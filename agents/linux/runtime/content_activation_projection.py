@@ -101,6 +101,24 @@ def _dayz_map_compatibility(command: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _community_map(state: Mapping[str, Any]) -> dict[str, str]:
+    raw = state.get("community_map")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    name = str(raw.get("name") or "").strip()
+    if name:
+        result["name"] = name[:191]
+    mission_path = str(raw.get("mission_path") or "").strip().replace("\\", "/")
+    if mission_path:
+        relative = Path(mission_path)
+        if (mission_path.startswith("/") or relative.is_absolute()
+                or any(part in {"", ".", ".."} for part in relative.parts)):
+            raise ValueError("invalid DayZ community mission path")
+        result["mission_path"] = mission_path[:512]
+    return result
+
+
 def _entry(state: dict[str, Any], *, include_disabled: bool = False) -> dict[str, Any] | None:
     status = str(state.get("status") or "")
     active_security = str(state.get("security_state") or "unscanned")
@@ -137,6 +155,7 @@ def _entry(state: dict[str, Any], *, include_disabled: bool = False) -> dict[str
         "dependencies": [str(value).strip() for value in (state.get("dependencies") or []) if str(value).strip()],
         "activation": activation,
         "dayz_map_compatibility": dict(state.get("dayz_map_compatibility") or {}) if isinstance(state.get("dayz_map_compatibility"), dict) else {},
+        "community_map": _community_map(state),
     }
 
 
