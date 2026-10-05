@@ -26,6 +26,12 @@ class ActivationProjectionTest(unittest.TestCase):
    self.assertEqual([x["content_id"] for x in snapshot["entries"]],["a-first","b-tie","z-last"])
    self.assertEqual(snapshot["entries"][0]["activation"],{"mode":"mod"})
    self.assertEqual(module.activation_snapshot("i1")["checksum"],snapshot["checksum"])
+   _state(root,"maps","dayz-map:deerisle",content_type="map",activation_state="disabled",community_map={"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
+   map_snapshot=module.activation_snapshot_with("maps",["dayz-map:deerisle"])
+   self.assertEqual(map_snapshot["entries"][0]["community_map"],{"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
+   _state(root,"unsafe-map","dayz-map:unsafe",content_type="map",community_map={"name":"Unsafe","mission_path":"../empty.deerisle"})
+   with self.assertRaisesRegex(ValueError,"invalid DayZ community mission path"):
+    module.refresh_activation_snapshot("unsafe-map")
    before=snapshot["checksum"];_state(root,"i1","a-first",activation_order=30);after=module.refresh_activation_snapshot("i1")
    self.assertNotEqual(before,after["checksum"]);self.assertEqual([x["content_id"] for x in after["entries"]],["b-tie","z-last","a-first"])
 
