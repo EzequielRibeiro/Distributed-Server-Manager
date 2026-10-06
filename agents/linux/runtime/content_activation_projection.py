@@ -155,7 +155,7 @@ def _entry(state: dict[str, Any], *, include_disabled: bool = False) -> dict[str
         "dependencies": [str(value).strip() for value in (state.get("dependencies") or []) if str(value).strip()],
         "activation": activation,
         "dayz_map_compatibility": dict(state.get("dayz_map_compatibility") or {}) if isinstance(state.get("dayz_map_compatibility"), dict) else {},
-        "community_map": _community_map(state),
+        "metadata": {"community_map": _community_map(state)} if _community_map(state) else {},
     }
 
 
