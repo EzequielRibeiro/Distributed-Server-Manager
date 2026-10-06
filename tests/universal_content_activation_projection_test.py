@@ -72,7 +72,7 @@ class DayZConfiguredMapDependencyProjectionTest(unittest.TestCase):
   old=os.environ.get('CAPIVARA_AGENT_STATE_DIR')
   with tempfile.TemporaryDirectory() as tmp:
    os.environ['CAPIVARA_AGENT_STATE_DIR']=tmp
-   module=_load(ROOT/'agents/linux/runtime/content_activation_projection.py','dayz_required_projection_tested')
+   module=_load(ROOT/'agents/linux/runtime/content_activation_projection.py','dayz_required_projection_tested',Path(tmp))
    iid='i1';root=Path(tmp)/'instance';(root/'config').mkdir(parents=True)
    (root/'config'/'serverDZ.cfg').write_text('class Missions { class DayZ { template="empty.deerisle"; }; };\n')
    state=Path(tmp)/'managed-content'/iid;state.mkdir(parents=True)
