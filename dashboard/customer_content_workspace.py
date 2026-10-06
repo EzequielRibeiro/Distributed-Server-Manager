@@ -465,9 +465,19 @@ class CustomerContentWorkspaceService:
   return {"kind":"MinecraftCleanContentPreparation","instance_id":str(instance_id),"removed":removed,"failed":failed,"completed":not failed,"preserved":["instance","world","ports","resource_profile","backups","permissions"]}
 
 
+ def _required_by_installed_content(self,instance_id,content_id):
+  required_by=[]
+  for item in self.content.list(instance_id=instance_id,desired_state="installed",limit=2000):
+   dependencies=item.get("dependencies") if isinstance(item.get("dependencies"),list) else []
+   if content_id in {str(value or "").strip() for value in dependencies}:required_by.append(str(item.get("content_id") or ""))
+  return sorted(value for value in required_by if value)
+
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
+  if action=="remove":
+   required_by=self._required_by_installed_content(instance_id,content_id)
+   if required_by:raise PermissionError("content is required by installed content: "+", ".join(required_by))
   parent_content_id=str(marker.get("parent_content_id") or "").strip() if isinstance(marker,Mapping) else ""
   if parent_content_id and ctype!="modpack":raise PermissionError("bundle child content must be changed through its parent modpack")
   if ctype=="modpack":
