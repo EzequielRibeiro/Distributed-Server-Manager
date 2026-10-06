@@ -28,7 +28,7 @@ class ActivationProjectionTest(unittest.TestCase):
    self.assertEqual(module.activation_snapshot("i1")["checksum"],snapshot["checksum"])
    _state(root,"maps","dayz-map:deerisle",content_type="map",activation_state="disabled",community_map={"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
    map_snapshot=module.activation_snapshot_with("maps",["dayz-map:deerisle"])
-   self.assertEqual(map_snapshot["entries"][0]["community_map"],{"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
+   self.assertEqual(map_snapshot["entries"][0]["metadata"]["community_map"],{"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
    _state(root,"unsafe-map","dayz-map:unsafe",content_type="map",community_map={"name":"Unsafe","mission_path":"../empty.deerisle"})
    with self.assertRaisesRegex(ValueError,"invalid DayZ community mission path"):
     module.refresh_activation_snapshot("unsafe-map")
