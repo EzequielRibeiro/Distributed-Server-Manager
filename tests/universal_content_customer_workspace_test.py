@@ -85,6 +85,11 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   with self.assertRaises(PermissionError):
    _service(_policy(mods_allowed=False),current).mutate({"username":"u"},"i1","eicar","remove",{})
 
+ def test_remove_rejects_content_required_by_installed_assignment(self):
+  current={**_current(),"content_id":"steam-workshop:1602372402","content_type":"workshop","provider":"steam-workshop"};service=_service(_policy(),current)
+  service.content.list=lambda **kw:[{"content_id":"dayz-map:deerisle","desired_state":"installed","dependencies":["steam-workshop:1602372402"]}]
+  with self.assertRaisesRegex(PermissionError,"dayz-map:deerisle"):service.mutate({"username":"u"},"i1","steam-workshop:1602372402","remove",{})
+  self.assertEqual(service.content.puts,[])
  def test_remove_preserves_assignment_as_absent_and_disabled(self):
   service=_service(_policy(),_current());service.mutate({"username":"u"},"i1","cf","remove",{});payload,_=service.content.puts[-1];self.assertEqual(service.workspace.calls[-1],('i1','content.remove'));self.assertEqual(payload["desired_state"],"absent");self.assertEqual(payload["activation_state"],"disabled")
  def test_enable_disable_and_reorder_use_install_permission(self):

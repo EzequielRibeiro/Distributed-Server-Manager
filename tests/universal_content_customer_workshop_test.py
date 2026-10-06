@@ -204,6 +204,14 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertNotIn("steam-workshop:1602372402",written)
         self.assertIn("dayz-map:deerisle",written)
 
+    def test_dayz_community_map_reinstall_repairs_absent_required_workshop_dependency(self):
+        service=_service();service.workspace.policy.mods_allowed=True
+        service.content.existing[("i1","steam-workshop:1602372402")]={"desired_state":"absent","activation_state":"disabled"}
+        result=service.install_dayz_community_map({"username":"u"},"i1",{"content_id":"dayz-map:deerisle","name":"Deer Isle","mission_path":"V5.9/empty.deerisle","source":{"provider":"github","repository":"johnmclane666/Deerisle-Stable","ref":"master"},"workshop_items":["1602372402"]})
+        self.assertEqual(result["assignment"]["dependencies"],["steam-workshop:1602372402"])
+        repaired=next(payload for payload,_ in service.content.puts if payload["content_id"]=="steam-workshop:1602372402")
+        self.assertEqual(repaired["desired_state"],"installed");self.assertEqual(repaired["activation_state"],"disabled")
+
     def test_dayz_community_map_persists_mission_path_selector(self):
         service = _service()
         service.workspace.policy.mods_allowed = True
