@@ -161,19 +161,48 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
         self.assertEqual([call.args[2] for call in lifecycle.call_args_list],["stop","start"])
         self.assertTrue(result["reconciled"])
 
-    def test_same_configured_mission_remains_noop_when_runtime_is_stopped(self):
+    def test_same_configured_mission_recovers_stopped_runtime_when_desired_running(self):
         view={"current":"empty.deerisle","missions":[{"id":"empty.deerisle","can_activate":True,"active":True}]}
+        record={"desired_state":"running"}
         with (
-            patch.object(dayz_operation_client,"_record_with_prepared_maps",return_value={}),
+            patch.object(dayz_operation_client,"_record_with_prepared_maps",return_value=record),
             patch.object(dayz_operation_client,"discover_missions",return_value=view),
             patch.object(dayz_operation_client,"activation_snapshot",return_value={"entries":[]}),
             patch.object(dayz_operation_client,"mod_compatibility_preflight",return_value={"blocking":False,"items":[]}),
             patch.object(dayz_operation_client,"status",return_value={"observed_state":"stopped"}),
+            patch.object(dayz_operation_client,"project_runtime_spec",return_value=record),
+            patch.object(dayz_operation_client.privileged_materialization,"materialize") as materialize,
             patch.object(dayz_operation_client,"lifecycle") as lifecycle,
+            patch.object(dayz_operation_client,"_stabilize",return_value={"observed_state":"running"}) as stabilize,
         ):
-            result=dayz_operation_client._change_mission({},{},"dayz-1",{"mission":"empty.deerisle","content_mode":"disable","persistence_mode":"fresh"})
+            result=dayz_operation_client._change_mission({},record,"dayz-1",{"mission":"empty.deerisle","content_mode":"disable","persistence_mode":"fresh"})
+        materialize.assert_called_once()
+        self.assertEqual([call.args[2] for call in lifecycle.call_args_list],["start"])
+        stabilize.assert_called_once_with({},"dayz-1")
+        self.assertTrue(result["restarted"])
+        self.assertTrue(result["reconciled"])
+        self.assertFalse(result["changed"])
+
+    def test_same_configured_mission_materializes_but_preserves_desired_stopped(self):
+        view={"current":"empty.deerisle","missions":[{"id":"empty.deerisle","can_activate":True,"active":True}]}
+        record={"desired_state":"stopped"}
+        with (
+            patch.object(dayz_operation_client,"_record_with_prepared_maps",return_value=record),
+            patch.object(dayz_operation_client,"discover_missions",return_value=view),
+            patch.object(dayz_operation_client,"activation_snapshot",return_value={"entries":[]}),
+            patch.object(dayz_operation_client,"mod_compatibility_preflight",return_value={"blocking":False,"items":[]}),
+            patch.object(dayz_operation_client,"status",return_value={"observed_state":"stopped"}),
+            patch.object(dayz_operation_client,"project_runtime_spec",return_value=record),
+            patch.object(dayz_operation_client.privileged_materialization,"materialize") as materialize,
+            patch.object(dayz_operation_client,"lifecycle") as lifecycle,
+            patch.object(dayz_operation_client,"_stabilize") as stabilize,
+        ):
+            result=dayz_operation_client._change_mission({},record,"dayz-1",{"mission":"empty.deerisle","content_mode":"disable","persistence_mode":"fresh"})
+        materialize.assert_called_once()
         lifecycle.assert_not_called()
+        stabilize.assert_not_called()
         self.assertFalse(result["restarted"])
+        self.assertTrue(result["reconciled"])
         self.assertFalse(result["changed"])
 
     def test_hybrid_rollback_repairs_file_access_through_privileged_helper(self):

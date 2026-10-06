@@ -158,21 +158,23 @@ def _change_mission(config,record,iid,payload):
         raise RuntimeError("DayZ mod compatibility preflight blocked mission "+target+": "+", ".join(blocked[:10]))
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"};previous_content_enabled=_content_enabled(record)
     if target==previous_mission:
-        if not was_running:
-            return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
-        lifecycle(config,iid,"stop")
+        should_run=was_running or str(record.get("desired_state") or "").strip().lower()=="running"
+        if was_running:lifecycle(config,iid,"stop")
         try:
             updated=dict(record)
             updated["dayz_content_enabled"]=content_mode=="keep"
             updated["dayz_required_content_ids"]=[value for value in prepared_ids if value and value!=str((target_item or {}).get("content_id") or "")]
             updated=project_runtime_spec(updated,snapshot)
             privileged_materialization.materialize(config,updated)
-            lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
+            stabilization=None
+            if should_run:
+                lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
         except Exception as exc:
-            try:lifecycle(config,iid,"start")
-            except Exception:pass
+            if was_running:
+                try:lifecycle(config,iid,"start")
+                except Exception:pass
             raise RuntimeError(f"mission reconciliation failed: {exc}") from exc
-        return {"previous_mission":previous_mission,"mission":target,"restarted":True,"rollback":False,"changed":False,"reconciled":True,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot),"stabilization":stabilization}
+        return {"previous_mission":previous_mission,"mission":target,"restarted":should_run,"rollback":False,"changed":False,"reconciled":True,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot),"stabilization":stabilization}
     if was_running:lifecycle(config,iid,"stop")
     persistence=None
     try:
