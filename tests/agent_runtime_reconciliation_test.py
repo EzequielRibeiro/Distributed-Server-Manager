@@ -107,6 +107,44 @@ class RuntimeReconcilerTest(unittest.TestCase):
         self.assertEqual(saved["reconcile_status"], "healthy")
         self.assertEqual(saved["reconcile_retry_count"], 0)
 
+    def test_dayz_recovered_start_must_survive_stabilization_before_healthy(self):
+        self.record = instance_runtime.register_instance({**self.record, "runtime_id": "dayz.stable"})
+        runtime_reconciler.resolve_materializer = lambda spec: FakeMaterializer({"exists": True, "owned": True, "matches": True})
+        adapter = FakeAdapter(False)
+        statuses = iter([
+            {"available": True, "running": False, "active_state": "inactive", "sub_state": "dead"},
+            {"available": True, "running": False, "active_state": "failed", "sub_state": "failed"},
+        ])
+        adapter.status = lambda spec: next(statuses)
+        runtime_reconciler.resolve_adapter = lambda spec: adapter
+        runtime_reconciler.runtime_materialization.reconcile = lambda config, instance_id: {"observed_state": "running"}
+        self.config["reconcile_start_stabilize_seconds"] = 3
+        ticks = [0.0]
+        old_monotonic, old_sleep = runtime_reconciler.time.monotonic, runtime_reconciler.time.sleep
+        def fake_monotonic():
+            value = ticks[0]
+            ticks[0] += 1.0
+            return value
+        runtime_reconciler.time.monotonic = fake_monotonic
+        runtime_reconciler.time.sleep = lambda seconds: None
+        try:
+            result = runtime_reconciler.reconcile_instance(self.config, "instance-one", force=True)
+        finally:
+            runtime_reconciler.time.monotonic, runtime_reconciler.time.sleep = old_monotonic, old_sleep
+        self.assertEqual(result["status"], "retry_wait")
+        self.assertEqual(result["retry_count"], 1)
+        self.assertIn("failed during start stabilization", result["error"])
+        saved = instance_runtime.get_instance("instance-one")
+        self.assertEqual(saved["reconcile_retry_count"], 1)
+
+    def test_non_dayz_recovered_start_keeps_zero_default_stabilization(self):
+        runtime_reconciler.resolve_materializer = lambda spec: FakeMaterializer({"exists": True, "owned": True, "matches": True})
+        runtime_reconciler.resolve_adapter = lambda spec: FakeAdapter(False)
+        runtime_reconciler.runtime_materialization.reconcile = lambda config, instance_id: {"observed_state": "running"}
+        result = runtime_reconciler.reconcile_instance(self.config, "instance-one")
+        self.assertEqual(result["status"], "healthy")
+        self.assertEqual(result["retry_count"], 0)
+
     def test_missing_owned_runtime_is_rematerialized_before_reconcile(self):
         runtime_reconciler.resolve_materializer = lambda spec: FakeMaterializer({"exists": False, "owned": False, "matches": False})
         calls = []
