@@ -141,6 +141,11 @@ def _change_mission(config,record,iid,payload):
             return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
         lifecycle(config,iid,"stop")
         try:
+            updated=dict(record)
+            updated["dayz_content_enabled"]=content_mode=="keep"
+            updated["dayz_required_content_ids"]=[value for value in prepared_ids if value and value!=str((target_item or {}).get("content_id") or "")]
+            updated=project_runtime_spec(updated,snapshot)
+            privileged_materialization.materialize(config,updated)
             lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
         except Exception as exc:
             try:lifecycle(config,iid,"start")

@@ -124,6 +124,8 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
             patch.object(dayz_operation_client,"activation_snapshot",return_value={"entries":[]}),
             patch.object(dayz_operation_client,"mod_compatibility_preflight",return_value={"blocking":False,"items":[]}),
             patch.object(dayz_operation_client,"status",return_value={"observed_state":"running"}),
+            patch.object(dayz_operation_client,"project_runtime_spec",return_value={}) as project,
+            patch.object(dayz_operation_client.privileged_materialization,"materialize") as materialize,
             patch.object(dayz_operation_client,"lifecycle") as lifecycle,
             patch.object(dayz_operation_client,"_stabilize",return_value={"observed_state":"running"}) as stabilize,
         ):
@@ -133,6 +135,31 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
         self.assertTrue(result["restarted"])
         self.assertTrue(result["reconciled"])
         self.assertFalse(result["changed"])
+
+    def test_same_configured_community_mission_materializes_required_content_before_restart(self):
+        view={"current":"empty.deerisle","missions":[{"id":"empty.deerisle","content_id":"dayz-map:deerisle","can_activate":True,"active":True}]}
+        record={"_dayz_prepared_map_content":{"empty.deerisle":["dayz-map:deerisle","steam-workshop:123"]}}
+        snapshot={"entries":[{"content_id":"steam-workshop:123"}]}
+        projected={"runtime_spec":{"mods":["steam-workshop:123"]}}
+        with (
+            patch.object(dayz_operation_client,"_record_with_prepared_maps",return_value=record),
+            patch.object(dayz_operation_client,"discover_missions",return_value=view),
+            patch.object(dayz_operation_client,"activation_snapshot_with",return_value=snapshot) as snapshot_with,
+            patch.object(dayz_operation_client,"mod_compatibility_preflight",return_value={"blocking":False,"items":[]}),
+            patch.object(dayz_operation_client,"status",return_value={"observed_state":"running"}),
+            patch.object(dayz_operation_client,"project_runtime_spec",return_value=projected) as project,
+            patch.object(dayz_operation_client.privileged_materialization,"materialize") as materialize,
+            patch.object(dayz_operation_client,"lifecycle") as lifecycle,
+            patch.object(dayz_operation_client,"_stabilize",return_value={"observed_state":"running"}),
+        ):
+            result=dayz_operation_client._change_mission({},{},"dayz-1",{"mission":"empty.deerisle","content_mode":"disable","persistence_mode":"fresh"})
+        snapshot_with.assert_called_once_with("dayz-1",["dayz-map:deerisle","steam-workshop:123"])
+        projected_record=project.call_args.args[0]
+        self.assertFalse(projected_record["dayz_content_enabled"])
+        self.assertEqual(projected_record["dayz_required_content_ids"],["steam-workshop:123"])
+        materialize.assert_called_once_with({},projected)
+        self.assertEqual([call.args[2] for call in lifecycle.call_args_list],["stop","start"])
+        self.assertTrue(result["reconciled"])
 
     def test_same_configured_mission_remains_noop_when_runtime_is_stopped(self):
         view={"current":"empty.deerisle","missions":[{"id":"empty.deerisle","can_activate":True,"active":True}]}
