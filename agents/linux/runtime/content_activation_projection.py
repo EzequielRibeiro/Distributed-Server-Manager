@@ -224,6 +224,40 @@ def activation_snapshot_with(instance_id: str, content_ids: list[str]) -> dict[s
     checksum=hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode("utf-8")).hexdigest()
     return {**identity,"checksum":checksum}
 
+def activation_snapshot_for_runtime(instance_id: str, spec: dict[str, Any], snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Include disabled dependencies required by the configured DayZ community map."""
+    base = snapshot if isinstance(snapshot, dict) else build_activation_snapshot(instance_id)
+    if str(spec.get("game_id") or "").strip().lower() != "dayz" or spec.get("dayz_content_enabled") is not False:
+        return base
+    config_path = str(spec.get("config_path") or "").strip()
+    if not config_path:
+        root = str(spec.get("instance_state_root") or "").strip()
+        config_path = str(Path(root) / "config" / "serverDZ.cfg") if root else ""
+    try:
+        source = Path(config_path).read_text(encoding="utf-8", errors="replace") if config_path else ""
+    except OSError:
+        source = ""
+    import re
+    match = re.search(r"\btemplate\s*=\s*[\"']([^\"']+)[\"']\s*;", source, re.I)
+    mission = match.group(1).strip().casefold() if match else ""
+    if not mission:
+        return base
+    required: list[str] = []
+    for state in _load_instance_states(_safe_component(instance_id)):
+        if str(state.get("status") or "") != "applied" or str(state.get("desired_state") or "installed") != "installed":
+            continue
+        if str(state.get("game_id") or "").strip().lower() != "dayz" or str(state.get("content_type") or "").strip().lower() != "map":
+            continue
+        community = state.get("community_map") if isinstance(state.get("community_map"), dict) else {}
+        mission_path = str(community.get("mission_path") or "").strip().replace("\\", "/").rstrip("/")
+        if not mission_path or mission_path.rsplit("/", 1)[-1].casefold() != mission:
+            continue
+        cid = str(state.get("content_id") or "").strip()
+        required = [cid, *[str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]]
+        break
+    return activation_snapshot_with(instance_id, required) if required else base
+
+
 def refresh_activation_snapshot(instance_id: str) -> dict[str, Any]:
     snapshot = build_activation_snapshot(instance_id)
     _write(ACTIVATION_STATE / f"{snapshot['instance_id']}.json", snapshot)

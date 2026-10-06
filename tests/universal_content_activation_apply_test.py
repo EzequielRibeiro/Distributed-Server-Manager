@@ -16,11 +16,13 @@ class ContentActivationApplyTest(unittest.TestCase):
   runtime.doctor=lambda config,iid:{"ready":True}
   privileged=types.ModuleType("privileged_materialization")
   privileged.materialize=lambda config,spec:calls.append(("materialize",dict(spec)))
+  projection=types.ModuleType("content_activation_projection")
+  projection.activation_snapshot_for_runtime=lambda iid,spec,snapshot:snapshot
   activation=types.ModuleType("content_activation_runtime")
   activation.materialize_content_activation=lambda spec:calls.append(("content_materialize",dict(spec)))
   activation.project_runtime_spec=lambda spec,snapshot:dict(projected)
-  saved={name:sys.modules.get(name) for name in ("instance_runtime","privileged_materialization","content_activation_runtime")}
-  sys.modules.update({"instance_runtime":runtime,"privileged_materialization":privileged,"content_activation_runtime":activation})
+  saved={name:sys.modules.get(name) for name in ("instance_runtime","privileged_materialization","content_activation_runtime","content_activation_projection")}
+  sys.modules.update({"instance_runtime":runtime,"privileged_materialization":privileged,"content_activation_runtime":activation,"content_activation_projection":projection})
   try:
    spec=importlib.util.spec_from_file_location("content_activation_apply_tested",ROOT/"agents/linux/runtime/content_activation_apply.py")
    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
