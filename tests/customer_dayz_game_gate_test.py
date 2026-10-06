@@ -22,6 +22,13 @@ class CustomerDayzGameGateTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout+"\n"+result.stderr)
         self.assertIn("PASS:", result.stdout)
 
+class DayzMapRuntimeReconciliationContractTest(unittest.TestCase):
+    def test_active_map_can_be_reapplied_after_unrestarted_completion(self):
+        script = (ROOT / "dashboard/web/customer-dayz.js").read_text(encoding="utf-8")
+        self.assertIn('latestChangeResult.changed===false&&latestChangeResult.restarted===false&&!latestChangeResult.reconciled', script)
+        self.assertIn('reconcile?"Reaplicar mapa e reiniciar":"Aplicar mapa e reiniciar"', script)
+        self.assertIn('(!!m.active&&!reconcile)', script)
+
 class DayzWipeScheduleFieldsContractTest(unittest.TestCase):
     def test_wipe_uses_mobile_safe_date_and_time_selects(self):
         script = (ROOT / "dashboard/web/customer-dayz.js").read_text(encoding="utf-8")
