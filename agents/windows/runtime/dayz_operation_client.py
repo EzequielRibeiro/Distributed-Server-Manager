@@ -135,9 +135,18 @@ def _change_mission(config,record,iid,payload):
     if content_mode=="keep" and preflight.get("blocking"):
         blocked=[str(item.get("content_id") or item.get("package_id") or "content") for item in preflight.get("items") or [] if item.get("status")=="incompatible"]
         raise RuntimeError("DayZ mod compatibility preflight blocked mission "+target+": "+", ".join(blocked[:10]))
-    if target==previous_mission:
-        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"};previous_content_enabled=_content_enabled(record)
+    if target==previous_mission:
+        if not was_running:
+            return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
+        lifecycle(config,iid,"stop")
+        try:
+            lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
+        except Exception as exc:
+            try:lifecycle(config,iid,"start")
+            except Exception:pass
+            raise RuntimeError(f"mission reconciliation failed: {exc}") from exc
+        return {"previous_mission":previous_mission,"mission":target,"restarted":True,"rollback":False,"changed":False,"reconciled":True,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot),"stabilization":stabilization}
     if was_running:lifecycle(config,iid,"stop")
     persistence=None
     try:

@@ -116,6 +116,39 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
                 record=dayz_operation_client._record_with_prepared_maps({"content_dayz_community_missions":[unmanaged]},"dayz-1")
             self.assertEqual(record["content_dayz_community_missions"],[unmanaged])
 
+    def test_same_configured_mission_reconciles_running_runtime(self):
+        view={"current":"empty.deerisle","missions":[{"id":"empty.deerisle","can_activate":True,"active":True}]}
+        with (
+            patch.object(dayz_operation_client,"_record_with_prepared_maps",return_value={}),
+            patch.object(dayz_operation_client,"discover_missions",return_value=view),
+            patch.object(dayz_operation_client,"activation_snapshot",return_value={"entries":[]}),
+            patch.object(dayz_operation_client,"mod_compatibility_preflight",return_value={"blocking":False,"items":[]}),
+            patch.object(dayz_operation_client,"status",return_value={"observed_state":"running"}),
+            patch.object(dayz_operation_client,"lifecycle") as lifecycle,
+            patch.object(dayz_operation_client,"_stabilize",return_value={"observed_state":"running"}) as stabilize,
+        ):
+            result=dayz_operation_client._change_mission({},{},"dayz-1",{"mission":"empty.deerisle","content_mode":"disable","persistence_mode":"fresh"})
+        self.assertEqual([call.args[2] for call in lifecycle.call_args_list],["stop","start"])
+        stabilize.assert_called_once_with({},"dayz-1")
+        self.assertTrue(result["restarted"])
+        self.assertTrue(result["reconciled"])
+        self.assertFalse(result["changed"])
+
+    def test_same_configured_mission_remains_noop_when_runtime_is_stopped(self):
+        view={"current":"empty.deerisle","missions":[{"id":"empty.deerisle","can_activate":True,"active":True}]}
+        with (
+            patch.object(dayz_operation_client,"_record_with_prepared_maps",return_value={}),
+            patch.object(dayz_operation_client,"discover_missions",return_value=view),
+            patch.object(dayz_operation_client,"activation_snapshot",return_value={"entries":[]}),
+            patch.object(dayz_operation_client,"mod_compatibility_preflight",return_value={"blocking":False,"items":[]}),
+            patch.object(dayz_operation_client,"status",return_value={"observed_state":"stopped"}),
+            patch.object(dayz_operation_client,"lifecycle") as lifecycle,
+        ):
+            result=dayz_operation_client._change_mission({},{},"dayz-1",{"mission":"empty.deerisle","content_mode":"disable","persistence_mode":"fresh"})
+        lifecycle.assert_not_called()
+        self.assertFalse(result["restarted"])
+        self.assertFalse(result["changed"])
+
     def test_hybrid_rollback_repairs_file_access_through_privileged_helper(self):
         completed = type("Completed", (), {"returncode": 0, "stderr": "", "stdout": ""})()
         with (
