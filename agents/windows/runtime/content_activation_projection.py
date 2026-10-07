@@ -268,6 +268,32 @@ def runtime_projection_inputs(instance_id: str, spec: dict[str, Any], snapshot: 
             continue
         map_id = str(state.get("content_id") or "").strip()
         required = [str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]
+        # Legacy map states may predate required_items metadata. Expand the
+        # installed Workshop dependency graph so runtime projection preserves
+        # mandatory transitive dependencies without mutating persisted state.
+        states_by_id = {str(item.get("content_id") or "").strip(): item for item in _load_instance_states(_safe_component(instance_id))}
+        graph: Mapping[str, Any] = {}
+        try:
+            definition = json.loads((Path(__file__).resolve().parents[3] / "catalog/v2/games/dayz/runtimes/stable.json").read_text(encoding="utf-8"))
+            workshop = ((definition.get("content") or {}).get("steam_workshop") or {}) if isinstance(definition, Mapping) else {}
+            graph = workshop.get("required_items") if isinstance(workshop.get("required_items"), Mapping) else {}
+        except (OSError, json.JSONDecodeError):
+            graph = {}
+        pending = list(required)
+        seen = set(required)
+        while pending:
+            dependency_id = pending.pop(0)
+            dependency_state = states_by_id.get(dependency_id) or {}
+            nested_values = list(dependency_state.get("dependencies") or [])
+            if dependency_id.startswith("steam-workshop:"):
+                published_id = dependency_id.split(":", 1)[1]
+                nested_values.extend(f"steam-workshop:{value}" for value in (graph.get(published_id) or []))
+            for nested in nested_values:
+                nested = str(nested).strip()
+                if nested and nested not in seen:
+                    seen.add(nested)
+                    required.append(nested)
+                    pending.append(nested)
         break
     if not map_id:
         return prepared, base
