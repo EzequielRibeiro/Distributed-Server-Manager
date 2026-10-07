@@ -10,13 +10,16 @@ from server_settings_runtime import materialize_server_settings
 from server_settings_surface import materialize_dynamic_values
 from minecraft_rcon_secret import materialize_password as materialize_minecraft_rcon_password
 from adapters import resolve_adapter
-from content_activation_projection import activation_snapshot
+from content_activation_projection import activation_snapshot,runtime_projection_inputs
 from content_activation_runtime import materialize_content_activation,project_runtime_spec
 from runtime_events import emit_runtime_event
 from runtime_spec import validate_runtime_spec
 def _events():return Path(instance_runtime.STATE_DIR)
 def _project(spec):
- iid=str(spec.get("instance_id") or "").strip();return project_runtime_spec(spec,activation_snapshot(iid)) if iid else dict(spec)
+ iid=str(spec.get("instance_id") or "").strip();
+ if not iid:return dict(spec)
+ prepared,snapshot=runtime_projection_inputs(iid,spec,activation_snapshot(iid))
+ return project_runtime_spec(prepared,snapshot)
 def _within(root:Path,value:str,label:str)->Path:
  root=root.resolve(strict=False);path=Path(value).resolve(strict=False)
  try:path.relative_to(root)

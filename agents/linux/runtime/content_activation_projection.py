@@ -224,14 +224,15 @@ def activation_snapshot_with(instance_id: str, content_ids: list[str]) -> dict[s
     checksum=hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode("utf-8")).hexdigest()
     return {**identity,"checksum":checksum}
 
-def activation_snapshot_for_runtime(instance_id: str, spec: dict[str, Any], snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Include disabled dependencies required by the configured DayZ community map."""
+def runtime_projection_inputs(instance_id: str, spec: dict[str, Any], snapshot: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Recover configured DayZ map dependencies before runtime projection."""
+    prepared = dict(spec)
     base = snapshot if isinstance(snapshot, dict) else build_activation_snapshot(instance_id)
-    if str(spec.get("game_id") or "").strip().lower() != "dayz" or spec.get("dayz_content_enabled") is not False:
-        return base
-    config_path = str(spec.get("config_path") or "").strip()
+    if str(prepared.get("game_id") or "").strip().lower() != "dayz" or prepared.get("dayz_content_enabled") is not False:
+        return prepared, base
+    config_path = str(prepared.get("config_path") or "").strip()
     if not config_path:
-        root = str(spec.get("instance_state_root") or "").strip()
+        root = str(prepared.get("instance_state_root") or "").strip()
         config_path = str(Path(root) / "config" / "serverDZ.cfg") if root else ""
     try:
         source = Path(config_path).read_text(encoding="utf-8", errors="replace") if config_path else ""
@@ -241,21 +242,39 @@ def activation_snapshot_for_runtime(instance_id: str, spec: dict[str, Any], snap
     match = re.search(r"\btemplate\s*=\s*[\"']([^\"']+)[\"']\s*;", source, re.I)
     mission = match.group(1).strip().casefold() if match else ""
     if not mission:
-        return base
+        return prepared, base
     required: list[str] = []
+    map_id = ""
+    from dayz_community_missions import discover_community_missions
     for state in _load_instance_states(_safe_component(instance_id)):
         if str(state.get("status") or "") != "applied" or str(state.get("desired_state") or "installed") != "installed":
             continue
         if str(state.get("game_id") or "").strip().lower() != "dayz" or str(state.get("content_type") or "").strip().lower() != "map":
             continue
-        community = state.get("community_map") if isinstance(state.get("community_map"), dict) else {}
-        mission_path = str(community.get("mission_path") or "").strip().replace("\\", "/").rstrip("/")
-        if not mission_path or mission_path.rsplit("/", 1)[-1].casefold() != mission:
+        if str(state.get("security_state") or "unscanned") != "clean" or not state.get("installed_version"):
             continue
-        cid = str(state.get("content_id") or "").strip()
-        required = [cid, *[str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]]
+        managed = str(state.get("managed_path") or "").strip()
+        if not managed:
+            continue
+        community = state.get("community_map") if isinstance(state.get("community_map"), dict) else {}
+        mission_path = str(community.get("mission_path") or "").strip() or None
+        try:
+            missions = discover_community_missions(Path(managed), mission_path=mission_path)
+        except (OSError, ValueError):
+            continue
+        if not any(str(item.get("id") or "").strip().casefold() == mission for item in missions):
+            continue
+        map_id = str(state.get("content_id") or "").strip()
+        required = [str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]
         break
-    return activation_snapshot_with(instance_id, required) if required else base
+    if not map_id:
+        return prepared, base
+    prepared["dayz_required_content_ids"] = required
+    return prepared, activation_snapshot_with(instance_id, [map_id, *required])
+
+
+def activation_snapshot_for_runtime(instance_id: str, spec: dict[str, Any], snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    return runtime_projection_inputs(instance_id, spec, snapshot)[1]
 
 
 def refresh_activation_snapshot(instance_id: str) -> dict[str, Any]:
