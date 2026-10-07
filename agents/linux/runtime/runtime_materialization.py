@@ -6,7 +6,7 @@ from typing import Any
 import instance_runtime
 import privileged_materialization
 from adapters import resolve_adapter
-from content_activation_projection import activation_snapshot
+from content_activation_projection import activation_snapshot,runtime_projection_inputs
 from content_activation_runtime import materialize_content_activation,project_runtime_spec
 from materializers import resolve_materializer
 from runtime_events import emit_runtime_event
@@ -15,7 +15,10 @@ from runtime_spec import validate_runtime_spec
 def _state_dir()->Path:return Path(instance_runtime.STATE_DIR)
 def _project(spec:dict[str,Any])->dict[str,Any]:
  iid=str(spec.get("instance_id") or "").strip()
- return project_runtime_spec(spec,activation_snapshot(iid)) if iid else dict(spec)
+
+ if not iid:return dict(spec)
+ prepared,snapshot=runtime_projection_inputs(iid,spec,activation_snapshot(iid))
+ return project_runtime_spec(prepared,snapshot)
 
 def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
  agent_id=str(config.get("agent_id") or "").strip();projected=_project(spec);normalized=validate_runtime_spec(projected,expected_agent_id=agent_id);emit_runtime_event(_state_dir(),"INSTANCE_RUNTIME_MATERIALIZING",instance_id=normalized["instance_id"],agent_id=agent_id);materializer=resolve_materializer(normalized)

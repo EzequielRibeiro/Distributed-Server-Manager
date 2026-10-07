@@ -4,7 +4,7 @@ from typing import Any
 import instance_runtime
 import runtime_materialization
 from content_activation_runtime import project_runtime_spec
-from content_activation_projection import activation_snapshot_for_runtime
+from content_activation_projection import runtime_projection_inputs
 class ContentActivationApplyError(RuntimeError):pass
 class ContentActivationRollbackError(ContentActivationApplyError):pass
 def _ready(config:dict[str,Any],instance_id:str)->bool:return bool(instance_runtime.doctor(config,instance_id).get("ready"))
@@ -16,7 +16,7 @@ def apply_activation_snapshots(config:dict[str,Any],snapshots:list[dict[str,Any]
   if not iid:continue
   previous=instance_runtime._owned(config,iid);new_checksum=str(snapshot.get("checksum") or "")
   if not _materializable(previous):results.append({"instance_id":iid,"changed":False,"skipped":True,"reason":"runtime_not_materialized","checksum":new_checksum});continue
-  snapshot=activation_snapshot_for_runtime(iid,previous,snapshot)
+  previous,snapshot=runtime_projection_inputs(iid,previous,snapshot)
   projected=project_runtime_spec(previous,snapshot);old_checksum=str(previous.get("content_activation_checksum") or "");new_checksum=str(projected.get("content_activation_checksum") or "")
   if old_checksum==new_checksum:results.append({"instance_id":iid,"changed":False,"checksum":new_checksum});continue
   was_running=instance_runtime.status(config,iid).get("observed_state")=="running"
