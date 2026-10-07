@@ -135,6 +135,32 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertTrue(cf["metadata"]["dependency"]["auto_managed"])
         self.assertEqual(cf["metadata"]["dependency"]["required_by"], "1828439124")
 
+    def test_dayz_deerisle_installs_cf_dependency_server_owned(self):
+        seen = []
+        def resolver(reference, *, expected_app_id):
+            published = str(reference).split(":")[-1]
+            seen.append((published, expected_app_id))
+            return {
+                "provider": "steam-workshop",
+                "package_id": f"{expected_app_id}:{published}",
+                "published_file_id": published,
+                "consumer_app_id": expected_app_id,
+                "metadata": {"published_file_id": published, "consumer_app_id": expected_app_id, "title": "Deer Isle" if published == "1602372402" else "CF"},
+            }
+        service = _service(resolver=resolver)
+        result = service.install({"username": "u"}, "i1", {
+            "content_id": "steam-workshop:1602372402",
+            "content_type": "workshop",
+            "provider": "steam-workshop",
+            "artifact": {"package_id": "1602372402"},
+        })
+        self.assertEqual(seen, [("1602372402", "221100"), ("1559212036", "221100")])
+        self.assertEqual(result["assignment"]["dependencies"], ["steam-workshop:1559212036"])
+        cf = result["dependencies"][0]
+        self.assertEqual(cf["content_id"], "steam-workshop:1559212036")
+        self.assertTrue(cf["metadata"]["dependency"]["auto_managed"])
+        self.assertEqual(cf["metadata"]["dependency"]["required_by"], "1602372402")
+
     def test_dayz_community_map_composes_github_source_and_workshop_dependencies(self):
         seen = []
         def resolver(reference, *, expected_app_id):
