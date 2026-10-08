@@ -138,7 +138,7 @@ class MigrationEnqueueHTTPTest(unittest.TestCase):
                 class Service:
                     def request(self,user,transfer_id,body,fingerprint):
                         raise ValueError(
-                            "Server Pack migration provisioning remains restricted to PR855 homologation"
+                            "Server Pack migration provisioning is disabled for this instance/Agent"
                         )
                 return Service()
         server,thread,patcher,calls=self._server(Factory)
@@ -163,7 +163,7 @@ class MigrationEnqueueHTTPTest(unittest.TestCase):
             self.assertEqual(denied.exception.code,400)
             body=json.loads(denied.exception.read().decode("utf-8"))
             self.assertEqual(body["error"],"invalid_request")
-            self.assertIn("restricted to PR855 homologation",body["message"])
+            self.assertIn("disabled for this instance/Agent",body["message"])
         finally:
             patcher.stop();server.shutdown();server.server_close();thread.join(timeout=5)
 
