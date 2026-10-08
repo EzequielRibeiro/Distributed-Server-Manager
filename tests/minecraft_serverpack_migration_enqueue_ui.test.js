@@ -52,6 +52,8 @@ const context={
         valid:true,
         install_allowed:false,
         migration_plan_sha256:"b".repeat(64),
+        provisioning_migration_available:true,
+        migration_execution_mode:"homologation",
         provisioning_homologation_available:true,
       }};
     }
@@ -59,7 +61,9 @@ const context={
       assert.equal(body.migration_plan_sha256,"b".repeat(64));
       return {migration:{
         accepted:true,
+        execution_mode:"homologation",
         homologation_only:true,
+        production_authorized:false,
         provisioning_id:"instance-provision-pr855",
         migration:{migration_plan_sha256:"b".repeat(64)},
         pending_bundle:{publish_allowed:false,candidate_bundle_revision:5},
