@@ -93,6 +93,9 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("assignment_cache",source)
   self.assertIn('assignment.get("desired_state") or "installed"',source)
   self.assertIn('=="absent":continue',source)
+  self.assertIn("removed_missions",source)
+  self.assertIn('community.get("mission_path")',source)
+  self.assertIn("if mission_id in removed_missions:continue",source)
 
 
 class DayzFutureOperationConflictContractTest(unittest.TestCase):
