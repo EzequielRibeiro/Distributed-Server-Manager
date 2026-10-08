@@ -37,7 +37,9 @@ class ServerPackUIContractTest(unittest.TestCase):
   self.assertIn('preview.kind!=="CapivaraServerPackPreview"',js)
   self.assertIn('/content/upload/migration/revalidate',js)
   self.assertIn('/content/upload/migration/enqueue',js)
-  self.assertIn('provisioning_homologation_available===true',js)
+  self.assertIn('provisioning_migration_available===true',js)
+  self.assertIn('migration_execution_mode',js)
+  self.assertIn('MIGRAÇÃO EM PRODUÇÃO',js)
   self.assertIn('migration_plan_sha256:plan.migration_plan_sha256',js)
 
  def test_workspace_never_auto_enables_a_serverpack(self):
