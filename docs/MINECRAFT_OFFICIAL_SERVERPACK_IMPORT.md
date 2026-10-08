@@ -329,3 +329,46 @@ conflitos como autorização automática de merge ou release.
   teste funcional dos mods acima. Resolver esses gates e avaliar os avisos
   antes de aprovar deployment/release. Nunca usar a instância 003 como
   ambiente de experimento por conveniência.
+
+
+### Gate de migração transacional pós-PR #855
+
+A migração conjunta de Server Pack + NeoForge continua **desabilitada por
+padrão**, mesmo após o merge da PR #855. O Controller e o Agent Linux avaliam
+a mesma política fail-closed.
+
+Modos suportados:
+
+- `CAPIVARA_SERVERPACK_MIGRATION_MODE=disabled` (ou variável ausente):
+  nenhuma migração é enfileirada ou executada;
+- `CAPIVARA_SERVERPACK_MIGRATION_MODE=homologation`: apenas identidades
+  `pr855-*` no Agent lógico `pr839-isolated-agent`;
+- `CAPIVARA_SERVERPACK_MIGRATION_MODE=production`: exige, simultaneamente:
+  - `CAPIVARA_SERVERPACK_MIGRATION_PRODUCTION_ACK=AUTHORIZED`;
+  - `CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_INSTANCES` com a lista exata de
+    IDs autorizados, separada por vírgulas;
+  - `CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_AGENTS` com a lista exata de
+    Agents autorizados.
+
+O modo `production` só é executável quando **Controller e Agent** possuem
+configuração compatível. O Controller grava `minecraft_serverpack_execution_mode`
+na requisição e o Agent exige que esse modo corresponda à sua política local.
+Alterar apenas um lado mantém o fluxo fail-closed.
+
+A variável legada
+`CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION=YES` continua aceita
+somente para compatibilidade com a homologação PR #855 quando o novo modo não
+foi definido explicitamente.
+
+O Agent Windows continua deliberadamente fail-closed para execução real de
+migração; qualquer liberação Windows requer homologação própria.
+
+Essas variáveis são **gates de feature**, não substituem os demais controles:
+fingerprint revalidado, backup independente verificado, capacidade em disco,
+lock exclusivo, staging seguro, readiness, journal de swap, rollback/recovery
+e publicação atômica no Controller permanecem obrigatórios.
+
+Não adicionar uma instância real às allow-lists nem configurar o ACK de
+produção como parte de um deploy genérico. Essa habilitação deve ser uma ação
+separada e explicitamente autorizada, com avaliação de espaço e backup
+imediatamente antes do teste.
