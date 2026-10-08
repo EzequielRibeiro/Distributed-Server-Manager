@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
-import os
 import socket
 import zipfile
 from pathlib import Path
@@ -20,6 +19,7 @@ from runtime_workspace_catalog import runtime_definition
 from customer_serverpack_service import build_serverpack_bundle
 from customer_modpack_source_discovery import discover_modpack as detect_modpack_source
 from core.minecraft_serverpack_pending_commit import build_pending_bundle_commit
+from core.minecraft_serverpack_migration_feature import migration_feature_decision
 
 _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
@@ -411,10 +411,9 @@ class CustomerContentUploadService:
   # Never return an executable request or let this validation alter assignments.
   item=self._transfer(user,transfer_id)
   context,_,_=self._access(user,str(item.get("instance_id") or ""))
-  homologation_enqueue_available=(
-   os.environ.get("CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION","").strip().upper()=="YES"
-   and str(context.get("id") or "").startswith("pr855-")
-   and str(context.get("agent_id") or "").strip()=="pr839-isolated-agent"
+  feature=migration_feature_decision(
+   instance_id=str(context.get("id") or ""),
+   agent_id=str(context.get("agent_id") or ""),
   )
   return {
    "valid":True,
@@ -424,7 +423,11 @@ class CustomerContentUploadService:
    "manifest_diff":dict(plan.get("manifest_diff") or {}),
    "requires_verified_backup":True,
    "requires_exclusive_instance_lock":True,
-   "provisioning_homologation_available":homologation_enqueue_available,
+   "provisioning_migration_available":bool(feature["allowed"]),
+   "migration_execution_mode":str(feature["mode"]),
+   "provisioning_homologation_available":bool(
+    feature["allowed"] and feature["homologation"]
+   ),
   }
 
  def prepare_staged_loader_migration(self,user,transfer_id,body:Mapping[str,Any],expected_plan_sha256:str):
