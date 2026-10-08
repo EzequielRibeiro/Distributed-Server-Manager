@@ -39,6 +39,17 @@ def _community_display_names(content,instance_id,maps):
     if not isinstance(maps,dict):return maps
     missions=maps.get("missions")
     if not isinstance(missions,list):return maps
+    # Discovery is asynchronous. Never expose a stale managed community map after
+    # its authoritative assignment has already been removed.
+    filtered=[];assignment_cache={}
+    for raw in missions:
+        if isinstance(raw,dict) and raw.get("community") and raw.get("content_id"):
+            content_id=str(raw.get("content_id") or "").strip()
+            if content_id not in assignment_cache:assignment_cache[content_id]=content.get(instance_id,content_id)
+            assignment=assignment_cache[content_id]
+            if isinstance(assignment,dict) and str(assignment.get("desired_state") or "installed").strip().lower()=="absent":continue
+        filtered.append(raw)
+    missions=filtered
     result=dict(maps);enriched=[];content_counts={}
     for raw in missions:
         if isinstance(raw,dict) and raw.get("community") and raw.get("content_id"):
