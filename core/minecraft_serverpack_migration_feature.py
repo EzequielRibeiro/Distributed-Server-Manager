@@ -82,7 +82,7 @@ def migration_feature_decision(
             "homologation":False,
         }
 
-    if str(env.get(_PRODUCTION_ACK_ENV,"") or "").strip()!="AUTHORIZED":
+    if str(env.get(_PRODUCTION_ACK_ENV,"") or "")!="AUTHORIZED":
         return {
             "allowed":False,
             "mode":"production",
