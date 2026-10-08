@@ -90,6 +90,9 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("content_counts",source)
   self.assertIn('display=f"{display} — {variant.title()}"',source)
   self.assertIn("assignments[content_id]",source)
+  self.assertIn("assignment_cache",source)
+  self.assertIn('assignment.get("desired_state") or "installed"',source)
+  self.assertIn('=="absent":continue',source)
 
 
 class DayzFutureOperationConflictContractTest(unittest.TestCase):
