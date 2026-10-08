@@ -92,8 +92,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.old_firewall_remove = provisioning_executor.privileged_firewall.remove
         self.old_reconcile = provisioning_executor.runtime_materialization.reconcile
         self.old_remove = provisioning_executor.privileged_materialization.remove
-        self.old_serverpack_gate = provisioning_executor.serverpack_homologation_enabled
-        self.old_serverpack_execute = provisioning_executor.execute_homologated_migration
+        self.old_serverpack_gate = provisioning_executor.serverpack_migration_enabled
+        self.old_serverpack_execute = provisioning_executor.execute_serverpack_migration
 
     def tearDown(self):
         instance_runtime.STATE_DIR = self.old_state
@@ -104,8 +104,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         provisioning_executor.privileged_firewall.remove = self.old_firewall_remove
         provisioning_executor.runtime_materialization.reconcile = self.old_reconcile
         provisioning_executor.privileged_materialization.remove = self.old_remove
-        provisioning_executor.serverpack_homologation_enabled = self.old_serverpack_gate
-        provisioning_executor.execute_homologated_migration = self.old_serverpack_execute
+        provisioning_executor.serverpack_migration_enabled = self.old_serverpack_gate
+        provisioning_executor.execute_serverpack_migration = self.old_serverpack_execute
         self.temp.cleanup()
 
     def _wire_success(self):
@@ -194,8 +194,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
             }
         }
         calls = []
-        provisioning_executor.serverpack_homologation_enabled = lambda req: True
-        provisioning_executor.execute_homologated_migration = (
+        provisioning_executor.serverpack_migration_enabled = lambda req: True
+        provisioning_executor.execute_serverpack_migration = (
             lambda config, req: calls.append(req["instance_id"]) or {
                 "status": "completed",
                 "homologation_only": True,
@@ -238,7 +238,7 @@ class ProvisioningExecutorTest(unittest.TestCase):
                 "install_allowed": False,
             }
         }
-        provisioning_executor.serverpack_homologation_enabled = lambda req: False
+        provisioning_executor.serverpack_migration_enabled = lambda req: False
         result = provisioning_executor.execute(self.config, request, self.result_path)
         self.assertEqual(result["status"], "failed")
         self.assertIn("not yet homologated", result["error"])
