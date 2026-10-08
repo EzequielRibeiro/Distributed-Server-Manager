@@ -211,6 +211,63 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.assertTrue(result["minecraft_serverpack_migration"]["homologation_only"])
         self.assertEqual(calls, ["pr855-provisioning-homolog"])
 
+    def test_production_serverpack_route_reports_production_mode_not_homologation(self):
+        request = ProvisioningContractTest().request()
+        request["desired_state"] = "stopped"
+        request["configuration"] = {
+            "minecraft_serverpack_execution_mode": "production",
+            "minecraft_serverpack_migration": {
+                "kind": "MinecraftServerPackMigration",
+                "schema_version": 1,
+                "instance_id": "instance-one",
+                "content_id": "atm11",
+                "transfer_id": "transfer-production",
+                "filename": "ServerFiles.zip",
+                "archive_sha256": "a" * 64,
+                "archive_size_bytes": 123,
+                "serverpack_prefix": "",
+                "serverpack_mod_count": 254,
+                "serverpack_override_dirs": ["config", "kubejs"],
+                "migration_plan_sha256": "b" * 64,
+                "previous_bundle_revision": 3,
+                "previous_manifest_sha256": "c" * 64,
+                "from_loader_version": "26.1.2.94",
+                "target_loader_version": "26.1.2.109",
+                "minecraft_version": "26.1.2",
+                "isolated_install_dir": "instance-prod",
+                "backup_before_update": True,
+                "preserve_world": True,
+                "install_allowed": False,
+            },
+        }
+        events = []
+        provisioning_executor.serverpack_migration_enabled = lambda req: True
+        provisioning_executor.execute_serverpack_migration = lambda config, req: {
+            "status": "completed",
+            "execution_mode": "production",
+            "homologation_only": False,
+            "production_authorized": True,
+            "trace": ["contract_validated", "committed"],
+        }
+        with patch.object(
+            provisioning_executor,
+            "_event",
+            side_effect=lambda event_type, request, **kwargs: events.append(
+                (event_type, dict(kwargs.get("data") or {}))
+            ),
+        ):
+            result = provisioning_executor.execute(self.config, request, self.result_path)
+        self.assertEqual(result["status"], "completed")
+        mode_events = [
+            data for event_type, data in events
+            if event_type in {"INSTANCE_PROVISIONING_STEP", "INSTANCE_PROVISIONING_COMPLETED"}
+        ]
+        self.assertTrue(mode_events)
+        for data in mode_events:
+            self.assertEqual(data.get("execution_mode"), "production")
+            self.assertFalse(data.get("homologation_only"))
+            self.assertTrue(data.get("production_authorized"))
+
     def test_serverpack_request_stays_fail_closed_when_homologation_gate_is_false(self):
         request = ProvisioningContractTest().request()
         request["configuration"] = {
