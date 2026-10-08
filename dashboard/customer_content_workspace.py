@@ -522,6 +522,19 @@ class CustomerContentWorkspaceService:
    self._mark_update_checkpoint(current,payload)
   else:raise ValueError("invalid content action")
   (self._enforce_type_policy if action=="remove" else self._enforce_policy)(payload,policy)
+  if action=="remove":
+   orphaned=[]
+   for dependency_id in current.get("dependencies") or []:
+    dependency_id=str(dependency_id or "").strip()
+    if not dependency_id:continue
+    dependency=self.content.get(instance_id,dependency_id)
+    if dependency is None or str(dependency.get("desired_state") or "installed")!="installed":continue
+    required_by=[value for value in self._required_by_installed_content(instance_id,dependency_id) if value!=content_id]
+    if required_by:continue
+    dependency_payload=self._desired(dependency);dependency_payload["instance_id"]=instance_id;dependency_payload["desired_state"]="absent";dependency_payload["activation_state"]="disabled"
+    self._enforce_type_policy(dependency_payload,policy);orphaned.append(dependency_payload)
+   if orphaned:
+    result=self.content.put_many([payload,*orphaned],requested_by=actor,**self._customer_guard_options());result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["removed_dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
   if action=="update" and provider in {"steam","steam-workshop"}:
    dependencies=self._resolve_workshop_dependencies(context,payload)
    if dependencies:

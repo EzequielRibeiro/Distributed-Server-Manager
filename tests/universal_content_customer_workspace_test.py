@@ -24,7 +24,10 @@ class _Content:
  def rollback_bundle(self,iid,cid,revision=None,**kwargs):self.bundle_rollbacks.append((iid,cid,revision,kwargs));return {"changed":True}
  def bundle_diff(self,iid,cid,bundle):return {"added":[],"removed":[],"updated":[],"unchanged":[]}
  def get(self,iid,cid):return dict(self.current) if self.current else None
- def put(self,payload,requested_by=None):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":{**payload,"revision":2}}
+ def put(self,payload,requested_by=None,**kwargs):self.puts.append((dict(payload),requested_by));return {"changed":True,"assignment":{**payload,"revision":2}}
+ def put_many(self,payloads,requested_by=None,**kwargs):
+  for payload in payloads:self.puts.append((dict(payload),requested_by))
+  return {"changed":True,"assignments":[{**payload,"revision":2} for payload in payloads]}
  def put_bundle(self,parent,bundle,children,requested_by=None):self.bundles.append((dict(parent),dict(bundle),[dict(x) for x in children],requested_by));return {"changed":True,"assignment":dict(parent),"children":children}
  def set_bundle_state(self,iid,cid,**kwargs):self.bundle_states.append((iid,cid,dict(kwargs)));return {"changed":True}
 
@@ -90,6 +93,26 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   service.content.list=lambda **kw:[{"content_id":"dayz-map:deerisle","desired_state":"installed","dependencies":["steam-workshop:1602372402"]}]
   with self.assertRaisesRegex(PermissionError,"dayz-map:deerisle"):service.mutate({"username":"u"},"i1","steam-workshop:1602372402","remove",{})
   self.assertEqual(service.content.puts,[])
+ def test_remove_collects_orphaned_dependency(self):
+  current={**_current(),"content_id":"dayz-map:deerisle","content_type":"map","provider":"github","dependencies":["steam-workshop:1602372402"]}
+  service=_service(_policy(),current)
+  dependency={**_current(),"content_id":"steam-workshop:1602372402","content_type":"workshop","provider":"steam-workshop","activation_state":"disabled"}
+  service.content.get=lambda iid,cid: dict(current if cid=="dayz-map:deerisle" else dependency)
+  service.content.list=lambda **kw:[current,dependency]
+  result=service.mutate({"username":"u"},"i1","dayz-map:deerisle","remove",{})
+  written={payload["content_id"]:payload for payload,_ in service.content.puts}
+  self.assertEqual(written["dayz-map:deerisle"]["desired_state"],"absent")
+  self.assertEqual(written["steam-workshop:1602372402"]["desired_state"],"absent")
+  self.assertEqual([item["content_id"] for item in result["removed_dependencies"]],["steam-workshop:1602372402"])
+
+ def test_remove_preserves_dependency_still_required_by_other_content(self):
+  current={**_current(),"content_id":"dayz-map:deerisle","content_type":"map","provider":"github","dependencies":["steam-workshop:1602372402"]}
+  dependency={**_current(),"content_id":"steam-workshop:1602372402","content_type":"workshop","provider":"steam-workshop","activation_state":"disabled"}
+  other={**_current(),"content_id":"dayz-map:other","content_type":"map","provider":"github","dependencies":["steam-workshop:1602372402"]}
+  service=_service(_policy(),current);service.content.get=lambda iid,cid: dict(current if cid=="dayz-map:deerisle" else dependency);service.content.list=lambda **kw:[current,dependency,other]
+  service.mutate({"username":"u"},"i1","dayz-map:deerisle","remove",{})
+  self.assertEqual([payload["content_id"] for payload,_ in service.content.puts],["dayz-map:deerisle"])
+
  def test_remove_preserves_assignment_as_absent_and_disabled(self):
   service=_service(_policy(),_current());service.mutate({"username":"u"},"i1","cf","remove",{});payload,_=service.content.puts[-1];self.assertEqual(service.workspace.calls[-1],('i1','content.remove'));self.assertEqual(payload["desired_state"],"absent");self.assertEqual(payload["activation_state"],"disabled")
  def test_enable_disable_and_reorder_use_install_permission(self):
