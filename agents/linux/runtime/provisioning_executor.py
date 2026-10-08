@@ -332,6 +332,12 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
     deadline = started + limits.provisioning_timeout_seconds
     migration_cfg = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
     if "minecraft_serverpack_migration" in migration_cfg and serverpack_migration_enabled(request):
+        execution_mode=str(migration_cfg.get("minecraft_serverpack_execution_mode") or "homologation").strip().lower()
+        mode_event={
+            "execution_mode":execution_mode,
+            "homologation_only":execution_mode=="homologation",
+            "production_authorized":execution_mode=="production",
+        }
         try:
             _result(result_path, request, status="running", current_step="minecraft_serverpack_migration", progress=10)
             _event(
@@ -339,7 +345,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 request,
                 step="minecraft_serverpack_migration",
                 progress=10,
-                data={"homologation_only": True},
+                data=dict(mode_event),
             )
             detail = execute_serverpack_migration(config, request)
             result = _result(
@@ -358,7 +364,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 request,
                 step="completed",
                 progress=100,
-                data={"homologation_only": True, "observed_state": "stopped"},
+                data={**mode_event, "observed_state": "stopped"},
             )
         except Exception as exc:
             increment("provisioning_failed")
@@ -378,7 +384,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 step="minecraft_serverpack_migration",
                 progress=99,
                 data={"error": diagnostics["error"], "exception_type": diagnostics["exception_type"],
-                      "correlation_id": diagnostics["correlation_id"], "homologation_only": True},
+                      "correlation_id": diagnostics["correlation_id"], **mode_event},
             )
         observe_duration("provisioning", int((time.monotonic() - started) * 1000))
         return result
