@@ -42,12 +42,26 @@ def _community_display_names(content,instance_id,maps):
     # Discovery is asynchronous. Never expose a stale managed community map after
     # its authoritative assignment has already been removed.
     filtered=[];assignment_cache={}
+    assignments=content.list(instance_id=instance_id,limit=2000)
+    managed_maps=[item for item in assignments if isinstance(item,dict) and str(item.get("content_type") or "").strip().lower()=="map"]
+    removed_map_ids={str(item.get("content_id") or "").strip() for item in managed_maps if str(item.get("desired_state") or "installed").strip().lower()=="absent"}
+    removed_missions=set()
+    for item in managed_maps:
+        if str(item.get("content_id") or "").strip() not in removed_map_ids:continue
+        metadata=item.get("metadata") if isinstance(item.get("metadata"),dict) else {}
+        community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
+        mission_path=str(community.get("mission_path") or "").strip().replace("\\","/")
+        if mission_path:removed_missions.add(mission_path.rstrip("/").rsplit("/",1)[-1].casefold())
     for raw in missions:
-        if isinstance(raw,dict) and raw.get("community") and raw.get("content_id"):
+        if isinstance(raw,dict) and raw.get("community"):
             content_id=str(raw.get("content_id") or "").strip()
-            if content_id not in assignment_cache:assignment_cache[content_id]=content.get(instance_id,content_id)
-            assignment=assignment_cache[content_id]
-            if isinstance(assignment,dict) and str(assignment.get("desired_state") or "installed").strip().lower()=="absent":continue
+            if content_id:
+                if content_id not in assignment_cache:assignment_cache[content_id]=content.get(instance_id,content_id)
+                assignment=assignment_cache[content_id]
+                if isinstance(assignment,dict) and str(assignment.get("desired_state") or "installed").strip().lower()=="absent":continue
+            else:
+                mission_id=str(raw.get("id") or "").strip().casefold()
+                if mission_id in removed_missions:continue
         filtered.append(raw)
     missions=filtered
     result=dict(maps);enriched=[];content_counts={}
