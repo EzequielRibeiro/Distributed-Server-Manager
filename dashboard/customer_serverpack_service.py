@@ -74,7 +74,7 @@ def _official_curseforge(path: Path, source: Mapping[str, Any],
 def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mapping[str, Any],
                             relative: str, content_id: str, metadata: Mapping[str, Any],
                             artifact_path: Path, *, requester=_request_json,
-                            load_secret=_secret_file):
+                            load_secret=_secret_file, preview_loader_mismatch: bool = False):
     if str(context.get("game_id") or "").lower() != "minecraft":
         raise ValueError("Importação de Server Pack disponível somente para Minecraft Java.")
     source = metadata.get("serverpack") if isinstance(metadata.get("serverpack"), Mapping) else {}
@@ -95,7 +95,7 @@ def build_serverpack_bundle(root: Path, context: Mapping[str, Any], item: Mappin
     declared_build = str(source.get("loader_version") or "").strip()
     inspected = inspect_serverpack(
         artifact_path, version, loader,
-        embedded_loader_version=installed_build,
+        embedded_loader_version="" if preview_loader_mismatch else installed_build,
         declared_loader_version=declared_build)
     uploaded_sha = str(item.get("sha256") or "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", uploaded_sha) or uploaded_sha != inspected["sha256"]:

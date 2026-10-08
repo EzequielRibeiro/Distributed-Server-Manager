@@ -15,6 +15,7 @@ import runtime_materialization
 from provisioning_state import write_json
 from runtime_events import emit_runtime_event
 from runtime_metrics import increment
+from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
 
 PROGRAM_STEP_TIMEOUT = 7200
 
@@ -78,6 +79,12 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
     materialized = False
     compensation: list[str] = []
     configuration = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
+    if "minecraft_serverpack_migration" in configuration:
+        validate_minecraft_serverpack_migration(
+            configuration["minecraft_serverpack_migration"],
+            instance_id=str(request.get("instance_id") or ""),
+        )
+        raise RuntimeError("staged Minecraft loader and Server Pack migration executor is not yet homologated; refusing to modify the instance")
     version_update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
     migration_meta = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
     update_meta = migration_meta or version_update_meta

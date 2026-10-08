@@ -95,6 +95,7 @@
 .content-upload-outcome[hidden]{display:none}
 .content-upload-outcome-accepted{background:#17382e;border-color:#328364;color:#b7f5d9}
 .content-upload-outcome-failed{background:#3a2229;border-color:#92545b;color:#ffe0e3}
+.content-upload-outcome-preview_only{background:#203348;border-color:#4b8fc1;color:#e0f0ff}
 @media(max-width:520px){.content-upload-outcome{padding:12px;font-size:13px}}
 /* Maintenance choices: keep checkbox and label together on narrow screens. */
 #maintenance-warnings.permission-grid label,#maintenance-weekdays.permission-grid label{justify-content:flex-start;min-width:0}

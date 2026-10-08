@@ -92,6 +92,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.old_firewall_remove = provisioning_executor.privileged_firewall.remove
         self.old_reconcile = provisioning_executor.runtime_materialization.reconcile
         self.old_remove = provisioning_executor.privileged_materialization.remove
+        self.old_serverpack_gate = provisioning_executor.serverpack_homologation_enabled
+        self.old_serverpack_execute = provisioning_executor.execute_homologated_migration
 
     def tearDown(self):
         instance_runtime.STATE_DIR = self.old_state
@@ -102,6 +104,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         provisioning_executor.privileged_firewall.remove = self.old_firewall_remove
         provisioning_executor.runtime_materialization.reconcile = self.old_reconcile
         provisioning_executor.privileged_materialization.remove = self.old_remove
+        provisioning_executor.serverpack_homologation_enabled = self.old_serverpack_gate
+        provisioning_executor.execute_homologated_migration = self.old_serverpack_execute
         self.temp.cleanup()
 
     def _wire_success(self):
@@ -158,6 +162,86 @@ class ProvisioningExecutorTest(unittest.TestCase):
             ("restore","snapshot-1")])
         self.assertIn("previous_world_restored",result["compensation"])
         self.assertIn("previous_runtime_restored",result["compensation"])
+
+    def test_pr855_homologation_route_bypasses_generic_provisioning_pipeline(self):
+        request = ProvisioningContractTest().request()
+        request["instance_id"] = "pr855-provisioning-homolog"
+        request["instance"]["instance_id"] = "pr855-provisioning-homolog"
+        request["desired_state"] = "stopped"
+        request["configuration"] = {
+            "minecraft_serverpack_migration": {
+                "kind": "MinecraftServerPackMigration",
+                "schema_version": 1,
+                "instance_id": "pr855-provisioning-homolog",
+                "content_id": "atm11",
+                "transfer_id": "transfer-homolog",
+                "filename": "ServerFiles.zip",
+                "archive_sha256": "a" * 64,
+                "archive_size_bytes": 123,
+                "serverpack_prefix": "",
+                "serverpack_mod_count": 254,
+                "serverpack_override_dirs": ["config", "kubejs"],
+                "migration_plan_sha256": "b" * 64,
+                "previous_bundle_revision": 3,
+                "previous_manifest_sha256": "c" * 64,
+                "from_loader_version": "26.1.2.94",
+                "target_loader_version": "26.1.2.109",
+                "minecraft_version": "26.1.2",
+                "isolated_install_dir": "instance-pr855-homolog",
+                "backup_before_update": True,
+                "preserve_world": True,
+                "install_allowed": False,
+            }
+        }
+        calls = []
+        provisioning_executor.serverpack_homologation_enabled = lambda req: True
+        provisioning_executor.execute_homologated_migration = (
+            lambda config, req: calls.append(req["instance_id"]) or {
+                "status": "completed",
+                "homologation_only": True,
+                "trace": ["contract_validated", "committed"],
+            }
+        )
+        provisioning_executor.execute_game_data = lambda command: (_ for _ in ()).throw(
+            AssertionError("generic content pipeline must not run")
+        )
+        result = provisioning_executor.execute(self.config, request, self.result_path)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["observed_state"], "stopped")
+        self.assertTrue(result["minecraft_serverpack_migration"]["homologation_only"])
+        self.assertEqual(calls, ["pr855-provisioning-homolog"])
+
+    def test_serverpack_request_stays_fail_closed_when_homologation_gate_is_false(self):
+        request = ProvisioningContractTest().request()
+        request["configuration"] = {
+            "minecraft_serverpack_migration": {
+                "kind": "MinecraftServerPackMigration",
+                "schema_version": 1,
+                "instance_id": "instance-one",
+                "content_id": "atm11",
+                "transfer_id": "transfer-prod",
+                "filename": "ServerFiles.zip",
+                "archive_sha256": "a" * 64,
+                "archive_size_bytes": 123,
+                "serverpack_prefix": "",
+                "serverpack_mod_count": 254,
+                "serverpack_override_dirs": ["config", "kubejs"],
+                "migration_plan_sha256": "b" * 64,
+                "previous_bundle_revision": 3,
+                "previous_manifest_sha256": "c" * 64,
+                "from_loader_version": "26.1.2.94",
+                "target_loader_version": "26.1.2.109",
+                "minecraft_version": "26.1.2",
+                "isolated_install_dir": "instance-prod",
+                "backup_before_update": True,
+                "preserve_world": True,
+                "install_allowed": False,
+            }
+        }
+        provisioning_executor.serverpack_homologation_enabled = lambda req: False
+        result = provisioning_executor.execute(self.config, request, self.result_path)
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("not yet homologated", result["error"])
 
     def test_contract_validation_failure_is_persisted_in_result(self):
         request = dict(self.request)

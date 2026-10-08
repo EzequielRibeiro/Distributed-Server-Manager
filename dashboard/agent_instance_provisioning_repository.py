@@ -32,6 +32,7 @@ _SPEC.loader.exec_module(_BASE)
 
 from alert_repository import AlertRepository  # noqa: E402
 from core.agent_health import utc_timestamp  # noqa: E402
+from minecraft_serverpack_pending_publication import publish_pending_serverpack_bundle  # noqa: E402
 
 ACTIVE_STATES = _BASE.ACTIVE_STATES
 FINAL_STATES = _BASE.FINAL_STATES
@@ -225,9 +226,21 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             if sanitized.get("traceback") is not None:
                 sanitized["traceback"] = _sanitize_text(sanitized["traceback"], limit=_MAX_TRACEBACK)
         now = utc_timestamp()
+        request = current.get("request") if isinstance(current.get("request"), dict) else {}
         payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
+            if status == "completed":
+                publication = publish_pending_serverpack_bundle(
+                    backend=self.backend,
+                    session=session,
+                    request=request,
+                    result=sanitized,
+                    instance_id=str(current.get("instance_id") or ""),
+                )
+                if publication is not None:
+                    sanitized = {**sanitized, "controller_bundle_publication": publication}
+                    payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
             if status == "running":
                 session.execute(
                     "UPDATE agent_instance_provisioning SET "

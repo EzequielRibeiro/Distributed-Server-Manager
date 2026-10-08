@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import json
+import os
 import socket
 import zipfile
 from pathlib import Path
@@ -18,6 +19,7 @@ from minecraft_content_resolver import provider_loaders
 from runtime_workspace_catalog import runtime_definition
 from customer_serverpack_service import build_serverpack_bundle
 from customer_modpack_source_discovery import discover_modpack as detect_modpack_source
+from core.minecraft_serverpack_pending_commit import build_pending_bundle_commit
 
 _ALLOWED_FIELDS=frozenset({"content_id","content_type","activation_state","activation_order","version","metadata","dependencies","conflicts"})
 _ARCHIVE_SUFFIXES=(".zip",".mrpack",".tar",".tar.gz",".tgz")
@@ -318,11 +320,164 @@ class CustomerContentUploadService:
   if relative!=expected:raise ValueError("A confirmação do upload pelo Agent não corresponde ao arquivo.")
   path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
   metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
-  preview,_,bundle,children=build_serverpack_bundle(self.root,context,item,relative,cid,metadata,path)
+  # Read-only preview can inspect a future loader. Finalization deliberately
+  # retains strict installed-build checks and same-build revision rules.
+  preview,parent,bundle,children=build_serverpack_bundle(
+   self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
   self._serverpack_capacity(context,cid,children)
-  plan=self._serverpack_revision_plan(context,cid,bundle)
+  installed_build=str(context.get("build_id") or "").strip()
+  requested_build=str(bundle.get("loader_version") or "").strip()
+  if installed_build and requested_build!=installed_build:
+   history=self.content.bundle_history(str(context.get("id") or ""),cid)
+   previous=history[0] if history else None
+   if not previous or any(
+     str(previous.get(key) or "")!=str(bundle.get(key) or "")
+     for key in ("provider","manifest_kind","provider_project_id","minecraft_version","loader_id")
+   ):
+    raise ValueError("A prévia de migração exige o mesmo modpack registrado, Minecraft e loader; não é possível trocar a identidade do pacote.")
+   # Bind a future migration request to the exact current content revision,
+   # current installed build, and verified incoming archive. This is evidence
+   # only; never a token that authorizes installation.
+   previous_revision=int(previous.get("revision") or 0)
+   previous_manifest=str(previous.get("manifest_sha256") or "").strip().lower()
+   incoming_sha=str(preview.get("archive_sha256") or "").strip().lower()
+   if previous_revision<1 or not incoming_sha or len(incoming_sha)!=64:
+    raise ValueError("A migração exige revisão existente e SHA256 verificável do novo Server Pack.")
+   if str(previous.get("loader_version") or "").strip()!=installed_build:
+    raise ValueError("A versão instalada não confere com o histórico do modpack; reconcilie o estado antes da migração.")
+   current_parts=installed_build.split(".")
+   future_parts=requested_build.split(".")
+   if not all(piece.isdigit() for piece in current_parts+future_parts):
+    raise ValueError("A migração exige versões numéricas verificáveis do NeoForge.")
+   if tuple(map(int,future_parts))<=tuple(map(int,current_parts)):
+    raise ValueError("O fluxo de migração de Server Pack não permite downgrade ou build inalterado.")
+   diff=self.content.bundle_diff(str(context.get("id") or ""),cid,bundle)
+   evidence={
+    "instance_id":str(context.get("id") or ""),
+    "content_id":cid,
+    "transfer_id":str(item.get("transfer_id") or ""),
+    "incoming_sha256":incoming_sha,
+    "filename":filename,
+    "archive_size_bytes":int(item.get("size_bytes") or path.stat().st_size),
+    "serverpack_prefix":str((parent.get("artifact") or {}).get("serverpack_prefix") or ""),
+    "serverpack_mod_count":int((parent.get("artifact") or {}).get("serverpack_mod_count") or 0),
+    "serverpack_override_dirs":list((parent.get("artifact") or {}).get("serverpack_override_dirs") or []),
+    "previous_bundle_revision":previous_revision,
+    "previous_manifest_sha256":previous_manifest,
+    "from_loader_version":installed_build,
+    "target_loader_version":requested_build,
+    "minecraft_version":str(bundle.get("minecraft_version") or ""),
+    "provider_project_id":str(bundle.get("provider_project_id") or ""),
+    "provider_version_id":str(bundle.get("provider_version_id") or "")
+   }
+   migration_plan_sha256=hashlib.sha256(json.dumps(evidence,sort_keys=True,separators=(",",":")).encode("utf-8")).hexdigest()
+   plan={
+    "operation":"staged_loader_migration_preview",
+    "migration_plan_sha256":migration_plan_sha256,
+    "evidence":evidence,
+    "install_allowed":False,
+    "requires_staged_migration":True,
+    "previous_revision":int(previous.get("revision") or 0),
+    "from_loader_version":installed_build,
+    "target_loader_version":requested_build,
+    "manifest_diff":diff,
+    "preserve_world":True,
+    "preserve_existing_config":True,
+    "requires_stopped_instance":True,
+    "requires_backup_confirmation":True,
+    "warning":"Prévia validada; a instalação permanece bloqueada até homologar a migração conjunta do loader e Server Pack com backup verificável."
+   }
+  else:
+   plan=self._serverpack_revision_plan(context,cid,bundle)
   preview["update_plan"]=plan
   return preview
+
+
+ def revalidate_staged_loader_plan(self,user,transfer_id,body:Mapping[str,Any],expected_plan_sha256:str):
+  """Re-attest a migration preview against live transfer, bundle and build.
+
+  Read only: this is not an installation authorization. A future executor
+  must call it again under an exclusive instance lock before mutating state.
+  """
+  expected=str(expected_plan_sha256 or "").strip().lower()
+  if len(expected)!=64 or any(char not in "0123456789abcdef" for char in expected):
+   raise ValueError("Fingerprint da migração inválido: gere uma nova prévia.")
+  preview=self.preview_serverpack(user,transfer_id,body)
+  plan=preview.get("update_plan") or {}
+  if plan.get("operation")!="staged_loader_migration_preview":
+   raise ValueError("O loader já mudou ou o ZIP não exige esta migração; gere nova prévia.")
+  if str(plan.get("migration_plan_sha256") or "")!=expected:
+   raise ValueError("O ZIP, loader, transferência ou revisão mudou desde a prévia; revalide antes de atualizar.")
+  # Never return an executable request or let this validation alter assignments.
+  item=self._transfer(user,transfer_id)
+  context,_,_=self._access(user,str(item.get("instance_id") or ""))
+  homologation_enqueue_available=(
+   os.environ.get("CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION","").strip().upper()=="YES"
+   and str(context.get("id") or "").startswith("pr855-")
+   and str(context.get("agent_id") or "").strip()=="pr839-isolated-agent"
+  )
+  return {
+   "valid":True,
+   "install_allowed":False,
+   "migration_plan_sha256":expected,
+   "evidence":dict(plan["evidence"]),
+   "manifest_diff":dict(plan.get("manifest_diff") or {}),
+   "requires_verified_backup":True,
+   "requires_exclusive_instance_lock":True,
+   "provisioning_homologation_available":homologation_enqueue_available,
+  }
+
+ def prepare_staged_loader_migration(self,user,transfer_id,body:Mapping[str,Any],expected_plan_sha256:str):
+  """Build immutable Controller-side pending publication evidence.
+
+  Read only with respect to content desired state: this method does not call
+  put_bundle and does not enqueue provisioning. It is the Controller bridge
+  between a revalidated customer preview and a future transactional request.
+  """
+  attested=self.revalidate_staged_loader_plan(
+   user,transfer_id,body,expected_plan_sha256)
+  item=self._transfer(user,transfer_id)
+  context,effective,_=self._access(user,str(item["instance_id"]))
+  if not effective.modpacks_allowed or not effective.mods_allowed:
+   raise PermissionError("O contrato não autoriza importação de modpacks.")
+  cid=str(body.get("content_id") or "").strip()
+  filename=self._filename(item.get("filename"))
+  relative=str(item.get("destination_ref") or "").strip().replace("\\","/")
+  path,_=self.transfers.controller_artifact(str(item["transfer_id"]))
+  metadata=body.get("metadata") if isinstance(body.get("metadata"),Mapping) else {}
+  # Re-run the complete read-only preview so identity/revision/build gates
+  # are re-applied immediately before we freeze a pending publication.
+  preview=self.preview_serverpack(user,transfer_id,body)
+  live_plan=preview.get("update_plan") if isinstance(preview.get("update_plan"),Mapping) else {}
+  if (live_plan.get("operation")!="staged_loader_migration_preview"
+      or str(live_plan.get("migration_plan_sha256") or "")!=str(expected_plan_sha256 or "").strip().lower()):
+   raise ValueError("A prévia de migração mudou antes de preparar o commit pendente.")
+  # Rebuild once more with the same verified artifact so the exact candidate
+  # assignments/manifests stored in the pending descriptor are derived from
+  # the same bytes that produced the live fingerprint.
+  _raw_preview,parent,bundle,children=build_serverpack_bundle(
+   self.root,context,item,relative,cid,metadata,path,preview_loader_mismatch=True)
+  evidence=dict(attested.get("evidence") or {})
+  previous_revision=int(evidence.get("previous_bundle_revision") or 0)
+  pending=build_pending_bundle_commit(
+   instance_id=str(context.get("id") or ""),
+   content_id=cid,
+   transfer_id=str(item.get("transfer_id") or ""),
+   migration_plan_sha256=str(attested.get("migration_plan_sha256") or ""),
+   expected_previous_revision=previous_revision,
+   parent=parent,
+   bundle=bundle,
+   children=children,
+   requested_by=str(user.get("username") or user.get("id") or "customer"),
+  )
+  return {
+   "kind":"MinecraftServerPackPreparedMigration",
+   "install_allowed":False,
+   "migration":attested,
+   "pending_bundle_commit":pending,
+   "candidate_bundle_revision":previous_revision+1,
+  }
+
 
  def _finalize(self,user,transfer_id,body:Mapping[str,Any],extra_assignments=None):
   item=self._transfer(user,transfer_id)
