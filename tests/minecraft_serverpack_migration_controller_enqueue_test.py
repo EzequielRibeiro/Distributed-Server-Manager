@@ -163,6 +163,8 @@ class ControllerMigrationEnqueueTest(unittest.TestCase):
             )
         self.assertTrue(result["accepted"])
         self.assertTrue(result["homologation_only"])
+        self.assertEqual(result["execution_mode"],"homologation")
+        self.assertFalse(result["production_authorized"])
         self.assertEqual(result["status"],"queued")
         self.assertFalse(result["pending_bundle"]["publish_allowed"])
         self.assertEqual(result["pending_bundle"]["candidate_bundle_revision"],5)
@@ -172,6 +174,7 @@ class ControllerMigrationEnqueueTest(unittest.TestCase):
         self.assertEqual(kwargs["desired_state"],"stopped")
         self.assertEqual(kwargs["selector"],"26.1.2@26.1.2.109")
         config=kwargs["configuration"]
+        self.assertEqual(config["minecraft_serverpack_execution_mode"],"homologation")
         migration=config["minecraft_serverpack_migration"]
         self.assertEqual(migration["archive_sha256"],"a"*64)
         self.assertEqual(migration["previous_bundle_revision"],4)
@@ -209,7 +212,7 @@ class ControllerMigrationEnqueueTest(unittest.TestCase):
                     "CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":"YES",
                 },clear=False),self.assertRaisesRegex(
                     module.MinecraftServerPackMigrationRequestError,
-                    "restricted to PR855 homologation",
+                    "disabled for this instance/Agent",
                 ):
                     service.request(
                         {"username":"customer"},
@@ -222,12 +225,48 @@ class ControllerMigrationEnqueueTest(unittest.TestCase):
     def test_gate_requires_explicit_environment_switch(self):
         with patch.dict(os.environ,{},clear=True),self.assertRaisesRegex(
             module.MinecraftServerPackMigrationRequestError,
-            "restricted to PR855 homologation",
+            "disabled for this instance/Agent",
         ):
             self.service.request(
                 {"username":"customer"},"transfer-pr855",self.body,"c"*64
             )
         self.assertEqual(self.service.uploads.calls,[])
+
+    def test_production_mode_requires_exact_instance_and_agent_allowlists(self):
+        context={
+            **self.context,
+            "id":"cli-production-test",
+            "agent_id":"agent-production-test",
+        }
+        service=module.MinecraftServerPackMigrationService.__new__(
+            module.MinecraftServerPackMigrationService
+        )
+        service.backend=object();service.root=ROOT
+        service.workspace=Workspace(context)
+        prepared_value=prepared()
+        prepared_value["pending_bundle_commit"]["instance_id"]="cli-production-test"
+        prepared_value["migration"]["evidence"]["instance_id"]="cli-production-test"
+        service.uploads=Uploads(prepared_value)
+        body={**self.body,"instance_id":"cli-production-test"}
+        env={
+            "CAPIVARA_SERVERPACK_MIGRATION_MODE":"production",
+            "CAPIVARA_SERVERPACK_MIGRATION_PRODUCTION_ACK":"AUTHORIZED",
+            "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_INSTANCES":"cli-production-test",
+            "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_AGENTS":"agent-production-test",
+        }
+        with patch.dict(os.environ,env,clear=True),patch.object(
+            module,"resolve_catalog_provisioning",side_effect=self.resolver
+        ),patch.object(module,"AgentInstanceProvisioningRepository",Jobs):
+            result=service.request(
+                {"username":"customer"},"transfer-pr855",body,"c"*64
+            )
+        self.assertEqual(result["execution_mode"],"production")
+        self.assertTrue(result["production_authorized"])
+        self.assertFalse(result["homologation_only"])
+        self.assertEqual(
+            Jobs.last.kwargs["configuration"]["minecraft_serverpack_execution_mode"],
+            "production",
+        )
 
     def test_changed_live_loader_after_preview_is_rejected_before_enqueue(self):
         self.service.workspace.context["build_id"]="26.1.2.95"

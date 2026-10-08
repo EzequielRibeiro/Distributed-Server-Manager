@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Linux-only provisioning adapter for PR #855 isolated homologation.
+"""Linux provisioning adapter for transactional Server Pack migrations.
 
-This adapter intentionally refuses production-shaped instance IDs and is
-disabled unless CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION=YES. It lets
-the normal provisioning entry point exercise the already-homologated
-transactional primitives on disposable/stopped node1 instances without making
-the feature reachable for customer production instances.
+Execution remains fail-closed behind the shared migration feature policy.
+Homologation preserves the PR #855 identity gate. Production additionally
+requires the explicit production acknowledgement and exact instance/Agent
+allow-lists on this Agent.
 """
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 import shutil
 import tarfile
@@ -37,23 +35,36 @@ from minecraft_serverpack_migration_runtime_stage import build_staged_runtime
 from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
 import minecraft_serverpack_migration_swap as migration_swap
 from minecraft_staged_migration_safety import assess_staged_migration
-
-
-_ENABLE_ENV="CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION"
-_PREFIX="pr855-"
-_LAB_AGENT_ID="pr839-isolated-agent"
+from minecraft_serverpack_migration_feature import migration_feature_decision
 
 
 class MinecraftServerPackProvisioningHomologationError(RuntimeError):
     pass
 
 
-def enabled_for(request:dict[str,Any])->bool:
-    return (
-        os.environ.get(_ENABLE_ENV,"").strip().upper()=="YES"
-        and str(request.get("instance_id") or "").startswith(_PREFIX)
-        and str(request.get("agent_id") or "").strip()==_LAB_AGENT_ID
+def _feature_for_request(request:dict[str,Any])->dict[str,Any]:
+    return migration_feature_decision(
+        instance_id=str(request.get("instance_id") or ""),
+        agent_id=str(request.get("agent_id") or ""),
     )
+
+
+def enabled_for(request:dict[str,Any])->bool:
+    feature=_feature_for_request(request)
+    if not feature["allowed"]:
+        return False
+    configuration=request.get("configuration")
+    requested_mode=(
+        str(configuration.get("minecraft_serverpack_execution_mode") or "").strip()
+        if isinstance(configuration,dict)
+        else ""
+    )
+    # Production must be explicitly bound into the Controller request so a
+    # stale homologation request can never become executable after a config
+    # change on the Agent. Homologation accepts the legacy request shape.
+    if feature["mode"]=="production":
+        return requested_mode=="production"
+    return not requested_mode or requested_mode==feature["mode"]
 
 
 def _digest(path:Path)->str:
@@ -349,6 +360,15 @@ def execute_homologated_migration(
             pass
         return migration_swap.recover(instance_root)
 
+    # Re-evaluate the complete local feature decision and Controller-bound
+    # execution mode immediately before entering the transaction. This closes
+    # a configuration TOCTOU window where an Agent policy change after initial
+    # request validation could otherwise leave a stale mode executable.
+    if not enabled_for(request):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "Server Pack migration feature policy or execution mode changed before execution"
+        )
+    feature=_feature_for_request(request)
     result=execute_minecraft_serverpack_migration(
         config,
         instance_id,
@@ -367,7 +387,9 @@ def execute_homologated_migration(
     )
     return {
         **result,
-        "homologation_only":True,
+        "execution_mode":str(feature["mode"]),
+        "homologation_only":bool(feature["homologation"]),
+        "production_authorized":bool(feature["production"]),
         "quarantine_archive":str(archive),
         "target_loader_seed":str(loader_seed),
         "baseline_backup":{

@@ -9,7 +9,6 @@ provisioning request without publishing the new bundle revision.
 from __future__ import annotations
 
 import hashlib
-import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -17,10 +16,7 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from catalog_provisioning_resolver import resolve_catalog_provisioning
 from customer_content_upload_service import CustomerContentUploadService
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
-
-_ENABLE_ENV="CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION"
-_LAB_AGENT_ID="pr839-isolated-agent"
-_INSTANCE_PREFIX="pr855-"
+from core.minecraft_serverpack_migration_feature import migration_feature_decision
 
 
 class MinecraftServerPackMigrationRequestError(ValueError):
@@ -33,14 +29,6 @@ def _isolated_install_dir(instance_id:str,runtime_id:str,version:str,build:str)-
         f"{runtime_id}\0{version}\0{build}".encode("utf-8")
     ).hexdigest()[:12]
     return f"instance-{identity}-{release}"
-
-
-def _homologation_allowed(context:Mapping[str,Any])->bool:
-    return (
-        os.environ.get(_ENABLE_ENV,"").strip().upper()=="YES"
-        and str(context.get("id") or "").startswith(_INSTANCE_PREFIX)
-        and str(context.get("agent_id") or "").strip()==_LAB_AGENT_ID
-    )
 
 
 class MinecraftServerPackMigrationService:
@@ -77,9 +65,14 @@ class MinecraftServerPackMigrationService:
             raise MinecraftServerPackMigrationRequestError(
                 "Server Pack loader migration requires the NeoForge runtime"
             )
-        if not _homologation_allowed(context):
+        feature=migration_feature_decision(
+            instance_id=instance_id,
+            agent_id=str(context.get("agent_id") or ""),
+        )
+        if not feature["allowed"]:
             raise MinecraftServerPackMigrationRequestError(
-                "Server Pack migration provisioning remains restricted to PR855 homologation"
+                "Server Pack migration provisioning is disabled for this instance/Agent: "
+                + str(feature["reason"])
             )
 
         prepared=self.uploads.prepare_staged_loader_migration(
@@ -158,6 +151,7 @@ class MinecraftServerPackMigrationService:
         configuration=dict(configuration or {})
         configuration["minecraft_serverpack_migration"]=migration
         configuration["minecraft_serverpack_pending_bundle"]=dict(pending)
+        configuration["minecraft_serverpack_execution_mode"]=str(feature["mode"])
 
         jobs=AgentInstanceProvisioningRepository(self.backend)
         jobs.initialize()
@@ -194,7 +188,9 @@ class MinecraftServerPackMigrationService:
 
         return {
             "accepted":True,
-            "homologation_only":True,
+            "execution_mode":str(feature["mode"]),
+            "homologation_only":bool(feature["homologation"]),
+            "production_authorized":bool(feature["production"]),
             "instance_id":instance_id,
             "provisioning_id":str(state.get("provisioning_id") or ""),
             "status":str(state.get("status") or ""),

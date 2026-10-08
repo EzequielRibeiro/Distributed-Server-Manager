@@ -92,8 +92,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.old_firewall_remove = provisioning_executor.privileged_firewall.remove
         self.old_reconcile = provisioning_executor.runtime_materialization.reconcile
         self.old_remove = provisioning_executor.privileged_materialization.remove
-        self.old_serverpack_gate = provisioning_executor.serverpack_homologation_enabled
-        self.old_serverpack_execute = provisioning_executor.execute_homologated_migration
+        self.old_serverpack_gate = provisioning_executor.serverpack_migration_enabled
+        self.old_serverpack_execute = provisioning_executor.execute_serverpack_migration
 
     def tearDown(self):
         instance_runtime.STATE_DIR = self.old_state
@@ -104,8 +104,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
         provisioning_executor.privileged_firewall.remove = self.old_firewall_remove
         provisioning_executor.runtime_materialization.reconcile = self.old_reconcile
         provisioning_executor.privileged_materialization.remove = self.old_remove
-        provisioning_executor.serverpack_homologation_enabled = self.old_serverpack_gate
-        provisioning_executor.execute_homologated_migration = self.old_serverpack_execute
+        provisioning_executor.serverpack_migration_enabled = self.old_serverpack_gate
+        provisioning_executor.execute_serverpack_migration = self.old_serverpack_execute
         self.temp.cleanup()
 
     def _wire_success(self):
@@ -194,8 +194,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
             }
         }
         calls = []
-        provisioning_executor.serverpack_homologation_enabled = lambda req: True
-        provisioning_executor.execute_homologated_migration = (
+        provisioning_executor.serverpack_migration_enabled = lambda req: True
+        provisioning_executor.execute_serverpack_migration = (
             lambda config, req: calls.append(req["instance_id"]) or {
                 "status": "completed",
                 "homologation_only": True,
@@ -210,6 +210,63 @@ class ProvisioningExecutorTest(unittest.TestCase):
         self.assertEqual(result["observed_state"], "stopped")
         self.assertTrue(result["minecraft_serverpack_migration"]["homologation_only"])
         self.assertEqual(calls, ["pr855-provisioning-homolog"])
+
+    def test_production_serverpack_route_reports_production_mode_not_homologation(self):
+        request = ProvisioningContractTest().request()
+        request["desired_state"] = "stopped"
+        request["configuration"] = {
+            "minecraft_serverpack_execution_mode": "production",
+            "minecraft_serverpack_migration": {
+                "kind": "MinecraftServerPackMigration",
+                "schema_version": 1,
+                "instance_id": "instance-one",
+                "content_id": "atm11",
+                "transfer_id": "transfer-production",
+                "filename": "ServerFiles.zip",
+                "archive_sha256": "a" * 64,
+                "archive_size_bytes": 123,
+                "serverpack_prefix": "",
+                "serverpack_mod_count": 254,
+                "serverpack_override_dirs": ["config", "kubejs"],
+                "migration_plan_sha256": "b" * 64,
+                "previous_bundle_revision": 3,
+                "previous_manifest_sha256": "c" * 64,
+                "from_loader_version": "26.1.2.94",
+                "target_loader_version": "26.1.2.109",
+                "minecraft_version": "26.1.2",
+                "isolated_install_dir": "instance-prod",
+                "backup_before_update": True,
+                "preserve_world": True,
+                "install_allowed": False,
+            },
+        }
+        events = []
+        provisioning_executor.serverpack_migration_enabled = lambda req: True
+        provisioning_executor.execute_serverpack_migration = lambda config, req: {
+            "status": "completed",
+            "execution_mode": "production",
+            "homologation_only": False,
+            "production_authorized": True,
+            "trace": ["contract_validated", "committed"],
+        }
+        with patch.object(
+            provisioning_executor,
+            "_event",
+            side_effect=lambda event_type, request, **kwargs: events.append(
+                (event_type, dict(kwargs.get("data") or {}))
+            ),
+        ):
+            result = provisioning_executor.execute(self.config, request, self.result_path)
+        self.assertEqual(result["status"], "completed")
+        mode_events = [
+            data for event_type, data in events
+            if event_type in {"INSTANCE_PROVISIONING_STEP", "INSTANCE_PROVISIONING_COMPLETED"}
+        ]
+        self.assertTrue(mode_events)
+        for data in mode_events:
+            self.assertEqual(data.get("execution_mode"), "production")
+            self.assertFalse(data.get("homologation_only"))
+            self.assertTrue(data.get("production_authorized"))
 
     def test_serverpack_request_stays_fail_closed_when_homologation_gate_is_false(self):
         request = ProvisioningContractTest().request()
@@ -238,7 +295,7 @@ class ProvisioningExecutorTest(unittest.TestCase):
                 "install_allowed": False,
             }
         }
-        provisioning_executor.serverpack_homologation_enabled = lambda req: False
+        provisioning_executor.serverpack_migration_enabled = lambda req: False
         result = provisioning_executor.execute(self.config, request, self.result_path)
         self.assertEqual(result["status"], "failed")
         self.assertIn("not yet homologated", result["error"])

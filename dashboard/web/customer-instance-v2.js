@@ -234,19 +234,27 @@ async function previewOfficialServerpack(transfer,contentId,type,name,displayNam
    "NeoForge instalado: "+plan.from_loader_version+"\n"+
    "NeoForge exigido: "+plan.target_loader_version+"\n"+changes+"\n"+
    "A instalação NÃO foi autorizada. Fingerprint: "+plan.migration_plan_sha256+"\nA migração conjunta exige backup verificado; o mundo e o modpack atual permanecem intactos até o provisionamento ser aceito.";
-  if(evidence.provisioning_homologation_available===true){
-   const approved=confirm(message+"\n\nAMBIENTE DE HOMOLOGAÇÃO PR #855: deseja enfileirar a migração transacional agora?");
+  if(evidence.provisioning_migration_available===true){
+   const mode=String(evidence.migration_execution_mode||"");
+   if(!["homologation","production"].includes(mode))throw new Error("O Controller retornou um modo de migração inválido.");
+   const production=mode==="production";
+   const warning=production
+    ?"MIGRAÇÃO EM PRODUÇÃO: esta operação irá parar temporariamente o servidor, criar e verificar backup, migrar o runtime e iniciar uma verificação de readiness antes do commit. Deseja enfileirar agora?"
+    :"AMBIENTE DE HOMOLOGAÇÃO: deseja enfileirar a migração transacional agora?";
+   const approved=confirm(message+"\n\n"+warning);
    if(approved){
-    setManagedUploadUi(true,100,"Enfileirando migração transacional de homologação…");
+    setManagedUploadUi(true,100,production?"Enfileirando migração transacional…":"Enfileirando migração transacional de homologação…");
     const queued=await request(`${api}/content/upload/migration/enqueue`,{method:"POST",body:JSON.stringify({...previewRequest,migration_plan_sha256:plan.migration_plan_sha256})});
     const migration=queued.migration||{};
-    if(migration.accepted!==true||migration.homologation_only!==true||migration.migration?.migration_plan_sha256!==plan.migration_plan_sha256)throw new Error("O Controller não confirmou o mesmo plano de migração enfileirado.");
-    const queuedMessage="Migração transacional de homologação enfileirada.\n"+
+    if(migration.accepted!==true||migration.execution_mode!==mode||migration.migration?.migration_plan_sha256!==plan.migration_plan_sha256)throw new Error("O Controller não confirmou o mesmo plano e modo de migração enfileirados.");
+    if(production&&migration.production_authorized!==true)throw new Error("O Controller não confirmou autorização do gate de produção.");
+    if(!production&&migration.homologation_only!==true)throw new Error("O Controller não confirmou o gate de homologação.");
+    const queuedMessage=(production?"Migração transacional enfileirada.":"Migração transacional de homologação enfileirada.")+"\n"+
      "Provisionamento: "+(migration.provisioning_id||"—")+"\n"+
      "NeoForge: "+plan.from_loader_version+" → "+plan.target_loader_version+"\n"+
      "A nova revisão do modpack continuará PENDENTE até o Agent concluir e o Controller publicar atomicamente.";
     showContentUploadOutcome("accepted",queuedMessage,transfer.transfer_id);
-    toast("Migração de homologação enfileirada; acompanhe o provisionamento.");
+    toast(production?"Migração enfileirada; acompanhe o provisionamento.":"Migração de homologação enfileirada; acompanhe o provisionamento.");
     const notice=new Error(queuedMessage);notice.previewOnly=true;notice.migrationQueued=true;throw notice;
    }
   }

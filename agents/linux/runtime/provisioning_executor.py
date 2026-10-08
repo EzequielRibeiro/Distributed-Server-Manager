@@ -28,7 +28,7 @@ from runtime_limits import runtime_limits
 from runtime_metrics import increment, observe_duration
 from runtime_operations import runtime_operation
 from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
-from minecraft_serverpack_migration_provisioning import enabled_for as serverpack_homologation_enabled, execute_homologated_migration
+from minecraft_serverpack_migration_provisioning import enabled_for as serverpack_migration_enabled, execute_homologated_migration as execute_serverpack_migration
 
 
 _SECRET_PATTERNS = (
@@ -331,17 +331,23 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
     limits = runtime_limits(config)
     deadline = started + limits.provisioning_timeout_seconds
     migration_cfg = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
-    if "minecraft_serverpack_migration" in migration_cfg and serverpack_homologation_enabled(request):
+    if "minecraft_serverpack_migration" in migration_cfg and serverpack_migration_enabled(request):
+        execution_mode=str(migration_cfg.get("minecraft_serverpack_execution_mode") or "homologation").strip().lower()
+        mode_event={
+            "execution_mode":execution_mode,
+            "homologation_only":execution_mode=="homologation",
+            "production_authorized":execution_mode=="production",
+        }
         try:
-            _result(result_path, request, status="running", current_step="minecraft_serverpack_migration_homologation", progress=10)
+            _result(result_path, request, status="running", current_step="minecraft_serverpack_migration", progress=10)
             _event(
                 "INSTANCE_PROVISIONING_STEP",
                 request,
-                step="minecraft_serverpack_migration_homologation",
+                step="minecraft_serverpack_migration",
                 progress=10,
-                data={"homologation_only": True},
+                data=dict(mode_event),
             )
-            detail = execute_homologated_migration(config, request)
+            detail = execute_serverpack_migration(config, request)
             result = _result(
                 result_path,
                 request,
@@ -358,7 +364,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 request,
                 step="completed",
                 progress=100,
-                data={"homologation_only": True, "observed_state": "stopped"},
+                data={**mode_event, "observed_state": "stopped"},
             )
         except Exception as exc:
             increment("provisioning_failed")
@@ -367,7 +373,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 result_path,
                 request,
                 status="failed",
-                current_step="minecraft_serverpack_migration_homologation",
+                current_step="minecraft_serverpack_migration",
                 progress=99,
                 compensation=["migration_journal_preserved", "content_preserved_for_retry", "port_reservations_preserved"],
                 **diagnostics,
@@ -375,10 +381,10 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
             _event(
                 "INSTANCE_PROVISIONING_FAILED",
                 request,
-                step="minecraft_serverpack_migration_homologation",
+                step="minecraft_serverpack_migration",
                 progress=99,
                 data={"error": diagnostics["error"], "exception_type": diagnostics["exception_type"],
-                      "correlation_id": diagnostics["correlation_id"], "homologation_only": True},
+                      "correlation_id": diagnostics["correlation_id"], **mode_event},
             )
         observe_duration("provisioning", int((time.monotonic() - started) * 1000))
         return result
