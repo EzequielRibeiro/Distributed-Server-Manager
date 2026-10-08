@@ -360,11 +360,15 @@ def execute_homologated_migration(
             pass
         return migration_swap.recover(instance_root)
 
-    feature=_feature_for_request(request)
-    if not feature["allowed"]:
+    # Re-evaluate the complete local feature decision and Controller-bound
+    # execution mode immediately before entering the transaction. This closes
+    # a configuration TOCTOU window where an Agent policy change after initial
+    # request validation could otherwise leave a stale mode executable.
+    if not enabled_for(request):
         raise MinecraftServerPackProvisioningHomologationError(
-            "Server Pack migration feature policy changed before execution"
+            "Server Pack migration feature policy or execution mode changed before execution"
         )
+    feature=_feature_for_request(request)
     result=execute_minecraft_serverpack_migration(
         config,
         instance_id,
