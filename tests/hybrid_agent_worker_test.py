@@ -29,6 +29,54 @@ from registry import installation_profile_identity
 from registry_repository import RegistryRepository
 
 
+
+
+class HybridHeartbeatLeaseContractTest(unittest.TestCase):
+    def test_hybrid_renews_liveness_before_slow_reconciliation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "config").mkdir()
+            (root / "config" / "agent.conf").write_text(
+                'AGENT_ID="agent-test"\n'
+                'AGENT_STATUS="active"\n'
+                'DSM_NODE_ID="node-test"\n'
+                'DSM_NODE_ROLE="hybrid"\n',
+                encoding="utf-8",
+            )
+            calls = []
+
+            runtime = Mock()
+            runtime.heartbeat.side_effect = lambda agent_id: calls.append(
+                ("heartbeat", agent_id)
+            )
+
+            def reconciliation(*args, **kwargs):
+                self.assertEqual(calls, [("heartbeat", "agent-test")])
+                raise RuntimeError("synthetic slow-stage boundary")
+
+            with (
+                patch(
+                    "hybrid_agent_worker.AgentRuntimeRepository",
+                    return_value=runtime,
+                ),
+                patch(
+                    "hybrid_agent_worker.RegistryRepository",
+                    return_value=Mock(),
+                ),
+                patch(
+                    "hybrid_agent_worker.reconcile_local_hybrid_runtime",
+                    side_effect=reconciliation,
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "synthetic slow-stage boundary",
+                ):
+                    heartbeat_cycle(root, backend=object())
+
+            runtime.heartbeat.assert_called_once_with("agent-test")
+
+
 class HybridAgentWorkerTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
