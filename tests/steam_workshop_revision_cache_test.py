@@ -245,8 +245,10 @@ class SteamWorkshopRevisionCacheTest(unittest.TestCase):
             source.mkdir(parents=True); (source/"mod.cpp").write_text("revision-a",encoding="utf-8")
             self._write_manifest(source,"221100","1828439124","1785000000")
             frozen=workshop_provider._snapshot_revision(source,game_data_root,"221100","1828439124","1785000000")
-            self.assertFalse(source.exists())
-            source.mkdir(parents=True); (source/"mod.cpp").write_text("revision-b",encoding="utf-8")
+            self.assertTrue(source.exists())
+            # SteamCMD updates/replaces live files; simulate that without writing
+            # through the hardlink inode shared with the frozen revision.
+            (source/"mod.cpp").unlink(); (source/"mod.cpp").write_text("revision-b",encoding="utf-8")
             self.assertEqual((frozen/"mod.cpp").read_text(encoding="utf-8"),"revision-a")
             self.assertEqual((source/"mod.cpp").read_text(encoding="utf-8"),"revision-b")
 

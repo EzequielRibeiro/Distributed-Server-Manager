@@ -212,9 +212,17 @@ def _snapshot_revision(
     for item in source.rglob("*"):
         if item.is_symlink():
             raise RuntimeError("Steam Workshop revision source contains a symlink")
+    # Keep SteamCMD's live Workshop tree intact. Its shared appworkshop manifest
+    # continues to declare this item installed and later downloads may validate
+    # every declared item. Moving the live directory out from under SteamCMD
+    # leaves that manifest pointing at missing files and can block unrelated
+    # Workshop installs. Freeze the revision with same-filesystem hardlinks
+    # instead: no payload bytes are duplicated and later live-cache updates
+    # cannot mutate the frozen tree because SteamCMD replaces changed files.
     try:
-        os.replace(source, destination)
+        shutil.copytree(source, destination, copy_function=os.link)
     except OSError as exc:
+        shutil.rmtree(destination, ignore_errors=True)
         raise RuntimeError(f"Steam Workshop revision cache promotion failed: {exc}") from exc
     if not destination.is_dir():
         raise RuntimeError("Steam Workshop revision cache materialization failed")
