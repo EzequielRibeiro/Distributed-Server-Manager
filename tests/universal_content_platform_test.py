@@ -134,6 +134,36 @@ class ContentContractTest(unittest.TestCase):
   windows_metrics=(ROOT/"agents/windows/runtime/runtime_metrics.py").read_text(encoding="utf-8");linux_metrics=(ROOT/"agents/linux/runtime/runtime_metrics.py").read_text(encoding="utf-8")
   self.assertIn('content_updates',windows_metrics);self.assertIn('content_updates',linux_metrics)
 
+class ContentOperationalBackoffTest(unittest.TestCase):
+ def test_operational_failure_backs_off_same_revision_but_new_revision_retries(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   previous={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":3,"desired_checksum":"d"*64,"status":"failed","security_state":"unscanned","operational_retry_after_epoch":9999999999}
+   state.write_text(json.dumps(previous))
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install") as install:
+    same=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(same["status"],"failed");install.assert_not_called()
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install",return_value=("/tmp/applied",{"security_state":"clean","engine":"none","matches":[]})) as install:
+    newer=content_client._apply({"agent_id":"agent-c4"},{**cmd,"revision":4,"checksum":"e"*64})
+   install.assert_called_once();self.assertEqual(newer["status"],"applied")
+
+ def test_legacy_enospc_failure_backs_off_from_state_mtime(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   previous={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":3,"desired_checksum":"d"*64,"status":"failed","security_state":"unscanned","last_error":"[Errno 28] No space left on device"}
+   state.write_text(json.dumps(previous));import os;os.utime(state,(1000,1000))
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install") as install,patch.object(content_client.time,"time",return_value=1001):
+    result=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(result["status"],"failed");install.assert_not_called()
+
+ def test_operational_exception_records_retry_deadline(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install",side_effect=OSError(28,"No space left on device")),patch.object(content_client.time,"time",return_value=1000):
+    result=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(result["status"],"failed");self.assertEqual(result["operational_retry_after_epoch"],1000+content_client.ENOSPC_RETRY_SECONDS)
+
+
 class ContentRepositoryTest(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory();self.backend=create_backend(DatabaseConfig(driver="sqlite",database=str(Path(self.tmp.name)/"capivara.db")));self.backend.initialize()
