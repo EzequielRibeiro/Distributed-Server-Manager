@@ -33,7 +33,7 @@ function contentName(item){const m=item.metadata||{};return m.display_name||m.st
 function securityLabel(value){return {clean:"Limpo",unscanned:"Não escaneado",suspicious:"Suspeito",blocked:"Bloqueado",scan_failed:"Falha no scan"}[String(value||"")]||String(value||"desconhecido")}
 function contentSecurityState(item){return String(item?.effective_security_state||item?.security_state||"unscanned").trim().toLowerCase()}
 function contentReconcileState(item){return String(item?.reconciliation?.status||"pending").trim().toLowerCase()}
-function contentIsScanning(item){const security=contentSecurityState(item),status=contentReconcileState(item);return security==="unscanned"||["pending","security_scanning","security_scan_pending"].includes(status)}
+function contentIsScanning(item){const security=contentSecurityState(item),status=contentReconcileState(item);if(["failed","rollback_failed","rolled_back","security_blocked","security_scan_failed"].includes(status))return false;return security==="unscanned"||["pending","security_scanning","security_scan_pending"].includes(status)}
 function contentNeedsLiveWatch(){return contentItems.some(item=>contentIsScanning(item)||contentBundlePending(item))}
 function clearContentScanWatch(){if(contentScanTimer){clearTimeout(contentScanTimer);contentScanTimer=null}}
 function notifyContentStateTransition(previous,next,item){if(!previous||previous===next)return;const [security,status]=next.split("|");if(security==="blocked"||security==="suspicious"||status==="security_blocked")toast(`${contentName(item)} foi bloqueado pela verificação de segurança.`);else if(security==="scan_failed"||status==="security_scan_failed")toast(`Falha ao verificar a segurança de ${contentName(item)}.`)}
