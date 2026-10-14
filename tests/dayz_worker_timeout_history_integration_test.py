@@ -47,6 +47,26 @@ class TimeoutHistoryIntegrationTest(unittest.TestCase):
   self.assertEqual(result['native_shutdown_timeouts'],1)
   self.assertEqual(self.repo.finished[0]['error_code'],'native_shutdown_timeout')
   self.assertEqual(len(self.life.enqueued),1)
+ def test_completed_untrusted_evidence_fails_closed(self):
+  self.tick()
+  self.life.states['cmd-1'].update({'agent_id':'wrong-agent','instance_id':'dayz-001',
+   'action':'systemd_lifecycle_evidence','status':'completed',
+   'parameters':{'since':'2026-10-14T12:33:10Z','until':'2026-10-14T12:37:15Z'},
+   'result':{'command_id':'cmd-1','instance_id':'dayz-001',
+    'action':'systemd_lifecycle_evidence','status':'completed',
+    'result':{'agent_id':'wrong-agent','kind':'CapivaraSystemdLifecycleObservations',
+     'scope':'instance-local','schema_version':1,'verified_native_shutdown':False,
+     'instance_id':'dayz-001','events':[]}}})
+  report=self.tick()
+  self.assertEqual(report['native_shutdown_timeouts'],1)
+  self.assertEqual(self.repo.finished[0]['error_code'],'native_shutdown_timeout')
+  self.assertEqual([x['action'] for x in self.life.enqueued],['systemd_lifecycle_evidence'])
+ def test_queued_then_delivered_does_not_restart(self):
+  self.tick()
+  self.life.states['cmd-1']['status']='delivered'
+  self.assertEqual(self.tick()['failed'],0)
+  self.assertEqual(len(self.life.enqueued),1)
+  self.assertEqual(len(self.repo.finished),0)
  def test_historical_restart_blocks_offline_work(self):
   self.tick()
   instance='dayz-001';unit='capivara-instance-dayz-001.service'
