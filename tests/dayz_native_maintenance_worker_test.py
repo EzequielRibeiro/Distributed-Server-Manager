@@ -271,7 +271,7 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
     def test_completed_stop_probe_before_timeout_is_accepted(self):
         run = run_state()
         run["event"]["native_shutdown"] = {
-            "started_at": "2026-09-16T14:55:00Z",
+            "started_at": "2026-09-16T14:59:00Z",
             "command_id": "native-probe",
             "status": "checking",
         }
