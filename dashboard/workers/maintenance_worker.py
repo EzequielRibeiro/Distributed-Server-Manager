@@ -324,6 +324,30 @@ class MaintenanceWorker:
    if stop_status in {'queued','delivered'}:return
    if stop_status!='completed':self._failed(run,'stop_failed',stop or {},now,result);return
   event=dict(self.repository.run(rid).get('event') or event)
+  if native_armed:
+   # A historical stopped result is not proof that the instance remains stopped.
+   from dayz_native_transition import offline_work_gate
+   gate=dict(event.get('offline_work_gate') or {})
+   cid=str(gate.get('command_id') or '')
+   if not cid:
+    try:probe=self._raw_lifecycle(run,'status')
+    except InstanceLifecycleCommandConflict:return
+    event=dict(event);event['offline_work_gate']={'command_id':str(probe['command_id'])}
+    self.repository.update_event(rid,event,stage='verifying-native-offline-state')
+    return
+   probe=self._command(cid)
+   probe_status=str((probe or {}).get('status') or '').lower()
+   decision=offline_work_gate(
+    latest_status=_observed_state(probe or {}) if probe_status=='completed' else None,
+    status_completed=probe_status=='completed',
+   )
+   if decision=='wait-for-fresh-status' and probe_status in {'queued','delivered'}:return
+   if decision!='allow-offline-work':
+    self.repository.finish(rid,success=False,
+     error_code='native_offline_state_active' if decision=='abort-instance-active' else 'native_offline_state_unverified',
+     error_detail='Fresh Agent status did not confirm safe offline maintenance',now=now)
+    result['failed']+=1
+    return
   if event.get('coalesce_updates'):
    event,ready=self._apply_game_work(run,event,result)
    if not ready:return
