@@ -35,7 +35,7 @@ def select_systemd_transitions(instance_id: str, events: list[dict], *, since: s
     unit = f'capivara-instance-{instance_id}.service'
     matches = []
     for item in events:
-        if not isinstance(item, dict) or item.get('_SYSTEMD_UNIT') != unit:
+        if not isinstance(item, dict):
             continue
         # Unit-scoped journal entries are not necessarily systemd manager events.
         # Require manager origin plus explicit lifecycle message identifiers.
@@ -46,10 +46,10 @@ def select_systemd_transitions(instance_id: str, events: list[dict], *, since: s
             continue
         message_id = item.get('MESSAGE_ID')
         kind = {
-            '9d1aaa27d60140bd96365438aad20286': 'starting',
+            '7d4958e842da4a758f6c1cdc7b36dcc5': 'starting',
             '39f53479d3a045ac8e11786248231fbf': 'started',
             'de5b426a63be47a7b6ac3eaac82e2f': 'stopping',
-            '9d1aaa27d60140bd96365438aad20287': 'stopped',
+            '9d1aaa27d60140bd96365438aad20286': 'stopped',
         }.get(message_id)
         if kind is None:
             continue
