@@ -324,6 +324,36 @@ class MaintenanceWorker:
    if stop_status in {'queued','delivered'}:return
    if stop_status!='completed':self._failed(run,'stop_failed',stop or {},now,result);return
   event=dict(self.repository.run(rid).get('event') or event)
+  if native_armed:
+   # The native stop probe can be stale: never mutate files on that observation.
+   # Demand a separate completed Agent status command before offline work.
+   from dayz_native_transition import offline_work_gate
+   gate=dict(event.get('offline_work_gate') or {})
+   gate_id=str(gate.get('command_id') or '')
+   if not gate_id:
+    try:gate_command=self._raw_lifecycle(run,'status')
+    except InstanceLifecycleCommandConflict:return
+    gate={'command_id':str(gate_command['command_id']),'status':'checking'}
+    event=dict(event);event['offline_work_gate']=gate
+    self.repository.update_event(rid,event,stage='verifying-native-offline-state')
+    return
+   gate_command=self._command(gate_id)
+   gate_status=str((gate_command or {}).get('status') or '').lower()
+   decision=offline_work_gate(
+    latest_status=_observed_state(gate_command or {}) if gate_status=='completed' else None,
+    status_completed=gate_status=='completed',
+   )
+   if decision=='wait-for-fresh-status':
+    if gate_status in {'queued','delivered'}:return
+    self.repository.finish(rid,success=False,error_code='native_offline_state_unverified',
+     error_detail='Fresh Agent status did not confirm the instance is stopped',now=now)
+    result['failed']+=1
+    return
+   if decision!='allow-offline-work':
+    self.repository.finish(rid,success=False,error_code='native_offline_state_active',
+     error_detail='Instance active after native shutdown; offline work and duplicate start blocked',now=now)
+    result['failed']+=1
+    return
   if event.get('coalesce_updates'):
    event,ready=self._apply_game_work(run,event,result)
    if not ready:return
