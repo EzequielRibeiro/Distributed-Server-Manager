@@ -1,19 +1,19 @@
 """Tracked additive migration for existing Capivara schemas (not auto-run).
 
-Version 41 consolidated checksum remains untouched. Call under a controlled
+Version 41 consolidated checksum remains untouched; source migration 042 is reserved. Call under a controlled
 upgrade transaction before enabling the evidence command queue.
 """
 from __future__ import annotations
 import hashlib
 
-VERSION = 42
+VERSION = 43
 NAME = 'instance_evidence_parameters'
 SQL = 'ALTER TABLE agent_instance_commands ADD COLUMN parameters_json TEXT'
 CHECKSUM = hashlib.sha256(SQL.encode('utf-8')).hexdigest()
 
 
 def migrate_sqlite(connection):
-    """Apply and track v42 in one SQLite write transaction.
+    """Apply and track v43 in one SQLite write transaction.
 
     The caller must not hold an existing transaction; BEGIN IMMEDIATE serializes
     competing migrators before either reads the version row.
@@ -44,7 +44,7 @@ def migrate_sqlite(connection):
 
 
 def migrate_postgresql(connection):
-    """Apply v42 using the caller's PostgreSQL transaction context.
+    """Apply v43 using the caller's PostgreSQL transaction context.
 
     Caller must ensure exclusive migration coordination and commit/rollback.
     No implicit commit occurs here.
@@ -63,7 +63,7 @@ def migrate_postgresql(connection):
 
 
 def apply_evidence_migration(connection, backend_name):
-    """Apply version 42 in an explicit transaction, with rollback on failure.
+    """Apply version 43 in an explicit transaction, with rollback on failure.
 
     Intended for controlled deployment orchestration; not auto-run on startup.
     """
