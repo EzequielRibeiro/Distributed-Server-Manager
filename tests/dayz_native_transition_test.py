@@ -48,6 +48,27 @@ class DayZNativeTransitionTest(unittest.TestCase):
         self.data['evidence']['restarted_at'] = '2026-10-14T12:36:10Z'
         self.assertFalse(verified_native_transition(**self.data))
 
+    def test_matching_invocation_pair_accepted(self):
+        self.data['expected_old_invocation_id'] = 'old-run'
+        self.data['observed_new_invocation_id'] = 'new-run'
+        self.data['evidence']['old_invocation_id'] = 'old-run'
+        self.data['evidence']['new_invocation_id'] = 'new-run'
+        self.assertTrue(verified_native_transition(**self.data))
+
+    def test_mismatched_invocation_rejected(self):
+        self.data['expected_old_invocation_id'] = 'old-run'
+        self.data['observed_new_invocation_id'] = 'new-run'
+        self.data['evidence']['old_invocation_id'] = 'other-run'
+        self.data['evidence']['new_invocation_id'] = 'new-run'
+        self.assertFalse(verified_native_transition(**self.data))
+
+    def test_same_invocation_rejected(self):
+        self.data['expected_old_invocation_id'] = 'same-run'
+        self.data['observed_new_invocation_id'] = 'same-run'
+        self.data['evidence']['old_invocation_id'] = 'same-run'
+        self.data['evidence']['new_invocation_id'] = 'same-run'
+        self.assertFalse(verified_native_transition(**self.data))
+
     def test_timezone_missing_rejected(self):
         self.data['evidence']['stopped_at'] = '2026-10-14T12:36:11'
         self.assertFalse(verified_native_transition(**self.data))
