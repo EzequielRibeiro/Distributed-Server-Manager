@@ -11,8 +11,9 @@ import uuid
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
+from instance_evidence_parameters import normalize_command_parameters
 
-VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
+VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove", "systemd_lifecycle_evidence"}
 LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
 SERIALIZED_ACTIONS = {"save", *LIFECYCLE_ACTIONS}
 ACTIVE_STATES = {"queued", "delivered"}
@@ -49,10 +50,11 @@ class AgentInstanceRuntimeRepository:
             try: yield session
             finally: session.close()
 
-    def enqueue(self, *, agent_id: str, instance_id: str, action: str, requested_by: str | None = None) -> dict[str, Any]:
+    def enqueue(self, *, agent_id: str, instance_id: str, action: str, requested_by: str | None = None, parameters: dict[str, Any] | None = None) -> dict[str, Any]:
         agent_id=str(agent_id or "").strip();instance_id=str(instance_id or "").strip();action=str(action or "").strip().lower()
         if not agent_id or not instance_id: raise ValueError("agent_id and instance_id are required")
         if action not in VALID_ACTIONS: raise ValueError("invalid instance runtime action")
+        normalized_parameters=normalize_command_parameters(action,parameters)
         ph=self.dialect.placeholder;existing_command_id=None
         with self.session(transaction=True) as session:
             agent=session.execute(f"SELECT status FROM agents WHERE id={ph}",(agent_id,)).fetchone()
@@ -72,7 +74,7 @@ class AgentInstanceRuntimeRepository:
                 existing=session.execute("SELECT command_id FROM agent_instance_commands "+f"WHERE instance_id={ph} AND action={ph} AND status IN ('queued','delivered') ORDER BY created_at ASC LIMIT 1",(instance_id,action)).fetchone()
                 if existing is not None:existing_command_id=str(existing["command_id"])
             if existing_command_id is None:
-                command_id="instance-cmd-"+uuid.uuid4().hex;now=utc_timestamp();session.execute("INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,status,requested_by,created_at,updated_at) "+f"VALUES ({self.dialect.parameters(8)})",(command_id,agent_id,instance_id,action,"queued",str(requested_by or "").strip() or None,now,now))
+                command_id="instance-cmd-"+uuid.uuid4().hex;now=utc_timestamp();session.execute("INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,status,requested_by,created_at,updated_at,parameters_json) "+f"VALUES ({self.dialect.parameters(9)})",(command_id,agent_id,instance_id,action,"queued",str(requested_by or "").strip() or None,now,now,json.dumps(normalized_parameters,separators=(",",":"),sort_keys=True) if normalized_parameters is not None else None))
             else:command_id=existing_command_id
         return self.snapshot(command_id)
 
@@ -81,6 +83,9 @@ class AgentInstanceRuntimeRepository:
         with self.session() as session:row=session.execute(f"SELECT * FROM agent_instance_commands WHERE command_id={ph}",(command_id,)).fetchone()
         if row is None:raise KeyError(command_id)
         result=dict(row);raw=result.pop("result_json",None)
+        params_raw=result.pop("parameters_json",None)
+        try:result["parameters"]=json.loads(params_raw) if params_raw else None
+        except (TypeError,ValueError):raise ValueError("invalid stored command parameters") from None
         try:result["result"]=json.loads(raw) if raw else None
         except (TypeError,ValueError):result["result"]=None
         return result
@@ -89,7 +94,11 @@ class AgentInstanceRuntimeRepository:
         ph=self.dialect.placeholder
         with self.session() as session:row=session.execute("SELECT command_id FROM agent_instance_commands "+f"WHERE agent_id={ph} AND status IN ('queued','delivered') ORDER BY created_at ASC LIMIT 1",(agent_id,)).fetchone()
         if row is None:return None
-        state=self.snapshot(str(row["command_id"]));return {key:state[key] for key in ("command_id","agent_id","instance_id","action")}
+        state=self.snapshot(str(row["command_id"]));command={key:state[key] for key in ("command_id","agent_id","instance_id","action")}
+        if state["action"]=="systemd_lifecycle_evidence":
+            params=normalize_command_parameters(state["action"],state.get("parameters"))
+            command.update(params)
+        return command
 
     def mark_delivered(self, command_id: str) -> dict[str, Any]:
         ph=self.dialect.placeholder;now=utc_timestamp()
