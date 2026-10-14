@@ -19,7 +19,7 @@ class MigrationTest(unittest.TestCase):
     def test_tracks_version_without_rewriting_baseline(self):
         self.assertTrue(migrate_sqlite(self.db))
         self.assertEqual(self.db.execute('SELECT checksum FROM schema_migrations WHERE version=41').fetchone()[0],'original-checksum')
-        self.assertEqual(tuple(self.db.execute('SELECT name,checksum FROM schema_migrations WHERE version=42').fetchone()),(NAME,CHECKSUM))
+        self.assertEqual(tuple(self.db.execute('SELECT name,checksum FROM schema_migrations WHERE version=43').fetchone()),(NAME,CHECKSUM))
         self.assertEqual(self.db.execute("SELECT action,parameters_json FROM agent_instance_commands WHERE command_id='old'").fetchone(),('status',None))
 
     def test_idempotent(self):
@@ -28,7 +28,7 @@ class MigrationTest(unittest.TestCase):
 
     def test_tampered_checksum_fails_closed(self):
         migrate_sqlite(self.db)
-        self.db.execute("UPDATE schema_migrations SET checksum='tampered' WHERE version=42")
+        self.db.execute("UPDATE schema_migrations SET checksum='tampered' WHERE version=43")
         with self.assertRaises(RuntimeError):migrate_sqlite(self.db)
 
     def test_record_without_column_fails_closed(self):
