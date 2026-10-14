@@ -104,6 +104,28 @@ def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
             # Observability must not interrupt instance status or maintenance.
             pass
     return {"schema_version":2,"kind":"CapivaraInstanceStatus","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"game_id":record.get("game_id"),"environment_id":record.get("environment_id"),"runtime_id":record.get("runtime_id"),"adapter":record.get("adapter"),"desired_state":record.get("desired_state"),"observed_state":_observed_state(adapter_state,record.get("observed_state")),"adapter_state":adapter_state,"path":configured_path or None,"path_exists":bool(configured_path and Path(configured_path).exists()),"updated_at":record.get("updated_at")}
+def systemd_lifecycle_evidence(config: dict[str, Any], instance_id: str, *, since: str, until: str) -> dict[str, Any]:
+    """Agent-owned, read-only lifecycle observations; not maintenance approval.
+
+    This function is intentionally not exposed as an instance command until
+    Controller protocol and authorization checks are implemented.
+    """
+    record = _owned(config, instance_id)
+    if str(record.get("adapter") or "") != "systemd":
+        raise ValueError("systemd adapter required")
+    from systemd_journal_reader import read_systemd_transitions
+    events = read_systemd_transitions(record["instance_id"], since=since, until=until)
+    return {
+        "schema_version": 1,
+        "kind": "CapivaraSystemdLifecycleObservations",
+        "scope": "instance-local",
+        "instance_id": record["instance_id"],
+        "agent_id": record["agent_id"],
+        "events": events,
+        "verified_native_shutdown": False,
+    }
+
+
 def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     record=_owned(config,instance_id);view=status(config,instance_id);findings=[];adapter_doctor=None
     if not view.get("adapter"):findings.append({"code":"adapter_unconfigured","severity":"warning","message":"Instance runtime adapter is not configured."})
