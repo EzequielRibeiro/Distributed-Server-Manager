@@ -17,7 +17,7 @@ INSTANCE_DIR = STATE_DIR / "instances"
 RESULT_DIR = STATE_DIR / "instance-results"
 HISTORY_DIR = STATE_DIR / "instance-command-history"
 _TOKEN = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
-VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
+VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove", "systemd_lifecycle_evidence"}
 LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
 
 
@@ -186,7 +186,11 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
     try:
         _token(instance_id,"instance_id")
         if action not in VALID_ACTIONS:raise ValueError("unsupported instance action")
-        if action=="status":payload=status(config,instance_id)
+        if action=="systemd_lifecycle_evidence":
+            from systemd_evidence_request import validate_evidence_request
+            query=validate_evidence_request(command)
+            payload=systemd_lifecycle_evidence(config,instance_id,since=query["since"],until=query["until"])
+        elif action=="status":payload=status(config,instance_id)
         elif action=="doctor":payload=doctor(config,instance_id)
         elif action=="save":payload=save(config,instance_id)
         elif action=="remove":payload=remove(config,instance_id)
