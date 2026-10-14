@@ -21,6 +21,25 @@ class TimeoutHistoryIntegrationTest(unittest.TestCase):
   second=self.tick()
   self.assertEqual(second['failed'],0)
   self.assertEqual(len(self.life.enqueued),1)
+ def test_pending_evidence_expires_without_start(self):
+  from datetime import timedelta
+  self.tick()
+  self.now+=timedelta(seconds=61)
+  report=self.tick()
+  self.assertEqual(report['native_shutdown_timeouts'],1)
+  self.assertEqual(self.repo.finished[0]['error_code'],'native_shutdown_timeout')
+  self.assertEqual([x['action'] for x in self.life.enqueued],['systemd_lifecycle_evidence'])
+ def test_missing_requested_at_fails_closed(self):
+  self.tick()
+  del self.repo.current['event']['native_shutdown']['systemd_evidence']['requested_at']
+  report=self.tick()
+  self.assertEqual(report['native_shutdown_timeouts'],1)
+  self.assertEqual(self.repo.finished[0]['error_code'],'native_shutdown_timeout')
+ def test_no_second_history_request_on_pending(self):
+  self.tick()
+  for _ in range(4):self.tick()
+  self.assertEqual(len(self.life.enqueued),1)
+  self.assertEqual(len(self.repo.finished),0)
  def test_failed_evidence_falls_back_to_timeout(self):
   self.tick()
   self.life.states['cmd-1']['status']='failed'
