@@ -51,7 +51,7 @@ def migrate_postgresql(connection):
     """
     current = connection.execute('SELECT name, checksum FROM schema_migrations WHERE version=%s', (VERSION,)).fetchone()
     if current is not None:
-        if tuple(current) != (NAME, CHECKSUM):
+        if ((current['name'], current['checksum']) if hasattr(current, 'keys') else tuple(current)) != (NAME, CHECKSUM):
             raise RuntimeError('evidence migration checksum mismatch')
         column = connection.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agent_instance_commands' AND column_name='parameters_json'").fetchone()
         if column is None:
