@@ -9,7 +9,7 @@ def _utc(value):
     return parsed.astimezone(timezone.utc)
 
 
-def verified_native_transition(*, instance_id, old_pid, new_pid, expected_at, deadline_at, evidence, authenticated=False):
+def verified_native_transition(*, instance_id, old_pid, new_pid, expected_at, deadline_at, evidence, authenticated=False, expected_old_invocation_id=None, observed_new_invocation_id=None):
     """Reject PID-only inference and unverified lifecycle claims."""
     if not authenticated:
         return False
@@ -21,6 +21,15 @@ def verified_native_transition(*, instance_id, old_pid, new_pid, expected_at, de
             return False
         if int(evidence['old_pid']) != previous or int(evidence['new_pid']) != current:
             return False
+        if expected_old_invocation_id is not None or observed_new_invocation_id is not None:
+            if not expected_old_invocation_id or not observed_new_invocation_id:
+                return False
+            if expected_old_invocation_id == observed_new_invocation_id:
+                return False
+            if str(evidence['old_invocation_id']) != str(expected_old_invocation_id):
+                return False
+            if str(evidence['new_invocation_id']) != str(observed_new_invocation_id):
+                return False
         stopped = _utc(evidence['stopped_at'])
         restarted = _utc(evidence['restarted_at'])
         return _utc(expected_at) <= stopped <= _utc(deadline_at) and restarted >= stopped
