@@ -286,7 +286,8 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
         )
         self.assertEqual(report["native_shutdown_timeouts"], 0)
         self.assertEqual(report["native_shutdowns"], 1)
-        self.assertEqual(repo.current["event"]["native_shutdown"]["status"], "completed")\n        self.assertEqual([item["action"] for item in life.enqueued], ["status"])
+        self.assertEqual(repo.current["event"]["native_shutdown"]["status"], "completed")
+        self.assertEqual([item["action"] for item in life.enqueued], ["status"])
 
     def test_running_with_replaced_pid_requires_proven_native_transition(self):
         run = run_state()
