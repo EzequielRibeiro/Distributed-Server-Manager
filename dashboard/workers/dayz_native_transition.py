@@ -68,3 +68,21 @@ def observed_systemd_restart(*, instance_id, expected_at, deadline_at, observati
                    for stopped in stops for started in starts)
     except (KeyError, TypeError, ValueError, OverflowError):
         return False
+
+
+def offline_work_gate(*, latest_status, status_completed, historical_restart=False):
+    """Fail closed before filesystem mutations or a generic start.
+
+    A historical restart is evidence of a race, never permission to proceed.
+    The caller must obtain a fresh Agent status result and independently
+    establish its authenticity. This function does not authenticate it.
+    """
+    if historical_restart:
+        return 'abort-already-restarted'
+    if not status_completed:
+        return 'wait-for-fresh-status'
+    if latest_status == 'stopped':
+        return 'allow-offline-work'
+    if latest_status in ('running', 'starting'):
+        return 'abort-instance-active'
+    return 'wait-for-fresh-status'
