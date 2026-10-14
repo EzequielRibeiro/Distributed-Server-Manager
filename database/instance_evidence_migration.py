@@ -60,3 +60,19 @@ def migrate_postgresql(connection):
     connection.execute('ALTER TABLE agent_instance_commands ADD COLUMN IF NOT EXISTS parameters_json TEXT')
     connection.execute('INSERT INTO schema_migrations(version,name,checksum) VALUES (%s,%s,%s)', (VERSION, NAME, CHECKSUM))
     return True
+
+
+def apply_evidence_migration(connection, backend_name):
+    """Apply version 42 in an explicit transaction, with rollback on failure.
+
+    Intended for controlled deployment orchestration; not auto-run on startup.
+    """
+    name=str(backend_name).lower()
+    if name == 'sqlite':
+        if connection.in_transaction:
+            raise RuntimeError('sqlite migration requires an independent transaction')
+        return migrate_sqlite(connection)
+    if name in ('postgres', 'postgresql'):
+        with connection.transaction():
+            return migrate_postgresql(connection)
+    raise ValueError('unsupported migration backend')
