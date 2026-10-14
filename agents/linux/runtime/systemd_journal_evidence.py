@@ -50,6 +50,7 @@ def select_systemd_transitions(instance_id: str, events: list[dict], *, since: s
             '39f53479d3a045ac8e11786248231fbf': 'started',
             'de5b426a63be47a7b6ac3eaac82e2f': 'stopping',
             '9d1aaa27d60140bd96365438aad20286': 'stopped',
+            '7ad2d189f7e94e70a38c781354912448': 'stopped',
         }.get(message_id)
         if kind is None:
             continue
