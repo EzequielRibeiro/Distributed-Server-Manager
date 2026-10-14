@@ -330,6 +330,39 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
         self.assertEqual(life.enqueued, [])
         self.assertEqual(repo.current["status"], "running")
 
+    def test_verified_native_stop_and_restart_between_probes_avoids_false_timeout(self):
+        # Production-like timeline: previous PID stopped at 12:36:11Z,
+        # replacement started at 12:36:19Z, next probe saw only 'running'.
+        # 'verified_transition' must eventually be populated from trusted
+        # lifecycle evidence; an arbitrary PID change is not sufficient.
+        run = run_state()
+        run["event"]["native_shutdown"] = {
+            "started_at": "2026-10-14T12:33:10Z",
+            "expected_shutdown_at": "2026-10-14T12:33:10Z",
+            "command_id": "native-probe",
+            "initial_pid": 3738932,
+            "verified_transition": {
+                "old_pid": 3738932,
+                "new_pid": 224240,
+                "stopped_at": "2026-10-14T12:36:11Z",
+                "restarted_at": "2026-10-14T12:36:19Z",
+                "source": "trusted-systemd-lifecycle",
+            },
+        }
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "running")
+        complete(life, "native-probe", "running")
+        life.states["native-probe"]["result"]["result"]["adapter_state"] = {
+            "main_pid": 224240, "active_state": "active"
+        }
+        report = worker.tick(
+            now=datetime(2026, 10, 14, 12, 37, 15, tzinfo=timezone.utc)
+        )
+        self.assertEqual(report["native_shutdown_timeouts"], 0)
+        self.assertEqual(report["failed"], 0)
+        self.assertNotEqual(repo.current["status"], "failed")
+        self.assertNotIn("stop", [item["action"] for item in life.enqueued])
+
     def test_already_stopped_native_instance_does_not_enqueue_stop(self):
         run = run_state()
         repo, life, worker = self.make_worker(run)
