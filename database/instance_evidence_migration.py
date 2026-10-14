@@ -57,6 +57,18 @@ def migrate_postgresql(connection):
         if column is None:
             raise RuntimeError('evidence migration recorded without column')
         return False
+    # The consolidated PostgreSQL schema uses VARCHAR(16) plus an action CHECK.
+    # Both must be widened before evidence commands can be enqueued.
+    connection.execute('ALTER TABLE agent_instance_commands ALTER COLUMN action TYPE TEXT')
+    constraints = connection.execute("SELECT conname, pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid = 'agent_instance_commands'::regclass AND contype = 'c'").fetchall()
+    for constraint in constraints:
+        name = constraint['conname'] if hasattr(constraint, 'keys') else constraint[0]
+        definition = constraint['definition'] if hasattr(constraint, 'keys') else constraint[1]
+        if 'action' in str(definition).lower():
+            if not name.replace('_', '').isalnum():
+                raise RuntimeError('invalid constraint identifier')
+            connection.execute('ALTER TABLE agent_instance_commands DROP CONSTRAINT "' + name + '"')
+    connection.execute("ALTER TABLE agent_instance_commands ADD CONSTRAINT agent_instance_commands_action_evidence_check CHECK (action IN ('status','doctor','save','start','stop','restart','remove','systemd_lifecycle_evidence'))")
     connection.execute('ALTER TABLE agent_instance_commands ADD COLUMN IF NOT EXISTS parameters_json TEXT')
     connection.execute('INSERT INTO schema_migrations(version,name,checksum) VALUES (%s,%s,%s)', (VERSION, NAME, CHECKSUM))
     return True
