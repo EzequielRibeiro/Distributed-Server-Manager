@@ -35,7 +35,10 @@ def _sqlite_upgrade_command_table(connection):
     if 'parameters_json' in {row[1] for row in connection.execute('PRAGMA table_info(agent_instance_commands)')}:
         raise RuntimeError('partially migrated command table requires manual review')
     expanded = original.replace(expected, "CHECK (action IN ('status','doctor','start','stop','restart','remove','systemd_lifecycle_evidence'))")
-    expanded = re.sub(r'^CREATE TABLE\\s+"?agent_instance_commands"?\\s*\\(', 'CREATE TABLE agent_instance_commands_evidence_v43 (', expanded, count=1, flags=re.I)
+    for prefix in ('CREATE TABLE "agent_instance_commands" (', 'CREATE TABLE agent_instance_commands ('):
+        if expanded.startswith(prefix):
+            expanded = 'CREATE TABLE agent_instance_commands_evidence_v43 (' + expanded[len(prefix):]
+            break
     if expanded == original or 'agent_instance_commands_evidence_v43' not in expanded:
         raise RuntimeError('unexpected command table DDL')
     expanded = expanded.replace('    updated_at ', '    parameters_json TEXT,\n    updated_at ', 1)
