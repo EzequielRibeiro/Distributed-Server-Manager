@@ -24,8 +24,11 @@ def upgrade_evidence_parameters(connection, backend_name: str) -> bool:
             cursor.execute('ALTER TABLE agent_instance_commands ADD COLUMN parameters_json TEXT')
             return True
         if name in ('postgresql', 'postgres'):
+            cursor.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'agent_instance_commands' AND column_name = 'parameters_json'")
+            if cursor.fetchone() is not None:
+                return False
             cursor.execute('ALTER TABLE agent_instance_commands ADD COLUMN IF NOT EXISTS parameters_json TEXT')
-            return True  # PostgreSQL IF NOT EXISTS is idempotent; existence is not reported.
+            return True
         raise ValueError('unsupported backend')
     finally:
         cursor.close()
