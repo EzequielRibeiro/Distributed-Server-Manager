@@ -35,3 +35,36 @@ def verified_native_transition(*, instance_id, old_pid, new_pid, expected_at, de
         return _utc(expected_at) <= stopped <= _utc(deadline_at) and restarted >= stopped
     except (KeyError, ValueError, TypeError, OverflowError):
         return False
+
+
+def observed_systemd_restart(*, instance_id, expected_at, deadline_at, observations, authenticated=False):
+    """Detect a historical unit stop/start, not proof of DayZ-native causation.
+
+    Only callers that authenticated the Agent result may set authenticated=True.
+    Never use this predicate alone to authorize offline work or another start.
+    """
+    if not authenticated or not isinstance(observations, dict):
+        return False
+    if observations.get('kind') != 'CapivaraSystemdLifecycleObservations':
+        return False
+    if str(observations.get('instance_id')) != str(instance_id):
+        return False
+    if observations.get('verified_native_shutdown') is not False:
+        return False
+    events = observations.get('events')
+    if not isinstance(events, list):
+        return False
+    try:
+        lower, upper = _utc(expected_at), _utc(deadline_at)
+        if lower > upper:
+            return False
+        stops = [_utc(item['at']) for item in events
+                 if isinstance(item, dict) and item.get('event') == 'stopped'
+                 and item.get('unit') == f'capivara-instance-{instance_id}.service']
+        starts = [_utc(item['at']) for item in events
+                  if isinstance(item, dict) and item.get('event') == 'started'
+                  and item.get('unit') == f'capivara-instance-{instance_id}.service']
+        return any(lower <= stopped <= upper and stopped <= started <= upper
+                   for stopped in stops for started in starts)
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return False
