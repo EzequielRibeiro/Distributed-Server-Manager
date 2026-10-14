@@ -34,4 +34,20 @@ class PostgreSQLFullSchemaTest(unittest.TestCase):
             db.execute("INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action,parameters_json) VALUES('command-new','agent-test','instance-test','systemd_lifecycle_evidence','{}')")
             self.assertEqual(db.execute("SELECT parameters_json FROM agent_instance_commands WHERE command_id='command-new'").fetchone()[0],'{}')
 
+    def test_migration_rolls_back_on_version_conflict(self):
+        import psycopg
+        with psycopg.connect('') as db:
+            db.execute((ROOT/'database/schemas/postgresql.sql').read_text())
+            db.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum TEXT)')
+            db.execute("INSERT INTO schema_migrations VALUES(43,'unexpected_migration','bad-checksum')")
+            db.commit()
+            with self.assertRaises(RuntimeError):
+                apply_evidence_migration(db,'postgresql')
+            db.rollback()
+            column=db.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agent_instance_commands' AND column_name='parameters_json'").fetchone()
+            self.assertIsNone(column)
+            action_type=db.execute("SELECT data_type,character_maximum_length FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agent_instance_commands' AND column_name='action'").fetchone()
+            self.assertEqual(action_type[0],'character varying')
+            self.assertEqual(action_type[1],16)
+
 if __name__=='__main__':unittest.main()
