@@ -96,6 +96,13 @@ def list_instances(config: dict[str, Any]) -> list[dict[str, Any]]:
     return values
 def status(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     record=_owned(config,instance_id);configured_path=str(record.get("path") or "").strip();adapter_state=_adapter_state(record)
+    if isinstance(adapter_state,dict) and adapter_state.get("adapter")=="systemd":
+        try:
+            from systemd_observation_history import record_observation
+            record_observation(STATE_DIR, record["instance_id"], adapter_state)
+        except (OSError, ValueError, TypeError):
+            # Observability must not interrupt instance status or maintenance.
+            pass
     return {"schema_version":2,"kind":"CapivaraInstanceStatus","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"game_id":record.get("game_id"),"environment_id":record.get("environment_id"),"runtime_id":record.get("runtime_id"),"adapter":record.get("adapter"),"desired_state":record.get("desired_state"),"observed_state":_observed_state(adapter_state,record.get("observed_state")),"adapter_state":adapter_state,"path":configured_path or None,"path_exists":bool(configured_path and Path(configured_path).exists()),"updated_at":record.get("updated_at")}
 def doctor(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     record=_owned(config,instance_id);view=status(config,instance_id);findings=[];adapter_doctor=None
