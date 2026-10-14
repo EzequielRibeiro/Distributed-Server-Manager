@@ -169,15 +169,6 @@ class MaintenanceWorker:
    return event,False
   observed=_observed_state(command or {})
   if observed=='stopped':
-   # A single historical stop probe does not authorize offline work indefinitely.
-   # Persist the stop observation, then require a fresh stop check on the next tick.
-   if not state.get('stopped_probe_seen'):
-    state['stopped_probe_seen']=True
-    state['command_id']=None
-    state['status']='confirming-stopped'
-    event=dict(event);event['native_shutdown']=state
-    self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
-    return event,False
    event=dict(event);event['native_shutdown']={**state,'status':'completed','command_id':command_id}
    self.repository.update_event(rid,event,stage='native-shutdown-completed')
    result['native_shutdowns']+=1
