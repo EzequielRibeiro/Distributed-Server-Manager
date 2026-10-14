@@ -126,6 +126,22 @@ class MaintenanceWorker:
   try:return self.native_restart.for_instance_due(str(run['instance_id']),run['due_at'])
   except Exception:return None
 
+ def _historical_restart_confirmed(self,run:dict,state:dict)->bool:
+  """Classify Controller-stored Agent history; never authorize offline work."""
+  from dayz_evidence_result import authenticated_restart_observation
+  evidence=state.get('systemd_evidence')
+  if not isinstance(evidence,dict):return False
+  command_id=str(evidence.get('command_id') or '')
+  if not command_id:return False
+  try:command=self._command(command_id)
+  except (KeyError,ValueError,TypeError):return False
+  return authenticated_restart_observation(
+   command=command,agent_id=str(run['agent_id']),
+   instance_id=str(run['instance_id']),
+   since=str(evidence.get('since') or ''),
+   until=str(evidence.get('until') or ''),
+  )
+
  def _wait_native_shutdown(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
   rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
   started=str(state.get('started_at') or '')
