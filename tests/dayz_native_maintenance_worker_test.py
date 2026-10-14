@@ -268,6 +268,67 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
             "native_shutdown_timeout",
         )
 
+    def test_completed_stop_probe_before_timeout_is_accepted(self):
+        run = run_state()
+        run["event"]["native_shutdown"] = {
+            "started_at": "2026-09-16T14:55:00Z",
+            "command_id": "native-probe",
+            "status": "checking",
+        }
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "running")
+        complete(life, "native-probe", "stopped")
+        worker._prepare_next_native_restart = (
+            lambda run, event, now, result: (event, False)
+        )
+        report = worker.tick(
+            now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc)
+        )
+        self.assertEqual(report["native_shutdown_timeouts"], 0)
+        self.assertEqual(report["native_shutdowns"], 1)
+        self.assertEqual(repo.current["event"]["native_shutdown"]["status"], "completed")
+
+    def test_running_with_replaced_pid_requires_proven_native_transition(self):
+        run = run_state()
+        run["event"]["native_shutdown"] = {
+            "started_at": "2026-09-16T14:59:00Z",
+            "command_id": "native-probe",
+            "status": "checking",
+            "initial_pid": 3738932,
+        }
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "running")
+        complete(life, "native-probe", "running")
+        life.states["native-probe"]["result"]["result"]["adapter_state"] = {
+            "main_pid": 224240, "active_state": "active"
+        }
+        report = worker.tick(
+            now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc)
+        )
+        self.assertEqual(report["native_shutdowns"], 0)
+        self.assertEqual(report["starts"], 0)
+        self.assertEqual(repo.current["event"]["native_shutdown"]["status"], "waiting")
+
+    def test_delayed_pending_probe_does_not_trigger_duplicate_commands(self):
+        run = run_state()
+        run["event"]["native_shutdown"] = {
+            "started_at": "2026-09-16T14:59:00Z",
+            "command_id": "native-probe",
+            "status": "checking",
+        }
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "running")
+        life.states["native-probe"] = {
+            "command_id": "native-probe", "status": "delivered"
+        }
+        report = worker.tick(
+            now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc)
+        )
+        self.assertEqual(report["native_shutdown_checks"], 0)
+        self.assertEqual(report["native_shutdowns"], 0)
+        self.assertEqual(life.enqueued, [])
+        self.assertEqual(repo.current["status"], "running")
+
     def test_already_stopped_native_instance_does_not_enqueue_stop(self):
         run = run_state()
         repo, life, worker = self.make_worker(run)
