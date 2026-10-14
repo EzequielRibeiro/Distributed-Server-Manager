@@ -142,6 +142,33 @@ class MaintenanceWorker:
    until=str(evidence.get('until') or ''),
   )
 
+ def _native_timeout_history(self,run:dict,event:dict,started:str,now:datetime)->tuple[dict,str]:
+  """One bounded Agent evidence lookup; no outcome authorizes offline work."""
+  from dayz_timeout_evidence_gate import decide_timeout_evidence
+  rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
+  evidence=state.get('systemd_evidence')
+  if not isinstance(evidence,dict):
+   until=now.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
+   try:
+    command=self.lifecycle.enqueue(
+     agent_id=str(run['agent_id']),instance_id=str(run['instance_id']),
+     action='systemd_lifecycle_evidence',requested_by='maintenance-worker',
+     parameters={'since':started,'until':until})
+   except (ValueError,PermissionError,InstanceLifecycleCommandConflict,KeyError):
+    return event,'native-shutdown-timeout'
+   state['systemd_evidence']={'command_id':str(command['command_id']),'since':started,'until':until}
+   event=dict(event);event['native_shutdown']=state
+   self.repository.update_event(rid,event,stage='checking-native-shutdown-history')
+   return event,'await-history'
+  command_id=str(evidence.get('command_id') or '')
+  if not command_id:return event,'native-shutdown-timeout'
+  try:command=self._command(command_id)
+  except (KeyError,ValueError,TypeError):return event,'native-shutdown-timeout'
+  status=str((command or {}).get('status') or '').lower()
+  return event,decide_timeout_evidence(elapsed=1,timeout_seconds=0,
+   evidence_state=status or 'unavailable',
+   restart_confirmed=self._historical_restart_confirmed(run,state) if status=='completed' else False)
+
  def _wait_native_shutdown(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
   rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
   started=str(state.get('started_at') or '')
@@ -151,6 +178,16 @@ class MaintenanceWorker:
   try:started_at=_dt(started)
   except Exception:started_at=now
   if (now-started_at).total_seconds()>=NATIVE_SHUTDOWN_TIMEOUT_SECONDS:
+   event,history=self._native_timeout_history(run,event,started,now)
+   if history=='await-history':return event,False
+   if history=='abort-systemd-restarted-native-unverified':
+    state=dict(event.get('native_shutdown') or {})
+    event=dict(event);event['native_shutdown']={**state,'status':'systemd-restarted-native-unverified'}
+    self.repository.update_event(rid,event,stage='native-shutdown-systemd-restarted')
+    self.repository.finish(rid,success=False,error_code='systemd_restarted_native_unverified',
+     error_detail='Systemd stop/start observed; native cause unverified; offline work and start blocked',now=now)
+    result['failed']+=1
+    return event,False
    event=dict(event);event['native_shutdown']={**state,'status':'timeout'}
    self.repository.update_event(rid,event,stage='native-shutdown-timeout')
    self.repository.finish(
