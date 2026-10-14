@@ -37,7 +37,7 @@ def _sqlite_upgrade_command_table(connection):
     expanded = expanded.replace('CREATE TABLE "agent_instance_commands" (', 'CREATE TABLE agent_instance_commands_evidence_v43 (', 1)
     if expanded == original or 'agent_instance_commands_evidence_v43' not in expanded:
         raise RuntimeError('unexpected command table DDL')
-    expanded = expanded.replace('    updated_at ', '    parameters_json TEXT,\\n    updated_at ', 1)
+    expanded = expanded.replace('    updated_at ', '    parameters_json TEXT,\n    updated_at ', 1)
     if 'parameters_json TEXT' not in expanded:
         raise RuntimeError('missing insertion point for parameters_json')
     connection.execute(expanded)
