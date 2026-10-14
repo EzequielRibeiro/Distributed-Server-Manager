@@ -5,6 +5,7 @@ running snapshots must never be interpreted as proof of an intervening stop.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -26,12 +27,6 @@ def record_observation(state_dir: Path, instance_id: str, adapter_state: dict, *
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(root, 0o700)
     path = root / f'{instance_id}.json'
-    try:
-        history = json.loads(path.read_text(encoding='utf-8'))
-        if not isinstance(history, list):
-            history = []
-    except (OSError, ValueError):
-        history = []
     entry = {
         'observed_at': observed_at or datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
         'instance_id': instance_id,
@@ -41,8 +36,43 @@ def record_observation(state_dir: Path, instance_id: str, adapter_state: dict, *
         'invocation_id': adapter_state.get('invocation_id'),
         'active_enter_timestamp': adapter_state.get('active_enter_timestamp'),
     }
-    if history and all(history[-1].get(k) == entry.get(k) for k in ('main_pid', 'active_state', 'invocation_id')):
-        return entry
+    # Serialize read-modify-write across Agent processes, not just threads.
+    lock_path = root / f'{instance_id}.lock'
+    with lock_path.open('a+b') as lock:
+        os.chmod(lock_path, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            try:
+                history = json.loads(path.read_text(encoding='utf-8'))
+                if not isinstance(history, list):
+                    raise ValueError('invalid observation history format')
+            except FileNotFoundError:
+                history = []
+            if history and all(history[-1].get(k) == entry.get(k) for k in ('main_pid', 'active_state', 'invocation_id')):
+                return entry
+            history = (history + [entry])[-MAX_OBSERVATIONS:]
+            tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
+            try:
+                with tmp.open('x', encoding='utf-8') as stream:
+                    os.chmod(tmp, 0o600)
+                    json.dump(history, stream, separators=(',', ':'))
+                    stream.write('\\n')
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(tmp, path)
+                dir_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            finally:
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+    return entry
     history = (history + [entry])[-MAX_OBSERVATIONS:]
     tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
     try:
