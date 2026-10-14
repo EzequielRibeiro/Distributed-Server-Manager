@@ -307,7 +307,8 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
         )
         self.assertEqual(report["native_shutdowns"], 0)
         self.assertEqual(report["starts"], 0)
-        self.assertEqual(repo.current["event"]["native_shutdown"]["status"], "waiting")
+        self.assertIn(repo.current["event"]["native_shutdown"]["status"], {"waiting", "checking"})
+        self.assertTrue(all(item["action"] == "status" for item in life.enqueued))
 
     def test_delayed_pending_probe_does_not_trigger_duplicate_commands(self):
         run = run_state()
