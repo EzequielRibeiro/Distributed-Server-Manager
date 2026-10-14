@@ -14,6 +14,9 @@ class PostgreSQLFullSchemaTest(unittest.TestCase):
     def test_preserve_existing_command(self):
         import psycopg
         with psycopg.connect('') as db:
+            db.execute('DROP SCHEMA IF EXISTS dayz_evidence_test CASCADE')
+            db.execute('CREATE SCHEMA dayz_evidence_test')
+            db.execute('SET search_path TO dayz_evidence_test')
             db.execute((ROOT/'database/schemas/postgresql.sql').read_text())
             db.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum TEXT)')
             db.execute("INSERT INTO schema_migrations VALUES(41,'consolidated_schema','baseline')")
@@ -37,6 +40,9 @@ class PostgreSQLFullSchemaTest(unittest.TestCase):
     def test_migration_rolls_back_on_version_conflict(self):
         import psycopg
         with psycopg.connect('') as db:
+            db.execute('DROP SCHEMA IF EXISTS dayz_evidence_test CASCADE')
+            db.execute('CREATE SCHEMA dayz_evidence_test')
+            db.execute('SET search_path TO dayz_evidence_test')
             db.execute((ROOT/'database/schemas/postgresql.sql').read_text())
             db.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum TEXT)')
             db.execute("INSERT INTO schema_migrations VALUES(43,'unexpected_migration','bad-checksum')")
