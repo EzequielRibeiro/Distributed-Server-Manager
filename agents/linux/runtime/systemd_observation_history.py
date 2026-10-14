@@ -56,7 +56,7 @@ def record_observation(state_dir: Path, instance_id: str, adapter_state: dict, *
                 with tmp.open('x', encoding='utf-8') as stream:
                     os.chmod(tmp, 0o600)
                     json.dump(history, stream, separators=(',', ':'))
-                    stream.write('\\n')
+                    stream.write('\n')
                     stream.flush()
                     os.fsync(stream.fileno())
                 os.replace(tmp, path)
