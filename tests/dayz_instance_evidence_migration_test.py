@@ -12,8 +12,15 @@ class MigrationTest(unittest.TestCase):
         self.addCleanup(self.db.close)
         self.db.execute('CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, name TEXT, checksum TEXT)')
         self.db.execute("INSERT INTO schema_migrations VALUES (41,'consolidated_schema','original-checksum')")
-        self.db.execute('CREATE TABLE agent_instance_commands (command_id TEXT PRIMARY KEY, action TEXT)')
-        self.db.execute("INSERT INTO agent_instance_commands VALUES ('old','status')")
+        self.db.executescript("""CREATE TABLE agent_instance_commands (
+            command_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+            instance_id TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('status','doctor','start','stop','restart','remove')),
+            status TEXT NOT NULL DEFAULT 'queued', requested_by TEXT,
+            result_json TEXT, last_error TEXT, created_at TEXT,
+            delivered_at TEXT, completed_at TEXT, updated_at TEXT
+        );""")
+        self.db.execute("INSERT INTO agent_instance_commands (command_id,agent_id,instance_id,action) VALUES ('old','agent','instance','status')")
         self.db.commit()
 
     def test_tracks_version_without_rewriting_baseline(self):
@@ -29,6 +36,7 @@ class MigrationTest(unittest.TestCase):
     def test_tampered_checksum_fails_closed(self):
         migrate_sqlite(self.db)
         self.db.execute("UPDATE schema_migrations SET checksum='tampered' WHERE version=43")
+        self.db.commit()
         with self.assertRaises(RuntimeError):migrate_sqlite(self.db)
 
     def test_record_without_column_fails_closed(self):
