@@ -56,4 +56,49 @@ class PostgreSQLFullSchemaTest(unittest.TestCase):
             self.assertEqual(action_type[0],'character varying')
             self.assertEqual(action_type[1],16)
 
+    def test_repository_queue_roundtrip_on_migrated_postgresql(self):
+        import psycopg
+        from psycopg.rows import dict_row
+        from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+        from contextlib import contextmanager
+
+        with psycopg.connect('') as db:
+            db.execute('DROP SCHEMA IF EXISTS dayz_evidence_test CASCADE')
+            db.execute('CREATE SCHEMA dayz_evidence_test')
+            db.execute('SET search_path TO dayz_evidence_test')
+            db.execute((ROOT/'database/schemas/postgresql.sql').read_text())
+            db.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum TEXT)')
+            db.execute("INSERT INTO schema_migrations VALUES(41,'consolidated_schema','baseline')")
+            db.execute("INSERT INTO nodes(id,name,role) VALUES('controller-node','Controller','controller'),('agent-node','Agent','agent')")
+            db.execute("INSERT INTO controllers(id,node_id,name) VALUES('controller-test','controller-node','Controller')")
+            db.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES('agent-test','controller-test','agent-node','Agent','active')")
+            db.execute("INSERT INTO customers(id,controller_id,name) VALUES('customer-test','controller-test','Customer')")
+            db.execute("INSERT INTO instances(id,node_id,controller_id,agent_id,customer_id,game_id,name) VALUES('instance-test','agent-node','controller-test','agent-test','customer-test','dayz','DayZ')")
+            db.commit()
+            self.assertTrue(apply_evidence_migration(db,'postgresql'))
+            db.commit()
+
+        class IsolatedBackend:
+            name='postgresql'
+            def initialize(self): pass
+            @contextmanager
+            def connect(self):
+                with psycopg.connect('',row_factory=dict_row,options='-c search_path=dayz_evidence_test') as connection:
+                    yield connection
+            transaction=connect
+
+        repo=AgentInstanceRuntimeRepository(IsolatedBackend())
+        params={'since':'2026-10-14T09:30:00Z','until':'2026-10-14T09:40:00Z'}
+        queued=repo.enqueue(agent_id='agent-test',instance_id='instance-test',action='systemd_lifecycle_evidence',requested_by='maintenance-worker',parameters=params)
+        command=repo.command_for_agent('agent-test')
+        self.assertEqual(command['command_id'],queued['command_id'])
+        self.assertEqual(command['since'],params['since'])
+        self.assertEqual(command['until'],params['until'])
+        repo.mark_delivered(command['command_id'])
+        with self.assertRaises(PermissionError):
+            repo.apply_result('wrong-agent',{'command_id':command['command_id'],'instance_id':'instance-test','action':'systemd_lifecycle_evidence','status':'completed'})
+        completed=repo.apply_result('agent-test',{'command_id':command['command_id'],'instance_id':'instance-test','action':'systemd_lifecycle_evidence','status':'completed','result':{'verified_native_shutdown':False}})
+        self.assertEqual(completed['status'],'completed')
+        self.assertIsNone(repo.command_for_agent('agent-test'))
+
 if __name__=='__main__':unittest.main()
