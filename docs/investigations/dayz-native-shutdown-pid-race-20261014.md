@@ -40,3 +40,34 @@ based solely on main without reconciling the production changes.**
 - Run unit tests in an isolated checkout.
 - Reconcile worker and test differences with production before PR/merge.
 - Require explicit approval for production deployment.
+
+## systemd evidence model and trust boundary (2026-10-14)
+
+The Agent systemd adapter now exposes `InvocationID`,
+`ActiveEnterTimestamp`, and `InactiveExitTimestamp` in the branch.
+These fields identify the **current** invocation and its state transition;
+they do not themselves attest to a completed stop of the prior invocation.
+In particular, `NRestarts=0` and `Restart=no` do not identify who
+initiated a subsequent `systemctl start`.
+
+A safe, auditable solution requires the Agent to supply an authenticated,
+instance-scoped lifecycle record containing the prior invocation identity,
+the stop-completed event, the new invocation identity, timestamps and the
+actor/reason for the start when available. The record must be bound to
+the expected native maintenance cycle and obtained through the existing
+authenticated Agent channel. A text field such as
+`source=trusted-systemd-lifecycle` or a caller-provided boolean
+`authenticated=True` is **not** sufficient to establish provenance.
+
+The pure validator in `dashboard/workers/dayz_native_transition.py` is
+a building block only; it is not wired into the worker and its
+`authenticated` flag must never be populated from untrusted payloads.
+The existing regression with a hard-coded `verified_transition` is a
+desired-behavior specification, **not proof** that real lifecycle evidence
+can currently be obtained.
+
+Before deployment: design and test Agent-side event collection,
+durability/retention, identity binding, event ordering and timestamp
+normalization; integrate evidence retrieval into the worker; ensure
+already-running instances skip unsafe offline-only work and duplicate
+start commands; and investigate the external start initiator.
