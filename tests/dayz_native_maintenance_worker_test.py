@@ -258,15 +258,12 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
         self.assertNotIn("stop", actions)
         self.assertNotIn("start", actions)
 
-        self.assertEqual(report["native_shutdown_timeouts"], 1)
-        self.assertEqual(report["failed"], 1)
+        self.assertEqual(report["native_shutdown_timeouts"], 0)
+        self.assertEqual(report["failed"], 0)
 
-        self.assertEqual(len(repo.finished), 1)
-        self.assertFalse(repo.finished[0]["success"])
-        self.assertEqual(
-            repo.finished[0]["error_code"],
-            "native_shutdown_timeout",
-        )
+        self.assertEqual(len(repo.finished), 0)
+        self.assertEqual(actions.count("systemd_lifecycle_evidence"), 1)
+        self.assertEqual(repo.current["stage"], "checking-native-shutdown-history")
 
     def test_completed_stop_probe_before_timeout_is_accepted(self):
         run = run_state()
@@ -359,9 +356,9 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
         report = worker.tick(
             now=datetime(2026, 10, 14, 12, 37, 15, tzinfo=timezone.utc)
         )
-        self.assertEqual(report["native_shutdown_timeouts"], 1)
-        self.assertEqual(report["failed"], 1)
-        self.assertEqual(repo.current["status"], "failed")
+        self.assertEqual(report["native_shutdown_timeouts"], 0)
+        self.assertEqual(report["failed"], 0)
+        self.assertEqual(repo.current["stage"], "checking-native-shutdown-history")
         self.assertNotIn("stop", [item["action"] for item in life.enqueued])
 
     def test_already_stopped_native_instance_does_not_enqueue_stop(self):
