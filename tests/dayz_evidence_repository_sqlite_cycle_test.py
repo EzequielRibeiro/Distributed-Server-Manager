@@ -84,10 +84,5 @@ class EvidenceQueueTest(unittest.TestCase):
                 agent_id='agent-test',instance_id='instance-test',
                 since=params['since'],until=params['until']))
             self.assertIsNone(repo.command_for_agent('agent-test'))
-            return
-            repo.mark_delivered(command['command_id'])
-            completed=repo.apply_result('agent-test',{'command_id':command['command_id'],'instance_id':'instance-test','action':'systemd_lifecycle_evidence','status':'completed','result':{'verified':False}})
-            self.assertEqual(completed['status'],'completed')
-            self.assertIsNone(repo.command_for_agent('agent-test'))
 
 if __name__=='__main__':unittest.main()
