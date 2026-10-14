@@ -9,14 +9,18 @@ def validate_evidence_request(command):
     if not isinstance(command, dict):
         raise ValueError('request must be an object')
     required = {'command_id', 'instance_id', 'action', 'since', 'until'}
-    if set(command) != required:
+    allowed = required | {'agent_id'}
+    if not required.issubset(command) or not set(command).issubset(allowed):
         raise ValueError('invalid request fields')
     if command['action'] != 'systemd_lifecycle_evidence':
         raise ValueError('unsupported action')
     for name in ('command_id', 'instance_id'):
+
         value = command[name]
         if not isinstance(value, str) or not TOKEN.fullmatch(value):
             raise ValueError('invalid ' + name)
+    if 'agent_id' in command and (not isinstance(command['agent_id'], str) or not TOKEN.fullmatch(command['agent_id'])):
+        raise ValueError('invalid agent_id')
     try:
         start = datetime.fromisoformat(command['since'].replace('Z', '+00:00'))
         end = datetime.fromisoformat(command['until'].replace('Z', '+00:00'))
