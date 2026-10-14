@@ -58,6 +58,33 @@ class EvidenceQueueTest(unittest.TestCase):
             self.assertEqual(command['agent_id'],'agent-test')
             self.assertEqual(command['since'],params['since'])
             self.assertEqual(command['until'],params['until'])
+            # Agent executes the exact queued Controller command against a
+            # mocked journal; no systemd unit or production files are touched.
+            from unittest.mock import patch
+            sys.path.insert(0,str(ROOT/'agents/linux/runtime'))
+            sys.path.insert(0,str(ROOT/'dashboard/workers'))
+            import instance_runtime as agent_runtime
+            from dayz_evidence_result import authenticated_restart_observation
+            from tempfile import TemporaryDirectory
+            with TemporaryDirectory() as agent_folder:
+                with patch.object(agent_runtime,'HISTORY_DIR',Path(agent_folder)/'history'), patch.object(agent_runtime,'RESULT_DIR',Path(agent_folder)/'results'):
+                    record={'instance_id':'instance-test','agent_id':'agent-test','adapter':'systemd'}
+                    unit='capivara-instance-instance-test.service'
+                    events=[{'unit':unit,'event':'stopped','at':'2026-10-14T09:35:00Z'},
+                            {'unit':unit,'event':'started','at':'2026-10-14T09:36:00Z'}]
+                    with patch.object(agent_runtime,'get_instance',return_value=record), patch('systemd_journal_reader.read_systemd_transitions',return_value=events) as reader:
+                        agent_result=agent_runtime.handle_command({'agent_id':'agent-test'},command)
+                    self.assertEqual(agent_result['status'],'completed')
+                    reader.assert_called_once()
+            repo.mark_delivered(command['command_id'])
+            completed=repo.apply_result('agent-test',agent_result)
+            self.assertEqual(completed['status'],'completed')
+            self.assertTrue(authenticated_restart_observation(
+                command=repo.snapshot(command['command_id']),
+                agent_id='agent-test',instance_id='instance-test',
+                since=params['since'],until=params['until']))
+            self.assertIsNone(repo.command_for_agent('agent-test'))
+            return
             repo.mark_delivered(command['command_id'])
             completed=repo.apply_result('agent-test',{'command_id':command['command_id'],'instance_id':'instance-test','action':'systemd_lifecycle_evidence','status':'completed','result':{'verified':False}})
             self.assertEqual(completed['status'],'completed')
