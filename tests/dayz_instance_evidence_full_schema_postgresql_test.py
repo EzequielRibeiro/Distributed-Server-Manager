@@ -97,6 +97,11 @@ class PostgreSQLFullSchemaTest(unittest.TestCase):
         repo.mark_delivered(command['command_id'])
         with self.assertRaises(PermissionError):
             repo.apply_result('wrong-agent',{'command_id':command['command_id'],'instance_id':'instance-test','action':'systemd_lifecycle_evidence','status':'completed'})
+        with self.assertRaises(ValueError):
+            repo.apply_result('agent-test',{'command_id':command['command_id'],'instance_id':'wrong-instance','action':'systemd_lifecycle_evidence','status':'completed'})
+        with self.assertRaises(ValueError):
+            repo.apply_result('agent-test',{'command_id':command['command_id'],'instance_id':'instance-test','action':'start','status':'completed'})
+        self.assertEqual(repo.snapshot(command['command_id'])['status'],'delivered')
         completed=repo.apply_result('agent-test',{'command_id':command['command_id'],'instance_id':'instance-test','action':'systemd_lifecycle_evidence','status':'completed','result':{'verified_native_shutdown':False}})
         self.assertEqual(completed['status'],'completed')
         self.assertIsNone(repo.command_for_agent('agent-test'))
