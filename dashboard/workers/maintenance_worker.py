@@ -131,14 +131,6 @@ class MaintenanceWorker:
   from dayz_evidence_result import authenticated_restart_observation
   evidence=state.get('systemd_evidence')
   if not isinstance(evidence,dict):return False
-  # Agent commands can remain queued indefinitely; do not stall maintenance.
-  # Fail closed after a bounded grace period without offline work or start.
-  try:
-   requested_at=_dt(str(evidence['requested_at']))
-   elapsed=(now-requested_at).total_seconds()
-   if elapsed < 0 or elapsed > 60:return event,'native-shutdown-timeout'
-  except (KeyError,ValueError,TypeError,OverflowError):
-   return event,'native-shutdown-timeout'
   command_id=str(evidence.get('command_id') or '')
   if not command_id:return False
   try:command=self._command(command_id)
@@ -168,6 +160,14 @@ class MaintenanceWorker:
    event=dict(event);event['native_shutdown']=state
    self.repository.update_event(rid,event,stage='checking-native-shutdown-history')
    return event,'await-history'
+  # Agent commands can remain queued indefinitely; do not stall maintenance.
+  # Fail closed after a bounded grace period without offline work or start.
+  try:
+   requested_at=_dt(str(evidence['requested_at']))
+   elapsed=(now-requested_at).total_seconds()
+   if elapsed < 0 or elapsed > 60:return event,'native-shutdown-timeout'
+  except (KeyError,ValueError,TypeError,OverflowError):
+   return event,'native-shutdown-timeout'
   command_id=str(evidence.get('command_id') or '')
   if not command_id:return event,'native-shutdown-timeout'
   try:command=self._command(command_id)
