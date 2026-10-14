@@ -106,4 +106,81 @@ class PostgreSQLFullSchemaTest(unittest.TestCase):
         self.assertEqual(completed['status'],'completed')
         self.assertIsNone(repo.command_for_agent('agent-test'))
 
+    def test_controller_agent_worker_historical_restart_on_postgresql(self):
+        """Real PostgreSQL queue and Agent command, worker decision, no game operations."""
+        import psycopg
+        from psycopg.rows import dict_row
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        from datetime import datetime,timezone
+        import tempfile
+        sys.path[:0]=[str(ROOT),str(ROOT/'core'),str(ROOT/'dashboard'),
+                      str(ROOT/'dashboard/workers'),str(ROOT/'agents/linux/runtime'),str(ROOT/'tests')]
+        from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
+        import instance_runtime as agent_runtime
+        import dayz_native_maintenance_worker_test as fixtures
+
+        with psycopg.connect('') as db:
+            db.execute('DROP SCHEMA IF EXISTS dayz_evidence_test CASCADE')
+            db.execute('CREATE SCHEMA dayz_evidence_test')
+            db.execute('SET search_path TO dayz_evidence_test')
+            db.execute((ROOT/'database/schemas/postgresql.sql').read_text())
+            db.execute('CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT,checksum TEXT)')
+            db.execute("INSERT INTO schema_migrations VALUES(41,'consolidated_schema','baseline')")
+            db.execute("INSERT INTO nodes(id,name,role) VALUES('controller-node','Controller','controller'),('agent-node','Agent','agent')")
+            db.execute("INSERT INTO controllers(id,node_id,name) VALUES('controller-test','controller-node','Controller')")
+            db.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES('agent-test','controller-test','agent-node','Agent','active')")
+            db.execute("INSERT INTO customers(id,controller_id,name) VALUES('customer-test','controller-test','Customer')")
+            db.execute("INSERT INTO instances(id,node_id,controller_id,agent_id,customer_id,game_id,name) VALUES('instance-test','agent-node','controller-test','agent-test','customer-test','dayz','DayZ')")
+            db.commit()
+            self.assertTrue(apply_evidence_migration(db,'postgresql'))
+            db.commit()
+
+        class IsolatedBackend:
+            name='postgresql'
+            @contextmanager
+            def connect(self):
+                with psycopg.connect('',row_factory=dict_row,options='-c search_path=dayz_evidence_test') as db:
+                    yield db
+            transaction=connect
+        lifecycle=AgentInstanceRuntimeRepository(IsolatedBackend())
+        run=fixtures.run_state()
+        run['instance_id']='instance-test'
+        run['agent_id']='agent-test'
+        run['event']['native_shutdown']={'started_at':'2026-10-14T12:33:10Z','status':'waiting'}
+        repository,unused,worker=fixtures.DayZNativeMaintenanceWorkerTest().make_worker(run)
+        class LifecycleAdapter:
+            def __init__(self,real):self.real=real
+            def enqueue(self,**kw):
+                self.assert_safe(kw)
+                return self.real.enqueue(**kw)
+            def assert_safe(self,kw):
+                if kw['action']!='systemd_lifecycle_evidence':
+                    raise AssertionError('unexpected lifecycle action: '+kw['action'])
+            def snapshot(self,command_id):
+                if command_id=='pre':
+                    return {'command_id':'pre','status':'completed','result':{'status':'completed','result':{'observed_state':'running'}}}
+                return self.real.snapshot(command_id)
+        worker.lifecycle=LifecycleAdapter(lifecycle)
+        now=datetime(2026,10,14,12,37,15,tzinfo=timezone.utc)
+        self.assertEqual(worker.tick(now=now)['failed'],0)
+        command=lifecycle.command_for_agent('agent-test')
+        self.assertIsNotNone(command)
+        self.assertEqual(command['action'],'systemd_lifecycle_evidence')
+        with tempfile.TemporaryDirectory() as folder:
+            record={'instance_id':'instance-test','agent_id':'agent-test','adapter':'systemd'}
+            unit='capivara-instance-instance-test.service'
+            events=[{'unit':unit,'event':'stopped','at':'2026-10-14T12:36:11Z'},
+                    {'unit':unit,'event':'started','at':'2026-10-14T12:36:19Z'}]
+            with patch.object(agent_runtime,'HISTORY_DIR',Path(folder)/'history'),patch.object(agent_runtime,'RESULT_DIR',Path(folder)/'results'),patch.object(agent_runtime,'get_instance',return_value=record),patch('systemd_journal_reader.read_systemd_transitions',return_value=events):
+                response=agent_runtime.handle_command({'agent_id':'agent-test'},command)
+        self.assertEqual(response['status'],'completed')
+        lifecycle.mark_delivered(command['command_id'])
+        lifecycle.apply_result('agent-test',response)
+        report=worker.tick(now=now)
+        self.assertEqual(report['failed'],1)
+        self.assertEqual(repository.finished[0]['error_code'],'systemd_restarted_native_unverified')
+        self.assertIsNone(lifecycle.command_for_agent('agent-test'))
+        self.assertEqual(lifecycle.snapshot(command['command_id'])['status'],'completed')
+
 if __name__=='__main__':unittest.main()
