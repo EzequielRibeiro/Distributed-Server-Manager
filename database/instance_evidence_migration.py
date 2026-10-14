@@ -41,3 +41,22 @@ def migrate_sqlite(connection):
             connection.rollback()
         raise
     return True
+
+
+def migrate_postgresql(connection):
+    """Apply v42 using the caller's PostgreSQL transaction context.
+
+    Caller must ensure exclusive migration coordination and commit/rollback.
+    No implicit commit occurs here.
+    """
+    current = connection.execute('SELECT name, checksum FROM schema_migrations WHERE version=%s', (VERSION,)).fetchone()
+    if current is not None:
+        if tuple(current) != (NAME, CHECKSUM):
+            raise RuntimeError('evidence migration checksum mismatch')
+        column = connection.execute("SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='agent_instance_commands' AND column_name='parameters_json'").fetchone()
+        if column is None:
+            raise RuntimeError('evidence migration recorded without column')
+        return False
+    connection.execute('ALTER TABLE agent_instance_commands ADD COLUMN IF NOT EXISTS parameters_json TEXT')
+    connection.execute('INSERT INTO schema_migrations(version,name,checksum) VALUES (%s,%s,%s)', (VERSION, NAME, CHECKSUM))
+    return True
