@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tempfile
 from datetime import datetime
 
 from systemd_journal_evidence import select_systemd_transitions, _timestamp
@@ -27,14 +28,23 @@ def read_systemd_transitions(instance_id: str, *, since: str, until: str, runner
     unit = f'capivara-instance-{instance_id}.service'
     args = ['journalctl', '--no-pager', '--output=json', '--since', start.isoformat(), '--until', end.isoformat(), f'UNIT={unit}']
     if runner is None:
-        def runner(command):
-            return subprocess.run(command, capture_output=True, text=True, check=False, timeout=12)
-    result = runner(args)
-    if result.returncode != 0:
-        raise RuntimeError('journal query failed')
-    output = result.stdout
-    if len(output.encode('utf-8')) > MAX_OUTPUT_BYTES:
-        raise ValueError('journal response too large')
+        # Avoid unbounded capture_output: journal volume is not controlled by the Agent.
+        with tempfile.TemporaryFile(mode='w+b') as sink:
+            result = subprocess.run(args, stdout=sink, stderr=subprocess.DEVNULL,
+                                    check=False, timeout=12)
+            if result.returncode != 0:
+                raise RuntimeError('journal query failed')
+            if sink.tell() > MAX_OUTPUT_BYTES:
+                raise ValueError('journal response too large')
+            sink.seek(0)
+            output = sink.read(MAX_OUTPUT_BYTES + 1).decode('utf-8')
+    else:
+        result = runner(args)
+        if result.returncode != 0:
+            raise RuntimeError('journal query failed')
+        output = result.stdout
+        if not isinstance(output, str) or len(output.encode('utf-8')) > MAX_OUTPUT_BYTES:
+            raise ValueError('journal response too large')
     events = []
     for line in output.splitlines():
         if not line.strip():
