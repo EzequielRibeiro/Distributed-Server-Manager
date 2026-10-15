@@ -14,6 +14,7 @@ class TimeoutHistoryIntegrationTest(unittest.TestCase):
   run['event']['capabilities']['save']=False
   self.repo,self.life,self.worker=fixtures.DayZNativeMaintenanceWorkerTest().make_worker(run)
   fixtures.complete(self.life,'pre','running')
+  self.worker.native_restart.current['due_at']=run['due_at']
   self.now=datetime(2026,10,14,12,38,15,tzinfo=timezone.utc)
  def tick(self):return self.worker.tick(now=self.now)
  def test_history_requested_once_and_waits(self):
