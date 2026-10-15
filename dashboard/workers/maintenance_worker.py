@@ -179,13 +179,60 @@ class MaintenanceWorker:
 
  def _wait_native_shutdown(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
   rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
+  native=self._native_command_for_current_due(run,event)
+  expected_at=None
+  if isinstance(native,dict) and str(native.get('status') or '').lower()=='completed':
+   prepared=_payload(native)
+   envelope=native.get('result') if isinstance(native.get('result'),dict) else {}
+   try:
+    minutes=int(prepared.get('deadline_minutes') or 0)
+    generated_at=str(envelope.get('generated_at') or '')
+    if generated_at and minutes>0:
+     expected_at=_dt(generated_at)+timedelta(minutes=minutes)
+   except (TypeError,ValueError):
+    expected_at=None
   started=str(state.get('started_at') or '')
   if not started:
-   started=now.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
+   try:due_at=_dt(run['due_at'])
+   except Exception:due_at=now
+   wait_from=max(due_at,expected_at) if expected_at is not None else due_at
+   started=wait_from.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
    state['started_at']=started
+   if expected_at is not None:
+    state['expected_shutdown_at']=expected_at.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
   try:started_at=_dt(started)
   except Exception:started_at=now
-  if (now-started_at).total_seconds()>=NATIVE_SHUTDOWN_TIMEOUT_SECONDS:
+
+  # Consume an already-completed status probe before evaluating the clock.
+  # A confirmed stopped state must win even if this tick is at/after the
+  # timeout boundary.
+  command_id=str(state.get('command_id') or '')
+  if command_id:
+   command=self._command(command_id);status=str((command or {}).get('status') or '').lower()
+   if status=='completed':
+    observed=_observed_state(command or {})
+    if observed=='stopped':
+     event=dict(event);event['native_shutdown']={**state,'status':'completed','command_id':command_id}
+     self.repository.update_event(rid,event,stage='native-shutdown-completed')
+     result['native_shutdowns']+=1
+     return event,True
+    state['command_id']=None;state['status']='waiting';state['observed_state']=observed
+    command_id=''
+   elif status not in {'queued','delivered'}:
+    self.repository.finish(
+     rid,
+     success=False,
+     error_code='native_shutdown_status_failed',
+     error_detail=str((command or {}).get('last_error') or 'native shutdown status check failed'),
+     now=now,
+    )
+    result['failed']+=1
+    return event,False
+
+  elapsed=(now-started_at).total_seconds() if now>=started_at else 0.0
+  hard_limit=NATIVE_SHUTDOWN_TIMEOUT_SECONDS+NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS
+
+  if now>=started_at and elapsed>=hard_limit:
    event,history=self._native_timeout_history(run,event,started,now)
    if history=='await-history':return event,False
    if history=='abort-systemd-restarted-native-unverified':
@@ -196,47 +243,31 @@ class MaintenanceWorker:
      error_detail='Systemd stop/start observed; native cause unverified; offline work and start blocked',now=now)
     result['failed']+=1
     return event,False
+   state=dict(event.get('native_shutdown') or state)
    event=dict(event);event['native_shutdown']={**state,'status':'timeout'}
    self.repository.update_event(rid,event,stage='native-shutdown-timeout')
    self.repository.finish(
-    rid,
-    success=False,
-    error_code='native_shutdown_timeout',
-    error_detail=f'DayZ did not complete native shutdown within {NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds',
-    now=now,
-   )
+    rid,success=False,error_code='native_shutdown_timeout',
+    error_detail=(
+     f'DayZ did not complete native shutdown within '
+     f'{NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds plus '
+     f'{NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS} seconds termination grace'
+    ),now=now)
    result['native_shutdown_timeouts']+=1;result['failed']+=1
    return event,False
-  command_id=str(state.get('command_id') or '')
-  if not command_id:
-   try:command=self._raw_lifecycle(run,'status')
-   except InstanceLifecycleCommandConflict:return event,False
-   state['command_id']=str(command['command_id']);state['status']='checking'
-   event=dict(event);event['native_shutdown']=state
-   self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
-   result['native_shutdown_checks']+=1
+
+  # Keep an outstanding probe alive.  Do not enqueue duplicates.
+  if command_id:
    return event,False
-  command=self._command(command_id);status=str((command or {}).get('status') or '').lower()
-  if status in {'queued','delivered'}:return event,False
-  if status!='completed':
-   self.repository.finish(
-    rid,
-    success=False,
-    error_code='native_shutdown_status_failed',
-    error_detail=str((command or {}).get('last_error') or 'native shutdown status check failed'),
-    now=now,
-   )
-   result['failed']+=1
-   return event,False
-  observed=_observed_state(command or {})
-  if observed=='stopped':
-   event=dict(event);event['native_shutdown']={**state,'status':'completed','command_id':command_id}
-   self.repository.update_event(rid,event,stage='native-shutdown-completed')
-   result['native_shutdowns']+=1
-   return event,True
-  state['command_id']=None;state['status']='waiting';state['observed_state']=observed
+
+  try:command=self._raw_lifecycle(run,'status')
+  except InstanceLifecycleCommandConflict:return event,False
+  state['command_id']=str(command['command_id']);state['status']='checking'
+  if elapsed>=NATIVE_SHUTDOWN_TIMEOUT_SECONDS:
+   state['termination_grace']=True
   event=dict(event);event['native_shutdown']=state
   self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
+  result['native_shutdown_checks']+=1
   return event,False
 
  def _prepare_next_native_restart(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
