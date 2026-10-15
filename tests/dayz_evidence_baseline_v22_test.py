@@ -51,6 +51,47 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
                 "VALUES ('evidence','systemd_lifecycle_evidence','{}')"
             )
 
+    def test_legacy_schema_preserves_rows_indexes_and_foreign_keys(self):
+        """Baseline v22 must not silently destroy existing relational metadata."""
+        self.db.execute("DROP TABLE agent_instance_commands")
+        self.db.execute("CREATE TABLE agents (id TEXT PRIMARY KEY)")
+        self.db.execute("CREATE TABLE instances (id TEXT PRIMARY KEY)")
+        self.db.execute("INSERT INTO agents VALUES ('agent-1')")
+        self.db.execute("INSERT INTO instances VALUES ('instance-1')")
+        self.db.execute(
+            "CREATE TABLE agent_instance_commands ("
+            "command_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, "
+            "instance_id TEXT NOT NULL, action TEXT NOT NULL "
+            "CHECK (action IN ('status','doctor','start','stop','restart','remove')), "
+            "FOREIGN KEY(agent_id) REFERENCES agents(id) ON DELETE CASCADE, "
+            "FOREIGN KEY(instance_id) REFERENCES instances(id) ON DELETE CASCADE)"
+        )
+        self.db.execute(
+            "CREATE INDEX idx_agent_instance_commands_agent_status "
+            "ON agent_instance_commands(agent_id,action)"
+        )
+        self.db.execute(
+            "INSERT INTO agent_instance_commands VALUES "
+            "('existing','agent-1','instance-1','status')"
+        )
+        before_fk = [tuple(row) for row in self.db.execute(
+            "PRAGMA foreign_key_list(agent_instance_commands)"
+        )]
+        before_indexes = [row[1] for row in self.db.execute(
+            "PRAGMA index_list(agent_instance_commands)"
+        )]
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.assertEqual(before_fk, [tuple(row) for row in self.db.execute(
+            "PRAGMA foreign_key_list(agent_instance_commands)"
+        )])
+        self.assertEqual(before_indexes, [row[1] for row in self.db.execute(
+            "PRAGMA index_list(agent_instance_commands)"
+        )])
+        self.assertEqual(1, self.db.execute(
+            "SELECT COUNT(*) FROM agent_instance_commands WHERE command_id='existing'"
+        ).fetchone()[0])
+        self.assertEqual([], self.db.execute("PRAGMA foreign_key_check").fetchall())
+
     def test_missing_table_fails_closed(self):
         self.db.execute("DROP TABLE agent_instance_commands")
         with self.assertRaisesRegex(Exception, "table is missing"):
