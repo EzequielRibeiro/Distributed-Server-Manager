@@ -1029,6 +1029,24 @@ def _upgrade_dayz_management(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("DayZ management baseline upgrade incomplete")
 
 
+
+def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None:
+    """Add the command parameters required by evidence and maintenance queues.
+
+    Refuse unknown action constraints instead of silently weakening them.
+    The separate action-constraint migration must be validated before enabling
+    systemd_lifecycle_evidence on previously installed SQLite databases.
+    """
+    table = "agent_instance_commands"
+    if table not in _table_names(backend, connection):
+        raise DatabaseMigrationError("agent_instance_commands table is missing")
+    if "parameters_json" not in _column_names(backend, connection, table):
+        column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
+        _execute_script(backend, connection, f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};")
+    if "parameters_json" not in _column_names(backend, connection, table):
+        raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -1051,6 +1069,7 @@ UPGRADES = (
     BaselineUpgrade(19, "alert_customer_identity", _upgrade_alert_customer_identity),
     BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
     BaselineUpgrade(21, "dayz_management_operations", _upgrade_dayz_management),
+    BaselineUpgrade(22, "instance_evidence_parameters", _upgrade_instance_evidence_parameters),
 )
 
 
