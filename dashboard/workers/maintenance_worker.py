@@ -18,6 +18,7 @@ from runtime_backend import backend_from_environment
 from runtime_workspace_catalog import runtime_workspace_capabilities
 INTERVAL_SECONDS=max(1,min(int(os.environ.get('DSM_MAINTENANCE_WORKER_SECONDS','5')),60))
 NATIVE_SHUTDOWN_TIMEOUT_SECONDS=max(30,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TIMEOUT_SECONDS','180')),900))
+NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS=max(15,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS','60')),300))
 _ALLOWED_DB_KEYS={'DSM_DATABASE_DRIVER','DSM_DATABASE','DSM_DATABASE_HOST','DSM_DATABASE_PORT','DSM_DATABASE_NAME','DSM_DATABASE_USER','DSM_DATABASE_PASSWORD_FILE','DSM_DATABASE_TLS'}
 
 def _read_shell_values(path:Path)->dict[str,str]:
