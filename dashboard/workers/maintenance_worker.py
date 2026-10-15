@@ -2,7 +2,7 @@
 """M5 controller worker for warnings, coalesced work, stop/start and readiness."""
 from __future__ import annotations
 import os,re,sys,time
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 from pathlib import Path
 ROOT=Path(os.environ.get('DSM_ROOT',Path(__file__).resolve().parents[2])).resolve()
 for path in (ROOT,ROOT/'core',ROOT/'database',ROOT/'dashboard'):
@@ -18,6 +18,7 @@ from runtime_backend import backend_from_environment
 from runtime_workspace_catalog import runtime_workspace_capabilities
 INTERVAL_SECONDS=max(1,min(int(os.environ.get('DSM_MAINTENANCE_WORKER_SECONDS','5')),60))
 NATIVE_SHUTDOWN_TIMEOUT_SECONDS=max(30,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TIMEOUT_SECONDS','180')),900))
+NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS=max(15,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS','60')),300))
 _ALLOWED_DB_KEYS={'DSM_DATABASE_DRIVER','DSM_DATABASE','DSM_DATABASE_HOST','DSM_DATABASE_PORT','DSM_DATABASE_NAME','DSM_DATABASE_USER','DSM_DATABASE_PASSWORD_FILE','DSM_DATABASE_TLS'}
 
 def _read_shell_values(path:Path)->dict[str,str]:
@@ -126,56 +127,148 @@ class MaintenanceWorker:
   try:return self.native_restart.for_instance_due(str(run['instance_id']),run['due_at'])
   except Exception:return None
 
+ def _historical_restart_confirmed(self,run:dict,state:dict)->bool:
+  """Classify Controller-stored Agent history; never authorize offline work."""
+  from dayz_evidence_result import authenticated_restart_observation
+  evidence=state.get('systemd_evidence')
+  if not isinstance(evidence,dict):return False
+  command_id=str(evidence.get('command_id') or '')
+  if not command_id:return False
+  try:command=self._command(command_id)
+  except (KeyError,ValueError,TypeError):return False
+  return authenticated_restart_observation(
+   command=command,agent_id=str(run['agent_id']),
+   instance_id=str(run['instance_id']),
+   since=str(evidence.get('since') or ''),
+   until=str(evidence.get('until') or ''),
+  )
+
+ def _native_timeout_history(self,run:dict,event:dict,started:str,now:datetime)->tuple[dict,str]:
+  """One bounded Agent evidence lookup; no outcome authorizes offline work."""
+  from dayz_timeout_evidence_gate import decide_timeout_evidence
+  rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
+  evidence=state.get('systemd_evidence')
+  if not isinstance(evidence,dict):
+   until=now.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
+   try:
+    command=self.lifecycle.enqueue(
+     agent_id=str(run['agent_id']),instance_id=str(run['instance_id']),
+     action='systemd_lifecycle_evidence',requested_by='maintenance-worker',
+     parameters={'since':started,'until':until})
+   except (ValueError,PermissionError,InstanceLifecycleCommandConflict,KeyError):
+    return event,'native-shutdown-timeout'
+   state['systemd_evidence']={'command_id':str(command['command_id']),'since':started,'until':until,'requested_at':until}
+   event=dict(event);event['native_shutdown']=state
+   self.repository.update_event(rid,event,stage='checking-native-shutdown-history')
+   return event,'await-history'
+  # Agent commands can remain queued indefinitely; do not stall maintenance.
+  # Fail closed after a bounded grace period without offline work or start.
+  try:
+   requested_at=_dt(str(evidence['requested_at']))
+   elapsed=(now-requested_at).total_seconds()
+   if elapsed < 0 or elapsed > 60:return event,'native-shutdown-timeout'
+  except (KeyError,ValueError,TypeError,OverflowError):
+   return event,'native-shutdown-timeout'
+  command_id=str(evidence.get('command_id') or '')
+  if not command_id:return event,'native-shutdown-timeout'
+  try:command=self._command(command_id)
+  except (KeyError,ValueError,TypeError):return event,'native-shutdown-timeout'
+  status=str((command or {}).get('status') or '').lower()
+  return event,decide_timeout_evidence(elapsed=1,timeout_seconds=0,
+   evidence_state=status or 'unavailable',
+   restart_confirmed=self._historical_restart_confirmed(run,state) if status=='completed' else False)
+
  def _wait_native_shutdown(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
   rid=str(run['run_id']);state=dict(event.get('native_shutdown') or {})
+  native=self._native_command_for_current_due(run,event)
+  expected_at=None
+  if isinstance(native,dict) and str(native.get('status') or '').lower()=='completed':
+   prepared=_payload(native)
+   envelope=native.get('result') if isinstance(native.get('result'),dict) else {}
+   try:
+    minutes=int(prepared.get('deadline_minutes') or 0)
+    generated_at=str(envelope.get('generated_at') or '')
+    if generated_at and minutes>0:
+     expected_at=_dt(generated_at)+timedelta(minutes=minutes)
+   except (TypeError,ValueError):
+    expected_at=None
   started=str(state.get('started_at') or '')
   if not started:
-   started=now.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
+   try:due_at=_dt(run['due_at'])
+   except Exception:due_at=now
+   wait_from=max(due_at,expected_at) if expected_at is not None else due_at
+   started=wait_from.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
    state['started_at']=started
+   if expected_at is not None:
+    state['expected_shutdown_at']=expected_at.astimezone(timezone.utc).isoformat().replace('+00:00','Z')
   try:started_at=_dt(started)
   except Exception:started_at=now
-  if (now-started_at).total_seconds()>=NATIVE_SHUTDOWN_TIMEOUT_SECONDS:
+
+  # Consume an already-completed status probe before evaluating the clock.
+  # A confirmed stopped state must win even if this tick is at/after the
+  # timeout boundary.
+  command_id=str(state.get('command_id') or '')
+  if command_id:
+   command=self._command(command_id);status=str((command or {}).get('status') or '').lower()
+   if status=='completed':
+    observed=_observed_state(command or {})
+    if observed=='stopped':
+     event=dict(event);event['native_shutdown']={**state,'status':'completed','command_id':command_id}
+     self.repository.update_event(rid,event,stage='native-shutdown-completed')
+     result['native_shutdowns']+=1
+     return event,True
+    state['command_id']=None;state['status']='waiting';state['observed_state']=observed
+    command_id=''
+   elif status not in {'queued','delivered'}:
+    self.repository.finish(
+     rid,
+     success=False,
+     error_code='native_shutdown_status_failed',
+     error_detail=str((command or {}).get('last_error') or 'native shutdown status check failed'),
+     now=now,
+    )
+    result['failed']+=1
+    return event,False
+
+  elapsed=(now-started_at).total_seconds() if now>=started_at else 0.0
+  hard_limit=NATIVE_SHUTDOWN_TIMEOUT_SECONDS+NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS
+
+  if now>=started_at and elapsed>=hard_limit:
+   event,history=self._native_timeout_history(run,event,started,now)
+   if history=='await-history':return event,False
+   if history=='abort-systemd-restarted-native-unverified':
+    state=dict(event.get('native_shutdown') or {})
+    event=dict(event);event['native_shutdown']={**state,'status':'systemd-restarted-native-unverified'}
+    self.repository.update_event(rid,event,stage='native-shutdown-systemd-restarted')
+    self.repository.finish(rid,success=False,error_code='systemd_restarted_native_unverified',
+     error_detail='Systemd stop/start observed; native cause unverified; offline work and start blocked',now=now)
+    result['failed']+=1
+    return event,False
+   state=dict(event.get('native_shutdown') or state)
    event=dict(event);event['native_shutdown']={**state,'status':'timeout'}
    self.repository.update_event(rid,event,stage='native-shutdown-timeout')
    self.repository.finish(
-    rid,
-    success=False,
-    error_code='native_shutdown_timeout',
-    error_detail=f'DayZ did not complete native shutdown within {NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds',
-    now=now,
-   )
+    rid,success=False,error_code='native_shutdown_timeout',
+    error_detail=(
+     f'DayZ did not complete native shutdown within '
+     f'{NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds plus '
+     f'{NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS} seconds termination grace'
+    ),now=now)
    result['native_shutdown_timeouts']+=1;result['failed']+=1
    return event,False
-  command_id=str(state.get('command_id') or '')
-  if not command_id:
-   try:command=self._raw_lifecycle(run,'status')
-   except InstanceLifecycleCommandConflict:return event,False
-   state['command_id']=str(command['command_id']);state['status']='checking'
-   event=dict(event);event['native_shutdown']=state
-   self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
-   result['native_shutdown_checks']+=1
+
+  # Keep an outstanding probe alive.  Do not enqueue duplicates.
+  if command_id:
    return event,False
-  command=self._command(command_id);status=str((command or {}).get('status') or '').lower()
-  if status in {'queued','delivered'}:return event,False
-  if status!='completed':
-   self.repository.finish(
-    rid,
-    success=False,
-    error_code='native_shutdown_status_failed',
-    error_detail=str((command or {}).get('last_error') or 'native shutdown status check failed'),
-    now=now,
-   )
-   result['failed']+=1
-   return event,False
-  observed=_observed_state(command or {})
-  if observed=='stopped':
-   event=dict(event);event['native_shutdown']={**state,'status':'completed','command_id':command_id}
-   self.repository.update_event(rid,event,stage='native-shutdown-completed')
-   result['native_shutdowns']+=1
-   return event,True
-  state['command_id']=None;state['status']='waiting';state['observed_state']=observed
+
+  try:command=self._raw_lifecycle(run,'status')
+  except InstanceLifecycleCommandConflict:return event,False
+  state['command_id']=str(command['command_id']);state['status']='checking'
+  if elapsed>=NATIVE_SHUTDOWN_TIMEOUT_SECONDS:
+   state['termination_grace']=True
   event=dict(event);event['native_shutdown']=state
   self.repository.update_event(rid,event,stage='awaiting-native-shutdown')
+  result['native_shutdown_checks']+=1
   return event,False
 
  def _prepare_next_native_restart(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
@@ -324,6 +417,30 @@ class MaintenanceWorker:
    if stop_status in {'queued','delivered'}:return
    if stop_status!='completed':self._failed(run,'stop_failed',stop or {},now,result);return
   event=dict(self.repository.run(rid).get('event') or event)
+  if native_armed:
+   # A historical stopped result is not proof that the instance remains stopped.
+   from dayz_native_transition import offline_work_gate
+   gate=dict(event.get('offline_work_gate') or {})
+   cid=str(gate.get('command_id') or '')
+   if not cid:
+    try:probe=self._raw_lifecycle(run,'status')
+    except InstanceLifecycleCommandConflict:return
+    event=dict(event);event['offline_work_gate']={'command_id':str(probe['command_id'])}
+    self.repository.update_event(rid,event,stage='verifying-native-offline-state')
+    return
+   probe=self._command(cid)
+   probe_status=str((probe or {}).get('status') or '').lower()
+   decision=offline_work_gate(
+    latest_status=_observed_state(probe or {}) if probe_status=='completed' else None,
+    status_completed=probe_status=='completed',
+   )
+   if decision=='wait-for-fresh-status' and probe_status in {'queued','delivered'}:return
+   if decision!='allow-offline-work':
+    self.repository.finish(rid,success=False,
+     error_code='native_offline_state_active' if decision=='abort-instance-active' else 'native_offline_state_unverified',
+     error_detail='Fresh Agent status did not confirm safe offline maintenance',now=now)
+    result['failed']+=1
+    return
   if event.get('coalesce_updates'):
    event,ready=self._apply_game_work(run,event,result)
    if not ready:return
