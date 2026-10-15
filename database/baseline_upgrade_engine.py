@@ -1040,6 +1040,16 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
     table = "agent_instance_commands"
     if table not in _table_names(backend, connection):
         raise DatabaseMigrationError("agent_instance_commands table is missing")
+    if backend.name == "sqlite":
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        definition = str(row[0] or "") if row else ""
+        if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" not in definition:
+            raise DatabaseMigrationError(
+                "SQLite instance command action CHECK excludes systemd_lifecycle_evidence; "
+                "safe table reconstruction is required before Baseline v22"
+            )
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
         _execute_script(backend, connection, f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};")
