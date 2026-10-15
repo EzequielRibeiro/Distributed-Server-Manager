@@ -19,7 +19,7 @@ class TimeoutHistoryIntegrationTest(unittest.TestCase):
  def tick(self):return self.worker.tick(now=self.now)
  def test_history_requested_once_and_waits(self):
   first=self.tick()
-  self.assertEqual(first['failed'],0)
+  self.assertEqual(first['failed'],0, self.repo.finished)
   self.assertEqual([x['action'] for x in self.life.enqueued],['systemd_lifecycle_evidence'])
   self.assertEqual(self.repo.current['stage'],'checking-native-shutdown-history')
   second=self.tick()
