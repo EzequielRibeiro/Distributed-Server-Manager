@@ -8,10 +8,13 @@ import dayz_native_maintenance_worker_test as fixtures
 class TimeoutHistoryIntegrationTest(unittest.TestCase):
  def setUp(self):
   run=fixtures.run_state()
+  run['due_at']='2026-10-14T12:33:10Z'
   run['event']['native_shutdown']={'started_at':'2026-10-14T12:33:10Z','status':'waiting'}
+  run['event']['capabilities']['native_countdown']=True
+  run['event']['capabilities']['save']=False
   self.repo,self.life,self.worker=fixtures.DayZNativeMaintenanceWorkerTest().make_worker(run)
   fixtures.complete(self.life,'pre','running')
-  self.now=datetime(2026,10,14,12,37,15,tzinfo=timezone.utc)
+  self.now=datetime(2026,10,14,12,38,15,tzinfo=timezone.utc)
  def tick(self):return self.worker.tick(now=self.now)
  def test_history_requested_once_and_waits(self):
   first=self.tick()
@@ -51,7 +54,7 @@ class TimeoutHistoryIntegrationTest(unittest.TestCase):
   self.tick()
   self.life.states['cmd-1'].update({'agent_id':'wrong-agent','instance_id':'dayz-001',
    'action':'systemd_lifecycle_evidence','status':'completed',
-   'parameters':{'since':'2026-10-14T12:33:10Z','until':'2026-10-14T12:37:15Z'},
+   'parameters':{'since':'2026-10-14T12:33:10Z','until':'2026-10-14T12:38:15Z'},
    'result':{'command_id':'cmd-1','instance_id':'dayz-001',
     'action':'systemd_lifecycle_evidence','status':'completed',
     'result':{'agent_id':'wrong-agent','kind':'CapivaraSystemdLifecycleObservations',
@@ -70,7 +73,7 @@ class TimeoutHistoryIntegrationTest(unittest.TestCase):
  def test_historical_restart_blocks_offline_work(self):
   self.tick()
   instance='dayz-001';unit='capivara-instance-dayz-001.service'
-  self.life.states['cmd-1'].update({'agent_id':'agent-001','instance_id':instance,'action':'systemd_lifecycle_evidence','status':'completed','parameters':{'since':'2026-10-14T12:33:10Z','until':'2026-10-14T12:37:15Z'},'result':{'command_id':'cmd-1','instance_id':instance,'action':'systemd_lifecycle_evidence','status':'completed','result':{'schema_version':1,'kind':'CapivaraSystemdLifecycleObservations','scope':'instance-local','instance_id':instance,'agent_id':'agent-001','verified_native_shutdown':False,'events':[{'unit':unit,'event':'stopped','at':'2026-10-14T12:36:11Z'},{'unit':unit,'event':'started','at':'2026-10-14T12:36:19Z'}]}}})
+  self.life.states['cmd-1'].update({'agent_id':'agent-001','instance_id':instance,'action':'systemd_lifecycle_evidence','status':'completed','parameters':{'since':'2026-10-14T12:33:10Z','until':'2026-10-14T12:38:15Z'},'result':{'command_id':'cmd-1','instance_id':instance,'action':'systemd_lifecycle_evidence','status':'completed','result':{'schema_version':1,'kind':'CapivaraSystemdLifecycleObservations','scope':'instance-local','instance_id':instance,'agent_id':'agent-001','verified_native_shutdown':False,'events':[{'unit':unit,'event':'stopped','at':'2026-10-14T12:36:11Z'},{'unit':unit,'event':'started','at':'2026-10-14T12:36:19Z'}]}}})
   report=self.tick()
   self.assertEqual(report['failed'],1)
   self.assertEqual(self.repo.finished[0]['error_code'],'systemd_restarted_native_unverified')
