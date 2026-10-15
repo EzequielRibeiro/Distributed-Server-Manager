@@ -35,6 +35,22 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
         ).fetchone()
         self.assertEqual(("existing", "status", None), tuple(row))
 
+    def test_legacy_action_check_still_blocks_evidence(self):
+        """Track the remaining migration gap; adding a column is insufficient."""
+        self.db.execute("DROP TABLE agent_instance_commands")
+        self.db.execute(
+            "CREATE TABLE agent_instance_commands ("
+            "command_id TEXT PRIMARY KEY, "
+            "action TEXT NOT NULL CHECK (action IN "
+            "('status','doctor','start','stop','restart','remove')))"
+        )
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.db.execute(
+                "INSERT INTO agent_instance_commands(command_id,action,parameters_json) "
+                "VALUES ('evidence','systemd_lifecycle_evidence','{}')"
+            )
+
     def test_missing_table_fails_closed(self):
         self.db.execute("DROP TABLE agent_instance_commands")
         with self.assertRaisesRegex(Exception, "table is missing"):
