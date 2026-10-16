@@ -1090,8 +1090,8 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 # UNIQUE and CHECK constraints. Insert the new column ahead
                 # of the first table constraint rather than after it.
                 constraint = re.search(
-                    r",\\s*(?=(?:CONSTRAINT\\s+[^\\s]+\\s+)?"
-                    r"(?:FOREIGN\\s+KEY|PRIMARY\\s+KEY|UNIQUE\\s*\\(|CHECK\\s*\\())",
+                    r",\s*(?=(?:CONSTRAINT\s+[^\s]+\s+)?"
+                    r"(?:FOREIGN\s+KEY|PRIMARY\s+KEY|UNIQUE\s*\(|CHECK\s*\())",
                     new_definition,
                     flags=re.IGNORECASE,
                 )
