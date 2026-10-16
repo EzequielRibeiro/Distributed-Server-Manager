@@ -1054,8 +1054,12 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         constraint = action_checks[0]
         definition = str(constraint["definition"])
         if "systemd_lifecycle_evidence" not in definition:
-            allowed = ("status", "doctor", "save", "start", "stop", "restart", "remove")
-            if not all(action in definition for action in allowed):
+            # Historical baselines may omit 'save'; validate the actual
+            # allowlist rather than requiring every modern action already.
+            import re
+            existing_actions = set(re.findall(r"'([a-z_]+)'", definition))
+            known_actions = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
+            if not {"status", "doctor"}.issubset(existing_actions) or not existing_actions.issubset(known_actions):
                 raise DatabaseMigrationError("unknown PostgreSQL instance command action CHECK")
             name = str(constraint["conname"])
             quoted_name = '"' + name.replace('"', '""') + '"'
