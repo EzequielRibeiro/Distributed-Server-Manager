@@ -138,6 +138,37 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             self.db.execute("SELECT COUNT(*) FROM agent_instance_commands").fetchone()[0],
         )
 
+    def test_legacy_trigger_fails_closed_without_data_loss(self):
+        self.db.execute("DROP TABLE agent_instance_commands")
+        self.db.execute(
+            "CREATE TABLE agent_instance_commands ("
+            "command_id TEXT PRIMARY KEY, action TEXT NOT NULL "
+            "CHECK (action IN ('status','doctor','start','stop','restart','remove')))"
+        )
+        self.db.execute(
+            "INSERT INTO agent_instance_commands VALUES ('existing','status')"
+        )
+        self.db.execute(
+            "CREATE TRIGGER protect_commands BEFORE DELETE ON agent_instance_commands "
+            "BEGIN SELECT RAISE(ABORT, 'protected'); END"
+        )
+        self.db.commit()
+        with self.assertRaisesRegex(Exception, "triggers require manual review"):
+            _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.assertEqual(
+            1,
+            self.db.execute(
+                "SELECT COUNT(*) FROM agent_instance_commands WHERE command_id='existing'"
+            ).fetchone()[0],
+        )
+        self.assertEqual(
+            1,
+            self.db.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' "
+                "AND name='protect_commands'"
+            ).fetchone()[0],
+        )
+
     def test_missing_table_fails_closed(self):
         self.db.execute("DROP TABLE agent_instance_commands")
         with self.assertRaisesRegex(Exception, "table is missing"):
