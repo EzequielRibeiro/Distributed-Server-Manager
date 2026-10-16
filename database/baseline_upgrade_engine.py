@@ -1196,7 +1196,22 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             cursor.close()
         if action_column is None:
             raise DatabaseMigrationError("MySQL evidence action column is missing")
+        action_type = str(action_column["data_type"]).lower()
+        # A NULL maximum length on a non-text type does not mean unlimited
+        # capacity. Reject unsupported types before assessing their width.
+        if action_type == "enum":
+            raise DatabaseMigrationError(
+                "MySQL evidence action ENUM requires a reviewed migration"
+            )
+        if action_type not in (
+            "varchar", "char", "text", "tinytext", "mediumtext", "longtext"
+        ):
+            raise DatabaseMigrationError(
+                "unsupported MySQL evidence action column type"
+            )
         max_length = action_column["max_length"]
+        if action_type in ("varchar", "char") and max_length is None:
+            raise DatabaseMigrationError("MySQL evidence action width is unknown")
         if max_length is not None and int(max_length) < len("systemd_lifecycle_evidence"):
             raise DatabaseMigrationError(
                 "MySQL evidence action column requires a reviewed width migration"
@@ -1211,16 +1226,6 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         if action_checks:
             raise DatabaseMigrationError(
                 "MySQL action CHECK requires explicit review before v22"
-            )
-        if str(action_column["data_type"]).lower() == "enum":
-            raise DatabaseMigrationError(
-                "MySQL evidence action ENUM requires a reviewed migration"
-            )
-        if str(action_column["data_type"]).lower() not in (
-            "varchar", "char", "text", "tinytext", "mediumtext", "longtext"
-        ):
-            raise DatabaseMigrationError(
-                "unsupported MySQL evidence action column type"
             )
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
