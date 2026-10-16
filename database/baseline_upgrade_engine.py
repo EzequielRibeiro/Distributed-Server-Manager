@@ -1140,6 +1140,8 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             if found != legacy_actions and found != legacy_actions | {"save"}:
                 raise DatabaseMigrationError("unknown PostgreSQL command action constraint")
             action_constraints.append(str(constraint["conname"]))
+        if len(action_constraints) > 1:
+            raise DatabaseMigrationError("multiple legacy PostgreSQL action constraints")
         for name in action_constraints:
             quoted_name = '"' + name.replace('"', '""') + '"'
             connection.execute(
