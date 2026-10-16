@@ -1040,6 +1040,35 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
     table = "agent_instance_commands"
     if table not in _table_names(backend, connection):
         raise DatabaseMigrationError("agent_instance_commands table is missing")
+    if backend.name == "postgresql":
+        constraints = connection.execute(
+            "SELECT conname, pg_get_constraintdef(oid) AS definition "
+            "FROM pg_constraint WHERE conrelid='agent_instance_commands'::regclass "
+            "AND contype='c'"
+        ).fetchall()
+        action_checks = [row for row in constraints if "action" in str(row["definition"]).lower()]
+        if len(action_checks) != 1:
+            raise DatabaseMigrationError(
+                "expected exactly one PostgreSQL instance command action CHECK"
+            )
+        constraint = action_checks[0]
+        definition = str(constraint["definition"])
+        if "systemd_lifecycle_evidence" not in definition:
+            allowed = ("status", "doctor", "save", "start", "stop", "restart", "remove")
+            if not all(action in definition for action in allowed):
+                raise DatabaseMigrationError("unknown PostgreSQL instance command action CHECK")
+            name = str(constraint["conname"])
+            quoted_name = '"' + name.replace('"', '""') + '"'
+            connection.execute("ALTER TABLE agent_instance_commands ALTER COLUMN action TYPE TEXT")
+            connection.execute(
+                f"ALTER TABLE agent_instance_commands DROP CONSTRAINT {quoted_name}"
+            )
+            connection.execute(
+                "ALTER TABLE agent_instance_commands ADD CONSTRAINT "
+                "agent_instance_commands_action_evidence_check CHECK "
+                "(action IN ('status','doctor','save','start','stop','restart',"
+                "'remove','systemd_lifecycle_evidence'))"
+            )
     if backend.name == "sqlite":
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
