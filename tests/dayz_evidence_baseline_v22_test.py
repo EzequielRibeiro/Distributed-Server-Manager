@@ -182,5 +182,81 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             _upgrade_instance_evidence_parameters(self.backend, self.db)
 
 
+
+class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
+    """Exercise the MySQL preflight without a live MySQL server."""
+
+    def test_legacy_varchar_rejected_before_schema_change(self):
+        from unittest.mock import patch
+
+        class Cursor:
+            def __init__(self):
+                self.query = ""
+
+            def execute(self, sql, params=None):
+                self.query = sql
+
+            def fetchone(self):
+                return {"data_type": "varchar", "max_length": 16}
+
+            def fetchall(self):
+                return []
+
+            def close(self):
+                pass
+
+        class Connection:
+            def __init__(self):
+                self.ddl_calls = 0
+
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        connection = Connection()
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ):
+            with self.assertRaisesRegex(Exception, "reviewed width migration"):
+                _upgrade_instance_evidence_parameters(
+                    SimpleNamespace(name="mysql"), connection
+                )
+
+    def test_action_check_rejected_before_schema_change(self):
+        from unittest.mock import patch
+
+        class Cursor:
+            def __init__(self):
+                self.query = ""
+
+            def execute(self, sql, params=None):
+                self.query = sql
+
+            def fetchone(self):
+                return {"data_type": "varchar", "max_length": 64}
+
+            def fetchall(self):
+                return [{
+                    "constraint_name": "legacy_action_check",
+                    "check_clause": "action IN ('status','start','stop')",
+                }]
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ):
+            with self.assertRaisesRegex(Exception, "explicit review"):
+                _upgrade_instance_evidence_parameters(
+                    SimpleNamespace(name="mysql"), Connection()
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
