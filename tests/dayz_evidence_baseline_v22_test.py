@@ -251,6 +251,64 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                     SimpleNamespace(name="mysql"), Connection()
                 )
 
+    def test_unknown_varchar_width_rejected(self):
+        from unittest.mock import patch
+
+        class Cursor:
+            def execute(self, sql, params=None):
+                pass
+
+            def fetchone(self):
+                return {"data_type": "varchar", "max_length": None}
+
+            def fetchall(self):
+                return []
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ):
+            with self.assertRaisesRegex(Exception, "width is unknown"):
+                _upgrade_instance_evidence_parameters(
+                    SimpleNamespace(name="mysql"), Connection()
+                )
+
+    def test_numeric_action_type_rejected_even_without_width(self):
+        from unittest.mock import patch
+
+        class Cursor:
+            def execute(self, sql, params=None):
+                pass
+
+            def fetchone(self):
+                return {"data_type": "int", "max_length": None}
+
+            def fetchall(self):
+                return []
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ):
+            with self.assertRaisesRegex(Exception, "unsupported MySQL evidence action"):
+                _upgrade_instance_evidence_parameters(
+                    SimpleNamespace(name="mysql"), Connection()
+                )
+
     def test_action_check_rejected_before_schema_change(self):
         from unittest.mock import patch
 
