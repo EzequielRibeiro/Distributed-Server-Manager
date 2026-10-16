@@ -1362,6 +1362,10 @@ def seed_current_upgrades(backend: Any, connection: Any) -> None:
     _validate_ledger(applied)
     for upgrade in UPGRADES:
         if upgrade.version not in applied:
+            if upgrade.version == 22 and backend.name == "sqlite" and connection.in_transaction:
+                # The v22 SQLite table swap must disable foreign keys before
+                # BEGIN IMMEDIATE. Commit earlier ledger/schema upgrades first.
+                connection.commit()
             upgrade.apply(backend, connection)
             _insert_ledger(backend, connection, upgrade)
 
@@ -1420,6 +1424,10 @@ def apply_pending_upgrades(
     for upgrade in UPGRADES:
         if upgrade.version in applied:
             continue
+        if upgrade.version == 22 and backend.name == "sqlite" and connection.in_transaction:
+            # SQLite PRAGMA foreign_keys cannot change inside a transaction.
+            # Commit completed lower-version upgrades before the v22 swap.
+            connection.commit()
         upgrade.apply(backend, connection)
         _insert_ledger(backend, connection, upgrade)
         applied[upgrade.version] = upgrade.name
