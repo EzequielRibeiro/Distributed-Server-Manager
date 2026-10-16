@@ -44,9 +44,10 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             "action TEXT NOT NULL CHECK (action IN "
             "('status','doctor','start','stop','restart','remove')))"
         )
-        with self.assertRaisesRegex(Exception, 'safe table reconstruction'):
-            _upgrade_instance_evidence_parameters(self.backend, self.db)
-        self.assertNotIn('parameters_json', _column_names(self.backend, self.db, 'agent_instance_commands'))
+        self.db.commit()
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.db.execute("INSERT INTO agent_instance_commands(command_id,action,parameters_json) VALUES ('evidence','systemd_lifecycle_evidence','{}')")
+        self.assertIn('parameters_json', _column_names(self.backend, self.db, 'agent_instance_commands'))
 
     def test_legacy_schema_preserves_rows_indexes_and_foreign_keys(self):
         """Baseline v22 must not silently destroy existing relational metadata."""
@@ -77,8 +78,8 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
         before_indexes = [row[1] for row in self.db.execute(
             "PRAGMA index_list(agent_instance_commands)"
         )]
-        with self.assertRaisesRegex(Exception, 'safe table reconstruction'):
-            _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.db.commit()
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
         self.assertEqual(before_fk, [tuple(row) for row in self.db.execute(
             "PRAGMA foreign_key_list(agent_instance_commands)"
         )])
