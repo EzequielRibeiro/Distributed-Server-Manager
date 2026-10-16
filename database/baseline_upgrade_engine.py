@@ -1203,7 +1203,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             )
         action_checks = [
             row for row in checks
-            if re.search(r"\\baction\\b", str(row["check_clause"]), re.IGNORECASE)
+            if re.search(r"\baction\b", str(row["check_clause"]), re.IGNORECASE)
         ]
         if action_checks and not all(
             "systemd_lifecycle_evidence" in str(row["check_clause"])
