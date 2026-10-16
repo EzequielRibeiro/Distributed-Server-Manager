@@ -148,24 +148,46 @@ class ArtifactTransferRepository:
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
  def reject_content_upload(self,transfer_id,reason):
-  item=self.get(transfer_id)
-  if str(item.get("purpose") or "")!="content_upload":raise ValueError("transfer is not a content upload")
+  """Reject an upload and enqueue at most one Agent cleanup atomically."""
   message=str(reason or "content upload rejected").strip()[:1024] or "content upload rejected"
   ph=self.dialect.placeholder
+  with self.session(transaction=True) as s:
+   lock=" FOR UPDATE" if ph=="%s" else ""
+   item=s.execute(f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}{lock}",(transfer_id,)).fetchone()
+   if item is None:raise KeyError(transfer_id)
+   if str(item["purpose"] or "")!="content_upload":raise ValueError("transfer is not a content upload")
+   s.execute(
+    f"UPDATE artifact_transfers SET status='failed',last_error={ph},"
+    f"completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} "
+    f"WHERE transfer_id={ph} AND status NOT IN ('expired','completed')",
+    (message,transfer_id),
+   )
+   existing=s.execute(
+    f"SELECT 1 FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={ph} LIMIT 1",
+    (transfer_id,),
+   ).fetchone()
+   if existing is None and item["agent_id"] and item["instance_id"]:
+    cleanup_id="transfer-"+uuid.uuid4().hex
+    filename=Path(str(item["filename"] or "artifact.bin")).name
+    expires=(datetime.now(timezone.utc)+timedelta(hours=24)).isoformat().replace("+00:00","Z")
+    s.execute(
+     "INSERT INTO artifact_transfers"
+     "(transfer_id,agent_id,instance_id,customer_id,direction,purpose,"
+     "source_ref,filename,status,controller_path,requested_by,expires_at) "
+     f"VALUES ({self.dialect.parameters(12)})",
+     (cleanup_id,item["agent_id"],item["instance_id"],item["customer_id"],
+      "controller_to_agent","content_upload_cleanup",transfer_id,filename,"queued",
+      str(self._path(cleanup_id,filename)),item["requested_by"],expires),
+    )
+  # The database decision is durable before removing the Controller-side staging file.
   try:
-   path=self._path(transfer_id,item.get("filename"))
+   path=self._path(transfer_id,item["filename"])
    path.unlink(missing_ok=True)
    path.with_suffix(path.suffix+".part").unlink(missing_ok=True)
    try:path.parent.rmdir()
    except OSError:pass
   except (OSError,ValueError):
    pass
-  with self.session(transaction=True) as s:
-   s.execute(f"UPDATE artifact_transfers SET status='failed',last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(message,transfer_id))
-   existing=s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={ph} AND status<>'expired' ORDER BY created_at DESC LIMIT 1",(transfer_id,)).fetchone()
-  if existing is None and item.get("agent_id") and item.get("instance_id"):
-   cleanup=self.create(agent_id=item["agent_id"],instance_id=item["instance_id"],customer_id=item.get("customer_id"),direction="controller_to_agent",purpose="content_upload_cleanup",filename=item.get("filename") or "artifact.bin",source_ref=transfer_id,requested_by=item.get("requested_by"),ttl_hours=24)
-   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(cleanup["transfer_id"],))
   return self.get(transfer_id)
 
  def cancel(self,transfer_id):
