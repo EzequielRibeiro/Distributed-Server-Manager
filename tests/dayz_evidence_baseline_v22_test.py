@@ -35,8 +35,8 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
         ).fetchone()
         self.assertEqual(("existing", "status", None), tuple(row))
 
-    def test_legacy_action_check_still_blocks_evidence(self):
-        """Track the remaining migration gap; adding a column is insufficient."""
+    def test_legacy_action_check_accepts_evidence(self):
+        """Known legacy constraints are rebuilt to allow evidence."""
         self.db.execute("DROP TABLE agent_instance_commands")
         self.db.execute(
             "CREATE TABLE agent_instance_commands ("
@@ -44,9 +44,9 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             "action TEXT NOT NULL CHECK (action IN "
             "('status','doctor','start','stop','restart','remove')))"
         )
-        with self.assertRaisesRegex(Exception, 'safe table reconstruction'):
-            _upgrade_instance_evidence_parameters(self.backend, self.db)
-        self.assertNotIn('parameters_json', _column_names(self.backend, self.db, 'agent_instance_commands'))
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.assertIn('parameters_json', _column_names(self.backend, self.db, 'agent_instance_commands'))
+        self.db.execute("INSERT INTO agent_instance_commands(command_id,action) VALUES ('evidence','systemd_lifecycle_evidence')")
 
     def test_legacy_schema_preserves_rows_indexes_and_foreign_keys(self):
         """Baseline v22 must not silently destroy existing relational metadata."""
@@ -77,8 +77,7 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
         before_indexes = [row[1] for row in self.db.execute(
             "PRAGMA index_list(agent_instance_commands)"
         )]
-        with self.assertRaisesRegex(Exception, 'safe table reconstruction'):
-            _upgrade_instance_evidence_parameters(self.backend, self.db)
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
         self.assertEqual(before_fk, [tuple(row) for row in self.db.execute(
             "PRAGMA foreign_key_list(agent_instance_commands)"
         )])
@@ -89,6 +88,7 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             "SELECT COUNT(*) FROM agent_instance_commands WHERE command_id='existing'"
         ).fetchone()[0])
         self.assertEqual([], self.db.execute("PRAGMA foreign_key_check").fetchall())
+        self.db.execute("INSERT INTO agent_instance_commands(command_id,agent_id,instance_id,action) VALUES ('evidence','agent-1','instance-1','systemd_lifecycle_evidence')")
 
     def test_missing_table_fails_closed(self):
         self.db.execute("DROP TABLE agent_instance_commands")
