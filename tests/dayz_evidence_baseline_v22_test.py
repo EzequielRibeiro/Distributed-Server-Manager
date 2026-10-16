@@ -222,6 +222,35 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                     SimpleNamespace(name="mysql"), connection
                 )
 
+    def test_enum_action_rejected_before_schema_change(self):
+        from unittest.mock import patch
+
+        class Cursor:
+            def execute(self, sql, params=None):
+                pass
+
+            def fetchone(self):
+                return {"data_type": "enum", "max_length": 64}
+
+            def fetchall(self):
+                return []
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ):
+            with self.assertRaisesRegex(Exception, "ENUM requires a reviewed migration"):
+                _upgrade_instance_evidence_parameters(
+                    SimpleNamespace(name="mysql"), Connection()
+                )
+
     def test_action_check_rejected_before_schema_change(self):
         from unittest.mock import patch
 
