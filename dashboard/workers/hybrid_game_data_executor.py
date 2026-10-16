@@ -52,7 +52,17 @@ def main() -> int:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": "runtime selection missing"})
         return 1
 
-    # A version probe must never enter the install-json path: that path\n    # performs an atomic installation, even when the queued action is verify.\n    # Fail closed until a read-only provider version probe is available.\n    if str(command.get("action") or "").strip().lower() == "verify":\n        _write_result(result_path, {\n            "job_id": job_id, "status": "failed", "progress": 100,\n            "error": "read_only_version_probe_unavailable",\n        })\n        return 1\n\n    _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
+    # A version probe must never enter the install-json path: that path
+    # performs an atomic installation, even when the queued action is verify.
+    # Fail closed until a read-only provider version probe is available.
+    if str(command.get("action") or "").strip().lower() == "verify":
+        _write_result(result_path, {
+            "job_id": job_id, "status": "failed", "progress": 100,
+            "error": "read_only_version_probe_unavailable",
+        })
+        return 1
+
+    _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
     installer = root / "installer" / "install_selection.sh"
     environment = {**os.environ, "DSM_ROOT": str(root)}
     steam_user = _steam_user(root)
