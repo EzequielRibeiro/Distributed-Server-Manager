@@ -187,6 +187,58 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
 class PostgreSQLInstanceEvidenceGuardTest(unittest.TestCase):
     """Reject PostgreSQL CHECK predicates that a literal-set parser could miss."""
 
+    def test_recognized_legacy_action_check_upgrades(self):
+        from unittest.mock import patch
+
+        class Result:
+            def __init__(self, rows=None, row=None):
+                self.rows = rows
+                self.row = row
+
+            def fetchall(self):
+                return self.rows
+
+            def fetchone(self):
+                return self.row
+
+        class Connection:
+            def __init__(self):
+                self.statements = []
+
+            def execute(self, sql, params=None):
+                self.statements.append(sql)
+                if "pg_constraint" in sql:
+                    return Result(rows=[{
+                        "conname": "agent_instance_commands_action_check",
+                        "definition": (
+                            "CHECK ((action = ANY (ARRAY['status'::text,"
+                            "'doctor'::text,'start'::text,'stop'::text,"
+                            "'restart'::text,'remove'::text])))"
+                        ),
+                    }])
+                if "information_schema.columns" in sql:
+                    return Result(row={
+                        "data_type": "character varying",
+                        "character_maximum_length": 16,
+                    })
+                return Result()
+
+        connection = Connection()
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ), patch(
+            "baseline_upgrade_engine._column_names",
+            return_value={"action", "parameters_json"},
+        ):
+            _upgrade_instance_evidence_parameters(
+                SimpleNamespace(name="postgresql"), connection
+            )
+        statements = "\\n".join(connection.statements)
+        self.assertIn("DROP CONSTRAINT", statements)
+        self.assertIn("systemd_lifecycle_evidence", statements)
+        self.assertIn("ALTER COLUMN action TYPE TEXT", statements)
+
     def test_compound_action_check_fails_before_ddl(self):
         from unittest.mock import patch
 
