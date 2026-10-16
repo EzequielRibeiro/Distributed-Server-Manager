@@ -1071,8 +1071,8 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 1,
             )
             new_definition, count = re.subn(
-                r'^(CREATE\\s+TABLE\\s+)(?:"agent_instance_commands"|agent_instance_commands)',
-                r'\\1"agent_instance_commands_v22_new"',
+                r'^(CREATE\s+TABLE\s+)(?:"agent_instance_commands"|agent_instance_commands)',
+                r'\1"agent_instance_commands_v22_new"',
                 new_definition,
                 count=1,
                 flags=re.IGNORECASE,
