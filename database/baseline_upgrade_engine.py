@@ -1167,6 +1167,51 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 connection.execute(
                     f"ALTER TABLE {table} ALTER COLUMN action TYPE TEXT"
                 )
+    if backend.name == "mysql":
+        # Do not silently record v22 as applied on installations whose
+        # action column cannot store the evidence action. MySQL DDL can
+        # auto-commit, so validate this before any schema modifications.
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT DATA_TYPE AS data_type, CHARACTER_MAXIMUM_LENGTH AS max_length "
+                "FROM information_schema.columns "
+                "WHERE table_schema=DATABASE() AND table_name=%s AND column_name='action'",
+                (table,),
+            )
+            action_column = cursor.fetchone()
+            cursor.execute(
+                "SELECT tc.CONSTRAINT_NAME AS constraint_name, "
+                "cc.CHECK_CLAUSE AS check_clause "
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.check_constraints cc "
+                "ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA "
+                "AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME "
+                "WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME=%s "
+                "AND tc.CONSTRAINT_TYPE='CHECK'",
+                (table,),
+            )
+            checks = cursor.fetchall()
+        finally:
+            cursor.close()
+        if action_column is None:
+            raise DatabaseMigrationError("MySQL evidence action column is missing")
+        max_length = action_column["max_length"]
+        if max_length is not None and int(max_length) < len("systemd_lifecycle_evidence"):
+            raise DatabaseMigrationError(
+                "MySQL evidence action column requires a reviewed width migration"
+            )
+        action_checks = [
+            row for row in checks
+            if re.search(r"\\baction\\b", str(row["check_clause"]), re.IGNORECASE)
+        ]
+        if action_checks and not all(
+            "systemd_lifecycle_evidence" in str(row["check_clause"])
+            for row in action_checks
+        ):
+            raise DatabaseMigrationError(
+                "MySQL evidence action CHECK requires a reviewed migration"
+            )
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
         _execute_script(
