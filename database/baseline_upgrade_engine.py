@@ -1047,6 +1047,17 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         ).fetchone()
         definition = str(row[0] or "") if row else ""
         old_check = "CHECK (action IN ('status','doctor','start','stop','restart','remove'))"
+        # An existing evidence literal is not proof that its CHECK allows
+        # evidence: a second predicate may still prohibit the new action.
+        if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" in definition:
+            if definition.upper().count("CHECK") != 1:
+                raise DatabaseMigrationError("unknown SQLite evidence action constraint")
+            expected = (
+                "CHECK (action IN ('status','doctor','save','start','stop',"
+                "'restart','remove','systemd_lifecycle_evidence'))"
+            )
+            if expected not in definition:
+                raise DatabaseMigrationError("unknown SQLite evidence action constraint")
         if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" not in definition:
             if old_check not in definition:
                 raise DatabaseMigrationError("unknown SQLite command action constraint")
