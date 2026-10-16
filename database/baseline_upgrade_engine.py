@@ -1130,8 +1130,15 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         action_constraints = []
         for constraint in constraints:
             definition = str(constraint["definition"])
-            if "action" not in definition.lower():
+            # Do not infer allowlist compatibility from the presence of
+            # action names alone: a compound CHECK may prohibit evidence.
+            if not re.search(r"\\baction\\b", definition, re.IGNORECASE):
                 continue
+            without_literals = re.sub(r"'(?:''|[^'])*'", "''", definition)
+            if re.search(r"\\b(?:AND|OR|NOT)\\b", without_literals, re.IGNORECASE):
+                raise DatabaseMigrationError(
+                    "compound PostgreSQL command action constraint requires review"
+                )
             found = set(re.findall(r"'([a-z_]+)'(?:::character varying|::text)?", definition))
             if "systemd_lifecycle_evidence" in found:
                 if not supported_actions.issubset(found):
