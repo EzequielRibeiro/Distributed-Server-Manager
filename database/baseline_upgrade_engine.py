@@ -1161,9 +1161,16 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             "WHERE table_schema='public' AND table_name=%s AND column_name='action'",
             (table,),
         ).fetchone()
-        if action_column and action_column["data_type"] == "character varying":
+        if action_column is None:
+            raise DatabaseMigrationError("PostgreSQL evidence action column is missing")
+        action_type = str(action_column["data_type"]).lower()
+        if action_type not in ("character varying", "character", "text"):
+            raise DatabaseMigrationError("unsupported PostgreSQL evidence action column type")
+        if action_type in ("character varying", "character"):
             length = action_column["character_maximum_length"]
-            if length is not None and int(length) < len("systemd_lifecycle_evidence"):
+            if length is None:
+                raise DatabaseMigrationError("PostgreSQL evidence action width is unknown")
+            if int(length) < len("systemd_lifecycle_evidence"):
                 connection.execute(
                     f"ALTER TABLE {table} ALTER COLUMN action TYPE TEXT"
                 )
