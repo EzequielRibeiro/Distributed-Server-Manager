@@ -1205,12 +1205,12 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             row for row in checks
             if re.search(r"\baction\b", str(row["check_clause"]), re.IGNORECASE)
         ]
-        if action_checks and not all(
-            "systemd_lifecycle_evidence" in str(row["check_clause"])
-            for row in action_checks
-        ):
+        # A CHECK that merely mentions the evidence action is not sufficient:
+        # it may also contain an extra predicate that forbids the action.
+        # Reject any unreviewed action CHECK rather than weakening it.
+        if action_checks:
             raise DatabaseMigrationError(
-                "MySQL evidence action CHECK requires a reviewed migration"
+                "MySQL action CHECK requires explicit review before v22"
             )
         if str(action_column["data_type"]).lower() == "enum":
             raise DatabaseMigrationError(
