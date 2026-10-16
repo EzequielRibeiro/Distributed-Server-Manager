@@ -1212,6 +1212,16 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             raise DatabaseMigrationError(
                 "MySQL evidence action CHECK requires a reviewed migration"
             )
+        if str(action_column["data_type"]).lower() == "enum":
+            raise DatabaseMigrationError(
+                "MySQL evidence action ENUM requires a reviewed migration"
+            )
+        if str(action_column["data_type"]).lower() not in (
+            "varchar", "char", "text", "tinytext", "mediumtext", "longtext"
+        ):
+            raise DatabaseMigrationError(
+                "unsupported MySQL evidence action column type"
+            )
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
         _execute_script(
