@@ -1132,10 +1132,10 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             definition = str(constraint["definition"])
             # Do not infer allowlist compatibility from the presence of
             # action names alone: a compound CHECK may prohibit evidence.
-            if not re.search(r"\\baction\\b", definition, re.IGNORECASE):
+            if not re.search(r"\baction\b", definition, re.IGNORECASE):
                 continue
             without_literals = re.sub(r"'(?:''|[^'])*'", "''", definition)
-            if re.search(r"\\b(?:AND|OR|NOT)\\b", without_literals, re.IGNORECASE):
+            if re.search(r"\b(?:AND|OR|NOT)\b", without_literals, re.IGNORECASE):
                 raise DatabaseMigrationError(
                     "compound PostgreSQL command action constraint requires review"
                 )
