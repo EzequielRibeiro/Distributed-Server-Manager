@@ -198,4 +198,46 @@ class ArtifactTransferRepository:
    count+=1
   return count
 
+ def enqueue_expired_content_upload_cleanup(self):
+  """Queue Agent quarantine cleanup only when no assignment revision references the upload."""
+  ph=self.dialect.placeholder
+  with self.session() as s:
+   rows=s.execute(
+    "SELECT transfer_id,agent_id,instance_id,customer_id,filename,requested_by,destination_ref "
+    "FROM artifact_transfers WHERE purpose='content_upload' AND direction='controller_to_agent' "
+    "AND status='expired' AND destination_ref IS NOT NULL AND agent_id IS NOT NULL AND instance_id IS NOT NULL"
+   ).fetchall()
+  queued=0
+  for raw in rows:
+   item=dict(raw);tid=str(item.get("transfer_id") or "")
+   pattern="%"+tid+"%"
+   with self.session() as s:
+    current=s.execute(
+     f"SELECT 1 FROM content_assignments WHERE artifact_json LIKE {ph} OR provenance_json LIKE {ph} LIMIT 1",
+     (pattern,pattern),
+    ).fetchone()
+    historical=s.execute(
+     f"SELECT 1 FROM content_assignment_revisions WHERE artifact_json LIKE {ph} OR provenance_json LIKE {ph} LIMIT 1",
+     (pattern,pattern),
+    ).fetchone()
+    existing=s.execute(
+     f"SELECT 1 FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={ph} AND status<>'expired' LIMIT 1",
+     (tid,),
+    ).fetchone()
+   if current is not None or historical is not None or existing is not None:
+    continue
+   cleanup=self.create(
+    agent_id=item["agent_id"],instance_id=item["instance_id"],customer_id=item.get("customer_id"),
+    direction="controller_to_agent",purpose="content_upload_cleanup",
+    filename=item.get("filename") or "artifact.bin",source_ref=tid,
+    requested_by=item.get("requested_by"),ttl_hours=24,
+   )
+   with self.session(transaction=True) as s:
+    s.execute(
+     f"UPDATE artifact_transfers SET status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",
+     (cleanup["transfer_id"],),
+    )
+   queued+=1
+  return queued
+
 __all__=["ACTIVE","FINAL","ArtifactTransferRepository"]
