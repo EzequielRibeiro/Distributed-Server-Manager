@@ -91,6 +91,53 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
         ).fetchone()[0])
         self.assertEqual([], self.db.execute("PRAGMA foreign_key_check").fetchall())
 
+    def test_unknown_action_constraint_fails_closed(self):
+        self.db.execute("DROP TABLE agent_instance_commands")
+        self.db.execute(
+            "CREATE TABLE agent_instance_commands ("
+            "command_id TEXT PRIMARY KEY, action TEXT NOT NULL "
+            "CHECK (action IN ('status','custom_action')))"
+        )
+        self.db.execute(
+            "INSERT INTO agent_instance_commands VALUES ('existing','status')"
+        )
+        self.db.commit()
+        with self.assertRaisesRegex(Exception, "unknown SQLite command action constraint"):
+            _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.assertEqual(
+            1,
+            self.db.execute(
+                "SELECT COUNT(*) FROM agent_instance_commands "
+                "WHERE command_id='existing'"
+            ).fetchone()[0],
+        )
+        self.assertNotIn(
+            "parameters_json",
+            _column_names(self.backend, self.db, "agent_instance_commands"),
+        )
+
+    def test_legacy_upgrade_idempotent_after_rebuild(self):
+        self.db.execute("DROP TABLE agent_instance_commands")
+        self.db.execute(
+            "CREATE TABLE agent_instance_commands ("
+            "command_id TEXT PRIMARY KEY, action TEXT NOT NULL "
+            "CHECK (action IN ('status','doctor','start','stop','restart','remove')))"
+        )
+        self.db.execute(
+            "INSERT INTO agent_instance_commands VALUES ('existing','status')"
+        )
+        self.db.commit()
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.db.execute(
+            "INSERT INTO agent_instance_commands(command_id,action,parameters_json) "
+            "VALUES ('evidence','systemd_lifecycle_evidence','{}')"
+        )
+        self.assertEqual(
+            2,
+            self.db.execute("SELECT COUNT(*) FROM agent_instance_commands").fetchone()[0],
+        )
+
     def test_missing_table_fails_closed(self):
         self.db.execute("DROP TABLE agent_instance_commands")
         with self.assertRaisesRegex(Exception, "table is missing"):
