@@ -1086,7 +1086,23 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 new_definition = new_definition.rstrip()
                 if not new_definition.endswith(")"):
                     raise DatabaseMigrationError("unsupported SQLite command table layout")
-                new_definition = new_definition[:-1] + ", parameters_json TEXT)"
+                # SQLite requires columns before table-level FOREIGN KEY,
+                # UNIQUE and CHECK constraints. Insert the new column ahead
+                # of the first table constraint rather than after it.
+                constraint = re.search(
+                    r",\\s*(?=(?:CONSTRAINT\\s+[^\\s]+\\s+)?"
+                    r"(?:FOREIGN\\s+KEY|PRIMARY\\s+KEY|UNIQUE\\s*\\(|CHECK\\s*\\())",
+                    new_definition,
+                    flags=re.IGNORECASE,
+                )
+                if constraint:
+                    at = constraint.start()
+                    new_definition = (
+                        new_definition[:at] + ", parameters_json TEXT"
+                        + new_definition[at:]
+                    )
+                else:
+                    new_definition = new_definition[:-1] + ", parameters_json TEXT)"
             quoted = ",".join('"' + name.replace('"', '""') + '"' for name in columns)
             try:
                 if original_fk:
