@@ -1115,6 +1115,56 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 if original_fk:
                     connection.execute("PRAGMA foreign_keys=ON")
             return
+    if backend.name == "postgresql":
+        # PostgreSQL installations can retain the original action CHECK even
+        # after adding parameters_json. Replace only the recognized legacy
+        # allowlist; unknown policies require explicit operator review.
+        constraints = connection.execute(
+            "SELECT conname, pg_get_constraintdef(oid) AS definition "
+            "FROM pg_constraint "
+            "WHERE conrelid = 'public.agent_instance_commands'::regclass "
+            "AND contype = 'c'"
+        ).fetchall()
+        legacy_actions = {"status", "doctor", "start", "stop", "restart", "remove"}
+        supported_actions = legacy_actions | {"save", "systemd_lifecycle_evidence"}
+        action_constraints = []
+        for constraint in constraints:
+            definition = str(constraint["definition"])
+            if "action" not in definition.lower():
+                continue
+            found = set(re.findall(r"'([a-z_]+)'(?:::character varying|::text)?", definition))
+            if "systemd_lifecycle_evidence" in found:
+                if not supported_actions.issubset(found):
+                    raise DatabaseMigrationError("incomplete PostgreSQL evidence action constraint")
+                continue
+            if found != legacy_actions and found != legacy_actions | {"save"}:
+                raise DatabaseMigrationError("unknown PostgreSQL command action constraint")
+            action_constraints.append(str(constraint["conname"]))
+        for name in action_constraints:
+            quoted_name = '"' + name.replace('"', '""') + '"'
+            connection.execute(
+                f"ALTER TABLE {table} DROP CONSTRAINT {quoted_name}"
+            )
+        if action_constraints:
+            connection.execute(
+                f"ALTER TABLE {table} ADD CONSTRAINT "
+                "agent_instance_commands_action_evidence_check "
+                "CHECK (action IN ('status','doctor','save','start','stop',"
+                "'restart','remove','systemd_lifecycle_evidence'))"
+            )
+        # Preserve existing TEXT action columns; widen legacy VARCHAR columns.
+        action_column = connection.execute(
+            "SELECT data_type, character_maximum_length "
+            "FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s AND column_name='action'",
+            (table,),
+        ).fetchone()
+        if action_column and action_column["data_type"] == "character varying":
+            length = action_column["character_maximum_length"]
+            if length is not None and int(length) < len("systemd_lifecycle_evidence"):
+                connection.execute(
+                    f"ALTER TABLE {table} ALTER COLUMN action TYPE TEXT"
+                )
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
         _execute_script(
