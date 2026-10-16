@@ -191,10 +191,18 @@ class ArtifactTransferRepository:
   with self.session() as s:rows=s.execute(f"SELECT transfer_id,controller_path FROM artifact_transfers WHERE expires_at IS NOT NULL AND expires_at<{ph} AND status<>'expired'",(now,)).fetchall()
   count=0
   for row in rows:
-   try:
-    path=Path(str(row["controller_path"] or "")).resolve();path.relative_to(self.spool);path.unlink(missing_ok=True);path.parent.rmdir()
-   except OSError:pass
-   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='expired',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(str(row["transfer_id"]),))
+   # Only remove paths inside the managed spool. A missing file is already clean;
+   # an actual filesystem error must be retried, not silently marked expired.
+   raw_path=str(row["controller_path"] or "").strip()
+   if raw_path:
+    try:
+     path=Path(raw_path).resolve();path.relative_to(self.spool)
+     path.unlink(missing_ok=True)
+     try:path.parent.rmdir()
+     except OSError:pass  # Other transfer files may still occupy the directory.
+    except (OSError,ValueError):
+     continue
+   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='expired',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status<>'expired'",(str(row["transfer_id"]),))
    count+=1
   return count
 
