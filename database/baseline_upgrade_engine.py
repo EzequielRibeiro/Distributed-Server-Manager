@@ -1168,9 +1168,11 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             raise DatabaseMigrationError("unsupported PostgreSQL evidence action column type")
         if action_type in ("character varying", "character"):
             length = action_column["character_maximum_length"]
-            if length is None:
+            # PostgreSQL VARCHAR without a declared limit reports NULL;
+            # unlike CHAR(n), this is an unbounded, valid text column.
+            if length is None and action_type == "character":
                 raise DatabaseMigrationError("PostgreSQL evidence action width is unknown")
-            if int(length) < len("systemd_lifecycle_evidence"):
+            if length is not None and int(length) < len("systemd_lifecycle_evidence"):
                 connection.execute(
                     f"ALTER TABLE {table} ALTER COLUMN action TYPE TEXT"
                 )
