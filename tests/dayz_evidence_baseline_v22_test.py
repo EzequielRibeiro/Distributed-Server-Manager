@@ -79,7 +79,14 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             "PRAGMA index_list(agent_instance_commands)"
         )]
         self.db.commit()
+        self.db.execute("PRAGMA foreign_keys=ON")
+        self.assertEqual(1, self.db.execute("PRAGMA foreign_keys").fetchone()[0])
         _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.assertEqual(
+            1,
+            self.db.execute("PRAGMA foreign_keys").fetchone()[0],
+            "migration must restore the original foreign-key enforcement",
+        )
         self.assertEqual(before_fk, [tuple(row) for row in self.db.execute(
             "PRAGMA foreign_key_list(agent_instance_commands)"
         )])
