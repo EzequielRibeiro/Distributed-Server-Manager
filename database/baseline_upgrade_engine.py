@@ -1031,12 +1031,13 @@ def _upgrade_dayz_management(backend: Any, connection: Any) -> None:
 
 
 def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None:
-    """Add the command parameters required by evidence and maintenance queues.
+    """Upgrade evidence command parameters without weakening unknown constraints.
 
-    Refuse unknown action constraints instead of silently weakening them.
-    The separate action-constraint migration must be validated before enabling
-    systemd_lifecycle_evidence on previously installed SQLite databases.
+    SQLite legacy CHECK tables require an isolated transaction so foreign keys
+    can be disabled before the table swap and restored after commit.
     """
+    import re
+
     table = "agent_instance_commands"
     if table not in _table_names(backend, connection):
         raise DatabaseMigrationError("agent_instance_commands table is missing")
@@ -1045,14 +1046,81 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone()
         definition = str(row[0] or "") if row else ""
+        old_check = "CHECK (action IN ('status','doctor','start','stop','restart','remove'))"
         if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" not in definition:
-            raise DatabaseMigrationError(
-                "SQLite instance command action CHECK excludes systemd_lifecycle_evidence; "
-                "safe table reconstruction is required before Baseline v22"
+            if old_check not in definition:
+                raise DatabaseMigrationError("unknown SQLite command action constraint")
+            if connection.in_transaction:
+                raise DatabaseMigrationError(
+                    "SQLite evidence table rebuild requires a separate transaction"
+                )
+            if connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name=?",
+                (table,),
+            ).fetchone()[0]:
+                raise DatabaseMigrationError("SQLite command triggers require manual review")
+            indexes = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' "
+                "AND tbl_name=? AND sql IS NOT NULL", (table,)
+            ).fetchall()
+            original_fk = connection.execute("PRAGMA foreign_keys").fetchone()[0]
+            new_definition = definition.replace(
+                old_check,
+                "CHECK (action IN ('status','doctor','save','start','stop',"
+                "'restart','remove','systemd_lifecycle_evidence'))",
+                1,
             )
+            new_definition, count = re.subn(
+                r'^(CREATE\\s+TABLE\\s+)(?:"agent_instance_commands"|agent_instance_commands)',
+                r'\\1"agent_instance_commands_v22_new"',
+                new_definition,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if count != 1:
+                raise DatabaseMigrationError("unsupported SQLite command table DDL")
+            columns = [row[1] for row in connection.execute(
+                "PRAGMA table_info(agent_instance_commands)"
+            )]
+            if "parameters_json" not in columns:
+                new_definition = new_definition.rstrip()
+                if not new_definition.endswith(")"):
+                    raise DatabaseMigrationError("unsupported SQLite command table layout")
+                new_definition = new_definition[:-1] + ", parameters_json TEXT)"
+            quoted = ",".join('"' + name.replace('"', '""') + '"' for name in columns)
+            try:
+                if original_fk:
+                    connection.execute("PRAGMA foreign_keys=OFF")
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(new_definition)
+                connection.execute(
+                    f'INSERT INTO "agent_instance_commands_v22_new" ({quoted}) '
+                    f'SELECT {quoted} FROM "agent_instance_commands"'
+                )
+                connection.execute('DROP TABLE "agent_instance_commands"')
+                connection.execute(
+                    'ALTER TABLE "agent_instance_commands_v22_new" '
+                    'RENAME TO "agent_instance_commands"'
+                )
+                for index in indexes:
+                    connection.execute(index[0])
+                violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise DatabaseMigrationError("SQLite evidence rebuild foreign key violations")
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+            finally:
+                if original_fk:
+                    connection.execute("PRAGMA foreign_keys=ON")
+            return
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
-        _execute_script(backend, connection, f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};")
+        _execute_script(
+            backend, connection,
+            f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};",
+        )
     if "parameters_json" not in _column_names(backend, connection, table):
         raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
 
