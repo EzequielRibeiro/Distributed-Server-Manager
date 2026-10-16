@@ -1029,6 +1029,127 @@ def _upgrade_dayz_management(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("DayZ management baseline upgrade incomplete")
 
 
+
+def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None:
+    """Add the command parameters required by evidence and maintenance queues.
+
+    Refuse unknown action constraints instead of silently weakening them.
+    The separate action-constraint migration must be validated before enabling
+    systemd_lifecycle_evidence on previously installed SQLite databases.
+    """
+    table = "agent_instance_commands"
+    if table not in _table_names(backend, connection):
+        raise DatabaseMigrationError("agent_instance_commands table is missing")
+    if backend.name == "postgresql":
+        constraints = connection.execute(
+            "SELECT conname, pg_get_constraintdef(oid) AS definition "
+            "FROM pg_constraint WHERE conrelid='agent_instance_commands'::regclass "
+            "AND contype='c'"
+        ).fetchall()
+        action_checks = [row for row in constraints if "action" in str(row["definition"]).lower()]
+        if len(action_checks) != 1:
+            raise DatabaseMigrationError(
+                "expected exactly one PostgreSQL instance command action CHECK"
+            )
+        constraint = action_checks[0]
+        definition = str(constraint["definition"])
+        if "systemd_lifecycle_evidence" not in definition:
+            # Historical baselines may omit 'save'; validate the actual
+            # allowlist rather than requiring every modern action already.
+            import re
+            existing_actions = set(re.findall(r"'([a-z_]+)'", definition))
+            known_actions = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
+            if not {"status", "doctor"}.issubset(existing_actions) or not existing_actions.issubset(known_actions):
+                raise DatabaseMigrationError("unknown PostgreSQL instance command action CHECK")
+            name = str(constraint["conname"])
+            quoted_name = '"' + name.replace('"', '""') + '"'
+            connection.execute("ALTER TABLE agent_instance_commands ALTER COLUMN action TYPE TEXT")
+            connection.execute(
+                f"ALTER TABLE agent_instance_commands DROP CONSTRAINT {quoted_name}"
+            )
+            connection.execute(
+                "ALTER TABLE agent_instance_commands ADD CONSTRAINT "
+                "agent_instance_commands_action_evidence_check CHECK "
+                "(action IN ('status','doctor','save','start','stop','restart',"
+                "'remove','systemd_lifecycle_evidence'))"
+            )
+    if backend.name == "sqlite":
+        import re
+        row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone()
+        definition = str(row[0] or "") if row else ""
+        match = re.search(
+            r"\\baction\\s+TEXT\\s+NOT\\s+NULL\\s+CHECK\\s*\\(\\s*action\\s+IN\\s*\\(([^)]*)\\)\\s*\\)",
+            definition, re.IGNORECASE,
+        )
+        if match and "systemd_lifecycle_evidence" not in match.group(1):
+            old_actions = re.findall(r"'([^']+)'", match.group(1))
+            allowed = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
+            if not {"status", "doctor"}.issubset(old_actions) or not set(old_actions).issubset(allowed):
+                raise DatabaseMigrationError("unknown SQLite instance command action CHECK")
+            # Rebuild only when no other table depends on this command table.
+            # SQLite DROP TABLE may cascade-delete dependent rows with FK enabled.
+            for other in _table_names(backend, connection) - {table}:
+                if not other.replace("_", "").isalnum():
+                    raise DatabaseMigrationError("unsafe SQLite table identifier")
+                references = connection.execute(f'PRAGMA foreign_key_list("{other}")').fetchall()
+                if any(str(fk[2]) == table for fk in references):
+                    raise DatabaseMigrationError("SQLite command table has inbound foreign keys")
+            objects = connection.execute(
+                "SELECT type,name,sql FROM sqlite_master "
+                "WHERE tbl_name=? AND type IN ('index','trigger') AND sql IS NOT NULL",
+                (table,),
+            ).fetchall()
+            if any(str(obj[0]) == "trigger" for obj in objects):
+                raise DatabaseMigrationError("SQLite command table has triggers requiring review")
+            new_actions = sorted(allowed | {"systemd_lifecycle_evidence"})
+            check = "action TEXT NOT NULL CHECK (action IN (" + ",".join(
+                "'" + action + "'" for action in new_actions
+            ) + "))"
+            updated = definition[:match.start()] + check + definition[match.end():]
+            if "parameters_json" not in _column_names(backend, connection, table):
+                updated = updated.rstrip().rstrip(";")
+                closing = updated.rfind(")")
+                updated = updated[:closing] + ", parameters_json TEXT" + updated[closing:]
+            updated = re.sub(
+                r"\\bCREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?agent_instance_commands\\b",
+                "CREATE TABLE agent_instance_commands_v22_shadow", updated, count=1, flags=re.IGNORECASE,
+            )
+            if "agent_instance_commands_v22_shadow" in _table_names(backend, connection):
+                raise DatabaseMigrationError("SQLite evidence shadow table already exists")
+            connection.execute("SAVEPOINT capivara_evidence_v22")
+            try:
+                connection.execute(updated)
+                old_columns = [str(col[1]) for col in connection.execute(
+                    "PRAGMA table_info(agent_instance_commands)"
+                )]
+                names = ",".join('"' + col.replace('"', '""') + '"' for col in old_columns)
+                connection.execute(
+                    f"INSERT INTO agent_instance_commands_v22_shadow ({names}) "
+                    f"SELECT {names} FROM agent_instance_commands"
+                )
+                connection.execute("DROP TABLE agent_instance_commands")
+                connection.execute(
+                    "ALTER TABLE agent_instance_commands_v22_shadow RENAME TO agent_instance_commands"
+                )
+                for obj in objects:
+                    connection.execute(str(obj[2]))
+                violations = connection.execute("PRAGMA foreign_key_check").fetchall()
+                if violations:
+                    raise DatabaseMigrationError("SQLite evidence rebuild foreign key violations")
+                connection.execute("RELEASE SAVEPOINT capivara_evidence_v22")
+            except Exception:
+                connection.execute("ROLLBACK TO SAVEPOINT capivara_evidence_v22")
+                connection.execute("RELEASE SAVEPOINT capivara_evidence_v22")
+                raise
+    if "parameters_json" not in _column_names(backend, connection, table):
+        column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
+        _execute_script(backend, connection, f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};")
+    if "parameters_json" not in _column_names(backend, connection, table):
+        raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -1051,6 +1172,7 @@ UPGRADES = (
     BaselineUpgrade(19, "alert_customer_identity", _upgrade_alert_customer_identity),
     BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
     BaselineUpgrade(21, "dayz_management_operations", _upgrade_dayz_management),
+    BaselineUpgrade(22, "instance_evidence_parameters", _upgrade_instance_evidence_parameters),
 )
 
 
