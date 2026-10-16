@@ -183,6 +183,48 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
 
 
 
+
+class PostgreSQLInstanceEvidenceGuardTest(unittest.TestCase):
+    """Reject PostgreSQL CHECK predicates that a literal-set parser could miss."""
+
+    def test_compound_action_check_fails_before_ddl(self):
+        from unittest.mock import patch
+
+        class Result:
+            def fetchall(self):
+                return [{
+                    "conname": "legacy_action_check",
+                    "definition": (
+                        "CHECK ((action = ANY (ARRAY['status'::text,"
+                        "'doctor'::text,'start'::text,'stop'::text,"
+                        "'restart'::text,'remove'::text])) "
+                        "AND action <> 'systemd_lifecycle_evidence'::text)"
+                    ),
+                }]
+
+        class Connection:
+            def __init__(self):
+                self.statements = []
+
+            def execute(self, sql, params=None):
+                self.statements.append(sql)
+                if "pg_constraint" in sql:
+                    return Result()
+                raise AssertionError("DDL must not run on an unknown CHECK")
+
+        connection = Connection()
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ):
+            with self.assertRaisesRegex(Exception, "compound PostgreSQL"):
+                _upgrade_instance_evidence_parameters(
+                    SimpleNamespace(name="postgresql"), connection
+                )
+        self.assertEqual(1, len(connection.statements))
+
+
+
 class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
     """Exercise the MySQL preflight without a live MySQL server."""
 
