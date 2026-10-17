@@ -55,13 +55,14 @@ def _run_steam(selection:dict[str,Any],target:Path)->None:
  branch=str(install.get("branch") or selection.get("branch") or "public").strip();_safe_name(branch,"Steam branch")
  auth=str(selection.get("auth") or "anonymous").strip().lower();login="anonymous" if auth=="anonymous" else str(os.environ.get("DSM_STEAM_USER") or "").strip()
  if not login:raise RuntimeError("Steam authentication is required on this Agent")
- argv=[_steamcmd(),"+force_install_dir",str(target),"+login",login,"+app_update",app_id]
+ argv=[_steamcmd(),"+@sSteamCmdForcePlatformType","linux","+force_install_dir",str(target),"+login",login,"+app_update",app_id]
  if branch!="public":argv.extend(["-beta",branch])
  argv.extend(["validate","+quit"]);target.mkdir(parents=True,exist_ok=True)
  session_home=str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or "/var/lib/capivara-agent").resolve())
  cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env={**os.environ,"HOME":session_home,"CAPIVARA_STEAM_HOME":session_home});output=cp.stdout or ""
  if cp.returncode!=0:
   lowered=output.lower()
+  if "no subscription" in lowered:raise RuntimeError("Steam account has no subscription for this app; configure an authorized Steam account on the Agent")
   if "password" in lowered or "steam guard" in lowered or "two-factor" in lowered:raise RuntimeError("Steam authentication is required or expired on this Agent")
   raise RuntimeError(f"SteamCMD failed with exit code {cp.returncode}")
 def _download(url:str,destination:Path)->None:
