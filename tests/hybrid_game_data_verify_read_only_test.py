@@ -25,7 +25,7 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
         self.bin = self.base / "bin"
         self.bin.mkdir()
         steam = self.bin / "steamcmd"
-        steam.write_text("#!/bin/sh\ncase \"$*\" in *+app_update*|*+force_install_dir*) exit 93;; esac\nprintf '%s\\n' '\"public\"' '{' '\"buildid\" \"1002\"' '}'\n")
+        steam.write_text("#!/bin/sh\ncase \"$*\" in *+app_update*|*+force_install_dir*) exit 93;; esac\nprintf '%s\\n' '\"branches\"' '{' '\"public\"' '{' '\"buildid\" \"1002\"' '}' '}'\n")
         steam.chmod(0o755)
         self.marker = self.root / "installer-was-called"
         installer = self.root / "installer/install_selection.sh"
