@@ -49,11 +49,17 @@ class ServerUpdateRepository:
   installed=_short(detail.get('installed_version'));available=_short(detail.get('available_version'))
   if not available or not available.isdecimal() or (installed is not None and not installed.isdecimal()):
    raise ValueError('invalid Steam build identifiers')
+  if detail['state']=='up_to_date' and installed!=available:raise ValueError('inconsistent Steam build state')
+  if detail['state']=='update_available' and (not installed or installed==available):raise ValueError('inconsistent Steam build state')
+  if detail['state']=='unknown' and installed is not None:raise ValueError('inconsistent Steam build state')
   now=utc_timestamp();ph=self.dialect.placeholder
   with self.session(transaction=True) as session:
-   row=session.execute(f'SELECT s.target_key,s.active_job_id FROM instance_update_state s JOIN instance_update_policy p ON p.instance_id=s.instance_id WHERE s.instance_id={ph}',(iid,)).fetchone()
+   row=session.execute(f'SELECT s.target_key,s.active_job_id,p.selection_json FROM instance_update_state s JOIN instance_update_policy p ON p.instance_id=s.instance_id WHERE s.instance_id={ph}',(iid,)).fetchone()
    if not row:raise KeyError(iid)
    if str(row['target_key'])!=str(detail.get('app_id')):raise ValueError('Steam application mismatch')
+   selection=json.loads(row['selection_json']) if row.get('selection_json') else {}
+   expected_branch=str((selection.get('install') or {}).get('branch') or selection.get('branch') or 'public')
+   if str(detail.get('branch') or 'public')!=expected_branch:raise ValueError('Steam branch mismatch')
    if row['active_job_id']:raise RuntimeError('update operation active')
    session.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},last_checked_at={ph},last_error_code=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,str(detail['state']),now,now,iid))
   return {'instance_id':iid,'installed_version':installed,'available_version':available,'state':detail['state'],'last_checked_at':now,'source':'read_only_steam_probe'}

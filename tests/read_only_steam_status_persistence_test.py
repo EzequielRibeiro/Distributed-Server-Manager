@@ -13,7 +13,7 @@ class ReadOnlySteamStatusPersistenceTest(unittest.TestCase):
   self.repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
   self.repo.dialect=MagicMock(placeholder='?')
   self.session=MagicMock()
-  self.session.execute.return_value.fetchone.return_value={'target_key':'223350','active_job_id':None}
+  self.session.execute.return_value.fetchone.return_value={'target_key':'223350','active_job_id':None,'selection_json':'{}'}
   class Context:
    def __enter__(inner):return self.session
    def __exit__(inner,*args):return False
@@ -30,9 +30,15 @@ class ReadOnlySteamStatusPersistenceTest(unittest.TestCase):
   with self.assertRaises(ValueError):self.repo.record_read_only_probe('dayz',{**self.detail,'app_id':'999'})
   self.assertEqual(self.session.execute.call_count,1)
  def test_rejects_active_operation(self):
-  self.session.execute.return_value.fetchone.return_value={'target_key':'223350','active_job_id':'running'}
+  self.session.execute.return_value.fetchone.return_value={'target_key':'223350','active_job_id':'running','selection_json':'{}'}
   with self.assertRaises(RuntimeError):self.repo.record_read_only_probe('dayz',self.detail)
   self.assertEqual(self.session.execute.call_count,1)
+ def test_rejects_branch_mismatch(self):
+  with self.assertRaises(ValueError):self.repo.record_read_only_probe('dayz',{**self.detail,'branch':'experimental'})
+  self.assertEqual(self.session.execute.call_count,1)
+ def test_rejects_inconsistent_state(self):
+  with self.assertRaises(ValueError):self.repo.record_read_only_probe('dayz',{**self.detail,'state':'up_to_date'})
+  self.session.execute.assert_not_called()
  def test_rejects_malformed_versions(self):
   with self.assertRaises(ValueError):self.repo.record_read_only_probe('dayz',{**self.detail,'available_version':'bad'})
   self.session.execute.assert_not_called()
