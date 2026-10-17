@@ -52,6 +52,28 @@ def main() -> int:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": "runtime selection missing"})
         return 1
 
+    # Verification must never enter install-json, which mutates game files.
+    if str(command.get("action") or "").strip().lower() == "verify":
+        try:
+            provider = str(selection.get("provider") or "").strip().lower()
+            if provider != "steam":
+                raise ValueError("read_only_version_probe_unsupported_provider")
+            from hybrid_steam_version_probe import probe
+            status = probe(selection)
+            target = Path(str(selection.get("install_dir")))
+            _write_result(result_path, {
+                "job_id": job_id, "status": "completed", "progress": 100,
+                "provider": provider, "game": selection.get("game"),
+                "target_path": str(target), "update_status": status,
+            })
+            return 0
+        except Exception as exc:
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": str(exc)[:2000],
+            })
+            return 1
+
     _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
     installer = root / "installer" / "install_selection.sh"
     environment = {**os.environ, "DSM_ROOT": str(root)}
