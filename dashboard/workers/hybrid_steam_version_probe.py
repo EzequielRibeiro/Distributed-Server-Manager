@@ -53,25 +53,40 @@ def probe(selection: dict) -> dict:
     inside = False
     depth = 0
     available = None
+    in_branches = False
+    branches_pending = False
+    branches_depth = 0
     for raw in (completed.stdout or "").splitlines():
         line = raw.strip()
-        if not inside and line == '"' + branch + '"':
-            pending = True
+        if not in_branches:
+            if line == '"branches"':
+                branches_pending = True
+                continue
+            if branches_pending:
+                if line == "{":
+                    in_branches, branches_depth = True, 1
+                branches_pending = False
             continue
-        if pending and not inside:
-            if line == "{":
+        if not inside:
+            if line == '"' + branch + '"':
+                pending = True
+                continue
+            if pending and line == "{":
                 inside, depth, pending = True, 1, False
-            elif line:
-                pending = False
+                continue
+            pending = False
+            branches_depth += line.count("{") - line.count("}")
+            if branches_depth <= 0:
+                break
             continue
-        if inside:
-            depth += line.count("{") - line.count("}")
-            match = _BUILD.search(line)
-            if match:
-                available = match.group(1)
-                break
-            if depth <= 0:
-                break
+        depth += line.count("{") - line.count("}")
+        match = _BUILD.search(line)
+        if match:
+            available = match.group(1)
+            break
+        if depth <= 0:
+            inside = False
+            branches_depth -= 1
     if not available:
         raise RuntimeError("read_only_version_probe_metadata_unavailable")
     return {
