@@ -41,6 +41,22 @@ class ServerUpdateRepository:
    if state:s.execute(f'UPDATE instance_update_state SET agent_id={ph},provider={ph},target_key={ph},updated_at={ph} WHERE instance_id={ph}',(aid,provider,target,now,iid))
    else:s.execute('INSERT INTO instance_update_state(instance_id,agent_id,provider,target_key,state,rollback_supported,updated_at) '+f'VALUES ({self.dialect.parameters(7)})',(iid,aid,provider,target,'unknown',0,now))
   return self.snapshot(iid)
+ def record_read_only_probe(self,instance_id:str,detail:dict[str,Any])->dict[str,Any]:
+  """Persist an independent Steam observation without scheduling any game operation."""
+  iid=str(instance_id or '').strip()
+  if not iid or not isinstance(detail,dict) or detail.get('provider')!='steam' or detail.get('state') not in ('up_to_date','update_available','unknown'):
+   raise ValueError('invalid read-only Steam observation')
+  installed=_short(detail.get('installed_version'));available=_short(detail.get('available_version'))
+  if not available or not available.isdecimal() or (installed is not None and not installed.isdecimal()):
+   raise ValueError('invalid Steam build identifiers')
+  now=utc_timestamp();ph=self.dialect.placeholder
+  with self.session(transaction=True) as session:
+   row=session.execute(f'SELECT s.target_key,s.active_job_id FROM instance_update_state s JOIN instance_update_policy p ON p.instance_id=s.instance_id WHERE s.instance_id={ph}',(iid,)).fetchone()
+   if not row:raise KeyError(iid)
+   if str(row['target_key'])!=str(detail.get('app_id')):raise ValueError('Steam application mismatch')
+   if row['active_job_id']:raise RuntimeError('update operation active')
+   session.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},last_checked_at={ph},last_error_code=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,str(detail['state']),now,now,iid))
+  return {'instance_id':iid,'installed_version':installed,'available_version':available,'state':detail['state'],'last_checked_at':now,'source':'read_only_steam_probe'}
  def set_content_policy(self,*,instance_id:str,content_id:str,mode:Any,requested_by:str|None=None)->dict[str,Any]:
   iid=str(instance_id or '').strip();cid=str(content_id or '').strip();normalized=normalize_content_update_mode(mode);ph=self.dialect.placeholder;now=utc_timestamp()
   if not iid or not cid or len(iid)>191 or len(cid)>191:raise ValueError('valid instance_id and content_id are required')
