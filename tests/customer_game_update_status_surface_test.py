@@ -16,7 +16,9 @@ class CustomerGameUpdateStatusSurfaceTest(unittest.TestCase):
         start = source.index('def instance_update_policy_view(')
         end = source.index('\ndef configure_server_update(', start)
         body = source[start:end]
-        self.assertIn("'game_update':snapshot.get('state') if configured else None", body)
+        self.assertIn("'game_update':public_state", body)
+        self.assertIn("'last_checked_at'", body)
+        self.assertNotIn("'game_update':snapshot.get('state')", body)
         self.assertIn('repo.snapshot(iid)', body)
         self.assertNotIn('queue_check(', body)
         self.assertNotIn('queue_update(', body)
