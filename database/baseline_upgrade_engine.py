@@ -1278,6 +1278,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
 
         def check_actions(clause):
             value = re.sub(r"[`\s]", "", str(clause)).lower()
+            value = value.replace("\\'", "'")
             value = re.sub(r"_utf8mb4(?=')", "", value)
             while value.startswith("(") and value.endswith(")"):
                 value = value[1:-1]
@@ -1296,6 +1297,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         for row in action_checks:
             actions = check_actions(row["check_clause"])
             normalized_clause = re.sub(r"[`\s]", "", str(row["check_clause"])).lower()
+            normalized_clause = normalized_clause.replace("\\'", "'")
             normalized_clause = re.sub(r"_utf8mb4(?=')", "", normalized_clause)
             name = str(row["constraint_name"])
             if (

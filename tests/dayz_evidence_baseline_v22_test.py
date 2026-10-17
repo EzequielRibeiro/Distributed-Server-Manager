@@ -513,7 +513,7 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
         expanded = "('status','doctor','start','stop','restart','remove','systemd_lifecycle_evidence')"
         def mysql_check(actions):
             return "(`action` in (" + ",".join(
-                "_utf8mb4" + value for value in actions[1:-1].split(",")
+                "_utf8mb4" + value.replace("'", "\\'") for value in actions[1:-1].split(",")
             ) + "))"
 
         class Cursor:
