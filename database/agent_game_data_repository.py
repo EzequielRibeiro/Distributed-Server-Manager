@@ -106,6 +106,8 @@ class AgentGameDataRepository:
                 selection_json=json.dumps(_redacted_selection(current.get("selection")),separators=(",",":"),sort_keys=True)
                 s.execute("UPDATE agent_game_data_jobs SET "+f"status={ph},progress={ph},selection_json={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} WHERE job_id={ph} AND status NOT IN ('completed','failed')",(status,progress,selection_json,result_json,error,now,now,job_id))
         updated=self.snapshot(job_id)
+        if str(current.get("status") or "") in FINAL_STATES:
+            return updated
         if str(current.get("action") or "") not in MAINTENANCE_ACTIONS:
             try:
                 from server_update_repository import ServerUpdateRepository

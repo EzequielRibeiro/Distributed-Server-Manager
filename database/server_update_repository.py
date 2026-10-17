@@ -41,6 +41,28 @@ class ServerUpdateRepository:
    if state:s.execute(f'UPDATE instance_update_state SET agent_id={ph},provider={ph},target_key={ph},updated_at={ph} WHERE instance_id={ph}',(aid,provider,target,now,iid))
    else:s.execute('INSERT INTO instance_update_state(instance_id,agent_id,provider,target_key,state,rollback_supported,updated_at) '+f'VALUES ({self.dialect.parameters(7)})',(iid,aid,provider,target,'unknown',0,now))
   return self.snapshot(iid)
+ def record_read_only_probe(self,instance_id:str,detail:dict[str,Any])->dict[str,Any]:
+  """Persist an independent Steam observation without scheduling any game operation."""
+  iid=str(instance_id or '').strip()
+  if not iid or not isinstance(detail,dict) or detail.get('provider')!='steam' or detail.get('state') not in ('up_to_date','update_available','unknown'):
+   raise ValueError('invalid read-only Steam observation')
+  installed=_short(detail.get('installed_version'));available=_short(detail.get('available_version'))
+  if not available or not available.isdecimal() or (installed is not None and not installed.isdecimal()):
+   raise ValueError('invalid Steam build identifiers')
+  if detail['state']=='up_to_date' and installed!=available:raise ValueError('inconsistent Steam build state')
+  if detail['state']=='update_available' and (not installed or installed==available):raise ValueError('inconsistent Steam build state')
+  if detail['state']=='unknown' and installed is not None:raise ValueError('inconsistent Steam build state')
+  now=utc_timestamp();ph=self.dialect.placeholder
+  with self.session(transaction=True) as session:
+   row=session.execute(f'SELECT s.target_key,s.active_job_id,p.selection_json FROM instance_update_state s JOIN instance_update_policy p ON p.instance_id=s.instance_id WHERE s.instance_id={ph}',(iid,)).fetchone()
+   if not row:raise KeyError(iid)
+   if str(row['target_key'])!=str(detail.get('app_id')):raise ValueError('Steam application mismatch')
+   selection=json.loads(row['selection_json']) if row.get('selection_json') else {}
+   expected_branch=str((selection.get('install') or {}).get('branch') or selection.get('branch') or 'public')
+   if str(detail.get('branch') or 'public')!=expected_branch:raise ValueError('Steam branch mismatch')
+   if row['active_job_id']:raise RuntimeError('update operation active')
+   session.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},last_checked_at={ph},last_error_code=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,str(detail['state']),now,now,iid))
+  return {'instance_id':iid,'installed_version':installed,'available_version':available,'state':detail['state'],'last_checked_at':now,'source':'read_only_steam_probe'}
  def set_content_policy(self,*,instance_id:str,content_id:str,mode:Any,requested_by:str|None=None)->dict[str,Any]:
   iid=str(instance_id or '').strip();cid=str(content_id or '').strip();normalized=normalize_content_update_mode(mode);ph=self.dialect.placeholder;now=utc_timestamp()
   if not iid or not cid or len(iid)>191 or len(cid)>191:raise ValueError('valid instance_id and content_id are required')
@@ -131,7 +153,8 @@ class ServerUpdateRepository:
   if not isinstance(detail,dict):detail={}
   state=str(detail.get('state') or ('updated' if operation=='update' else 'unknown'));installed=detail.get('installed_version');available=detail.get('available_version')
   with self.session(transaction=True) as s:
-   s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid))
+   cursor=s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid,str(job['job_id'])))
+   if cursor.rowcount != 1:return
    if operation=='update':s.execute(f'UPDATE instance_update_runs SET installed_after={ph},status={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',(installed,'completed',now,now,job['job_id']))
   if operation=='check' and state=='update_available':
    row=self._row(iid);policy={'mode':row['mode'],'timezone':row['timezone'],'weekdays':json.loads(row['weekdays_json']),'start_time':row['start_time'],'duration_minutes':row['duration_minutes'],'check_interval_seconds':row['check_interval_seconds'],'backup_before_update':bool(row['backup_before_update'])}
