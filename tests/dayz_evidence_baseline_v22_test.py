@@ -524,6 +524,8 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                     return {"data_type": "varchar", "max_length": state["width"]}
                 if "CHECK_CLAUSE" in self.query:
                     return {"check_clause": "(`action` in " + expanded + ")"}
+                if "SELECT VERSION()" in self.query:
+                    return {"version": "8.4.0"}
                 raise AssertionError(self.query)
 
             def fetchall(self):

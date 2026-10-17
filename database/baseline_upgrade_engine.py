@@ -1278,6 +1278,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
 
         def check_actions(clause):
             value = re.sub(r"[`\s]", "", str(clause)).lower()
+            value = re.sub(r"(?<=[(,])_[a-z0-9]+'", "'", value)
             while value.startswith("(") and value.endswith(")"):
                 value = value[1:-1]
             match = re.fullmatch(r"actionin\((.*)\)", value)
@@ -1297,7 +1298,8 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 or not re.fullmatch(r"chk_agent_instance_commands_(?:v3_)?action", name)
             ):
                 raise DatabaseMigrationError(
-                    "MySQL action CHECK requires explicit review before v22"
+                    "MySQL action CHECK requires explicit review before v22: "
+                    f"{name}={str(row['check_clause'])[:500]}"
                 )
             if actions == legacy_actions:
                 legacy_checks.append(name)
@@ -1339,9 +1341,16 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             # Avoid leaving an unguarded table between DDL statements.
             name = legacy_checks[0]
             allowed = ",".join(f"'{action}'" for action in supported_actions)
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute("SELECT VERSION() AS version")
+                server_version = str(cursor.fetchone()["version"]).lower()
+            finally:
+                cursor.close()
+            drop_keyword = "CONSTRAINT" if "mariadb" in server_version else "CHECK"
             _execute_script(
                 backend, connection,
-                f"ALTER TABLE {table} DROP CHECK {name}, "
+                f"ALTER TABLE {table} DROP {drop_keyword} {name}, "
                 f"ADD CONSTRAINT {name} CHECK (action IN ({allowed}));",
             )
             cursor = connection.cursor(dictionary=True)
