@@ -52,15 +52,47 @@ def main() -> int:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": "runtime selection missing"})
         return 1
 
-    # A version probe must never enter the install-json path: that path
-    # performs an atomic installation, even when the queued action is verify.
-    # Fail closed until a read-only provider version probe is available.
+    # Verification must never enter install-json, which mutates game files.
     if str(command.get("action") or "").strip().lower() == "verify":
-        _write_result(result_path, {
-            "job_id": job_id, "status": "failed", "progress": 100,
-            "error": "read_only_version_probe_unavailable",
-        })
-        return 1
+        try:
+            import shutil
+            provider = str(selection.get("provider") or "").strip().lower()
+            if provider != "steam":
+                raise ValueError("read_only_version_probe_unsupported_provider")
+            install = selection.get("install")
+            if not isinstance(install, dict):
+                raise ValueError("read_only_version_probe_missing_metadata")
+            app_id = str(install.get("package_id") or "").strip()
+            if not re.fullmatch(r"[0-9]{1,20}", app_id):
+                raise ValueError("read_only_version_probe_invalid_app_id")
+            target = Path(str(selection.get("install_dir") or ""))
+            if not target.is_absolute() or not target.is_dir():
+                raise ValueError("read_only_version_probe_missing_target")
+            steamcmd = shutil.which("steamcmd")
+            if steamcmd is None and Path("/usr/games/steamcmd").is_file():
+                steamcmd = "/usr/games/steamcmd"
+            if steamcmd is None:
+                raise RuntimeError("read_only_version_probe_steamcmd_unavailable")
+            agent_runtime = root / "agents" / "linux" / "runtime"
+            if not (agent_runtime / "server_update_provider.py").is_file():
+                raise RuntimeError("read_only_version_probe_detector_unavailable")
+            sys.path.insert(0, str(agent_runtime))
+            from server_update_provider import detect_update
+            status = detect_update(selection, target, steamcmd)
+            if not status.get("detector_supported"):
+                raise RuntimeError("read_only_version_probe_unsupported")
+            _write_result(result_path, {
+                "job_id": job_id, "status": "completed", "progress": 100,
+                "provider": provider, "game": selection.get("game"),
+                "target_path": str(target), "update_status": status,
+            })
+            return 0
+        except Exception as exc:
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": str(exc)[:2000],
+            })
+            return 1
 
     _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
     installer = root / "installer" / "install_selection.sh"

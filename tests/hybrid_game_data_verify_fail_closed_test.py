@@ -33,7 +33,7 @@ class HybridVerifyFailClosedTest(unittest.TestCase):
             self.assertFalse(marker.exists())
             payload = json.loads(result.read_text(encoding="utf-8"))
             self.assertEqual(payload["status"], "failed")
-            self.assertEqual(payload["error"], "read_only_version_probe_unavailable")
+            self.assertEqual(payload["error"], "read_only_version_probe_missing_metadata")
 
 
 if __name__ == "__main__":
