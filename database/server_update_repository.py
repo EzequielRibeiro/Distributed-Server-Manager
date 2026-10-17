@@ -153,7 +153,8 @@ class ServerUpdateRepository:
   if not isinstance(detail,dict):detail={}
   state=str(detail.get('state') or ('updated' if operation=='update' else 'unknown'));installed=detail.get('installed_version');available=detail.get('available_version')
   with self.session(transaction=True) as s:
-   s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid))
+   cursor=s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid,str(job['job_id'])))
+   if cursor.rowcount != 1:return
    if operation=='update':s.execute(f'UPDATE instance_update_runs SET installed_after={ph},status={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',(installed,'completed',now,now,job['job_id']))
   if operation=='check' and state=='update_available':
    row=self._row(iid);policy={'mode':row['mode'],'timezone':row['timezone'],'weekdays':json.loads(row['weekdays_json']),'start_time':row['start_time'],'duration_minutes':row['duration_minutes'],'check_interval_seconds':row['check_interval_seconds'],'backup_before_update':bool(row['backup_before_update'])}
