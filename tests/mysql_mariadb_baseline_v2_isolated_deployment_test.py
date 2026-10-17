@@ -176,6 +176,35 @@ def main() -> int:
             ):
                 raise AssertionError("backup_jobs backup_id lookup index is missing")
 
+            # Evidence v22 must accept the production command identifier
+            # without widening the set of unrelated permitted actions.
+            evidence_column = rows(
+                cursor,
+                "SELECT DATA_TYPE AS data_type, CHARACTER_MAXIMUM_LENGTH AS max_length "
+                "FROM information_schema.columns WHERE table_schema=DATABASE() "
+                "AND table_name='agent_instance_commands' AND column_name='action'",
+            )
+            if len(evidence_column) != 1:
+                raise AssertionError("missing evidence action column")
+            action_col = evidence_column[0]
+            if str(action_col["data_type"]).lower() == "varchar" and int(action_col["max_length"]) < 26:
+                raise AssertionError("evidence action column remains too short")
+            action_checks = rows(
+                cursor,
+                "SELECT cc.CHECK_CLAUSE AS check_clause "
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.check_constraints cc "
+                "ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA "
+                "AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME "
+                "WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME='agent_instance_commands' "
+                "AND tc.CONSTRAINT_TYPE='CHECK'",
+            )
+            if not any(
+                "systemd_lifecycle_evidence" in str(r["check_clause"])
+                for r in action_checks
+            ):
+                raise AssertionError("evidence action CHECK is not installed")
+
             # Prove that the latest registered post-baseline upgrade can be replayed
             # against the real server flavor. Remove only the latest ledger row and
             # prove that the additive upgrade can be replayed idempotently.
