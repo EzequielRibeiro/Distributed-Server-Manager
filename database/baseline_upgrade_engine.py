@@ -1031,121 +1031,359 @@ def _upgrade_dayz_management(backend: Any, connection: Any) -> None:
 
 
 def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None:
-    """Add the command parameters required by evidence and maintenance queues.
+    """Upgrade evidence command parameters without weakening unknown constraints.
 
-    Refuse unknown action constraints instead of silently weakening them.
-    The separate action-constraint migration must be validated before enabling
-    systemd_lifecycle_evidence on previously installed SQLite databases.
+    SQLite legacy CHECK tables require an isolated transaction so foreign keys
+    can be disabled before the table swap and restored after commit.
     """
+    import re
+
     table = "agent_instance_commands"
     if table not in _table_names(backend, connection):
         raise DatabaseMigrationError("agent_instance_commands table is missing")
-    if backend.name == "postgresql":
-        constraints = connection.execute(
-            "SELECT conname, pg_get_constraintdef(oid) AS definition "
-            "FROM pg_constraint WHERE conrelid='agent_instance_commands'::regclass "
-            "AND contype='c'"
-        ).fetchall()
-        action_checks = [row for row in constraints if "action" in str(row["definition"]).lower()]
-        if len(action_checks) != 1:
-            raise DatabaseMigrationError(
-                "expected exactly one PostgreSQL instance command action CHECK"
-            )
-        constraint = action_checks[0]
-        definition = str(constraint["definition"])
-        if "systemd_lifecycle_evidence" not in definition:
-            # Historical baselines may omit 'save'; validate the actual
-            # allowlist rather than requiring every modern action already.
-            import re
-            existing_actions = set(re.findall(r"'([a-z_]+)'", definition))
-            known_actions = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
-            if not {"status", "doctor"}.issubset(existing_actions) or not existing_actions.issubset(known_actions):
-                raise DatabaseMigrationError("unknown PostgreSQL instance command action CHECK")
-            name = str(constraint["conname"])
-            quoted_name = '"' + name.replace('"', '""') + '"'
-            connection.execute("ALTER TABLE agent_instance_commands ALTER COLUMN action TYPE TEXT")
-            connection.execute(
-                f"ALTER TABLE agent_instance_commands DROP CONSTRAINT {quoted_name}"
-            )
-            connection.execute(
-                "ALTER TABLE agent_instance_commands ADD CONSTRAINT "
-                "agent_instance_commands_action_evidence_check CHECK "
-                "(action IN ('status','doctor','save','start','stop','restart',"
-                "'remove','systemd_lifecycle_evidence'))"
-            )
     if backend.name == "sqlite":
-        import re
         row = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
         ).fetchone()
         definition = str(row[0] or "") if row else ""
-        match = re.search(
-            r"\\baction\\s+TEXT\\s+NOT\\s+NULL\\s+CHECK\\s*\\(\\s*action\\s+IN\\s*\\(([^)]*)\\)\\s*\\)",
-            definition, re.IGNORECASE,
-        )
-        if match and "systemd_lifecycle_evidence" not in match.group(1):
-            old_actions = re.findall(r"'([^']+)'", match.group(1))
-            allowed = {"status", "doctor", "save", "start", "stop", "restart", "remove"}
-            if not {"status", "doctor"}.issubset(old_actions) or not set(old_actions).issubset(allowed):
-                raise DatabaseMigrationError("unknown SQLite instance command action CHECK")
-            # Rebuild only when no other table depends on this command table.
-            # SQLite DROP TABLE may cascade-delete dependent rows with FK enabled.
-            for other in _table_names(backend, connection) - {table}:
-                if not other.replace("_", "").isalnum():
-                    raise DatabaseMigrationError("unsafe SQLite table identifier")
-                references = connection.execute(f'PRAGMA foreign_key_list("{other}")').fetchall()
-                if any(str(fk[2]) == table for fk in references):
-                    raise DatabaseMigrationError("SQLite command table has inbound foreign keys")
-            objects = connection.execute(
-                "SELECT type,name,sql FROM sqlite_master "
-                "WHERE tbl_name=? AND type IN ('index','trigger') AND sql IS NOT NULL",
-                (table,),
-            ).fetchall()
-            if any(str(obj[0]) == "trigger" for obj in objects):
-                raise DatabaseMigrationError("SQLite command table has triggers requiring review")
-            new_actions = sorted(allowed | {"systemd_lifecycle_evidence"})
-            check = "action TEXT NOT NULL CHECK (action IN (" + ",".join(
-                "'" + action + "'" for action in new_actions
-            ) + "))"
-            updated = definition[:match.start()] + check + definition[match.end():]
-            if "parameters_json" not in _column_names(backend, connection, table):
-                updated = updated.rstrip().rstrip(";")
-                closing = updated.rfind(")")
-                updated = updated[:closing] + ", parameters_json TEXT" + updated[closing:]
-            updated = re.sub(
-                r"\\bCREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?agent_instance_commands\\b",
-                "CREATE TABLE agent_instance_commands_v22_shadow", updated, count=1, flags=re.IGNORECASE,
+        old_check = "CHECK (action IN ('status','doctor','start','stop','restart','remove'))"
+        # An existing evidence literal is not proof that its CHECK allows
+        # evidence: a second predicate may still prohibit the new action.
+        if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" in definition:
+            expected = (
+                "CHECK (action IN ('status','doctor','save','start','stop',"
+                "'restart','remove','systemd_lifecycle_evidence'))"
             )
-            if "agent_instance_commands_v22_shadow" in _table_names(backend, connection):
-                raise DatabaseMigrationError("SQLite evidence shadow table already exists")
-            connection.execute("SAVEPOINT capivara_evidence_v22")
+            known_status_check = (
+                "CHECK (status IN ('queued','delivered','completed','failed'))"
+            )
+            # The canonical table also has an independent status CHECK.
+            # Allow only that known extra predicate; fail closed for any
+            # other CHECK, including a second predicate on action.
+            if definition.count(expected) != 1:
+                raise DatabaseMigrationError("unknown SQLite evidence action constraint")
+            remaining = definition.replace(expected, "", 1)
+            remaining = remaining.replace(known_status_check, "", 1)
+            if re.search(r"\bCHECK\b", remaining, flags=re.IGNORECASE):
+                raise DatabaseMigrationError("unknown SQLite evidence action constraint")
+        if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" not in definition:
+            if old_check not in definition:
+                raise DatabaseMigrationError("unknown SQLite command action constraint")
+            if connection.in_transaction:
+                raise DatabaseMigrationError(
+                    "SQLite evidence table rebuild requires a separate transaction"
+                )
+            if connection.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND tbl_name=?",
+                (table,),
+            ).fetchone()[0]:
+                raise DatabaseMigrationError("SQLite command triggers require manual review")
+            indexes = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='index' "
+                "AND tbl_name=? AND sql IS NOT NULL", (table,)
+            ).fetchall()
+            original_fk = connection.execute("PRAGMA foreign_keys").fetchone()[0]
+            new_definition = definition.replace(
+                old_check,
+                "CHECK (action IN ('status','doctor','save','start','stop',"
+                "'restart','remove','systemd_lifecycle_evidence'))",
+                1,
+            )
+            new_definition, count = re.subn(
+                r'^(CREATE\s+TABLE\s+)(?:"agent_instance_commands"|agent_instance_commands)',
+                r'\1"agent_instance_commands_v22_new"',
+                new_definition,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+            if count != 1:
+                raise DatabaseMigrationError("unsupported SQLite command table DDL")
+            columns = [row[1] for row in connection.execute(
+                "PRAGMA table_info(agent_instance_commands)"
+            )]
+            if "parameters_json" not in columns:
+                new_definition = new_definition.rstrip()
+                if not new_definition.endswith(")"):
+                    raise DatabaseMigrationError("unsupported SQLite command table layout")
+                # SQLite requires columns before table-level FOREIGN KEY,
+                # UNIQUE and CHECK constraints. Insert the new column ahead
+                # of the first table constraint rather than after it.
+                constraint = re.search(
+                    r",\s*(?=(?:CONSTRAINT\s+[^\s]+\s+)?"
+                    r"(?:FOREIGN\s+KEY|PRIMARY\s+KEY|UNIQUE\s*\(|CHECK\s*\())",
+                    new_definition,
+                    flags=re.IGNORECASE,
+                )
+                if constraint:
+                    at = constraint.start()
+                    new_definition = (
+                        new_definition[:at] + ", parameters_json TEXT"
+                        + new_definition[at:]
+                    )
+                else:
+                    new_definition = new_definition[:-1] + ", parameters_json TEXT)"
+            quoted = ",".join('"' + name.replace('"', '""') + '"' for name in columns)
             try:
-                connection.execute(updated)
-                old_columns = [str(col[1]) for col in connection.execute(
-                    "PRAGMA table_info(agent_instance_commands)"
-                )]
-                names = ",".join('"' + col.replace('"', '""') + '"' for col in old_columns)
+                if original_fk:
+                    connection.execute("PRAGMA foreign_keys=OFF")
+                connection.execute("BEGIN IMMEDIATE")
+                connection.execute(new_definition)
                 connection.execute(
-                    f"INSERT INTO agent_instance_commands_v22_shadow ({names}) "
-                    f"SELECT {names} FROM agent_instance_commands"
+                    f'INSERT INTO "agent_instance_commands_v22_new" ({quoted}) '
+                    f'SELECT {quoted} FROM "agent_instance_commands"'
                 )
-                connection.execute("DROP TABLE agent_instance_commands")
+                connection.execute('DROP TABLE "agent_instance_commands"')
                 connection.execute(
-                    "ALTER TABLE agent_instance_commands_v22_shadow RENAME TO agent_instance_commands"
+                    'ALTER TABLE "agent_instance_commands_v22_new" '
+                    'RENAME TO "agent_instance_commands"'
                 )
-                for obj in objects:
-                    connection.execute(str(obj[2]))
+                for index in indexes:
+                    connection.execute(index[0])
                 violations = connection.execute("PRAGMA foreign_key_check").fetchall()
                 if violations:
                     raise DatabaseMigrationError("SQLite evidence rebuild foreign key violations")
-                connection.execute("RELEASE SAVEPOINT capivara_evidence_v22")
+                connection.commit()
             except Exception:
-                connection.execute("ROLLBACK TO SAVEPOINT capivara_evidence_v22")
-                connection.execute("RELEASE SAVEPOINT capivara_evidence_v22")
+                connection.rollback()
                 raise
+            finally:
+                if original_fk:
+                    connection.execute("PRAGMA foreign_keys=ON")
+            return
+    if backend.name == "postgresql":
+        # PostgreSQL installations can retain the original action CHECK even
+        # after adding parameters_json. Replace only the recognized legacy
+        # allowlist; unknown policies require explicit operator review.
+        constraints = connection.execute(
+            "SELECT conname, pg_get_constraintdef(oid) AS definition "
+            "FROM pg_constraint "
+            "WHERE conrelid = 'public.agent_instance_commands'::regclass "
+            "AND contype = 'c'"
+        ).fetchall()
+        legacy_actions = {"status", "doctor", "start", "stop", "restart", "remove"}
+        supported_actions = legacy_actions | {"save", "systemd_lifecycle_evidence"}
+        action_constraints = []
+        for constraint in constraints:
+            definition = str(constraint["definition"])
+            # Do not infer allowlist compatibility from the presence of
+            # action names alone: a compound CHECK may prohibit evidence.
+            if not re.search(r"\baction\b", definition, re.IGNORECASE):
+                continue
+            without_literals = re.sub(r"'(?:''|[^'])*'", "''", definition)
+            if re.search(r"\b(?:AND|OR|NOT)\b", without_literals, re.IGNORECASE):
+                raise DatabaseMigrationError(
+                    "compound PostgreSQL command action constraint requires review"
+                )
+            found = set(re.findall(r"'([a-z_]+)'(?:::character varying|::text)?", definition))
+            if "systemd_lifecycle_evidence" in found:
+                if not supported_actions.issubset(found):
+                    raise DatabaseMigrationError("incomplete PostgreSQL evidence action constraint")
+                continue
+            if found != legacy_actions and found != legacy_actions | {"save"}:
+                raise DatabaseMigrationError("unknown PostgreSQL command action constraint")
+            action_constraints.append(str(constraint["conname"]))
+        if len(action_constraints) > 1:
+            raise DatabaseMigrationError("multiple legacy PostgreSQL action constraints")
+        for name in action_constraints:
+            quoted_name = '"' + name.replace('"', '""') + '"'
+            connection.execute(
+                f"ALTER TABLE {table} DROP CONSTRAINT {quoted_name}"
+            )
+        if action_constraints:
+            connection.execute(
+                f"ALTER TABLE {table} ADD CONSTRAINT "
+                "agent_instance_commands_action_evidence_check "
+                "CHECK (action IN ('status','doctor','save','start','stop',"
+                "'restart','remove','systemd_lifecycle_evidence'))"
+            )
+        # Preserve existing TEXT action columns; widen legacy VARCHAR columns.
+        action_column = connection.execute(
+            "SELECT data_type, character_maximum_length "
+            "FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name=%s AND column_name='action'",
+            (table,),
+        ).fetchone()
+        if action_column is None:
+            raise DatabaseMigrationError("PostgreSQL evidence action column is missing")
+        action_type = str(action_column["data_type"]).lower()
+        if action_type not in ("character varying", "character", "text"):
+            raise DatabaseMigrationError("unsupported PostgreSQL evidence action column type")
+        if action_type in ("character varying", "character"):
+            length = action_column["character_maximum_length"]
+            # PostgreSQL VARCHAR without a declared limit reports NULL;
+            # unlike CHAR(n), this is an unbounded, valid text column.
+            if length is None and action_type == "character":
+                raise DatabaseMigrationError("PostgreSQL evidence action width is unknown")
+            if length is not None and int(length) < len("systemd_lifecycle_evidence"):
+                connection.execute(
+                    f"ALTER TABLE {table} ALTER COLUMN action TYPE TEXT"
+                )
+    if backend.name == "mysql":
+        # Do not silently record v22 as applied on installations whose
+        # action column cannot store the evidence action. MySQL DDL can
+        # auto-commit, so validate this before any schema modifications.
+        cursor = connection.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT DATA_TYPE AS data_type, CHARACTER_MAXIMUM_LENGTH AS max_length "
+                "FROM information_schema.columns "
+                "WHERE table_schema=DATABASE() AND table_name=%s AND column_name='action'",
+                (table,),
+            )
+            action_column = cursor.fetchone()
+            cursor.execute(
+                "SELECT tc.CONSTRAINT_NAME AS constraint_name, "
+                "cc.CHECK_CLAUSE AS check_clause "
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.check_constraints cc "
+                "ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA "
+                "AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME "
+                "WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME=%s "
+                "AND tc.CONSTRAINT_TYPE='CHECK'",
+                (table,),
+            )
+            checks = cursor.fetchall()
+        finally:
+            cursor.close()
+        if action_column is None:
+            raise DatabaseMigrationError("MySQL evidence action column is missing")
+        action_type = str(action_column["data_type"]).lower()
+        # A NULL maximum length on a non-text type does not mean unlimited
+        # capacity. Reject unsupported types before assessing their width.
+        if action_type == "enum":
+            raise DatabaseMigrationError(
+                "MySQL evidence action ENUM requires a reviewed migration"
+            )
+        if action_type not in (
+            "varchar", "char", "text", "tinytext", "mediumtext", "longtext"
+        ):
+            raise DatabaseMigrationError(
+                "unsupported MySQL evidence action column type"
+            )
+        max_length = action_column["max_length"]
+        if action_type in ("varchar", "char") and max_length is None:
+            raise DatabaseMigrationError("MySQL evidence action width is unknown")
+        needs_action_widening = (
+            action_type in ("varchar", "char")
+            and int(max_length) < len("systemd_lifecycle_evidence")
+        )
+        action_checks = [
+            row for row in checks
+            if re.search(r"\baction\b", str(row["check_clause"]), re.IGNORECASE)
+        ]
+        # Only replace the exact legacy DSM allowlist. MySQL/MariaDB may
+        # add quoting and parentheses when exposing CHECK_CLAUSE.
+        legacy_actions = ("status", "doctor", "start", "stop", "restart", "remove")
+        supported_actions = legacy_actions + ("systemd_lifecycle_evidence",)
+
+        def check_actions(clause):
+            value = re.sub(r"[`\s]", "", str(clause)).lower()
+            value = value.replace("\\'", "'")
+            value = re.sub(r"_utf8mb4(?=')", "", value)
+            while value.startswith("(") and value.endswith(")"):
+                value = value[1:-1]
+            match = re.fullmatch(r"actionin\((.*)\)", value)
+            if not match:
+                return None
+            action_values = match.group(1)
+            while action_values.startswith("(") and action_values.endswith(")"):
+                action_values = action_values[1:-1]
+            tokens = action_values.split(",")
+            if not all(re.fullmatch(r"'[a-z_]+?'", token) for token in tokens):
+                return None
+            return tuple(token[1:-1] for token in tokens)
+
+        legacy_checks = []
+        for row in action_checks:
+            actions = check_actions(row["check_clause"])
+            normalized_clause = re.sub(r"[`\s]", "", str(row["check_clause"])).lower()
+            normalized_clause = normalized_clause.replace("\\'", "'")
+            normalized_clause = re.sub(r"_utf8mb4(?=')", "", normalized_clause)
+            name = str(row["constraint_name"])
+            if (
+                actions not in (legacy_actions, supported_actions)
+                or not re.fullmatch(r"chk_agent_instance_commands_(?:v3_)?action", name)
+            ):
+                raise DatabaseMigrationError(
+                    "MySQL action CHECK requires explicit review before v22: "
+                    f"{name}={str(row['check_clause'])[:500]}; parsed={actions!r}; "
+                    f"normalized={normalized_clause!r}"
+                )
+            if actions == legacy_actions:
+                legacy_checks.append(name)
+        if len(action_checks) > 1:
+            raise DatabaseMigrationError(
+                "multiple MySQL action CHECK constraints require explicit review"
+            )
+        if needs_action_widening:
+            # Only the known legacy short string types are widened. Keep
+            # NOT NULL and avoid touching unreviewed action CHECK policies.
+            _execute_script(
+                backend, connection,
+                f"ALTER TABLE {table} MODIFY COLUMN action VARCHAR(64) NOT NULL;",
+            )
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    "SELECT DATA_TYPE AS data_type, "
+                    "CHARACTER_MAXIMUM_LENGTH AS max_length "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema=DATABASE() AND table_name=%s "
+                    "AND column_name='action'",
+                    (table,),
+                )
+                widened = cursor.fetchone()
+            finally:
+                cursor.close()
+            if (
+                widened is None
+                or str(widened["data_type"]).lower() != "varchar"
+                or widened["max_length"] is None
+                or int(widened["max_length"]) < len("systemd_lifecycle_evidence")
+            ):
+                raise DatabaseMigrationError(
+                    "MySQL evidence action width upgrade incomplete"
+                )
+        if legacy_checks:
+            # Widen first, then replace the CHECK in one DDL statement.
+            # Avoid leaving an unguarded table between DDL statements.
+            name = legacy_checks[0]
+            allowed = ",".join(f"'{action}'" for action in supported_actions)
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute("SELECT VERSION() AS version")
+                server_version = str(cursor.fetchone()["version"]).lower()
+            finally:
+                cursor.close()
+            drop_keyword = "CONSTRAINT" if "mariadb" in server_version else "CHECK"
+            _execute_script(
+                backend, connection,
+                f"ALTER TABLE {table} DROP {drop_keyword} {name}, "
+                f"ADD CONSTRAINT {name} CHECK (action IN ({allowed}));",
+            )
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    "SELECT cc.CHECK_CLAUSE AS check_clause "
+                    "FROM information_schema.table_constraints tc "
+                    "JOIN information_schema.check_constraints cc "
+                    "ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA "
+                    "AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME "
+                    "WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME=%s "
+                    "AND tc.CONSTRAINT_NAME=%s AND tc.CONSTRAINT_TYPE='CHECK'",
+                    (table, name),
+                )
+                verified = cursor.fetchone()
+            finally:
+                cursor.close()
+            if verified is None or check_actions(verified["check_clause"]) != supported_actions:
+                raise DatabaseMigrationError("MySQL evidence action CHECK upgrade incomplete")
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
-        _execute_script(backend, connection, f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};")
+        _execute_script(
+            backend, connection,
+            f"ALTER TABLE {table} ADD COLUMN parameters_json {column_type};",
+        )
     if "parameters_json" not in _column_names(backend, connection, table):
         raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
 
@@ -1232,6 +1470,10 @@ def seed_current_upgrades(backend: Any, connection: Any) -> None:
     _validate_ledger(applied)
     for upgrade in UPGRADES:
         if upgrade.version not in applied:
+            if upgrade.version == 22 and backend.name == "sqlite" and connection.in_transaction:
+                # The v22 SQLite table swap must disable foreign keys before
+                # BEGIN IMMEDIATE. Commit earlier ledger/schema upgrades first.
+                connection.commit()
             upgrade.apply(backend, connection)
             _insert_ledger(backend, connection, upgrade)
 
@@ -1290,6 +1532,10 @@ def apply_pending_upgrades(
     for upgrade in UPGRADES:
         if upgrade.version in applied:
             continue
+        if upgrade.version == 22 and backend.name == "sqlite" and connection.in_transaction:
+            # SQLite PRAGMA foreign_keys cannot change inside a transaction.
+            # Commit completed lower-version upgrades before the v22 swap.
+            connection.commit()
         upgrade.apply(backend, connection)
         _insert_ledger(backend, connection, upgrade)
         applied[upgrade.version] = upgrade.name

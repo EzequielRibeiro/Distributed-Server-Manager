@@ -1,6 +1,13 @@
 name: MySQL Baseline v2 Isolated Deployment
 
 on:
+  push:
+    branches:
+      - 'fix/pr898-baseline-v22-evidence-recovery'
+    paths:
+      - 'database/**'
+      - 'tests/**'
+      - '.github/workflows/**'
   pull_request:
     paths:
       - 'database/**'

@@ -41,7 +41,7 @@ def read_systemd_transitions(instance_id: str, *, since: str, until: str, runner
     else:
         result = runner(args)
         if result.returncode != 0:
-            raise RuntimeError('journal query failed')
+            raise RuntimeError(f'journal query failed (exit_code={result.returncode})')
         output = result.stdout
         if not isinstance(output, str) or len(output.encode('utf-8')) > MAX_OUTPUT_BYTES:
             raise ValueError('journal response too large')
