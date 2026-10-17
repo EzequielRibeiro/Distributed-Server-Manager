@@ -504,6 +504,70 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                     SimpleNamespace(name="mysql"), Connection()
                 )
 
+    def test_canonical_mysql_action_check_upgrade_and_replay(self):
+        from unittest.mock import patch
+
+        state = {"width": 16, "parameters": False, "action_check": "legacy"}
+        statements = []
+        legacy = "('status','doctor','start','stop','restart','remove')"
+        expanded = "('status','doctor','start','stop','restart','remove','systemd_lifecycle_evidence')"
+
+        class Cursor:
+            def __init__(self):
+                self.query = ""
+
+            def execute(self, sql, params=None):
+                self.query = sql
+
+            def fetchone(self):
+                if "CHARACTER_MAXIMUM_LENGTH" in self.query:
+                    return {"data_type": "varchar", "max_length": state["width"]}
+                if "CHECK_CLAUSE" in self.query:
+                    return {"check_clause": "(`action` in " + expanded + ")"}
+                raise AssertionError(self.query)
+
+            def fetchall(self):
+                if state["action_check"] == "absent":
+                    return []
+                actions = legacy if state["action_check"] == "legacy" else expanded
+                return [{
+                    "constraint_name": "chk_agent_instance_commands_v3_action",
+                    "check_clause": "(`action` in " + actions + ")",
+                }]
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        def execute_script(backend, connection, sql):
+            statements.append(sql)
+            if "MODIFY COLUMN action VARCHAR(64)" in sql:
+                state["width"] = 64
+            elif ("DROP CHECK chk_agent_instance_commands_v3_action" in sql
+                  and "ADD CONSTRAINT chk_agent_instance_commands_v3_action" in sql):
+                state["action_check"] = "expanded"
+            elif "ADD COLUMN parameters_json LONGTEXT" in sql:
+                state["parameters"] = True
+            else:
+                raise AssertionError(sql)
+
+        def columns(backend, connection, table):
+            return {"action", "parameters_json"} if state["parameters"] else {"action"}
+
+        with patch("baseline_upgrade_engine._table_names", return_value={"agent_instance_commands"}), patch(
+            "baseline_upgrade_engine._column_names", side_effect=columns
+        ), patch("baseline_upgrade_engine._execute_script", side_effect=execute_script):
+            _upgrade_instance_evidence_parameters(SimpleNamespace(name="mysql"), Connection())
+            _upgrade_instance_evidence_parameters(SimpleNamespace(name="mysql"), Connection())
+
+        self.assertEqual(3, len(statements))
+        self.assertEqual("expanded", state["action_check"])
+        self.assertEqual(64, state["width"])
+        self.assertTrue(state["parameters"])
+
     def test_action_check_rejected_before_schema_change(self):
         from unittest.mock import patch
 

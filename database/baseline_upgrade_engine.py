@@ -1271,12 +1271,39 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             row for row in checks
             if re.search(r"\baction\b", str(row["check_clause"]), re.IGNORECASE)
         ]
-        # A CHECK that merely mentions the evidence action is not sufficient:
-        # it may also contain an extra predicate that forbids the action.
-        # Reject any unreviewed action CHECK rather than weakening it.
-        if action_checks:
+        # Only replace the exact legacy DSM allowlist. MySQL/MariaDB may
+        # add quoting and parentheses when exposing CHECK_CLAUSE.
+        legacy_actions = ("status", "doctor", "start", "stop", "restart", "remove")
+        supported_actions = legacy_actions + ("systemd_lifecycle_evidence",)
+
+        def check_actions(clause):
+            value = re.sub(r"[`\s]", "", str(clause)).lower()
+            while value.startswith("(") and value.endswith(")"):
+                value = value[1:-1]
+            match = re.fullmatch(r"actionin\((.*)\)", value)
+            if not match:
+                return None
+            tokens = match.group(1).split(",")
+            if not all(re.fullmatch(r"'[a-z_]+?'", token) for token in tokens):
+                return None
+            return tuple(token[1:-1] for token in tokens)
+
+        legacy_checks = []
+        for row in action_checks:
+            actions = check_actions(row["check_clause"])
+            name = str(row["constraint_name"])
+            if (
+                actions not in (legacy_actions, supported_actions)
+                or not re.fullmatch(r"chk_agent_instance_commands_(?:v3_)?action", name)
+            ):
+                raise DatabaseMigrationError(
+                    "MySQL action CHECK requires explicit review before v22"
+                )
+            if actions == legacy_actions:
+                legacy_checks.append(name)
+        if len(action_checks) > 1:
             raise DatabaseMigrationError(
-                "MySQL action CHECK requires explicit review before v22"
+                "multiple MySQL action CHECK constraints require explicit review"
             )
         if needs_action_widening:
             # Only the known legacy short string types are widened. Keep
@@ -1307,6 +1334,33 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
                 raise DatabaseMigrationError(
                     "MySQL evidence action width upgrade incomplete"
                 )
+        if legacy_checks:
+            # Widen first, then replace the CHECK in one DDL statement.
+            # Avoid leaving an unguarded table between DDL statements.
+            name = legacy_checks[0]
+            allowed = ",".join(f"'{action}'" for action in supported_actions)
+            _execute_script(
+                backend, connection,
+                f"ALTER TABLE {table} DROP CHECK {name}, "
+                f"ADD CONSTRAINT {name} CHECK (action IN ({allowed}));",
+            )
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    "SELECT cc.CHECK_CLAUSE AS check_clause "
+                    "FROM information_schema.table_constraints tc "
+                    "JOIN information_schema.check_constraints cc "
+                    "ON cc.CONSTRAINT_SCHEMA=tc.CONSTRAINT_SCHEMA "
+                    "AND cc.CONSTRAINT_NAME=tc.CONSTRAINT_NAME "
+                    "WHERE tc.TABLE_SCHEMA=DATABASE() AND tc.TABLE_NAME=%s "
+                    "AND tc.CONSTRAINT_NAME=%s AND tc.CONSTRAINT_TYPE='CHECK'",
+                    (table, name),
+                )
+                verified = cursor.fetchone()
+            finally:
+                cursor.close()
+            if verified is None or check_actions(verified["check_clause"]) != supported_actions:
+                raise DatabaseMigrationError("MySQL evidence action CHECK upgrade incomplete")
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
         _execute_script(
