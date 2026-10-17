@@ -28,7 +28,7 @@ def parse_app_info_buildid(text:str,branch:str='public')->str|None:
    if path:path.pop()
    pending=None
   elif token.startswith('"'):
-   m=re.fullmatch(r'"([^"\\n]+)"(?:\\s+"([^"\\n]*)")?',token)
+   m=re.fullmatch(r'"([^"]+)"(?:\s+"([^"]*)")?',token)
    if not m:continue
    key,value=m.groups()
    if path[-1:]==['branches'] and key==branch and value is None:
