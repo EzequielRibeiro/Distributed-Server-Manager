@@ -18,6 +18,8 @@ from backend_factory import create_backend
 from observability_repository import ObservabilityRepository
 from observability_retention_worker import ObservabilityRetentionWorker
 from artifact_transfer_repository import ArtifactTransferRepository
+from content_repository import ContentRepository
+from content_platform import ContentValidationError
 
 
 class ObservabilityRetentionWorkerTest(unittest.TestCase):
@@ -187,6 +189,60 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
 
         self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 0)
         self.assertIsNone(repo.command_for_agent("agent-c3"))
+
+    def test_cleanup_queued_before_assignment_is_cancelled_before_delivery(self):
+        repo = ArtifactTransferRepository(self.backend, Path(self.temp.name) / "dsm-late-reference")
+        original = self._expired_upload(repo, "late")
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 1)
+        self._assignment_reference(original["transfer_id"])
+        self.assertIsNone(repo.command_for_agent("agent-c3"))
+        with self.backend.connect() as connection:
+            state = connection.execute(
+                "SELECT status FROM artifact_transfers WHERE purpose=? AND source_ref=?",
+                ("content_upload_cleanup", original["transfer_id"]),
+            ).fetchone()["status"]
+        self.assertEqual(state, "cancelled")
+
+    def test_reject_refuses_upload_referenced_by_history(self):
+        repo = ArtifactTransferRepository(self.backend, Path(self.temp.name) / "dsm-reject-reference")
+        original = self._expired_upload(repo, "reject-ref")
+        self._assignment_reference(original["transfer_id"], historical=True)
+        with self.assertRaisesRegex(ValueError, "referenced"):
+            repo.reject_content_upload(original["transfer_id"], "reject")
+        self.assertEqual(repo.get(original["transfer_id"])["status"], "expired")
+        self.assertIsNone(repo.command_for_agent("agent-c3"))
+
+    def test_content_assignment_rejects_upload_with_cleanup_pending(self):
+        repo = ArtifactTransferRepository(self.backend, Path(self.temp.name) / "dsm-assignment-guard")
+        original = self._expired_upload(repo, "guard")
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 1)
+        with self.assertRaisesRegex(ContentValidationError, "limpeza"):
+            ContentRepository(self.backend).put({
+                "instance_id": "instance-guard", "content_id": "pack-guard",
+                "content_type": "modpack", "provider": "local", "version": "1",
+                "target": "external/pack-guard", "desired_state": "installed",
+                "artifact": {"provider": "local", "package_id": "external/pack-guard"},
+                "provenance": {"kind": "customer-upload", "transfer_id": original["transfer_id"]},
+            }, requested_by="test")
+
+    def test_cancelled_cleanup_allows_referencing_upload_again(self):
+        repo = ArtifactTransferRepository(self.backend, Path(self.temp.name) / "dsm-cancelled-cleanup")
+        original = self._expired_upload(repo, "reusable")
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 1)
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE artifact_transfers SET status=? WHERE purpose=? AND source_ref=?",
+                ("cancelled", "content_upload_cleanup", original["transfer_id"]),
+            )
+        result = ContentRepository(self.backend).put({
+            "instance_id": "instance-reusable", "content_id": "pack-reusable",
+            "content_type": "modpack", "provider": "local", "version": "1",
+            "target": "external/pack-reusable", "desired_state": "installed",
+            "artifact": {"provider": "local", "package_id": "external/pack-reusable"},
+            "provenance": {"kind": "customer-upload", "transfer_id": original["transfer_id"]},
+        }, requested_by="test")
+        self.assertTrue(result["changed"])
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 0)
 
     def test_artifact_cleanup_removes_only_expired_spool_files(self):
         root = Path(self.temp.name) / "dsm"

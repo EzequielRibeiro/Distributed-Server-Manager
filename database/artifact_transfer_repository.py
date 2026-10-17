@@ -85,7 +85,17 @@ class ArtifactTransferRepository:
   with self.session(transaction=True) as s:
    row=s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE agent_id={ph} AND status='queued' ORDER BY created_at ASC LIMIT 1",(str(agent_id),)).fetchone()
    if row is None:return None
-   tid=str(row["transfer_id"]);s.execute(f"UPDATE artifact_transfers SET status='delivered',delivered_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='queued'",(tid,))
+   tid=str(row["transfer_id"])
+   cleanup=s.execute(f"SELECT source_ref FROM artifact_transfers WHERE transfer_id={ph} AND purpose='content_upload_cleanup'",(tid,)).fetchone()
+   if cleanup is not None:
+    original=str(cleanup["source_ref"] or "")
+    if original:
+     lock=" FOR UPDATE" if ph=="%s" else ""
+     s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE transfer_id={ph}{lock}",(original,)).fetchone()
+    if not original or self._content_upload_is_referenced(s,original):
+     s.execute(f"UPDATE artifact_transfers SET status='cancelled',last_error='content upload became referenced',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='queued'",(tid,))
+     return None
+   s.execute(f"UPDATE artifact_transfers SET status='delivered',delivered_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='queued'",(tid,))
   item=self.get(tid);return {k:item.get(k) for k in ("transfer_id","direction","purpose","instance_id","source_ref","destination_ref","filename","size_bytes","sha256")}
  def mark_transferring(self,transfer_id):
   ph=self.dialect.placeholder
@@ -147,6 +157,13 @@ class ArtifactTransferRepository:
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
+ def _content_upload_is_referenced(self,s,transfer_id):
+  ph=self.dialect.placeholder
+  pattern="%"+str(transfer_id).replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
+  return any(s.execute(
+   f"SELECT 1 FROM {table} WHERE artifact_json LIKE {ph} OR provenance_json LIKE {ph} LIMIT 1",
+   (pattern,pattern),
+  ).fetchone() for table in ("content_assignments","content_assignment_revisions"))
  def reject_content_upload(self,transfer_id,reason):
   """Reject an upload and enqueue at most one Agent cleanup atomically."""
   message=str(reason or "content upload rejected").strip()[:1024] or "content upload rejected"
@@ -156,10 +173,12 @@ class ArtifactTransferRepository:
    item=s.execute(f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}{lock}",(transfer_id,)).fetchone()
    if item is None:raise KeyError(transfer_id)
    if str(item["purpose"] or "")!="content_upload":raise ValueError("transfer is not a content upload")
+   if self._content_upload_is_referenced(s,transfer_id):
+    raise ValueError("cannot reject referenced content upload")
    s.execute(
     f"UPDATE artifact_transfers SET status='failed',last_error={ph},"
     f"completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} "
-    f"WHERE transfer_id={ph} AND status NOT IN ('expired','completed')",
+    f"WHERE transfer_id={ph} AND status<>'expired'",
     (message,transfer_id),
    )
    existing=s.execute(
@@ -254,16 +273,7 @@ class ArtifactTransferRepository:
      ).fetchone()
      if source is None or source["status"]!="expired" or not source["destination_ref"]:
       continue
-     pattern="%"+tid.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
-     referenced=False
-     for table in ("content_assignments","content_assignment_revisions"):
-      if s.execute(
-       f"SELECT 1 FROM {table} WHERE artifact_json LIKE {ph} OR provenance_json LIKE {ph} LIMIT 1",
-       (pattern,pattern),
-      ).fetchone():
-       referenced=True
-       break
-     if referenced:
+     if self._content_upload_is_referenced(s,tid):
       continue
      if s.execute(
       f"SELECT 1 FROM artifact_transfers WHERE purpose='content_upload_cleanup' "
