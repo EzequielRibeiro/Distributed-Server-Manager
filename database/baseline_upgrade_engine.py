@@ -1299,7 +1299,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             ):
                 raise DatabaseMigrationError(
                     "MySQL action CHECK requires explicit review before v22: "
-                    f"{name}={str(row['check_clause'])[:500]}"
+                    f"{name}={str(row['check_clause'])[:500]}; parsed={actions!r}"
                 )
             if actions == legacy_actions:
                 legacy_checks.append(name)
