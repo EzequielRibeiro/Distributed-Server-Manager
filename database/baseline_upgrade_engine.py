@@ -1278,7 +1278,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
 
         def check_actions(clause):
             value = re.sub(r"[`\s]", "", str(clause)).lower()
-            value = re.sub(r"(?<=[(,])_[a-z0-9]+'", "'", value)
+            value = re.sub(r"_utf8mb4(?=')", "", value)
             while value.startswith("(") and value.endswith(")"):
                 value = value[1:-1]
             match = re.fullmatch(r"actionin\((.*)\)", value)
@@ -1293,7 +1293,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         for row in action_checks:
             actions = check_actions(row["check_clause"])
             normalized_clause = re.sub(r"[`\s]", "", str(row["check_clause"])).lower()
-            normalized_clause = re.sub(r"(?<=[(,])_[a-z0-9]+'", "'", normalized_clause)
+            normalized_clause = re.sub(r"_utf8mb4(?=')", "", normalized_clause)
             name = str(row["constraint_name"])
             if (
                 actions not in (legacy_actions, supported_actions)
