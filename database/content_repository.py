@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backend-neutral desired-state persistence for Universal Content."""
 from __future__ import annotations
-import json,sys,uuid
+import json,re,sys,uuid
 from pathlib import Path
 from typing import Any,Mapping
 ROOT=Path(__file__).resolve().parents[1]; CORE=ROOT/"core"
@@ -57,6 +57,14 @@ class ContentRepository:
   return self._row(s.execute(f"SELECT * FROM content_assignments WHERE instance_id={self.ph} AND content_id={self.ph}",(instance_id,content_id)).fetchone())
  def _write_assignment_session(self,s,item,existing,requested_by,now):
   if existing and existing.get("checksum")==item["checksum"]:return existing,False
+  # Serialize new references with cleanup dispatch using the original transfer row.
+  references=set(re.findall(r"transfer-[0-9a-f]{32}",json.dumps((item.get("artifact"),item.get("provenance")))))
+  for transfer_id in sorted(references):
+   lock=" FOR UPDATE" if self.ph=="%s" else ""
+   source=s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE transfer_id={self.ph}{lock}",(transfer_id,)).fetchone()
+   if source is None:continue
+   cleanup=s.execute(f"SELECT 1 FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={self.ph} AND status<>'cancelled' LIMIT 1",(transfer_id,)).fetchone()
+   if cleanup is not None:raise ContentValidationError("Upload em limpeza; não é possível vincular o arquivo ao conteúdo.")
   aid=str(existing["assignment_id"]) if existing else str(uuid.uuid4());rev=int(existing.get("revision") or 0)+1 if existing else 1
   artifact=json.dumps(item["artifact"],sort_keys=True,separators=(",",":"),ensure_ascii=False);provenance=json.dumps(item["provenance"],sort_keys=True,separators=(",",":"),ensure_ascii=False);metadata=json.dumps(item["metadata"],sort_keys=True,separators=(",",":"),ensure_ascii=False);deps=json.dumps(item["dependencies"],separators=(",",":"));conflicts=json.dumps(item["conflicts"],separators=(",",":"))
   vals=(item["agent_id"],item["game_id"],item["content_type"],item["desired_state"],item["activation_state"],item["activation_order"],item["version"],item["provider"],item["target"],artifact,provenance,metadata,item["security_state"],deps,conflicts,rev,item["checksum"],requested_by,now)
