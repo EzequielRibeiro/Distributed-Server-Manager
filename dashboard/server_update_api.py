@@ -38,7 +38,7 @@ def instance_update_policy_view(instance_id,*,backend)->dict[str,Any]:
   snapshot=repo.snapshot(iid);policy={key:snapshot['policy'].get(key) for key in _PUBLIC_POLICY_FIELDS};configured=True;content=snapshot.get('content') or []
  except KeyError:
   policy=normalize_policy({});configured=False;content=repo._content_snapshot(iid)
- return {'instance_id':iid,'configured':configured,'policy':policy,'content':content}
+ return {'instance_id':iid,'configured':configured,'policy':policy,'content':content,'game_update':snapshot.get('state') if configured else None}
 
 def configure_server_update(user,payload,*,backend,root:Path)->dict[str,Any]:
  actor=_require_admin(user);body=payload if isinstance(payload,dict) else {};snapshot=set_instance_update_policy(body,backend=backend,root=root,requested_by=actor);repo=ServerUpdateRepository(backend);job=repo.queue_check(str(snapshot['instance_id']),requested_by=actor)
