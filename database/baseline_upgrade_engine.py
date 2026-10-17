@@ -1292,6 +1292,8 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         legacy_checks = []
         for row in action_checks:
             actions = check_actions(row["check_clause"])
+            normalized_clause = re.sub(r"[`\s]", "", str(row["check_clause"])).lower()
+            normalized_clause = re.sub(r"(?<=[(,])_[a-z0-9]+'", "'", normalized_clause)
             name = str(row["constraint_name"])
             if (
                 actions not in (legacy_actions, supported_actions)
@@ -1299,7 +1301,8 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             ):
                 raise DatabaseMigrationError(
                     "MySQL action CHECK requires explicit review before v22: "
-                    f"{name}={str(row['check_clause'])[:500]}; parsed={actions!r}"
+                    f"{name}={str(row['check_clause'])[:500]}; parsed={actions!r}; "
+                    f"normalized={normalized_clause!r}"
                 )
             if actions == legacy_actions:
                 legacy_checks.append(name)
