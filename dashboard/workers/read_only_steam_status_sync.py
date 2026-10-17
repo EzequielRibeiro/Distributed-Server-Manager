@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--apply', action='store_true', help='Persist detected builds; otherwise print only')
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
+    sys.path.insert(0, str(root))
     sys.path.insert(0, str(root / 'database'))
     sys.path.insert(0, str(root / 'core'))
     from runtime_backend import backend_from_environment
