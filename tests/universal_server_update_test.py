@@ -34,6 +34,32 @@ class UniversalServerUpdateTest(unittest.TestCase):
   self.assertEqual(parse_manifest_buildid('"AppState" { "buildid" "12345" }'),'12345')
   text='''"branches"\n{\n "public"\n {\n  "buildid" "100"\n }\n "beta"\n {\n  "buildid" "200"\n }\n}'''
   self.assertEqual(parse_app_info_buildid(text,'public'),'100');self.assertEqual(parse_app_info_buildid(text,'beta'),'200')
+ def test_steam_build_parser_ignores_depot_public_manifest(self):
+  text='''"223350"
+{
+ "depots"
+ {
+  "223351"
+  {
+   "manifests"
+   {
+    "public"
+    {
+     "gid" "3976983986945841576"
+    }
+   }
+  }
+  "branches"
+  {
+   "public"
+   {
+    "buildid" "25460313"
+   }
+  }
+ }
+}'''
+  self.assertEqual(parse_app_info_buildid(text,'public'),'25460313')
+  self.assertIsNone(parse_app_info_buildid(text,'beta'))
  def test_detector_is_generic_across_steam_games(self):
   selections=[{'provider':'steam','install':{'package_id':'380870'},'game':'projectzomboid'},{'provider':'steam','install':{'package_id':'294420'},'game':'7daystodie'}]
   with patch('server_update_provider.installed_steam_build',return_value='100'),patch('server_update_provider.upstream_steam_build',return_value='101'):
