@@ -22,9 +22,6 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
         (self.target / "steamapps").mkdir()
         (self.target / "steamapps/appmanifest_223350.acf").write_text('"buildid" "1001"\n')
         self.root = self.base / "root"
-        detector = self.root / "agents/linux/runtime/server_update_provider.py"
-        detector.parent.mkdir(parents=True)
-        shutil.copyfile(ROOT / "agents/linux/runtime/server_update_provider.py", detector)
         self.bin = self.base / "bin"
         self.bin.mkdir()
         steam = self.bin / "steamcmd"
@@ -43,7 +40,7 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
             "game": "dayz", "provider": provider, "install": {"package_id": package_id, "branch": branch},
             "install_dir": str(self.target),
         }}))
-        env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""))
+        env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""), HOME=str(self.base / "home"))
         p = subprocess.run([sys.executable, str(EXECUTOR), str(self.root), str(request), str(result)],
                            env=env, capture_output=True, text=True, timeout=15)
         self.assertFalse(self.marker.exists())
@@ -68,6 +65,15 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
         self.assertEqual(p.returncode, 0, result)
         self.assertEqual(result["update_status"]["state"], "unknown")
 
+    def test_global_manifest_not_used(self):
+        (self.target / "steamapps/appmanifest_223350.acf").unlink()
+        global_manifest = self.base / "home/.local/share/Steam/steamapps"
+        global_manifest.mkdir(parents=True)
+        (global_manifest / "appmanifest_223350.acf").write_text('"buildid" "1002"\\n')
+        p, result = self.run_probe()
+        self.assertEqual(p.returncode, 0, result)
+        self.assertEqual(result["update_status"]["state"], "unknown")
+
     def test_invalid_app_id_fails_closed(self):
         p, result = self.run_probe(package_id="223350;touch /tmp/unsafe")
         self.assertNotEqual(p.returncode, 0)
@@ -81,7 +87,7 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
     def test_unavailable_branch_fails_closed(self):
         p, result = self.run_probe(branch="private")
         self.assertNotEqual(p.returncode, 0)
-        self.assertEqual(result["error"], "Steam branch build metadata unavailable")
+        self.assertEqual(result["error"], "read_only_version_probe_metadata_unavailable")
 
 
 if __name__ == "__main__":
