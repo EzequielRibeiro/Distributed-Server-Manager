@@ -136,6 +136,38 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
         self.assertEqual(command["source_ref"], original["transfer_id"])
         self.assertEqual(command["instance_id"], "instance-orphan")
 
+    def test_expired_cleanup_is_idempotent_across_repeated_worker_passes(self):
+        root = Path(self.temp.name) / "dsm-idempotent"
+        repo = ArtifactTransferRepository(self.backend, root)
+        repo.initialize()
+        original = self._expired_upload(repo, "repeat")
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 1)
+        self.assertEqual(repo.enqueue_expired_content_upload_cleanup(), 0)
+        with self.backend.transaction() as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM artifact_transfers WHERE purpose=? AND source_ref=?",
+                ("content_upload_cleanup", original["transfer_id"]),
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
+
+    def test_missing_spool_file_is_safe_to_expire_and_retry(self):
+        root = Path(self.temp.name) / "dsm-missing"
+        repo = ArtifactTransferRepository(self.backend, root)
+        repo.initialize()
+        item = repo.create(
+            agent_id="agent-c3", instance_id=None, customer_id=None,
+            direction="controller_to_agent", purpose="content_upload",
+            filename="missing.zip", ttl_hours=1,
+        )
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE artifact_transfers SET expires_at=? WHERE transfer_id=?",
+                ("2000-01-01T00:00:00Z", item["transfer_id"]),
+            )
+        self.assertEqual(repo.cleanup_expired(), 1)
+        self.assertEqual(repo.cleanup_expired(), 0)
+        self.assertEqual(repo.get(item["transfer_id"])["status"], "expired")
+
     def test_expired_upload_with_current_assignment_reference_is_preserved(self):
         root = Path(self.temp.name) / "dsm-current"
         repo = ArtifactTransferRepository(self.backend, root)
@@ -199,3 +231,5 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+[executed on device: horizon-server (80687e08-8c09-4aab-aa57-b6f0072d8459)]
