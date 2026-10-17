@@ -231,5 +231,3 @@ class ObservabilityRetentionWorkerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-[executed on device: horizon-server (80687e08-8c09-4aab-aa57-b6f0072d8459)]
