@@ -145,6 +145,50 @@ class InstanceEvidenceBaselineUpgradeTest(unittest.TestCase):
             self.db.execute("SELECT COUNT(*) FROM agent_instance_commands").fetchone()[0],
         )
 
+    def test_canonical_sqlite_schema_with_status_check_is_idempotent(self):
+        self.db.execute("DROP TABLE agent_instance_commands")
+        schema = Path(__file__).resolve().parents[1] / "database/schemas/sqlite.sql"
+        self.db.executescript(schema.read_text(encoding="utf-8"))
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.db.execute(
+            "INSERT INTO agent_instance_commands "
+            "(command_id,agent_id,instance_id,action,status) "
+            "VALUES ('evidence','agent-1','instance-1',"
+            "'systemd_lifecycle_evidence','queued')"
+        )
+        self.assertIn(
+            "parameters_json",
+            _column_names(self.backend, self.db, "agent_instance_commands"),
+        )
+
+    def test_extra_action_check_rejected_after_v22_without_data_loss(self):
+        self.db.execute("DROP TABLE agent_instance_commands")
+        self.db.execute(
+            "CREATE TABLE agent_instance_commands ("
+            "command_id TEXT PRIMARY KEY, action TEXT NOT NULL "
+            "CHECK (action IN ('status','doctor','save','start','stop',"
+            "'restart','remove','systemd_lifecycle_evidence')), "
+            "status TEXT CHECK (status IN "
+            "('queued','delivered','completed','failed')), "
+            "CHECK (action <> 'systemd_lifecycle_evidence'))"
+        )
+        self.db.execute(
+            "INSERT INTO agent_instance_commands(command_id,action,status) "
+            "VALUES ('existing','status','queued')"
+        )
+        self.db.commit()
+        with self.assertRaisesRegex(
+            Exception, "unknown SQLite evidence action constraint"
+        ):
+            _upgrade_instance_evidence_parameters(self.backend, self.db)
+        self.assertEqual(
+            1,
+            self.db.execute(
+                "SELECT COUNT(*) FROM agent_instance_commands"
+            ).fetchone()[0],
+        )
+
     def test_legacy_trigger_fails_closed_without_data_loss(self):
         self.db.execute("DROP TABLE agent_instance_commands")
         self.db.execute(
@@ -280,15 +324,70 @@ class PostgreSQLInstanceEvidenceGuardTest(unittest.TestCase):
 class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
     """Exercise the MySQL preflight without a live MySQL server."""
 
-    def test_legacy_varchar_rejected_before_schema_change(self):
+    def test_legacy_varchar_widened_before_parameters_column(self):
         from unittest.mock import patch
 
-        class Cursor:
-            def __init__(self):
-                self.query = ""
+        state = {"width": 16, "parameters": False}
+        ddl = []
 
+        class Cursor:
             def execute(self, sql, params=None):
-                self.query = sql
+                pass
+
+            def fetchone(self):
+                return {"data_type": "varchar", "max_length": state["width"]}
+
+            def fetchall(self):
+                return []
+
+            def close(self):
+                pass
+
+        class Connection:
+            def cursor(self, dictionary=False):
+                return Cursor()
+
+        def execute_script(backend, connection, sql):
+            ddl.append(sql)
+            if "MODIFY COLUMN action VARCHAR(64) NOT NULL" in sql:
+                state["width"] = 64
+            elif "ADD COLUMN parameters_json LONGTEXT" in sql:
+                state["parameters"] = True
+            else:
+                raise AssertionError(sql)
+
+        def columns(backend, connection, table):
+            return {"action", "parameters_json"} if state["parameters"] else {"action"}
+
+        connection = Connection()
+        with patch(
+            "baseline_upgrade_engine._table_names",
+            return_value={"agent_instance_commands"},
+        ), patch(
+            "baseline_upgrade_engine._column_names",
+            side_effect=columns,
+        ), patch(
+            "baseline_upgrade_engine._execute_script",
+            side_effect=execute_script,
+        ):
+            _upgrade_instance_evidence_parameters(
+                SimpleNamespace(name="mysql"), connection
+            )
+            _upgrade_instance_evidence_parameters(
+                SimpleNamespace(name="mysql"), connection
+            )
+        self.assertEqual(2, len(ddl))
+        self.assertIn("MODIFY COLUMN action VARCHAR(64) NOT NULL", ddl[0])
+        self.assertIn("ADD COLUMN parameters_json LONGTEXT", ddl[1])
+
+    def test_mysql_widening_verification_fails_closed(self):
+        from unittest.mock import patch
+
+        statements = []
+
+        class Cursor:
+            def execute(self, sql, params=None):
+                pass
 
             def fetchone(self):
                 return {"data_type": "varchar", "max_length": 16}
@@ -300,21 +399,23 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                 pass
 
         class Connection:
-            def __init__(self):
-                self.ddl_calls = 0
-
             def cursor(self, dictionary=False):
                 return Cursor()
 
-        connection = Connection()
         with patch(
             "baseline_upgrade_engine._table_names",
             return_value={"agent_instance_commands"},
+        ), patch(
+            "baseline_upgrade_engine._execute_script",
+            side_effect=lambda backend, connection, sql: statements.append(sql),
         ):
-            with self.assertRaisesRegex(Exception, "reviewed width migration"):
+            with self.assertRaisesRegex(Exception, "width upgrade incomplete"):
                 _upgrade_instance_evidence_parameters(
-                    SimpleNamespace(name="mysql"), connection
+                    SimpleNamespace(name="mysql"), Connection()
                 )
+        self.assertEqual(1, len(statements))
+        self.assertIn("MODIFY COLUMN action VARCHAR(64)", statements[0])
+        self.assertNotIn("parameters_json", statements[0])
 
     def test_enum_action_rejected_before_schema_change(self):
         from unittest.mock import patch

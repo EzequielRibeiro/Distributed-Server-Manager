@@ -1050,13 +1050,21 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         # An existing evidence literal is not proof that its CHECK allows
         # evidence: a second predicate may still prohibit the new action.
         if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" in definition:
-            if definition.upper().count("CHECK") != 1:
-                raise DatabaseMigrationError("unknown SQLite evidence action constraint")
             expected = (
                 "CHECK (action IN ('status','doctor','save','start','stop',"
                 "'restart','remove','systemd_lifecycle_evidence'))"
             )
-            if expected not in definition:
+            known_status_check = (
+                "CHECK (status IN ('queued','delivered','completed','failed'))"
+            )
+            # The canonical table also has an independent status CHECK.
+            # Allow only that known extra predicate; fail closed for any
+            # other CHECK, including a second predicate on action.
+            if definition.count(expected) != 1:
+                raise DatabaseMigrationError("unknown SQLite evidence action constraint")
+            remaining = definition.replace(expected, "", 1)
+            remaining = remaining.replace(known_status_check, "", 1)
+            if re.search(r"\bCHECK\b", remaining, flags=re.IGNORECASE):
                 raise DatabaseMigrationError("unknown SQLite evidence action constraint")
         if "CHECK" in definition.upper() and "systemd_lifecycle_evidence" not in definition:
             if old_check not in definition:
@@ -1255,10 +1263,10 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         max_length = action_column["max_length"]
         if action_type in ("varchar", "char") and max_length is None:
             raise DatabaseMigrationError("MySQL evidence action width is unknown")
-        if max_length is not None and int(max_length) < len("systemd_lifecycle_evidence"):
-            raise DatabaseMigrationError(
-                "MySQL evidence action column requires a reviewed width migration"
-            )
+        needs_action_widening = (
+            action_type in ("varchar", "char")
+            and int(max_length) < len("systemd_lifecycle_evidence")
+        )
         action_checks = [
             row for row in checks
             if re.search(r"\baction\b", str(row["check_clause"]), re.IGNORECASE)
@@ -1270,6 +1278,35 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             raise DatabaseMigrationError(
                 "MySQL action CHECK requires explicit review before v22"
             )
+        if needs_action_widening:
+            # Only the known legacy short string types are widened. Keep
+            # NOT NULL and avoid touching unreviewed action CHECK policies.
+            _execute_script(
+                backend, connection,
+                f"ALTER TABLE {table} MODIFY COLUMN action VARCHAR(64) NOT NULL;",
+            )
+            cursor = connection.cursor(dictionary=True)
+            try:
+                cursor.execute(
+                    "SELECT DATA_TYPE AS data_type, "
+                    "CHARACTER_MAXIMUM_LENGTH AS max_length "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema=DATABASE() AND table_name=%s "
+                    "AND column_name='action'",
+                    (table,),
+                )
+                widened = cursor.fetchone()
+            finally:
+                cursor.close()
+            if (
+                widened is None
+                or str(widened["data_type"]).lower() != "varchar"
+                or widened["max_length"] is None
+                or int(widened["max_length"]) < len("systemd_lifecycle_evidence")
+            ):
+                raise DatabaseMigrationError(
+                    "MySQL evidence action width upgrade incomplete"
+                )
     if "parameters_json" not in _column_names(backend, connection, table):
         column_type = "LONGTEXT" if backend.name == "mysql" else "TEXT"
         _execute_script(
