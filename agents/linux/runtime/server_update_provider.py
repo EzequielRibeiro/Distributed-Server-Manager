@@ -17,19 +17,25 @@ def parse_manifest_buildid(text:str)->str|None:
  m=_BUILD.search(str(text or ''));return m.group(1) if m else None
 
 def parse_app_info_buildid(text:str,branch:str='public')->str|None:
- branch=_safe(branch,'Steam branch');lines=str(text or '').splitlines();needle='"'+branch+'"';inside=False;depth=0;seen=False
+ branch=_safe(branch,'Steam branch');lines=str(text or '').splitlines()
+ # Steam depot manifests also contain branch names. Only inspect depots.branches.
+ path=[];pending=None
  for raw in lines:
-  s=raw.strip()
-  if not inside and s==needle:seen=True;continue
-  if seen and not inside:
-   if s=='{':inside=True;depth=1;seen=False
-   elif s:seen=False
-   continue
-  if inside:
-   depth+=s.count('{')-s.count('}')
-   m=_BUILD.search(s)
-   if m:return m.group(1)
-   if depth<=0:return None
+  token=raw.strip()
+  if token=='{':
+   path.append(pending);pending=None
+  elif token=='}':
+   if path:path.pop()
+   pending=None
+  elif token.startswith('"'):
+   m=re.fullmatch(r'"([^"]+)"(?:\s+"([^"]*)")?',token)
+   if not m:continue
+   key,value=m.groups()
+   if path[-1:]==['branches'] and key==branch and value is None:
+    pending=key
+   elif path[-2:]==['branches',branch] and key=='buildid' and value and value.isdigit():
+    return value
+   else:pending=key if value is None else None
  return None
 
 def _manifest_candidates(target:Path,appid:str)->list[Path]:
