@@ -1284,7 +1284,10 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
             match = re.fullmatch(r"actionin\((.*)\)", value)
             if not match:
                 return None
-            tokens = match.group(1).split(",")
+            action_values = match.group(1)
+            while action_values.startswith("(") and action_values.endswith(")"):
+                action_values = action_values[1:-1]
+            tokens = action_values.split(",")
             if not all(re.fullmatch(r"'[a-z_]+?'", token) for token in tokens):
                 return None
             return tuple(token[1:-1] for token in tokens)

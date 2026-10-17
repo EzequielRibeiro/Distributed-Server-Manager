@@ -511,6 +511,10 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
         statements = []
         legacy = "('status','doctor','start','stop','restart','remove')"
         expanded = "('status','doctor','start','stop','restart','remove','systemd_lifecycle_evidence')"
+        def mysql_check(actions):
+            return "(`action` in (" + ",".join(
+                "_utf8mb4" + value for value in actions[1:-1].split(",")
+            ) + "))"
 
         class Cursor:
             def __init__(self):
@@ -523,7 +527,7 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                 if "CHARACTER_MAXIMUM_LENGTH" in self.query:
                     return {"data_type": "varchar", "max_length": state["width"]}
                 if "CHECK_CLAUSE" in self.query:
-                    return {"check_clause": "(`action` in " + expanded + ")"}
+                    return {"check_clause": mysql_check(expanded)}
                 if "SELECT VERSION()" in self.query:
                     return {"version": "8.4.0"}
                 raise AssertionError(self.query)
@@ -534,7 +538,7 @@ class MySQLInstanceEvidenceGuardTest(unittest.TestCase):
                 actions = legacy if state["action_check"] == "legacy" else expanded
                 return [{
                     "constraint_name": "chk_agent_instance_commands_v3_action",
-                    "check_clause": "(`action` in " + actions + ")",
+                    "check_clause": mysql_check(actions),
                 }]
 
             def close(self):
