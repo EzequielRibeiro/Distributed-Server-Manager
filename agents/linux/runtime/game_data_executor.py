@@ -17,9 +17,11 @@ def _safe_name(value:Any,label:str)->str:
  return text
 def _instance_update_target(selection:dict[str,Any])->Path|None:
  meta=selection.get("_server_update")
- if not isinstance(meta,dict):return None
+ if not isinstance(meta,dict):
+  if isinstance(selection.get("_maintenance_game_update"),dict):meta={"operation":"maintenance","instance_id":selection["_maintenance_game_update"].get("instance_id")}
+  else:return None
  operation=str(meta.get("operation") or "").strip().lower()
- if operation not in {"check","update"}:return None
+ if operation not in {"check","update","maintenance"}:return None
  import instance_runtime
  instance_id=_safe_name(meta.get("instance_id"),"instance_id")
  record=instance_runtime.get_instance(instance_id)
@@ -40,6 +42,7 @@ def _instance_update_target(selection:dict[str,Any])->Path|None:
 def _target_for(selection:dict[str,Any])->Path:
  scoped=_instance_update_target(selection)
  if scoped is not None:return scoped
+ if isinstance(selection.get("_maintenance_game_update"),dict):raise RuntimeError("maintenance game update requires a registered instance-scoped target")
  game=_safe_name(selection.get("game"),"game");declared=Path(str(selection.get("install_dir") or "serverfiles"));leaf=_safe_name(declared.name if declared.name not in {"",".","/"} else "serverfiles","install target");target=(GAME_DATA_ROOT/game/leaf).resolve();target.relative_to(GAME_DATA_ROOT)
  if _minecraft_java_runtime(selection):
   version=_safe_name(selection.get("version") or "current","version")
