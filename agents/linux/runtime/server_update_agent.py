@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 
@@ -42,8 +44,34 @@ def _context(selection: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return iid, record
 
 
-def _affected(config: dict[str, Any], game: str) -> list[str]:
-    return [str(item["instance_id"]) for item in instance_runtime.list_instances(config) if str(item.get("game_id") or "") == game]
+def _affected(config: dict[str, Any], game: str, target: Path, instance_id: str) -> list[str]:
+    """Limit a transactional update to instances with the same proven installation."""
+    target = Path(target).resolve(strict=True)
+    owner = instance_runtime.get_instance(instance_id)
+    if not isinstance(owner, dict) or str(owner.get("agent_id") or "") != str(config.get("agent_id") or ""):
+        raise ServerUpdateError("server update instance ownership mismatch")
+    if str(owner.get("game_id") or "") != game:
+        raise ServerUpdateError("server update game identity mismatch")
+    affected = []
+    for item in instance_runtime.list_instances(config):
+        current = str(item.get("instance_id") or "")
+        if str(item.get("game_id") or "") != game or not current:
+            continue
+        record = instance_runtime.get_instance(current)
+        if not isinstance(record, dict) or str(record.get("agent_id") or "") != str(config.get("agent_id") or ""):
+            raise ServerUpdateError("cannot establish instance ownership for shared update")
+        directory = str(record.get("working_directory") or "").strip()
+        if not directory or not Path(directory).is_absolute():
+            raise ServerUpdateError("cannot establish shared installation path for "+current)
+        try:
+            resolved = Path(directory).resolve(strict=True)
+        except OSError as exc:
+            raise ServerUpdateError("cannot resolve installation path for "+current) from exc
+        if resolved == target:
+            affected.append(current)
+    if instance_id not in affected:
+        raise ServerUpdateError("update owner is not bound to the selected installation")
+    return affected
 
 
 def _tree_size(root: Path) -> int:
@@ -104,6 +132,18 @@ def _restart_and_validate(config: dict[str, Any], instance_ids: list[str]) -> tu
     return restarted, failures
 
 
+def _local_agent_config(record: dict[str, Any]) -> dict[str, str]:
+        config_path = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
+        try:
+            local_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ServerUpdateError("cannot establish local Agent identity") from exc
+        local_agent_id = str(local_config.get("agent_id") or "").strip()
+        if not local_agent_id or local_agent_id != str(record.get("agent_id") or ""):
+            raise ServerUpdateError("server update instance belongs to another Agent")
+        return {"agent_id": local_agent_id}
+
+
 def perform_update(
     selection: dict[str, Any],
     target: Path,
@@ -112,12 +152,12 @@ def perform_update(
 ) -> dict[str, Any]:
     """Stage, validate, atomically activate and rollback shared game data when needed."""
     _, record = _context(selection)
-    config = {"agent_id": str(record.get("agent_id") or "")}
+    config = _local_agent_config(record)
     game = str(record.get("game_id") or "")
     meta = selection.get("_server_update") or {}
     backup_enabled = bool(meta.get("backup_before_update", True))
-    affected = _affected(config, game)
     target = Path(target).resolve()
+    affected = _affected(config, game, target, str(meta.get('instance_id') or ''))
     running: list[str] = []
     backups: list[dict[str, Any]] = []
     restarted: list[str] = []
