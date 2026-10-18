@@ -64,5 +64,27 @@ class AffectedInstallationsTests(unittest.TestCase):
                 detector.assert_not_called()
 
 
+    def test_maintenance_prepare_rejects_foreign_agent_before_mutation(self):
+        import json
+        from agents.linux.runtime import maintenance_game_update
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "dayz"
+            target.mkdir()
+            config_file = root / "agent.json"
+            config_file.write_text(json.dumps({"agent_id": "local-agent"}), encoding="utf-8")
+            foreign = {"instance_id": "foreign", "agent_id": "other-agent", "game_id": "dayz",
+                       "working_directory": str(target)}
+            selection = {"game": "dayz", "_maintenance_game_update": {"instance_id": "foreign"}}
+            with patch.object(maintenance_game_update.instance_runtime, "get_instance",
+                              return_value=foreign), patch.dict("os.environ", {"CAPIVARA_AGENT_CONFIG": str(config_file)}), patch.object(
+                                  maintenance_game_update, "_affected") as affected, patch.object(
+                                  maintenance_game_update, "detect_update") as detector:
+                with self.assertRaises(server_update_agent.ServerUpdateError):
+                    maintenance_game_update.prepare(selection, target, lambda destination: None)
+                affected.assert_not_called()
+                detector.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
