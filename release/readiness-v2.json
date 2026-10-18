@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.121",
-  "tag_name": "v2.0.121",
-  "status": "release-approved",
-  "publish_release": true,
+  "release_version": "2.0.122",
+  "tag_name": "v2.0.122",
+  "status": "release-candidate",
+  "publish_release": false,
   "release_authorized": true,
   "required_gates": [
     "CI",
