@@ -132,6 +132,18 @@ def _restart_and_validate(config: dict[str, Any], instance_ids: list[str]) -> tu
     return restarted, failures
 
 
+def _local_agent_config(record: dict[str, Any]) -> dict[str, str]:
+        config_path = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
+        try:
+            local_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ServerUpdateError("cannot establish local Agent identity") from exc
+        local_agent_id = str(local_config.get("agent_id") or "").strip()
+        if not local_agent_id or local_agent_id != str(record.get("agent_id") or ""):
+            raise ServerUpdateError("server update instance belongs to another Agent")
+        return {"agent_id": local_agent_id}
+
+
 def perform_update(
     selection: dict[str, Any],
     target: Path,
@@ -140,15 +152,7 @@ def perform_update(
 ) -> dict[str, Any]:
     """Stage, validate, atomically activate and rollback shared game data when needed."""
     _, record = _context(selection)
-    config_path = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
-    try:
-        local_config = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ServerUpdateError("cannot establish local Agent identity") from exc
-    local_agent_id = str(local_config.get("agent_id") or "").strip()
-    if not local_agent_id or local_agent_id != str(record.get("agent_id") or ""):
-        raise ServerUpdateError("server update instance belongs to another Agent")
-    config = {"agent_id": local_agent_id}
+    config = _local_agent_config(record)
     game = str(record.get("game_id") or "")
     meta = selection.get("_server_update") or {}
     backup_enabled = bool(meta.get("backup_before_update", True))
