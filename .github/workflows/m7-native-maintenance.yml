@@ -34,6 +34,7 @@ on:
       - 'tests/maintenance_configuration_coalescing_test.py'
       - 'tests/maintenance_content_coalescing_test.py'
       - 'tests/maintenance_game_update_coalescing_test.py'
+      - 'tests/run_maintenance_isolated.py'
       - 'tests/palworld_console_rest_test.py'
       - '.github/workflows/m7-native-maintenance.yml'
 
@@ -71,6 +72,7 @@ on:
       - 'tests/maintenance_configuration_coalescing_test.py'
       - 'tests/maintenance_content_coalescing_test.py'
       - 'tests/maintenance_game_update_coalescing_test.py'
+      - 'tests/run_maintenance_isolated.py'
       - 'tests/palworld_console_rest_test.py'
       - '.github/workflows/m7-native-maintenance.yml'
 
@@ -141,6 +143,11 @@ jobs:
           python3 tests/maintenance_configuration_coalescing_test.py
           python3 tests/maintenance_content_coalescing_test.py
           python3 tests/maintenance_game_update_coalescing_test.py
+
+      - name: Verify isolated maintenance test discovery
+        env:
+          PYTHONPATH: .
+        run: python3 tests/run_maintenance_isolated.py
 
       - name: Enforce typed maintenance safety
         run: |
