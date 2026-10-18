@@ -80,7 +80,7 @@ class AffectedInstallationsTests(unittest.TestCase):
                               return_value=foreign), patch.dict("os.environ", {"CAPIVARA_AGENT_CONFIG": str(config_file)}), patch.object(
                                   maintenance_game_update, "_affected") as affected, patch.object(
                                   maintenance_game_update, "detect_update") as detector:
-                with self.assertRaises(server_update_agent.ServerUpdateError):
+                with self.assertRaisesRegex(RuntimeError, "belongs to another Agent"):
                     maintenance_game_update.prepare(selection, target, lambda destination: None)
                 affected.assert_not_called()
                 detector.assert_not_called()
