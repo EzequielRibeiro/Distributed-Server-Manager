@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import instance_runtime
 from backup_client import _create as create_backup
-from server_update_agent import _affected, _ensure_staging_space, _provider_metadata_snapshot
+from server_update_agent import _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config
 from server_update_provider import detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback
 
@@ -108,7 +108,7 @@ def _load(selection: dict[str, Any], transaction_id: str) -> tuple[dict[str, Any
 
 
 def prepare(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],steamcmd:str|None=None)->dict[str,Any]:
-    instance_id,record,meta=_context(selection);config={"agent_id":str(record.get("agent_id") or "")};game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);before=detect_update(selection,target,steamcmd)
+    instance_id,record,meta=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);before=detect_update(selection,target,steamcmd)
     if before.get("state")=="up_to_date":return {"changed":False,"transaction_id":None,"affected_instances":affected,"update_status_before":before,"update_status_after":before}
     staging=None;previous=None;activated=False;provider_snapshot={};backups=[]
     try:
