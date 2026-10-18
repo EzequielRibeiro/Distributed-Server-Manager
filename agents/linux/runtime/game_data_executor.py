@@ -21,7 +21,7 @@ def _instance_update_target(selection:dict[str,Any])->Path|None:
   if isinstance(selection.get("_maintenance_game_update"),dict):meta={"operation":"maintenance","instance_id":selection["_maintenance_game_update"].get("instance_id")}
   else:return None
  operation=str(meta.get("operation") or "").strip().lower()
- if operation not in {"check","update","maintenance"}:return None
+ if operation not in {"check","update","maintenance"}:raise RuntimeError("unsupported instance-scoped server update operation")
  import instance_runtime
  instance_id=_safe_name(meta.get("instance_id"),"instance_id")
  record=instance_runtime.get_instance(instance_id)
