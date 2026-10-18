@@ -101,6 +101,7 @@ def _load(selection: dict[str, Any], transaction_id: str) -> tuple[dict[str, Any
     except (OSError,ValueError) as exc:raise MaintenanceGameUpdateError("maintenance game update transaction is unreadable") from exc
     if not isinstance(payload,dict) or payload.get("kind")!="CapivaraMaintenanceGameUpdateTransaction":raise MaintenanceGameUpdateError("invalid maintenance game update transaction")
     instance_id,record,_=_context(selection)
+    _local_agent_config(record)
     if str(payload.get("instance_id") or "")!=instance_id:raise MaintenanceGameUpdateError("maintenance transaction belongs to another instance")
     if str(payload.get("agent_id") or "")!=str(record.get("agent_id") or ""):raise MaintenanceGameUpdateError("maintenance transaction belongs to another Agent")
     if str(payload.get("game_id") or "")!=str(record.get("game_id") or ""):raise MaintenanceGameUpdateError("maintenance transaction belongs to another game")
@@ -138,7 +139,7 @@ def finalize(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
 def rollback_transaction(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
     checkpoint,path=_load(selection,transaction_id)
     if str(checkpoint.get("state") or "")!="prepared":raise MaintenanceGameUpdateError("maintenance transaction is not prepared")
-    instance_id,record,_=_context(selection);config={"agent_id":str(record.get("agent_id") or "")};affected=[str(value) for value in checkpoint.get("affected_instances") or []];_all_stopped(config,affected);target=Path(str(checkpoint.get("target") or "")).resolve();previous=Path(str(checkpoint["previous"])).resolve() if checkpoint.get("previous") else None
+    instance_id,record,_=_context(selection);config=_local_agent_config(record);affected=[str(value) for value in checkpoint.get("affected_instances") or []];_all_stopped(config,affected);target=Path(str(checkpoint.get("target") or "")).resolve();previous=Path(str(checkpoint["previous"])).resolve() if checkpoint.get("previous") else None
     if not rollback(target,previous):raise MaintenanceGameUpdateError("maintenance rollback tree is unavailable")
     restore_files(_decode_snapshot(checkpoint.get("provider_snapshot")));checkpoint["state"]="rolled_back";_write(path,checkpoint);path.unlink(missing_ok=True);return {"transaction_id":transaction_id,"state":"rolled_back","changed":True,"instance_id":instance_id}
 
