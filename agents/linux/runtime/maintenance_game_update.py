@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import instance_runtime
 from backup_client import _create as create_backup
-from server_update_agent import _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config
+from server_update_agent import ServerUpdateError, _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config
 from server_update_provider import detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback
 
@@ -101,10 +101,39 @@ def _load(selection: dict[str, Any], transaction_id: str) -> tuple[dict[str, Any
     except (OSError,ValueError) as exc:raise MaintenanceGameUpdateError("maintenance game update transaction is unreadable") from exc
     if not isinstance(payload,dict) or payload.get("kind")!="CapivaraMaintenanceGameUpdateTransaction":raise MaintenanceGameUpdateError("invalid maintenance game update transaction")
     instance_id,record,_=_context(selection)
-    _local_agent_config(record)
+    try:
+        _local_agent_config(record)
+    except ServerUpdateError as exc:
+        raise MaintenanceGameUpdateError(str(exc)) from exc
     if str(payload.get("instance_id") or "")!=instance_id:raise MaintenanceGameUpdateError("maintenance transaction belongs to another instance")
     if str(payload.get("agent_id") or "")!=str(record.get("agent_id") or ""):raise MaintenanceGameUpdateError("maintenance transaction belongs to another Agent")
     if str(payload.get("game_id") or "")!=str(record.get("game_id") or ""):raise MaintenanceGameUpdateError("maintenance transaction belongs to another game")
+    directory = str(record.get("working_directory") or "").strip()
+    if not directory or not Path(directory).is_absolute():
+        raise MaintenanceGameUpdateError("maintenance instance has no absolute installation path")
+    try:
+        current_target = Path(directory).resolve(strict=True)
+        checkpoint_target = Path(str(payload.get("target") or "")).resolve(strict=True)
+    except OSError as exc:
+        raise MaintenanceGameUpdateError("maintenance installation path is unavailable") from exc
+    if current_target != checkpoint_target:
+        raise MaintenanceGameUpdateError("maintenance instance installation changed since prepare")
+    affected = payload.get("affected_instances")
+    if not isinstance(affected, list) or instance_id not in affected:
+        raise MaintenanceGameUpdateError("maintenance checkpoint has invalid affected instances")
+    for current in affected:
+        other = instance_runtime.get_instance(str(current))
+        if not isinstance(other, dict) or str(other.get("agent_id") or "") != str(record.get("agent_id") or ""):
+            raise MaintenanceGameUpdateError("maintenance affected instance ownership changed")
+        other_directory = str(other.get("working_directory") or "").strip()
+        if not other_directory or not Path(other_directory).is_absolute():
+            raise MaintenanceGameUpdateError("maintenance affected instance installation is missing")
+        try:
+            other_target = Path(other_directory).resolve(strict=True)
+        except OSError as exc:
+            raise MaintenanceGameUpdateError("maintenance affected installation is unavailable") from exc
+        if other_target != checkpoint_target:
+            raise MaintenanceGameUpdateError("maintenance affected installation changed since prepare")
     return payload,path
 
 
