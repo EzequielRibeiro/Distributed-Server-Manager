@@ -43,6 +43,10 @@ class InstanceScopedUpdateTargetTests(unittest.TestCase):
             "instance_id": "dayz-homolog-node1-isolated"}}
         self.assertEqual(executor._target_for(selection), self.target)
 
+    def test_unknown_update_operation_fails_closed(self):
+        with self.assertRaises(RuntimeError):
+            executor._target_for(self.selection("unexpected-operation"))
+
     def test_missing_instance_fails_closed(self):
         selection = self.selection()
         selection["_server_update"]["instance_id"] = "missing"
