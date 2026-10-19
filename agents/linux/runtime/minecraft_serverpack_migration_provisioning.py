@@ -393,12 +393,9 @@ def execute_homologated_migration(
                 ready=len(list((active/"mods").glob("*.jar")))==evidence["serverpack_mod_count"]
             return bool(ready)
         finally:
-            try:
-                current_state=adapter.status(active_record)
-                if str(current_state.get("active_state") or "").lower() in {"active","activating"}:
-                    adapter.stop(active_record)
-            except Exception:
-                pass
+            # A failed stop must propagate: swap commit or rollback cannot
+            # proceed while the candidate server might still be running.
+            ensure_stopped(active_record,adapter)
 
     def commit(evidence:dict[str,Any],backup_evidence:dict[str,Any])->dict[str,Any]:
         return migration_swap.commit(instance_root,readiness_passed=True)
