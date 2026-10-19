@@ -348,11 +348,14 @@ class AgentInstanceProvisioningRepository:
                     ).fetchone()
                     if row is None or str(row["status"] or "") not in FINAL_STATES:
                         raise RuntimeError("provisioning terminal claim lost without terminal state")
-                    return {
-                        **current,
-                        "status": str(row["status"]),
-                        "result": _decode_request(row["result_json"]),
-                    }
+                    terminal = dict(row)
+                    for source, target in (("request_json", "request"), ("result_json", "result")):
+                        raw = terminal.pop(source, None)
+                        try:
+                            terminal[target] = json.loads(raw) if raw else None
+                        except (TypeError, ValueError):
+                            terminal[target] = None
+                    return terminal
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
