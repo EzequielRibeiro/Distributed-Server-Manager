@@ -214,7 +214,7 @@ def execute_homologated_migration(
     status=adapter.status(record)
     if str(status.get("active_state") or "").lower() not in {"inactive","deactivating"}:
         raise MinecraftServerPackProvisioningHomologationError(
-            "PR855 homologation currently requires the instance to be stopped"
+            "Server Pack migration requires a stopped instance; controlled-stop orchestration is not yet integrated"
         )
     current=verify_installed_neoforge(active,migration["from_loader_version"])
     if current.get("loader_version")!=migration["from_loader_version"]:
