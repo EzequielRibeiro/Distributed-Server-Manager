@@ -250,12 +250,19 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
                     # Read through the same transaction/session rather than
                     # opening a second connection while holding this lock.
                     row = session.execute(
-                        f"SELECT status FROM agent_instance_provisioning WHERE provisioning_id={ph}",
+                        f"SELECT * FROM agent_instance_provisioning WHERE provisioning_id={ph}",
                         (provisioning_id,),
                     ).fetchone()
                     if row is None or str(row["status"] or "") not in FINAL_STATES:
                         raise RuntimeError("provisioning terminal claim lost without terminal state")
-                    return current
+                    terminal = dict(row)
+                    for source, target in (("request_json", "request"), ("result_json", "result")):
+                        raw = terminal.pop(source, None)
+                        try:
+                            terminal[target] = json.loads(raw) if raw else None
+                        except (TypeError, ValueError):
+                            terminal[target] = None
+                    return terminal
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
