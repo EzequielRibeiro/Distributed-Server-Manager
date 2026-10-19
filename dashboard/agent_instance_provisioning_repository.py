@@ -262,7 +262,7 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
                             terminal[target] = json.loads(raw) if raw else None
                         except (TypeError, ValueError):
                             terminal[target] = None
-                    return terminal
+                    return _public_snapshot(terminal)
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
