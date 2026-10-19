@@ -45,6 +45,18 @@ class ControlledStopTest(unittest.TestCase):
         self.assertFalse(result["stop_requested"])
         adapter.stop.assert_not_called()
 
+    def test_stop_completes_at_deadline(self):
+        adapter = Mock()
+        adapter.status.side_effect = [
+            {"active_state": "active"},
+            {"active_state": "inactive"},
+        ]
+        clock = iter([0.0])
+        result = ensure_stopped(
+            {}, adapter, timeout_seconds=1, monotonic=lambda: next(clock),
+        )
+        self.assertTrue(result["stop_requested"])
+
     def test_timeout_is_not_success(self):
         adapter = Mock()
         adapter.status.return_value = {"active_state": "active"}
