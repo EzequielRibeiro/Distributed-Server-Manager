@@ -1,0 +1,28 @@
+name: Server Pack Controlled Stop Tests
+
+on:
+  push:
+    branches:
+      - fix/hybrid-serverpack-customer-flow
+  pull_request:
+    paths:
+      - 'agents/linux/runtime/minecraft_serverpack_controlled_stop.py'
+      - 'tests/minecraft_serverpack_controlled_stop_test.py'
+      - '.github/workflows/serverpack-controlled-stop.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  controlled-stop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile changed modules
+        run: python -m py_compile agents/linux/runtime/minecraft_serverpack_controlled_stop.py tests/minecraft_serverpack_controlled_stop_test.py
+      - name: Run isolated controlled-stop tests
+        run: python -m unittest discover -s tests -p 'minecraft_serverpack_controlled_stop_test.py' -v
