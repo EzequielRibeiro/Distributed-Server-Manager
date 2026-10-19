@@ -312,6 +312,8 @@ class AgentInstanceProvisioningRepository:
             raise PermissionError("provisioning operation belongs to another Agent")
         if str(result.get("instance_id") or "") != str(current.get("instance_id") or ""):
             raise ValueError("provisioning result instance_id mismatch")
+        if str(current.get("status") or "").lower() in FINAL_STATES:
+            return current
         status = str(result.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
@@ -331,6 +333,26 @@ class AgentInstanceProvisioningRepository:
         minecraft_change = minecraft_migration or minecraft_update
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
+            # Serialize terminal result publication with the terminal state.
+            # A replay must not publish a second bundle or emit another event.
+            if status in FINAL_STATES:
+                claim = session.execute(
+                    "UPDATE agent_instance_provisioning SET updated_at=updated_at "
+                    f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
+                    (provisioning_id,),
+                )
+                if int(getattr(claim, "rowcount", 0) or 0) != 1:
+                    row = session.execute(
+                        f"SELECT * FROM agent_instance_provisioning WHERE provisioning_id={ph}",
+                        (provisioning_id,),
+                    ).fetchone()
+                    if row is None or str(row["status"] or "") not in FINAL_STATES:
+                        raise RuntimeError("provisioning terminal claim lost without terminal state")
+                    return self.snapshot(provisioning_id) if False else {
+                        **current,
+                        "status": str(row["status"]),
+                        "result": _decode_request(row["result_json"]),
+                    }
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
