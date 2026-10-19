@@ -57,6 +57,20 @@ class ControlledStopTest(unittest.TestCase):
         )
         self.assertTrue(result["stop_requested"])
 
+    def test_invalid_initial_status_fails_closed(self):
+        adapter = Mock()
+        adapter.status.return_value = None
+        with self.assertRaisesRegex(ControlledStopError, "status response is invalid"):
+            ensure_stopped({}, adapter)
+        adapter.stop.assert_not_called()
+
+    def test_invalid_status_after_stop_fails_closed(self):
+        adapter = Mock()
+        adapter.status.side_effect = [{"active_state": "active"}, None]
+        with self.assertRaisesRegex(ControlledStopError, "status response is invalid"):
+            ensure_stopped({}, adapter)
+        adapter.stop.assert_called_once()
+
     def test_timeout_is_not_success(self):
         adapter = Mock()
         adapter.status.return_value = {"active_state": "active"}
