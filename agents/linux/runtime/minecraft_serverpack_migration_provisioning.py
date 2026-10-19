@@ -277,7 +277,10 @@ def execute_homologated_migration(
             serverpack_zip_bytes=archive.stat().st_size,
             expanded_pack_bytes=expanded,
             new_runtime_bytes=_tree_bytes(loader_seed)+expanded,
-            backup_evidence={"size_bytes":runtime_bytes, "integrity_verified":True},
+            # A size estimate is not evidence of an existing verified backup.
+            # Fail closed until the Agent has independently attested the
+            # retained baseline backup before starting the transaction.
+            backup_evidence=configuration.get("minecraft_serverpack_verified_backup"),
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
                 "install_allowed":False,
@@ -354,7 +357,8 @@ def execute_homologated_migration(
                 adapter.stop(record)
         except Exception:
             pass
-        recovery=migration_swap.recover(instance_root) if state.get("candidate_runtime") else {"status":"no_swap"}
+        journal=instance_root/".dsm/minecraft-serverpack-migration.json"
+        recovery=migration_swap.recover(instance_root) if journal.is_file() else {"status":"no_swap"}
         if state.get("initial_active_state") in {"active","activating"}:
             adapter.start(record)
         return recovery
