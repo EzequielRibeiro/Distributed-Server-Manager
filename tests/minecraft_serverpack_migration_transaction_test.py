@@ -116,6 +116,27 @@ class TransactionTest(unittest.TestCase):
     self.assertLess(events.index("rollback"),events.index("unlock"))
     self.assertIn("rolled_back",ctx.exception.trace)
 
+ def test_stop_failure_triggers_compensation_under_lock(self):
+  module,events,_,hooks=self._run(fail_at="stop")
+  with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
+   module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+  self.assertIn("rollback",events)
+  self.assertNotIn("backup",events)
+  self.assertLess(events.index("rollback"),events.index("unlock"))
+  self.assertIn("rolled_back",ctx.exception.trace)
+
+ def test_backup_failure_triggers_compensation_under_lock(self):
+  module,events,_,hooks=self._run(fail_at="backup")
+  with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
+   module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+  self.assertIn("stop",events)
+  self.assertIn("rollback",events)
+  self.assertNotIn("stage",events)
+  self.assertLess(events.index("rollback"),events.index("unlock"))
+  self.assertIn("rolled_back",ctx.exception.trace)
+
  def test_rollback_failure_requires_manual_recovery(self):
   module,events,_,hooks=self._run(fail_at="commit",rollback_fail=True)
   with self.assertRaisesRegex(module.MinecraftServerPackMigrationExecutionError,
