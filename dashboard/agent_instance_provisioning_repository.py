@@ -234,6 +234,20 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
         payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
         ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
+            # Acquire the provisioning row's write lock before publication.
+            # Only one terminal result may claim a nonterminal operation.
+            # The claim and bundle publication share this transaction.
+            if status in FINAL_STATES:
+                claim = session.execute(
+                    "UPDATE agent_instance_provisioning SET "
+                    "updated_at=updated_at "
+                    f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
+                    (provisioning_id,),
+                )
+                if int(getattr(claim, "rowcount", 0) or 0) != 1:
+                    # A concurrent completion already committed. Do not publish
+                    # or emit a second completion event for this replay.
+                    return self.snapshot(provisioning_id)
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
