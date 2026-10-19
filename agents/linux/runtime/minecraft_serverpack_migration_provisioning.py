@@ -160,13 +160,20 @@ def _attest_retained_backup(value:Any,instance_id:str)->dict[str,Any]:
         )
     artifact=Path(str(value.get("artifact_path") or ""))
     expected=str(value.get("sha256") or "").strip().lower()
+    try:
+        recorded_size=int(value.get("size_bytes") or 0)
+    except (TypeError,ValueError) as exc:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "retained backup size is invalid"
+        ) from exc
     if (
         not artifact.is_absolute()
         or not artifact.is_file()
         or artifact.is_symlink()
         or len(expected)!=64
         or any(char not in "0123456789abcdef" for char in expected)
-        or artifact.stat().st_size!=int(value.get("size_bytes") or 0)
+        or recorded_size<=0
+        or artifact.stat().st_size!=recorded_size
         or _digest(artifact)!=expected
         or not str(value.get("backup_id") or "").strip()
     ):
