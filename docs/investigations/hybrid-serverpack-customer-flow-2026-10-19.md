@@ -1,6 +1,6 @@
 # Hybrid Agent Server Pack customer migration: investigation and acceptance criteria
 
-Status: investigation; no implementation or production deployment in this branch.
+Status: implementation in progress on PR #916; automated Agent safeguards and backup tests added. No production deployment or end-to-end customer homologation.
 
 ## Reproduction (2026-10-19)
 - Instance: `cli-000001-minecraft-005`, Agent: `agent-horizon-server`, runtime: NeoForge.
@@ -27,4 +27,19 @@ Status: investigation; no implementation or production deployment in this branch
 - Successful Agent completion then atomic Controller publication; crash/retry boundaries.
 - Customer status transition pending -> failed/completed with accurate error.
 
-This note records the observed failure and work scope. It is not a code fix.
+This note records the observed failure, implemented safeguards and outstanding acceptance criteria. The PR remains a draft.
+
+## Controller publication concurrency review (2026-10-19)
+
+The Controller publication bridge is implemented in `database/minecraft_serverpack_pending_publication.py`, invoked from `dashboard/agent_instance_provisioning_repository.py::apply_result` in a database transaction. It checks the previous content revision and runtime identity, then writes the candidate bundle and instance loader metadata.
+
+**Remaining concurrency gap:** `apply_result` snapshots provisioning state before starting its write transaction. A terminal-state replay guard prevents ordinary sequential duplicates, but two concurrent completions can both observe a nonterminal snapshot. The bundle revision check can reject one writer, but that is not a complete idempotent result protocol and may surface a failure on a legitimate retry.
+
+Required before real customer migration:
+1. Atomically claim terminal completion with a conditional provisioning-row update inside the same transaction as publication; only the winner may publish.
+2. Ensure losing/replayed completions read and return the committed terminal state without attempting a second publication.
+3. Confirm rollback of the claim, bundle publication and instance metadata together if any validation or database write fails.
+4. Add concurrent completion and delayed failure/replay regression tests for PostgreSQL and SQLite where supported.
+5. Ensure customer-facing pending/failed/completed state reflects the persisted Controller outcome, not merely the Agent's report.
+
+No merge, deploy or real Minecraft 005 restart is authorized by this note.
