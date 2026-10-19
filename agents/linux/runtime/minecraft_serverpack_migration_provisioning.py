@@ -199,6 +199,36 @@ def _attest_retained_backup(backup_id:Any,instance_id:str)->dict[str,Any]:
     }
 
 
+def _select_retained_backup_id(config:dict[str,Any],instance_id:str)->str:
+    configured=config.get("minecraft_serverpack_retained_backup_id")
+    if configured:
+        return str(configured)
+    # Discover only Agent-owned archives with a matching embedded manifest.
+    # An invalid candidate is skipped; if none qualifies the capacity gate
+    # fails closed before stopping the running server.
+    from backup_client import BACKUP_ROOT
+    directory=BACKUP_ROOT/instance_id
+    if not directory.is_dir() or directory.is_symlink():
+        raise MinecraftServerPackProvisioningHomologationError(
+            "no trusted retained backup directory exists"
+        )
+    candidates=sorted(
+        (p for p in directory.iterdir() if p.is_file() and not p.is_symlink()
+         and (p.name.endswith(".tar.gz") or p.name.endswith(".tar"))),
+        key=lambda p:p.stat().st_mtime,reverse=True,
+    )
+    for artifact in candidates:
+        candidate_id=artifact.name[:-7] if artifact.name.endswith(".tar.gz") else artifact.name[:-4]
+        try:
+            _attest_retained_backup(candidate_id,instance_id)
+            return candidate_id
+        except (MinecraftServerPackProvisioningHomologationError,ValueError):
+            continue
+    raise MinecraftServerPackProvisioningHomologationError(
+        "no verified retained Agent backup is available"
+    )
+
+
 def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240)->bool:
     working=Path(str(record.get("working_directory") or record.get("files_root") or ""))
     log=working/"logs/latest.log"
@@ -318,35 +348,6 @@ def execute_homologated_migration(
             "migration_plan_sha256":evidence["migration_plan_sha256"],
         }
 
-    def retained_backup_id()->str:
-        configured=config.get("minecraft_serverpack_retained_backup_id")
-        if configured:
-            return str(configured)
-        # Discover only Agent-owned archives with a matching embedded manifest.
-        # An invalid candidate is skipped; if none qualifies the capacity gate
-        # fails closed before stopping the running server.
-        from backup_client import BACKUP_ROOT
-        directory=BACKUP_ROOT/instance_id
-        if not directory.is_dir() or directory.is_symlink():
-            raise MinecraftServerPackProvisioningHomologationError(
-                "no trusted retained backup directory exists"
-            )
-        candidates=sorted(
-            (p for p in directory.iterdir() if p.is_file() and not p.is_symlink()
-             and (p.name.endswith(".tar.gz") or p.name.endswith(".tar"))),
-            key=lambda p:p.stat().st_mtime,reverse=True,
-        )
-        for artifact in candidates:
-            candidate_id=artifact.name[:-7] if artifact.name.endswith(".tar.gz") else artifact.name[:-4]
-            try:
-                _attest_retained_backup(candidate_id,instance_id)
-                return candidate_id
-            except (MinecraftServerPackProvisioningHomologationError,ValueError):
-                continue
-        raise MinecraftServerPackProvisioningHomologationError(
-            "no verified retained Agent backup is available"
-        )
-
     def capacity(evidence:dict[str,Any])->dict[str,Any]:
         # Estimate backup from the existing runtime before stopping it.
         runtime_bytes=_tree_bytes(active)
@@ -361,7 +362,7 @@ def execute_homologated_migration(
             # Fail closed until the Agent has independently attested the
             # retained baseline backup before starting the transaction.
             backup_evidence=_attest_retained_backup(
-                retained_backup_id(),instance_id
+                _select_retained_backup_id(config,instance_id),instance_id
             ),
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
