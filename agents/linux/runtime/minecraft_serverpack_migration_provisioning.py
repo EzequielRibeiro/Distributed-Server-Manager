@@ -9,6 +9,7 @@ allow-lists on this Agent.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import tarfile
@@ -170,7 +171,6 @@ def _attest_retained_backup(backup_id:Any,instance_id:str)->dict[str,Any]:
             stream=package.extractfile(manifest_member)
             if stream is None:
                 raise ValueError("backup manifest is unreadable")
-            import json
             manifest=json.loads(stream.read().decode("utf-8"))
             if (
                 manifest.get("kind")!="CapivaraInstanceBackup"
@@ -181,6 +181,12 @@ def _attest_retained_backup(backup_id:Any,instance_id:str)->dict[str,Any]:
                 raise ValueError("backup manifest identity mismatch")
             if len(members)<=1:
                 raise ValueError("backup contains no instance data")
+            for member in members:
+                if member.issym() or member.islnk() or member.isdev():
+                    raise ValueError("backup contains unsafe filesystem entries")
+                member_path=Path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise ValueError("backup contains unsafe archive paths")
     except (OSError,ValueError,LookupError,tarfile.TarError,TypeError) as exc:
         raise MinecraftServerPackProvisioningHomologationError(
             "retained Agent backup failed independent verification"
