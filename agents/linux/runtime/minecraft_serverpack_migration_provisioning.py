@@ -318,6 +318,35 @@ def execute_homologated_migration(
             "migration_plan_sha256":evidence["migration_plan_sha256"],
         }
 
+    def retained_backup_id()->str:
+        configured=config.get("minecraft_serverpack_retained_backup_id")
+        if configured:
+            return str(configured)
+        # Discover only Agent-owned archives with a matching embedded manifest.
+        # An invalid candidate is skipped; if none qualifies the capacity gate
+        # fails closed before stopping the running server.
+        from backup_client import BACKUP_ROOT
+        directory=BACKUP_ROOT/instance_id
+        if not directory.is_dir() or directory.is_symlink():
+            raise MinecraftServerPackProvisioningHomologationError(
+                "no trusted retained backup directory exists"
+            )
+        candidates=sorted(
+            (p for p in directory.iterdir() if p.is_file() and not p.is_symlink()
+             and (p.name.endswith(".tar.gz") or p.name.endswith(".tar"))),
+            key=lambda p:p.stat().st_mtime,reverse=True,
+        )
+        for artifact in candidates:
+            candidate_id=artifact.name[:-7] if artifact.name.endswith(".tar.gz") else artifact.name[:-4]
+            try:
+                _attest_retained_backup(candidate_id,instance_id)
+                return candidate_id
+            except (MinecraftServerPackProvisioningHomologationError,ValueError):
+                continue
+        raise MinecraftServerPackProvisioningHomologationError(
+            "no verified retained Agent backup is available"
+        )
+
     def capacity(evidence:dict[str,Any])->dict[str,Any]:
         # Estimate backup from the existing runtime before stopping it.
         runtime_bytes=_tree_bytes(active)
@@ -332,7 +361,7 @@ def execute_homologated_migration(
             # Fail closed until the Agent has independently attested the
             # retained baseline backup before starting the transaction.
             backup_evidence=_attest_retained_backup(
-                config.get("minecraft_serverpack_retained_backup_id"),instance_id
+                retained_backup_id(),instance_id
             ),
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
