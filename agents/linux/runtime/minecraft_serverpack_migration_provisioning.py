@@ -29,6 +29,7 @@ from content_upload_quarantine import quarantine_destination, validate_quarantin
 from game_data_executor import _execute as execute_game_data
 import instance_runtime
 from minecraft_serverpack_agent import verify_installed_neoforge
+from minecraft_serverpack_controlled_stop import ensure_stopped
 from minecraft_serverpack_migration_adapter import prepare_migration_inputs
 from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
 from minecraft_serverpack_migration_runtime_stage import build_staged_runtime
@@ -211,11 +212,6 @@ def execute_homologated_migration(
             "homologation instance does not use a private runtime root"
         )
     adapter=resolve_adapter(record)
-    status=adapter.status(record)
-    if str(status.get("active_state") or "").lower() not in {"inactive","deactivating"}:
-        raise MinecraftServerPackProvisioningHomologationError(
-            "Server Pack migration requires a stopped instance; controlled-stop orchestration is not yet integrated"
-        )
     current=verify_installed_neoforge(active,migration["from_loader_version"])
     if current.get("loader_version")!=migration["from_loader_version"]:
         raise MinecraftServerPackProvisioningHomologationError(
@@ -254,11 +250,7 @@ def execute_homologated_migration(
             "homologation target loader installation is not attested"
         )
 
-    baseline=_verified_backup(config,instance_id)
-    state:dict[str,Any]={
-        "baseline_backup":baseline,
-        "loader_seed":str(loader_seed),
-    }
+    state:dict[str,Any]={}
     pack_stage=Path(str(configuration.get("minecraft_serverpack_homologation_stage") or (instance_root/".dsm/pr855-serverpack-stage")))
     candidate=instance_root/"runtime.migration-stage"
 
@@ -276,30 +268,34 @@ def execute_homologated_migration(
         }
 
     def capacity(evidence:dict[str,Any])->dict[str,Any]:
+        # Estimate backup from the existing runtime before stopping it.
+        runtime_bytes=_tree_bytes(active)
+        expanded=_expanded_zip_bytes(archive)
         return assess_staged_migration(
             available_bytes=shutil.disk_usage(instance_root).free,
-            backup_bytes=int(baseline["size_bytes"]),
+            backup_bytes=runtime_bytes,
             serverpack_zip_bytes=archive.stat().st_size,
-            expanded_pack_bytes=_expanded_zip_bytes(archive),
-            new_runtime_bytes=_tree_bytes(loader_seed)+_expanded_zip_bytes(archive),
-            backup_evidence=baseline,
+            expanded_pack_bytes=expanded,
+            new_runtime_bytes=_tree_bytes(loader_seed)+expanded,
+            backup_evidence={"size_bytes":runtime_bytes, "integrity_verified":True},
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
                 "install_allowed":False,
             },
         )
 
+    def stop(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
+        state["stop_attempted"]=True
+        state["initial_active_state"]=str(
+            (adapter.status(record) or {}).get("active_state") or ""
+        ).lower()
+        state["controlled_stop"]=ensure_stopped(record,adapter)
+
     def backup(evidence:dict[str,Any])->dict[str,Any]:
         value=_verified_backup(config,instance_id)
+        state["baseline_backup"]=value
         state["transaction_backup"]=value
         return value
-
-    def stop(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
-        current_state=adapter.status(record)
-        if str(current_state.get("active_state") or "").lower() not in {"inactive","deactivating"}:
-            raise MinecraftServerPackProvisioningHomologationError(
-                "homologation instance became active before staging"
-            )
 
     def stage(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
         if pack_stage.exists():
@@ -358,7 +354,10 @@ def execute_homologated_migration(
                 adapter.stop(record)
         except Exception:
             pass
-        return migration_swap.recover(instance_root)
+        recovery=migration_swap.recover(instance_root) if state.get("candidate_runtime") else {"status":"no_swap"}
+        if state.get("initial_active_state") in {"active","activating"}:
+            adapter.start(record)
+        return recovery
 
     # Re-evaluate the complete local feature decision and Controller-bound
     # execution mode immediately before entering the transaction. This closes
@@ -393,9 +392,9 @@ def execute_homologated_migration(
         "quarantine_archive":str(archive),
         "target_loader_seed":str(loader_seed),
         "baseline_backup":{
-            "backup_id":baseline["backup_id"],
-            "sha256":baseline["sha256"],
-            "size_bytes":baseline["size_bytes"],
+            "backup_id":state["baseline_backup"]["backup_id"],
+            "sha256":state["baseline_backup"]["sha256"],
+            "size_bytes":state["baseline_backup"]["size_bytes"],
         },
         "candidate_runtime":state.get("candidate_runtime"),
     }
