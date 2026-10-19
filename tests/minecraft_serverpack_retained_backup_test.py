@@ -83,6 +83,60 @@ class RetainedBackupTest(unittest.TestCase):
             with self.assertRaises(provisioning.MinecraftServerPackProvisioningHomologationError):
                 self.verify(archive)
 
+    def test_selector_chooses_newest_valid_backup(self):
+        import os
+        import backup_client
+        with tempfile.TemporaryDirectory() as folder:
+            directory=Path(folder)/INSTANCE
+            directory.mkdir()
+            old=directory/"old-backup.tar.gz"
+            newest=directory/"new-backup.tar.gz"
+            make_archive(old,backup="old-backup")
+            make_archive(newest,backup="new-backup")
+            os.utime(old,(100,100))
+            os.utime(newest,(200,200))
+            with patch.object(backup_client,"BACKUP_ROOT",Path(folder)):
+                self.assertEqual(
+                    provisioning._select_retained_backup_id({},INSTANCE),
+                    "new-backup",
+                )
+
+    def test_selector_skips_newest_invalid_backup(self):
+        import os
+        import backup_client
+        with tempfile.TemporaryDirectory() as folder:
+            directory=Path(folder)/INSTANCE
+            directory.mkdir()
+            valid=directory/"valid-backup.tar.gz"
+            invalid=directory/"invalid-backup.tar.gz"
+            make_archive(valid,backup="valid-backup")
+            make_archive(invalid,backup="incorrect-manifest-id")
+            os.utime(valid,(100,100))
+            os.utime(invalid,(200,200))
+            with patch.object(backup_client,"BACKUP_ROOT",Path(folder)):
+                self.assertEqual(
+                    provisioning._select_retained_backup_id({},INSTANCE),
+                    "valid-backup",
+                )
+
+    def test_selector_rejects_missing_backup_directory(self):
+        import backup_client
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(backup_client,"BACKUP_ROOT",Path(folder)):
+                with self.assertRaises(provisioning.MinecraftServerPackProvisioningHomologationError):
+                    provisioning._select_retained_backup_id({},INSTANCE)
+
+    def test_selector_rejects_only_invalid_backups(self):
+        import backup_client
+        with tempfile.TemporaryDirectory() as folder:
+            directory=Path(folder)/INSTANCE
+            directory.mkdir()
+            make_archive(directory/"invalid.tar.gz",backup="other-id")
+            with patch.object(backup_client,"BACKUP_ROOT",Path(folder)):
+                with self.assertRaises(provisioning.MinecraftServerPackProvisioningHomologationError):
+                    provisioning._select_retained_backup_id({},INSTANCE)
+
+
 
 if __name__=="__main__":
     unittest.main()
