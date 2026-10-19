@@ -351,12 +351,8 @@ def execute_homologated_migration(
         return migration_swap.commit(instance_root,readiness_passed=True)
 
     def rollback(evidence:dict[str,Any],backup_evidence:dict[str,Any],trace:tuple[str,...])->dict[str,Any]:
-        try:
-            current_state=adapter.status(record)
-            if str(current_state.get("active_state") or "").lower() in {"active","activating"}:
-                adapter.stop(record)
-        except Exception:
-            pass
+        # Never restore or restart while the candidate service may still be running.
+        ensure_stopped(record,adapter)
         journal=instance_root/".dsm/minecraft-serverpack-migration.json"
         recovery=migration_swap.recover(instance_root) if journal.is_file() else {"status":"no_swap"}
         if state.get("initial_active_state") in {"active","activating"}:
