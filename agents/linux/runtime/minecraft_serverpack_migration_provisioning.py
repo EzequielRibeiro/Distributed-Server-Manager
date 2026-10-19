@@ -201,8 +201,14 @@ def _attest_retained_backup(backup_id:Any,instance_id:str)->dict[str,Any]:
 
 def _select_retained_backup_id(config:dict[str,Any],instance_id:str)->str:
     configured=config.get("minecraft_serverpack_retained_backup_id")
-    if configured:
-        return str(configured)
+    if configured is not None:
+        if not isinstance(configured,str) or not configured.strip():
+            raise MinecraftServerPackProvisioningHomologationError(
+                "configured retained backup ID must be a nonempty string"
+            )
+        # Explicit backup selection must be independently verified too.
+        _attest_retained_backup(configured,instance_id)
+        return configured
     # Discover only Agent-owned archives with a matching embedded manifest.
     # An invalid candidate is skipped; if none qualifies the capacity gate
     # fails closed before stopping the running server.
