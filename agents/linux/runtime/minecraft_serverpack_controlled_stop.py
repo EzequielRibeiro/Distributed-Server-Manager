@@ -39,11 +39,13 @@ def ensure_stopped(record: dict[str, Any], adapter: Any, *,
     if initial in {"active", "activating"}:
         adapter.stop(record)
     deadline = monotonic() + timeout_seconds
-    while monotonic() < deadline:
+    while True:
         state = str(adapter.status(record).get("active_state") or "").lower()
         if state in _STOPPED:
             return {"previous_state": initial, "stop_requested": initial != "deactivating"}
         if state not in _RUNNING:
             raise ControlledStopError(f"instance entered unsafe state during stop: {state or 'unknown'}")
-        sleep(min(poll_seconds, max(0.0, deadline - monotonic())))
-    raise ControlledStopError("instance stop confirmation timed out")
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise ControlledStopError("instance stop confirmation timed out")
+        sleep(min(poll_seconds, remaining))
