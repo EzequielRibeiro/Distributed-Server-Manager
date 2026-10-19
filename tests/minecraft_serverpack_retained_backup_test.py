@@ -157,6 +157,23 @@ class RetainedBackupTest(unittest.TestCase):
                 {"minecraft_serverpack_retained_backup_id":"  "},INSTANCE)
 
 
+    def test_backup_id_glob_metacharacters_rejected_before_lookup(self):
+        for unsafe in ("*", "backup?", "backup[0]", "../backup", "dir/backup", "dir\\\\backup"):
+            with self.subTest(unsafe=unsafe):
+                with patch.object(provisioning,"find_backup_artifact") as lookup:
+                    with self.assertRaises(provisioning.MinecraftServerPackProvisioningHomologationError):
+                        provisioning._attest_retained_backup(unsafe,INSTANCE)
+                    lookup.assert_not_called()
+
+    def test_legacy_backup_id_remains_supported(self):
+        with tempfile.TemporaryDirectory() as folder:
+            archive=Path(folder)/"legacy.tar.gz"
+            make_archive(archive,backup="legacy-backup")
+            with patch.object(provisioning,"find_backup_artifact",return_value=archive):
+                result=provisioning._attest_retained_backup("legacy-backup",INSTANCE)
+            self.assertEqual(result["backup_id"],"legacy-backup")
+
+
 
 if __name__=="__main__":
     unittest.main()
