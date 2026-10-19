@@ -245,9 +245,17 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
                     (provisioning_id,),
                 )
                 if int(getattr(claim, "rowcount", 0) or 0) != 1:
-                    # A concurrent completion already committed. Do not publish
-                    # or emit a second completion event for this replay.
-                    return self.snapshot(provisioning_id)
+                    # The competing transaction has already committed its
+                    # terminal state. Avoid a second publication and events.
+                    # Read through the same transaction/session rather than
+                    # opening a second connection while holding this lock.
+                    row = session.execute(
+                        f"SELECT status FROM agent_instance_provisioning WHERE provisioning_id={ph}",
+                        (provisioning_id,),
+                    ).fetchone()
+                    if row is None or str(row["status"] or "") not in FINAL_STATES:
+                        raise RuntimeError("provisioning terminal claim lost without terminal state")
+                    return current
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
