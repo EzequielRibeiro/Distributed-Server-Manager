@@ -71,6 +71,32 @@ class ControlledStopTest(unittest.TestCase):
             ensure_stopped({}, adapter)
         adapter.stop.assert_called_once()
 
+    def test_adapter_stop_failure_propagates(self):
+        adapter = Mock()
+        adapter.status.return_value = {"active_state": "active"}
+        adapter.stop.side_effect = RuntimeError("systemd stop denied")
+        with self.assertRaisesRegex(RuntimeError, "systemd stop denied"):
+            ensure_stopped({}, adapter)
+        adapter.stop.assert_called_once()
+
+    def test_transition_to_failed_does_not_report_stopped(self):
+        adapter = Mock()
+        adapter.status.side_effect = [
+            {"active_state": "active"},
+            {"active_state": "failed"},
+        ]
+        with self.assertRaisesRegex(ControlledStopError, "unsafe state"):
+            ensure_stopped({}, adapter)
+        adapter.stop.assert_called_once()
+
+    def test_rejects_invalid_timeouts_before_touching_adapter(self):
+        adapter = Mock()
+        with self.assertRaises(ValueError):
+            ensure_stopped({}, adapter, timeout_seconds=0)
+        with self.assertRaises(ValueError):
+            ensure_stopped({}, adapter, poll_seconds=0)
+        adapter.status.assert_not_called()
+
     def test_timeout_is_not_success(self):
         adapter = Mock()
         adapter.status.return_value = {"active_state": "active"}
