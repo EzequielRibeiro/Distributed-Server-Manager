@@ -348,7 +348,7 @@ class AgentInstanceProvisioningRepository:
                     ).fetchone()
                     if row is None or str(row["status"] or "") not in FINAL_STATES:
                         raise RuntimeError("provisioning terminal claim lost without terminal state")
-                    return self.snapshot(provisioning_id) if False else {
+                    return {
                         **current,
                         "status": str(row["status"]),
                         "result": _decode_request(row["result_json"]),
