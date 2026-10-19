@@ -137,6 +137,26 @@ class RetainedBackupTest(unittest.TestCase):
                     provisioning._select_retained_backup_id({},INSTANCE)
 
 
+    def test_explicit_backup_id_is_attested(self):
+        with patch.object(provisioning,"_attest_retained_backup",return_value={"integrity_verified":True}) as attest:
+            result=provisioning._select_retained_backup_id(
+                {"minecraft_serverpack_retained_backup_id":"selected-backup"},INSTANCE)
+        self.assertEqual(result,"selected-backup")
+        attest.assert_called_once_with("selected-backup",INSTANCE)
+
+    def test_explicit_invalid_backup_is_rejected(self):
+        with patch.object(provisioning,"_attest_retained_backup",
+                          side_effect=provisioning.MinecraftServerPackProvisioningHomologationError("invalid")):
+            with self.assertRaises(provisioning.MinecraftServerPackProvisioningHomologationError):
+                provisioning._select_retained_backup_id(
+                    {"minecraft_serverpack_retained_backup_id":"invalid-backup"},INSTANCE)
+
+    def test_explicit_blank_backup_is_rejected(self):
+        with self.assertRaises(provisioning.MinecraftServerPackProvisioningHomologationError):
+            provisioning._select_retained_backup_id(
+                {"minecraft_serverpack_retained_backup_id":"  "},INSTANCE)
+
+
 
 if __name__=="__main__":
     unittest.main()
