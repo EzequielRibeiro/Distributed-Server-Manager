@@ -148,6 +148,49 @@ def _verified_backup(config:dict[str,Any],instance_id:str)->dict[str,Any]:
     return {**created,"integrity_verified":True}
 
 
+def _attest_retained_backup(value:Any,instance_id:str)->dict[str,Any]:
+    """Verify a retained on-disk backup; never trust Controller-supplied flags."""
+    if not isinstance(value,dict):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "a retained backup record is required before migration"
+        )
+    if str(value.get("instance_id") or "")!=instance_id:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "retained backup belongs to another instance"
+        )
+    artifact=Path(str(value.get("artifact_path") or ""))
+    expected=str(value.get("sha256") or "").strip().lower()
+    if (
+        not artifact.is_absolute()
+        or not artifact.is_file()
+        or artifact.is_symlink()
+        or len(expected)!=64
+        or any(char not in "0123456789abcdef" for char in expected)
+        or artifact.stat().st_size!=int(value.get("size_bytes") or 0)
+        or _digest(artifact)!=expected
+        or not str(value.get("backup_id") or "").strip()
+    ):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "retained backup artifact failed independent integrity verification"
+        )
+    try:
+        with tarfile.open(artifact,"r:*") as package:
+            if not package.getmembers():
+                raise MinecraftServerPackProvisioningHomologationError(
+                    "retained backup archive is empty"
+                )
+    except (tarfile.TarError,OSError) as exc:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "retained backup archive cannot be verified"
+        ) from exc
+    return {
+        "backup_id":str(value["backup_id"]),
+        "sha256":expected,
+        "size_bytes":artifact.stat().st_size,
+        "integrity_verified":True,
+    }
+
+
 def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240)->bool:
     working=Path(str(record.get("working_directory") or record.get("files_root") or ""))
     log=working/"logs/latest.log"
@@ -280,7 +323,9 @@ def execute_homologated_migration(
             # A size estimate is not evidence of an existing verified backup.
             # Fail closed until the Agent has independently attested the
             # retained baseline backup before starting the transaction.
-            backup_evidence=configuration.get("minecraft_serverpack_verified_backup"),
+            backup_evidence=_attest_retained_backup(
+                config.get("minecraft_serverpack_retained_backup"),instance_id
+            ),
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
                 "install_allowed":False,
