@@ -199,6 +199,10 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             raise PermissionError("provisioning operation belongs to another Agent")
         if str(sanitized.get("instance_id") or "") != str(current.get("instance_id") or ""):
             raise ValueError("provisioning result instance_id mismatch")
+        # Replayed Agent results must not re-enter Controller publication.
+        # A terminal provisioning operation is immutable.
+        if str(current.get("status") or "").lower() in FINAL_STATES:
+            return current
         status = str(sanitized.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
