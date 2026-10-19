@@ -31,7 +31,10 @@ def ensure_stopped(record: dict[str, Any], adapter: Any, *,
     """
     if timeout_seconds <= 0 or poll_seconds <= 0:
         raise ValueError("stop timeout and polling interval must be positive")
-    initial = str(adapter.status(record).get("active_state") or "").lower()
+    initial_status = adapter.status(record)
+    if not isinstance(initial_status, dict):
+        raise ControlledStopError("instance status response is invalid")
+    initial = str(initial_status.get("active_state") or "").lower()
     if initial in _STOPPED:
         return {"previous_state": initial, "stop_requested": False}
     if initial not in _RUNNING:
@@ -40,7 +43,10 @@ def ensure_stopped(record: dict[str, Any], adapter: Any, *,
         adapter.stop(record)
     deadline = monotonic() + timeout_seconds
     while True:
-        state = str(adapter.status(record).get("active_state") or "").lower()
+        observed = adapter.status(record)
+        if not isinstance(observed, dict):
+            raise ControlledStopError("instance status response is invalid")
+        state = str(observed.get("active_state") or "").lower()
         if state in _STOPPED:
             return {"previous_state": initial, "stop_requested": initial != "deactivating"}
         if state not in _RUNNING:
