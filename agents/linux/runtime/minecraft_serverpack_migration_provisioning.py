@@ -24,7 +24,7 @@ for _path in (_AGENT_COMMON,_PROJECT_ROOT/"core"):
         sys.path.insert(0,str(_path))
 
 from adapters import resolve_adapter
-from backup_client import _create as create_backup
+from backup_client import _create as create_backup, _artifact as find_backup_artifact, MANIFEST_NAME
 from content_upload_quarantine import quarantine_destination, validate_quarantine_archive
 from game_data_executor import _execute as execute_game_data
 import instance_runtime
@@ -148,52 +148,47 @@ def _verified_backup(config:dict[str,Any],instance_id:str)->dict[str,Any]:
     return {**created,"integrity_verified":True}
 
 
-def _attest_retained_backup(value:Any,instance_id:str)->dict[str,Any]:
-    """Verify a retained on-disk backup; never trust Controller-supplied flags."""
-    if not isinstance(value,dict):
+def _attest_retained_backup(backup_id:Any,instance_id:str)->dict[str,Any]:
+    """Resolve a backup by ID from the Agent-owned backup store and verify it."""
+    if not isinstance(backup_id,str) or not backup_id.strip():
         raise MinecraftServerPackProvisioningHomologationError(
-            "a retained backup record is required before migration"
-        )
-    if str(value.get("instance_id") or "")!=instance_id:
-        raise MinecraftServerPackProvisioningHomologationError(
-            "retained backup belongs to another instance"
-        )
-    artifact=Path(str(value.get("artifact_path") or ""))
-    expected=str(value.get("sha256") or "").strip().lower()
-    try:
-        recorded_size=int(value.get("size_bytes") or 0)
-    except (TypeError,ValueError) as exc:
-        raise MinecraftServerPackProvisioningHomologationError(
-            "retained backup size is invalid"
-        ) from exc
-    if (
-        not artifact.is_absolute()
-        or not artifact.is_file()
-        or artifact.is_symlink()
-        or len(expected)!=64
-        or any(char not in "0123456789abcdef" for char in expected)
-        or recorded_size<=0
-        or artifact.stat().st_size!=recorded_size
-        or _digest(artifact)!=expected
-        or not str(value.get("backup_id") or "").strip()
-    ):
-        raise MinecraftServerPackProvisioningHomologationError(
-            "retained backup artifact failed independent integrity verification"
+            "an Agent-owned retained backup ID is required before migration"
         )
     try:
+        artifact=find_backup_artifact(instance_id,backup_id)
+        if not artifact.is_file() or artifact.is_symlink():
+            raise ValueError("unsafe backup artifact")
+        size=artifact.stat().st_size
+        if size<=0:
+            raise ValueError("empty backup artifact")
+        checksum=_digest(artifact)
         with tarfile.open(artifact,"r:*") as package:
-            if not package.getmembers():
-                raise MinecraftServerPackProvisioningHomologationError(
-                    "retained backup archive is empty"
-                )
-    except (tarfile.TarError,OSError) as exc:
+            members=package.getmembers()
+            manifest_member=next((item for item in members if item.name==MANIFEST_NAME),None)
+            if manifest_member is None or not manifest_member.isfile():
+                raise ValueError("backup manifest is missing")
+            stream=package.extractfile(manifest_member)
+            if stream is None:
+                raise ValueError("backup manifest is unreadable")
+            import json
+            manifest=json.loads(stream.read().decode("utf-8"))
+            if (
+                manifest.get("kind")!="CapivaraInstanceBackup"
+                or manifest.get("backup_format")!="capivara-instance"
+                or manifest.get("backup_id")!=backup_id
+                or manifest.get("source_instance")!=instance_id
+            ):
+                raise ValueError("backup manifest identity mismatch")
+            if len(members)<=1:
+                raise ValueError("backup contains no instance data")
+    except (OSError,ValueError,LookupError,tarfile.TarError,TypeError) as exc:
         raise MinecraftServerPackProvisioningHomologationError(
-            "retained backup archive cannot be verified"
+            "retained Agent backup failed independent verification"
         ) from exc
     return {
-        "backup_id":str(value["backup_id"]),
-        "sha256":expected,
-        "size_bytes":artifact.stat().st_size,
+        "backup_id":backup_id,
+        "sha256":checksum,
+        "size_bytes":size,
         "integrity_verified":True,
     }
 
@@ -331,7 +326,7 @@ def execute_homologated_migration(
             # Fail closed until the Agent has independently attested the
             # retained baseline backup before starting the transaction.
             backup_evidence=_attest_retained_backup(
-                config.get("minecraft_serverpack_retained_backup"),instance_id
+                config.get("minecraft_serverpack_retained_backup_id"),instance_id
             ),
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
