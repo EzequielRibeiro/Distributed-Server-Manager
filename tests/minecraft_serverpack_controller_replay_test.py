@@ -37,6 +37,27 @@ class ControllerTerminalReplayTest(unittest.TestCase):
         self.assertIn('SELECT * FROM agent_instance_provisioning WHERE provisioning_id=', source)
         self.assertIn('return _public_snapshot(terminal)', source)
 
+    def test_base_repository_claims_terminal_before_publication(self):
+        base_path = ROOT / "database" / "agent_instance_provisioning_repository.py"
+        source = base_path.read_text(encoding="utf-8")
+        module = ast.parse(source)
+        repository = next(
+            item for item in module.body
+            if isinstance(item, ast.ClassDef)
+            and item.name == "AgentInstanceProvisioningRepository"
+        )
+        method = next(
+            item for item in repository.body
+            if isinstance(item, ast.FunctionDef) and item.name == "apply_result"
+        )
+        body = ast.get_source_segment(source, method)
+        self.assertLess(
+            body.index("updated_at=updated_at"),
+            body.index("publication = publish_pending_serverpack_bundle("),
+        )
+        self.assertIn("return terminal", body)
+        self.assertIn("status NOT IN ('completed','failed')", body)
+
     def test_public_projection_removes_sensitive_diagnostics(self):
         projection = next(
             item for item in self.module.body
