@@ -25,8 +25,8 @@ class MinecraftServerPackMigrationExecutionError(RuntimeError):
 _REQUIRED_HOOKS = (
     "revalidate",
     "capacity",
-    "backup",
     "stop",
+    "backup",
     "stage",
     "swap",
     "readiness",
@@ -88,7 +88,7 @@ def execute_minecraft_serverpack_migration(
 ) -> dict[str, Any]:
     """Run the transaction against caller-owned concrete Agent hooks.
 
-    Ordering is fixed: validate -> re-attest -> capacity -> backup -> stop ->
+    Ordering is fixed: validate -> re-attest -> capacity -> stop -> backup ->
     stage -> swap -> readiness -> commit. Any failure after staging begins
     invokes rollback exactly once while the exclusive runtime-operation lock is
     still held. A rollback failure is terminal and requires manual recovery.
@@ -100,6 +100,7 @@ def execute_minecraft_serverpack_migration(
     trace: list[str] = ["contract_validated"]
     backup: dict[str, Any] | None = None
     mutated = False
+    stopped = False
 
     with runtime_operation(
         config,
@@ -134,12 +135,14 @@ def execute_minecraft_serverpack_migration(
             )
         trace.append("capacity_checked")
 
-        backup = _verified_backup(callbacks["backup"](dict(evidence)))
-        trace.append("backup_verified")
-
         try:
-            callbacks["stop"](dict(evidence), dict(backup))
+            # Stop under the exclusive lock before requesting a stopped-consistency backup.
+            # Compensate even if stop confirmation or backup verification fails.
+            stopped = True
+            callbacks["stop"](dict(evidence), {})
             trace.append("stopped")
+            backup = _verified_backup(callbacks["backup"](dict(evidence)))
+            trace.append("backup_verified")
             callbacks["stage"](dict(evidence), dict(backup))
             trace.append("staged")
             mutated = True
@@ -168,7 +171,7 @@ def execute_minecraft_serverpack_migration(
             }
         except Exception as exc:
             trace.append("failed")
-            if mutated:
+            if mutated or stopped:
                 try:
                     callbacks["rollback"](
                         dict(evidence),
