@@ -60,6 +60,24 @@ class HomologationGateTest(unittest.TestCase):
                 "agent_id":"agent-production-test-other",
             }))
 
+    def test_hybrid_customer_flow_is_scoped_to_minecraft_005(self):
+        env={
+            "CAPIVARA_SERVERPACK_MIGRATION_MODE":"production",
+            "CAPIVARA_SERVERPACK_MIGRATION_PRODUCTION_ACK":"AUTHORIZED",
+            "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_INSTANCES":"cli-000001-minecraft-005",
+            "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_AGENTS":"agent-horizon-server",
+        }
+        request={
+            "instance_id":"cli-000001-minecraft-005",
+            "agent_id":"agent-horizon-server",
+            "configuration":{"minecraft_serverpack_execution_mode":"production"},
+        }
+        with patch.dict(os.environ,env,clear=True):
+            self.assertTrue(module.enabled_for(request))
+            self.assertFalse(module.enabled_for({**request,"instance_id":"cli-000001-minecraft-003"}))
+            self.assertFalse(module.enabled_for({**request,"agent_id":"agent-node1"}))
+            self.assertFalse(module.enabled_for({**request,"configuration":{}}))
+
     def test_production_agent_stays_disabled_without_exact_ack(self):
         request={
             "instance_id":"cli-production-test",
