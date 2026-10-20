@@ -83,6 +83,60 @@ class ControllerTerminalReplayTest(unittest.TestCase):
                     body.index("return state", body.index('if status == "running" and not running_updated:')) + 12,
                 )
 
+    def test_terminal_publication_and_state_share_transaction(self):
+        for relative_path in (
+            "database/agent_instance_provisioning_repository.py",
+            "dashboard/agent_instance_provisioning_repository.py",
+        ):
+            with self.subTest(repository=relative_path):
+                source = (ROOT / relative_path).read_text(encoding="utf-8")
+                module = ast.parse(source)
+                repository = next(
+                    node for node in module.body
+                    if isinstance(node, ast.ClassDef)
+                    and node.name == "AgentInstanceProvisioningRepository"
+                )
+                method = next(
+                    node for node in repository.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "apply_result"
+                )
+                transactional_blocks = [
+                    node for node in ast.walk(method)
+                    if isinstance(node, ast.With)
+                    and any(
+                        isinstance(item.context_expr, ast.Call)
+                        and isinstance(item.context_expr.func, ast.Attribute)
+                        and item.context_expr.func.attr == "session"
+                        and any(
+                            keyword.arg == "transaction"
+                            and isinstance(keyword.value, ast.Constant)
+                            and keyword.value.value is True
+                            for keyword in item.context_expr.keywords
+                        )
+                        for item in node.items
+                    )
+                ]
+                self.assertEqual(len(transactional_blocks), 1)
+                block = transactional_blocks[0]
+                calls = [
+                    node for node in ast.walk(block)
+                    if isinstance(node, ast.Call)
+                ]
+                self.assertTrue(any(
+                    isinstance(call.func, ast.Name)
+                    and call.func.id == "publish_pending_serverpack_bundle"
+                    for call in calls
+                ))
+                self.assertTrue(any(
+                    isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "execute"
+                    and call.args
+                    and "UPDATE agent_instance_provisioning SET " in (
+                        ast.get_source_segment(source, call.args[0]) or ""
+                    )
+                    for call in calls
+                ))
+
     def test_public_projection_removes_sensitive_diagnostics(self):
         projection = next(
             item for item in self.module.body
