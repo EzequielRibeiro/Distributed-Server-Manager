@@ -338,9 +338,9 @@ class AgentInstanceProvisioningRepository:
             # A replay must not publish a second bundle or emit another event.
             if status in FINAL_STATES:
                 claim = session.execute(
-                    "UPDATE agent_instance_provisioning SET updated_at=updated_at "
-                    f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
-                    (provisioning_id,),
+                    "UPDATE agent_instance_provisioning SET "
+                    f"updated_at={ph} WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
+                    (now, provisioning_id),
                 )
                 if int(getattr(claim, "rowcount", 0) or 0) != 1:
                     row = session.execute(
