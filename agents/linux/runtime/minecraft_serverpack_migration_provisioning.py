@@ -308,9 +308,12 @@ def execute_homologated_migration(
         configuration.get("minecraft_serverpack_migration"),
         instance_id=instance_id,
     )
-    if str(request.get("desired_state") or "").lower()!="stopped":
+    # The requested final state is distinct from the temporary controlled stop.
+    # The transaction restores the instance's original running state on commit.
+    requested_state=str(request.get("desired_state") or "").strip().lower()
+    if requested_state not in {"stopped", "running"}:
         raise MinecraftServerPackProvisioningHomologationError(
-            "PR855 homologation requires desired_state=stopped"
+            "Server Pack migration requires desired_state=running or stopped"
         )
     record=instance_runtime.get_instance(instance_id)
     if not isinstance(record,dict):
