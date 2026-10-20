@@ -27,7 +27,7 @@ class ControllerTerminalReplayTest(unittest.TestCase):
         source = ast.get_source_segment(self.source, self.method)
         self.assertIsNotNone(source)
         self.assertLess(
-            source.index('updated_at=updated_at'),
+            source.index('updated_at={ph}'),
             source.index('publication = publish_pending_serverpack_bundle('),
         )
         self.assertIn("status NOT IN ('completed','failed')", source)
@@ -52,7 +52,7 @@ class ControllerTerminalReplayTest(unittest.TestCase):
         )
         body = ast.get_source_segment(source, method)
         self.assertLess(
-            body.index("updated_at=updated_at"),
+            body.index("updated_at={ph}"),
             body.index("publication = publish_pending_serverpack_bundle("),
         )
         self.assertIn("return terminal", body)
