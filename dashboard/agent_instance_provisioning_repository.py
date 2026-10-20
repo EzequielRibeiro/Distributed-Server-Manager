@@ -233,6 +233,7 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
         request = current.get("request") if isinstance(current.get("request"), dict) else {}
         payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
         ph = self.dialect.placeholder
+        running_updated = True
         with self.session(transaction=True) as session:
             # Acquire the provisioning row's write lock before publication.
             # Only one terminal result may claim a nonterminal operation.
@@ -275,13 +276,14 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
                     sanitized = {**sanitized, "controller_bundle_publication": publication}
                     payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
             if status == "running":
-                session.execute(
+                update = session.execute(
                     "UPDATE agent_instance_provisioning SET "
                     f"status={ph},current_step={ph},progress={ph},result_json={ph},last_error={ph},"
                     f"started_at=CASE WHEN started_at IS NULL THEN {ph} ELSE started_at END,updated_at={ph} "
                     f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
                     (status, current_step, progress, payload, error, now, now, provisioning_id),
                 )
+                running_updated = int(getattr(update, "rowcount", 0) or 0) == 1
             else:
                 session.execute(
                     "UPDATE agent_instance_provisioning SET "
@@ -291,6 +293,10 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
                 )
 
         state = self.snapshot(provisioning_id)
+        if status == "running" and not running_updated:
+            # A terminal result won while this progress update was in flight.
+            # Do not emit a misleading late progress event.
+            return state
         pool_id, reserved_bytes = _request_storage_reservation(current.get("request"))
         if status == "running":
             self._publish_event(
