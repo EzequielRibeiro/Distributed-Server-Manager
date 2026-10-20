@@ -61,6 +61,23 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
                 self.assertIn("updated_at={ph}", body)
                 self.assertIn("WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')", body)
 
+    def test_claim_updates_timestamp_and_only_active_state(self):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assertEqual(db.execute(CLAIM_SQL, (123, "p1")).rowcount, 1)
+            db.commit()
+            self.assertEqual(
+                db.execute("SELECT updated_at FROM agent_instance_provisioning WHERE provisioning_id='p1'").fetchone()[0],
+                123,
+            )
+            db.execute("UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'")
+            db.commit()
+            self.assertEqual(db.execute(CLAIM_SQL, (456, "p1")).rowcount, 0)
+            self.assertEqual(
+                db.execute("SELECT updated_at FROM agent_instance_provisioning WHERE provisioning_id='p1'").fetchone()[0],
+                123,
+            )
+
     def test_replay_claim_does_not_republish(self):
         for _ in range(2):
             with self.connect() as db:
