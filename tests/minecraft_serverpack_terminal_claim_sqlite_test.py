@@ -89,6 +89,37 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "running")
             self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 0)
 
+    def test_failed_result_wins_claim_and_blocks_late_completion(self):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            db.execute(
+                "UPDATE agent_instance_provisioning SET status='failed' WHERE provisioning_id='p1'"
+            )
+            db.commit()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 0)
+            db.commit()
+            self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "failed")
+            self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 0)
+
+    def test_completed_result_blocks_late_failure(self):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
+            db.execute(
+                "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
+            )
+            db.commit()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 0)
+            db.commit()
+            self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "completed")
+            self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 1)
+
     def test_two_concurrent_claims_publish_once(self):
         barrier = threading.Barrier(2)
         errors = []
