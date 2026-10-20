@@ -12,6 +12,10 @@ class Adapter:
     def status(self,record):return {"active_state":self.state}
 
 class ReadinessTest(unittest.TestCase):
+    def test_heavy_modpack_default_readiness_window_is_ten_minutes(self):
+        import inspect
+        self.assertEqual(inspect.signature(m._wait_for_done).parameters["timeout_seconds"].default,600)
+
     def test_old_done_is_rejected_and_new_done_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);log=root/"logs/latest.log";log.parent.mkdir()

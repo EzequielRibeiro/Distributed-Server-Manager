@@ -251,7 +251,7 @@ def _readiness_log_baseline(working:Path)->tuple[int,int]|None:
         return None
 
 
-def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240,
+def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=600,
                    baseline:tuple[int,int]|None=None)->bool:
     working=Path(str(record.get("working_directory") or record.get("files_root") or ""))
     log=working/"logs/latest.log"
