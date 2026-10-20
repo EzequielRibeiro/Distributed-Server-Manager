@@ -78,6 +78,25 @@ class HomologationGateTest(unittest.TestCase):
             self.assertFalse(module.enabled_for({**request,"agent_id":"agent-node1"}))
             self.assertFalse(module.enabled_for({**request,"configuration":{}}))
 
+    def test_migration_accepts_running_request_before_instance_lookup(self):
+        request={"instance_id":"pr855-lab","agent_id":"pr839-isolated-agent",
+                 "desired_state":"running","configuration":{"minecraft_serverpack_migration":{}}}
+        with patch.dict(os.environ,{"CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":"YES"},clear=True), \
+             patch.object(module,"validate_minecraft_serverpack_migration",return_value={}), \
+             patch.object(module.instance_runtime,"get_instance",return_value=None):
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "existing disposable instance"):
+                module.execute_homologated_migration({"agent_id":"pr839-isolated-agent"},request)
+
+    def test_migration_rejects_unknown_desired_state(self):
+        request={"instance_id":"pr855-lab","agent_id":"pr839-isolated-agent",
+                 "desired_state":"paused","configuration":{"minecraft_serverpack_migration":{}}}
+        with patch.dict(os.environ,{"CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":"YES"},clear=True), \
+             patch.object(module,"validate_minecraft_serverpack_migration",return_value={}):
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "desired_state=running or stopped"):
+                module.execute_homologated_migration({"agent_id":"pr839-isolated-agent"},request)
+
     def test_production_agent_stays_disabled_without_exact_ack(self):
         request={
             "instance_id":"cli-production-test",
