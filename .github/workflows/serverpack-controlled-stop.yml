@@ -12,6 +12,7 @@ on:
       - 'tests/minecraft_serverpack_retained_backup_test.py'
       - 'tests/minecraft_serverpack_controller_replay_test.py'
       - 'dashboard/agent_instance_provisioning_repository.py'
+      - 'database/agent_instance_provisioning_repository.py'
       - 'database/minecraft_serverpack_pending_publication.py'
       - 'agents/linux/runtime/minecraft_serverpack_migration_transaction.py'
       - 'agents/windows/runtime/minecraft_serverpack_migration_transaction.py'
