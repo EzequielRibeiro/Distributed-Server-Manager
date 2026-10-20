@@ -158,6 +158,57 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
             self.assertEqual(changed, 0)
             self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "completed")
 
+    def test_competing_claim_waits_for_failed_transaction_and_then_succeeds(self):
+        first_has_claim = threading.Event()
+        allow_failure = threading.Event()
+        errors = []
+        claims = []
+
+        def failed_publisher():
+            try:
+                with self.connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+                    db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
+                    first_has_claim.set()
+                    if not allow_failure.wait(timeout=5):
+                        raise TimeoutError("competing transaction did not start")
+                    db.rollback()
+            except Exception as exc:
+                errors.append(exc)
+
+        def retrying_publisher():
+            try:
+                if not first_has_claim.wait(timeout=5):
+                    raise TimeoutError("first transaction did not acquire claim")
+                with self.connect() as db:
+                    db.execute("BEGIN IMMEDIATE")
+                    claimed = db.execute(CLAIM_SQL, ("p1",)).rowcount
+                    claims.append(claimed)
+                    if claimed:
+                        db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
+                        db.execute(
+                            "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
+                        )
+                    db.commit()
+            except Exception as exc:
+                errors.append(exc)
+
+        first = threading.Thread(target=failed_publisher)
+        second = threading.Thread(target=retrying_publisher)
+        first.start()
+        second.start()
+        self.assertTrue(first_has_claim.wait(timeout=5))
+        allow_failure.set()
+        first.join(timeout=10)
+        second.join(timeout=10)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertFalse(errors, errors)
+        self.assertEqual(claims, [1])
+        with self.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "completed")
+
     def test_two_concurrent_claims_publish_once(self):
         barrier = threading.Barrier(2)
         errors = []
