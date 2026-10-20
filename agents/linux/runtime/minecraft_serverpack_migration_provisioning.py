@@ -242,7 +242,17 @@ def _select_retained_backup_id(config:dict[str,Any],instance_id:str)->str:
     )
 
 
-def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240)->bool:
+def _readiness_log_baseline(working:Path)->tuple[int,int]|None:
+    """Capture the pre-start log identity and byte offset to exclude stale Done lines."""
+    try:
+        stat=(working/"logs/latest.log").stat()
+        return (stat.st_ino,stat.st_size)
+    except FileNotFoundError:
+        return None
+
+
+def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240,
+                   baseline:tuple[int,int]|None=None)->bool:
     working=Path(str(record.get("working_directory") or record.get("files_root") or ""))
     log=working/"logs/latest.log"
     started=time.monotonic()
@@ -252,9 +262,14 @@ def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240)->
         if active=="failed":
             return False
         try:
-            if log.is_file() and "Done (" in log.read_text(encoding="utf-8",errors="replace"):
+            stat=log.stat()
+            offset=baseline[1] if baseline and stat.st_ino==baseline[0] and stat.st_size>=baseline[1] else 0
+            with log.open("rb") as stream:
+                stream.seek(offset)
+                recent=stream.read().decode("utf-8",errors="replace")
+            if "Done (" in recent:
                 return active in {"active","activating"}
-        except OSError:
+        except (FileNotFoundError,OSError):
             pass
         time.sleep(2)
     return False
@@ -429,8 +444,9 @@ def execute_homologated_migration(
         active_record["working_directory"]=str(active)
         active_record["files_root"]=str(active)
         try:
+            baseline=_readiness_log_baseline(active)
             adapter.start(active_record)
-            ready=_wait_for_done(active_record,adapter)
+            ready=_wait_for_done(active_record,adapter,baseline=baseline)
             if ready:
                 verify_installed_neoforge(active,evidence["target_loader_version"])
                 ready=len(list((active/"mods").glob("*.jar")))==evidence["serverpack_mod_count"]
