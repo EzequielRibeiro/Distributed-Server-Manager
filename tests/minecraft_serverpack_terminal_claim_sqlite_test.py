@@ -89,6 +89,25 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
             self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "running")
             self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 0)
 
+    def test_publication_failure_allows_subsequent_successful_retry(self):
+        # The failed attempt must leave no terminal marker or bundle behind.
+        with self.assertRaisesRegex(RuntimeError, "simulated publication failure"):
+            with self.connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+                db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
+                raise RuntimeError("simulated publication failure")
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
+            db.execute(
+                "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
+            )
+            db.commit()
+            self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "completed")
+
     def test_failed_result_wins_claim_and_blocks_late_completion(self):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
