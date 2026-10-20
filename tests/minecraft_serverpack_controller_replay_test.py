@@ -58,6 +58,31 @@ class ControllerTerminalReplayTest(unittest.TestCase):
         self.assertIn("return terminal", body)
         self.assertIn("status NOT IN ('completed','failed')", body)
 
+    def test_stale_running_result_does_not_emit_progress_event(self):
+        for relative_path in (
+            "database/agent_instance_provisioning_repository.py",
+            "dashboard/agent_instance_provisioning_repository.py",
+        ):
+            with self.subTest(repository=relative_path):
+                source = (ROOT / relative_path).read_text(encoding="utf-8")
+                module = ast.parse(source)
+                repository = next(
+                    item for item in module.body
+                    if isinstance(item, ast.ClassDef)
+                    and item.name == "AgentInstanceProvisioningRepository"
+                )
+                method = next(
+                    item for item in repository.body
+                    if isinstance(item, ast.FunctionDef) and item.name == "apply_result"
+                )
+                body = ast.get_source_segment(source, method)
+                self.assertIn('running_updated = int(getattr(update, "rowcount", 0) or 0) == 1', body)
+                self.assertIn('if status == "running" and not running_updated:', body)
+                self.assertLess(
+                    body.index('if status == "running" and not running_updated:'),
+                    body.index("return state", body.index('if status == "running" and not running_updated:')) + 12,
+                )
+
     def test_public_projection_removes_sensitive_diagnostics(self):
         projection = next(
             item for item in self.module.body
