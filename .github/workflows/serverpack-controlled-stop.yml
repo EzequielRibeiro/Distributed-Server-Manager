@@ -11,6 +11,7 @@ on:
       - 'tests/minecraft_serverpack_migration_transaction_test.py'
       - 'tests/minecraft_serverpack_retained_backup_test.py'
       - 'tests/minecraft_serverpack_controller_replay_test.py'
+      - 'tests/minecraft_serverpack_terminal_claim_sqlite_test.py'
       - 'dashboard/agent_instance_provisioning_repository.py'
       - 'database/agent_instance_provisioning_repository.py'
       - 'database/minecraft_serverpack_pending_publication.py'
@@ -32,7 +33,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Compile changed modules
-        run: python -m py_compile agents/linux/runtime/minecraft_serverpack_controlled_stop.py agents/linux/runtime/minecraft_serverpack_migration_transaction.py agents/windows/runtime/minecraft_serverpack_migration_transaction.py agents/linux/runtime/minecraft_serverpack_migration_provisioning.py tests/minecraft_serverpack_controlled_stop_test.py tests/minecraft_serverpack_migration_transaction_test.py tests/minecraft_serverpack_retained_backup_test.py tests/minecraft_serverpack_controller_replay_test.py
+        run: python -m py_compile agents/linux/runtime/minecraft_serverpack_controlled_stop.py agents/linux/runtime/minecraft_serverpack_migration_transaction.py agents/windows/runtime/minecraft_serverpack_migration_transaction.py agents/linux/runtime/minecraft_serverpack_migration_provisioning.py tests/minecraft_serverpack_controlled_stop_test.py tests/minecraft_serverpack_migration_transaction_test.py tests/minecraft_serverpack_retained_backup_test.py tests/minecraft_serverpack_controller_replay_test.py tests/minecraft_serverpack_terminal_claim_sqlite_test.py
       - name: Run isolated controlled-stop tests
         run: python -m unittest discover -s tests -p 'minecraft_serverpack_controlled_stop_test.py' -v
       - name: Run isolated migration transaction tests
@@ -41,3 +42,5 @@ jobs:
         run: python -m unittest discover -s tests -p 'minecraft_serverpack_retained_backup_test.py' -v
       - name: Run Controller terminal replay boundary tests
         run: python -m unittest discover -s tests -p 'minecraft_serverpack_controller_replay_test.py' -v
+      - name: Run SQLite terminal claim concurrency tests
+        run: python -m unittest discover -s tests -p 'minecraft_serverpack_terminal_claim_sqlite_test.py' -v
