@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 CLAIM_SQL = (
-    "UPDATE agent_instance_provisioning SET updated_at=updated_at "
+     "UPDATE agent_instance_provisioning SET updated_at=? "
     "WHERE provisioning_id=? AND status NOT IN ('completed','failed')"
 )
 
@@ -58,14 +58,14 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
                 )
                 body = ast.get_source_segment(source, apply_result)
                 self.assertIn("UPDATE agent_instance_provisioning SET ", body)
-                self.assertIn("updated_at=updated_at", body)
+                self.assertIn("updated_at={ph}", body)
                 self.assertIn("WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')", body)
 
     def test_replay_claim_does_not_republish(self):
         for _ in range(2):
             with self.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
-                claimed = db.execute(CLAIM_SQL, ("p1",)).rowcount
+                claimed = db.execute(CLAIM_SQL, (1, "p1")).rowcount
                 if claimed:
                     db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
                     db.execute(
@@ -79,7 +79,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "publish failed"):
             with self.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
-                self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+                self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
                 db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
                 db.execute(
                     "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
@@ -94,12 +94,12 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "simulated publication failure"):
             with self.connect() as db:
                 db.execute("BEGIN IMMEDIATE")
-                self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+                self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
                 db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
                 raise RuntimeError("simulated publication failure")
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
             db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
             db.execute(
                 "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
@@ -111,14 +111,14 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
     def test_failed_result_wins_claim_and_blocks_late_completion(self):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
             db.execute(
                 "UPDATE agent_instance_provisioning SET status='failed' WHERE provisioning_id='p1'"
             )
             db.commit()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 0)
+            self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 0)
             db.commit()
             self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "failed")
             self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 0)
@@ -126,7 +126,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
     def test_completed_result_blocks_late_failure(self):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
             db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
             db.execute(
                 "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
@@ -134,7 +134,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
             db.commit()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 0)
+            self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 0)
             db.commit()
             self.assertEqual(db.execute("SELECT status FROM agent_instance_provisioning").fetchone()[0], "completed")
             self.assertEqual(db.execute("SELECT count(*) FROM published").fetchone()[0], 1)
@@ -142,7 +142,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
     def test_running_progress_cannot_reopen_terminal_state(self):
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+            self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
             db.execute(
                 "UPDATE agent_instance_provisioning SET status='completed' WHERE provisioning_id='p1'"
             )
@@ -168,7 +168,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
             try:
                 with self.connect() as db:
                     db.execute("BEGIN IMMEDIATE")
-                    self.assertEqual(db.execute(CLAIM_SQL, ("p1",)).rowcount, 1)
+                    self.assertEqual(db.execute(CLAIM_SQL, (1, "p1")).rowcount, 1)
                     db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
                     first_has_claim.set()
                     if not allow_failure.wait(timeout=5):
@@ -183,7 +183,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
                     raise TimeoutError("first transaction did not acquire claim")
                 with self.connect() as db:
                     db.execute("BEGIN IMMEDIATE")
-                    claimed = db.execute(CLAIM_SQL, ("p1",)).rowcount
+                    claimed = db.execute(CLAIM_SQL, (1, "p1")).rowcount
                     claims.append(claimed)
                     if claimed:
                         db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
@@ -219,7 +219,7 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
                 try:
                     barrier.wait(timeout=5)
                     db.execute("BEGIN IMMEDIATE")
-                    claimed = db.execute(CLAIM_SQL, ("p1",)).rowcount
+                    claimed = db.execute(CLAIM_SQL, (1, "p1")).rowcount
                     claims.append(claimed)
                     if claimed:
                         db.execute("INSERT INTO published(provisioning_id) VALUES ('p1')")
