@@ -137,6 +137,39 @@ class ControllerTerminalReplayTest(unittest.TestCase):
                     for call in calls
                 ))
 
+    def test_terminal_claim_uses_timestamp_write_and_two_parameters(self):
+        for relative_path in (
+            "database/agent_instance_provisioning_repository.py",
+            "dashboard/agent_instance_provisioning_repository.py",
+        ):
+            with self.subTest(repository=relative_path):
+                source = (ROOT / relative_path).read_text(encoding="utf-8")
+                module = ast.parse(source)
+                repository = next(
+                    node for node in module.body
+                    if isinstance(node, ast.ClassDef)
+                    and node.name == "AgentInstanceProvisioningRepository"
+                )
+                method = next(
+                    node for node in repository.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "apply_result"
+                )
+                claim_assignments = [
+                    node for node in ast.walk(method)
+                    if isinstance(node, ast.Assign)
+                    and any(isinstance(target, ast.Name) and target.id == "claim" for target in node.targets)
+                    and isinstance(node.value, ast.Call)
+                ]
+                self.assertEqual(len(claim_assignments), 1)
+                claim = claim_assignments[0].value
+                self.assertIn("updated_at={ph}", ast.get_source_segment(source, claim))
+                self.assertEqual(len(claim.args), 2)
+                self.assertIsInstance(claim.args[1], ast.Tuple)
+                self.assertEqual(
+                    [item.id for item in claim.args[1].elts if isinstance(item, ast.Name)],
+                    ["now", "provisioning_id"],
+                )
+
     def test_public_projection_removes_sensitive_diagnostics(self):
         projection = next(
             item for item in self.module.body
