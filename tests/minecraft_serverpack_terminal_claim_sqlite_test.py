@@ -4,6 +4,7 @@
 This isolates database concurrency semantics; it is not a full repository E2E test.
 """
 import sqlite3
+import ast
 import tempfile
 import threading
 import unittest
@@ -36,6 +37,29 @@ class TerminalClaimSQLiteTest(unittest.TestCase):
 
     def connect(self):
         return sqlite3.connect(self.db, timeout=5, isolation_level=None)
+
+    def test_claim_sql_matches_both_controller_repositories(self):
+        root = Path(__file__).resolve().parents[1]
+        for relative_path in (
+            "database/agent_instance_provisioning_repository.py",
+            "dashboard/agent_instance_provisioning_repository.py",
+        ):
+            with self.subTest(repository=relative_path):
+                source = (root / relative_path).read_text(encoding="utf-8")
+                tree = ast.parse(source)
+                repository = next(
+                    node for node in tree.body
+                    if isinstance(node, ast.ClassDef)
+                    and node.name == "AgentInstanceProvisioningRepository"
+                )
+                apply_result = next(
+                    node for node in repository.body
+                    if isinstance(node, ast.FunctionDef) and node.name == "apply_result"
+                )
+                body = ast.get_source_segment(source, apply_result)
+                self.assertIn("UPDATE agent_instance_provisioning SET ", body)
+                self.assertIn("updated_at=updated_at", body)
+                self.assertIn("WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')", body)
 
     def test_replay_claim_does_not_republish(self):
         for _ in range(2):
