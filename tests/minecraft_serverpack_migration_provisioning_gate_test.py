@@ -101,5 +101,50 @@ class HomologationGateTest(unittest.TestCase):
                 self.assertFalse(module.enabled_for(self.request()))
 
 
+class AutomaticRestartTest(unittest.TestCase):
+    def test_running_instance_restarts_and_waits_for_fresh_readiness(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        record={"instance_id":"lab"}
+        with patch.object(module,"_readiness_log_baseline",return_value=(42,100)), \
+             patch.object(module,"_wait_for_done",return_value=True) as wait:
+            observed=module._restore_initial_running_state(
+                record,adapter,"active",working=Path("/tmp/pr916-test-runtime"))
+        self.assertEqual(observed,"running")
+        adapter.start.assert_called_once_with(record)
+        wait.assert_called_once_with(record,adapter,baseline=(42,100))
+
+    def test_previously_stopped_instance_stays_stopped(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        with patch.object(module,"_wait_for_done") as wait:
+            observed=module._restore_initial_running_state(
+                {},adapter,"inactive",working=Path("/tmp/pr916-test-runtime"))
+        self.assertEqual(observed,"stopped")
+        adapter.start.assert_not_called()
+        wait.assert_not_called()
+
+    def test_activating_instance_restores_running_state(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        with patch.object(module,"_readiness_log_baseline",return_value=None), \
+             patch.object(module,"_wait_for_done",return_value=True):
+            observed=module._restore_initial_running_state(
+                {},adapter,"activating",working=Path("/tmp/pr916-test-runtime"))
+        self.assertEqual(observed,"running")
+        adapter.start.assert_called_once()
+
+    def test_failed_restart_prevents_commit(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        with patch.object(module,"_readiness_log_baseline",return_value=None), \
+             patch.object(module,"_wait_for_done",return_value=False):
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "did not become ready"):
+                module._restore_initial_running_state(
+                    {},adapter,"active",working=Path("/tmp/pr916-test-runtime"))
+        adapter.start.assert_called_once()
+
+
 if __name__=="__main__":
     unittest.main()

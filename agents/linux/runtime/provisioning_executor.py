@@ -354,8 +354,8 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 status="completed",
                 current_step="completed",
                 progress=100,
-                desired_state="stopped",
-                observed_state="stopped",
+                desired_state=str((detail.get("commit") or {}).get("observed_state") or "stopped"),
+                observed_state=str((detail.get("commit") or {}).get("observed_state") or "stopped"),
                 minecraft_serverpack_migration=detail,
             )
             increment("provisioning_completed")
@@ -364,7 +364,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 request,
                 step="completed",
                 progress=100,
-                data={**mode_event, "observed_state": "stopped"},
+                data={**mode_event, "observed_state": str((detail.get("commit") or {}).get("observed_state") or "stopped")},
             )
         except Exception as exc:
             increment("provisioning_failed")

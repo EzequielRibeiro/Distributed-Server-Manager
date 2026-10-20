@@ -87,6 +87,20 @@ class TransactionTest(unittest.TestCase):
     ["lock","revalidate","capacity","stop","backup","stage","swap","readiness","commit","unlock"])
    self.assertEqual(locks[0][1],"minecraft_serverpack_migration")
 
+ def test_failed_post_swap_restart_rolls_back_before_unlock(self):
+  module,events,_,hooks=self._run()
+  def restart_and_commit(*args):
+   events.append("restart")
+   raise RuntimeError("updated instance did not become ready after automatic restart")
+  hooks["commit"]=restart_and_commit
+  with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
+   module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+  self.assertIn("rolled_back",ctx.exception.trace)
+  self.assertNotIn("committed",ctx.exception.trace)
+  self.assertLess(events.index("restart"),events.index("rollback"))
+  self.assertLess(events.index("rollback"),events.index("unlock"))
+
  def test_fingerprint_change_blocks_before_backup_or_mutation(self):
   module,events,_,hooks=self._run(revalidate_sha="e"*64)
   with self.assertRaisesRegex(module.MinecraftServerPackMigrationExecutionError,

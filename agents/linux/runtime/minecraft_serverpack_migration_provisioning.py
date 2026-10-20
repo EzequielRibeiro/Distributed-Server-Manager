@@ -275,6 +275,21 @@ def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240,
     return False
 
 
+
+def _restore_initial_running_state(record:dict[str,Any],adapter:Any,initial_state:str,*,
+                                   working:Path)->str:
+    """Re-establish original availability before committing an irreversible swap."""
+    if initial_state not in {"active","activating"}:
+        return "stopped"
+    baseline=_readiness_log_baseline(working)
+    adapter.start(record)
+    if not _wait_for_done(record,adapter,baseline=baseline):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "updated instance did not become ready after automatic restart"
+        )
+    return "running"
+
+
 def execute_homologated_migration(
     config:dict[str,Any],
     request:dict[str,Any],
@@ -457,16 +472,23 @@ def execute_homologated_migration(
             ensure_stopped(active_record,adapter)
 
     def commit(evidence:dict[str,Any],backup_evidence:dict[str,Any])->dict[str,Any]:
-        return migration_swap.commit(instance_root,readiness_passed=True)
+        # Restore the customer's original availability before the irreversible
+        # journal commit. A failed restart must still be able to roll back.
+        restored_state=_restore_initial_running_state(
+            record,adapter,str(state.get("initial_active_state") or ""),working=active
+        )
+        committed=migration_swap.commit(instance_root,readiness_passed=True)
+        return {**committed,"observed_state":restored_state}
 
     def rollback(evidence:dict[str,Any],backup_evidence:dict[str,Any],trace:tuple[str,...])->dict[str,Any]:
         # Never restore or restart while the candidate service may still be running.
         ensure_stopped(record,adapter)
         journal=instance_root/".dsm/minecraft-serverpack-migration.json"
         recovery=migration_swap.recover(instance_root) if journal.is_file() else {"status":"no_swap"}
-        if state.get("initial_active_state") in {"active","activating"}:
-            adapter.start(record)
-        return recovery
+        restored_state=_restore_initial_running_state(
+            record,adapter,str(state.get("initial_active_state") or ""),working=active
+        )
+        return {**recovery,"observed_state":restored_state}
 
     # Re-evaluate the complete local feature decision and Controller-bound
     # execution mode immediately before entering the transaction. This closes
