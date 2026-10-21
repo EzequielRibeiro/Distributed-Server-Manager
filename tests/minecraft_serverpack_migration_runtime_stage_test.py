@@ -51,11 +51,13 @@ class RuntimeStageTest(unittest.TestCase):
  def test_candidate_replaces_loader_and_mods_but_preserves_private_state(self):
   with tempfile.TemporaryDirectory() as name:
    root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (active/"mods").chmod(0o770)
    result=module.build_staged_runtime(
     active_runtime=active,target_loader_seed=seed,serverpack_stage=pack,
     destination=root/"candidate",target_loader_version="26.1.2.109")
    candidate=root/"candidate"
    self.assertEqual(result["mods"],2)
+   self.assertEqual((candidate/"mods").stat().st_mode & 0o777,0o770)
    self.assertTrue(result["existing_config_preserved"])
    self.assertTrue(result["world_preserved"])
    self.assertFalse(result["activated"])
