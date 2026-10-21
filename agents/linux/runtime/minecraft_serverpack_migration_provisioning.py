@@ -69,6 +69,18 @@ def enabled_for(request:dict[str,Any])->bool:
     return not requested_mode or requested_mode==feature["mode"]
 
 
+def _ensure_stopped_after_candidate_failure(record:dict[str,Any],adapter:Any)->dict[str,Any]:
+    """Normalize a crashed systemd service before verified rollback.
+
+    Only the explicit failed state is normalized; unknown and transitional
+    states still fail closed. The adapter must confirm inactive afterward.
+    """
+    observed=adapter.status(record)
+    if isinstance(observed,dict) and str(observed.get("active_state") or "").lower()=="failed":
+        adapter.stop(record)
+    return ensure_stopped(record,adapter)
+
+
 def _digest(path:Path)->str:
     digest=hashlib.sha256()
     with path.open("rb") as stream:
@@ -472,7 +484,7 @@ def execute_homologated_migration(
         finally:
             # A failed stop must propagate: swap commit or rollback cannot
             # proceed while the candidate server might still be running.
-            ensure_stopped(active_record,adapter)
+            _ensure_stopped_after_candidate_failure(active_record,adapter)
 
     def commit(evidence:dict[str,Any],backup_evidence:dict[str,Any])->dict[str,Any]:
         # Restore the customer's original availability before the irreversible
@@ -485,7 +497,7 @@ def execute_homologated_migration(
 
     def rollback(evidence:dict[str,Any],backup_evidence:dict[str,Any],trace:tuple[str,...])->dict[str,Any]:
         # Never restore or restart while the candidate service may still be running.
-        ensure_stopped(record,adapter)
+        _ensure_stopped_after_candidate_failure(record,adapter)
         journal=instance_root/".dsm/minecraft-serverpack-migration.json"
         recovery=migration_swap.recover(instance_root) if journal.is_file() else {"status":"no_swap"}
         restored_state=_restore_initial_running_state(
