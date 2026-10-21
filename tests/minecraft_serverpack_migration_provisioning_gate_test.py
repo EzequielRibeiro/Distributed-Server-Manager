@@ -120,6 +120,34 @@ class HomologationGateTest(unittest.TestCase):
                 self.assertFalse(module.enabled_for(self.request()))
 
 
+class FailedCandidateRollbackStopTest(unittest.TestCase):
+    def test_failed_service_normalized_before_rollback(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        adapter.status.side_effect=[{"active_state":"failed"},{"active_state":"inactive"}]
+        result=module._ensure_stopped_after_candidate_failure({},adapter)
+        self.assertEqual(result["previous_state"],"inactive")
+        adapter.stop.assert_called_once()
+
+    def test_unknown_state_still_fails_closed(self):
+        from unittest.mock import Mock
+        from minecraft_serverpack_controlled_stop import ControlledStopError
+        adapter=Mock()
+        adapter.status.return_value={"active_state":"unknown"}
+        with self.assertRaises(ControlledStopError):
+            module._ensure_stopped_after_candidate_failure({},adapter)
+        adapter.stop.assert_not_called()
+
+    def test_failed_normalization_must_reach_inactive(self):
+        from unittest.mock import Mock
+        from minecraft_serverpack_controlled_stop import ControlledStopError
+        adapter=Mock()
+        adapter.status.return_value={"active_state":"failed"}
+        with self.assertRaises(ControlledStopError):
+            module._ensure_stopped_after_candidate_failure({},adapter)
+        adapter.stop.assert_called_once()
+
+
 class AutomaticRestartTest(unittest.TestCase):
     def test_running_instance_restarts_and_waits_for_fresh_readiness(self):
         from unittest.mock import Mock
