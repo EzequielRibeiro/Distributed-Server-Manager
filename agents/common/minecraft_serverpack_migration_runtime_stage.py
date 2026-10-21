@@ -131,6 +131,9 @@ def build_staged_runtime(
                 continue
             _copy_entry(source, destination / name)
         shutil.copytree(mods, destination / "mods", copy_function=shutil.copy2)
+        # Keep the instance's existing mods-directory access policy. The ZIP
+        # staging tree is not authoritative for customer runtime permissions.
+        shutil.copystat(active_runtime / "mods", destination / "mods")
         _reject_unsafe_tree(destination, "candidate runtime")
         proof = verify_installed_neoforge(destination, target_loader_version)
         protected_after = _protected_tree_hash(destination)
