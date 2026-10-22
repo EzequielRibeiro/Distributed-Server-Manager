@@ -23,7 +23,7 @@ _LOADER_PATHS = (
     "run.sh",
     "run.bat",
 )
-_REPLACED_TOP_LEVEL = frozenset((*_LOADER_PATHS, "mods"))
+_REPLACED_TOP_LEVEL = frozenset((*_LOADER_PATHS, "mods", "config", "kubejs"))
 
 
 class MinecraftServerPackRuntimeStageError(RuntimeError):
@@ -119,7 +119,7 @@ def build_staged_runtime(
     protected_before = _protected_tree_hash(active_runtime)
     try:
         shutil.copytree(active_runtime, destination, copy_function=shutil.copy2)
-        for name in _REPLACED_TOP_LEVEL:
+        for name in (*_LOADER_PATHS, "mods"):
             target = destination / name
             if target.is_dir():
                 shutil.rmtree(target)
@@ -134,6 +134,23 @@ def build_staged_runtime(
         # Keep the instance's existing mods-directory access policy. The ZIP
         # staging tree is not authoritative for customer runtime permissions.
         shutil.copystat(active_runtime / "mods", destination / "mods")
+        # Approved Server Pack overrides replace incompatible modpack-owned
+        # scripts/configurations, while world and instance settings stay intact.
+        override_root = serverpack_stage / "server-overrides"
+        for name in ("config", "kubejs"):
+            source = override_root / name
+            if not source.exists():
+                continue
+            if source.is_symlink() or not source.is_dir():
+                raise MinecraftServerPackRuntimeStageError("invalid Server Pack override directory")
+            target = destination / name
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                raise MinecraftServerPackRuntimeStageError("invalid existing override destination")
+            shutil.copytree(source, target, copy_function=shutil.copy2)
+            if (active_runtime / name).is_dir():
+                shutil.copystat(active_runtime / name, target)
         _reject_unsafe_tree(destination, "candidate runtime")
         proof = verify_installed_neoforge(destination, target_loader_version)
         protected_after = _protected_tree_hash(destination)
@@ -152,7 +169,7 @@ def build_staged_runtime(
         "mods": len(mod_files),
         "protected_tree_sha256": protected_after,
         "candidate_path": str(destination),
-        "existing_config_preserved": True,
+        "existing_config_preserved": not any((serverpack_stage / "server-overrides" / name).is_dir() for name in ("config", "kubejs")),
         "world_preserved": True,
         "activated": False,
     }
