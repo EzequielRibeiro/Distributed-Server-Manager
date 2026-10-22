@@ -81,11 +81,25 @@ class TransactionTest(unittest.TestCase):
    self.assertEqual(result["status"],"completed")
    self.assertEqual(result["backup"]["backup_id"],"backup-1")
    self.assertEqual(result["trace"],
-    ["contract_validated","revalidated","capacity_checked","backup_verified",
-     "stopped","staged","swapped","ready","committed"])
+    ["contract_validated","revalidated","capacity_checked","stopped",
+     "backup_verified","staged","swapped","ready","committed"])
    self.assertEqual(events,
-    ["lock","revalidate","capacity","backup","stop","stage","swap","readiness","commit","unlock"])
+    ["lock","revalidate","capacity","stop","backup","stage","swap","readiness","commit","unlock"])
    self.assertEqual(locks[0][1],"minecraft_serverpack_migration")
+
+ def test_failed_post_swap_restart_rolls_back_before_unlock(self):
+  module,events,_,hooks=self._run()
+  def restart_and_commit(*args):
+   events.append("restart")
+   raise RuntimeError("updated instance did not become ready after automatic restart")
+  hooks["commit"]=restart_and_commit
+  with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
+   module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+  self.assertIn("rolled_back",ctx.exception.trace)
+  self.assertNotIn("committed",ctx.exception.trace)
+  self.assertLess(events.index("restart"),events.index("rollback"))
+  self.assertLess(events.index("rollback"),events.index("unlock"))
 
  def test_fingerprint_change_blocks_before_backup_or_mutation(self):
   module,events,_,hooks=self._run(revalidate_sha="e"*64)
@@ -95,7 +109,7 @@ class TransactionTest(unittest.TestCase):
     {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
   self.assertNotIn("backup",events);self.assertNotIn("stage",events)
 
- def test_invalid_backup_blocks_before_stop(self):
+ def test_invalid_backup_compensates_after_stop(self):
   module,events,_,hooks=self._run(
    backup={"backup_id":"backup-1","sha256":"d"*64,"size_bytes":1,
            "integrity_verified":False})
@@ -103,7 +117,7 @@ class TransactionTest(unittest.TestCase):
                               "independently verified"):
    module.execute_minecraft_serverpack_migration(
     {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
-  self.assertNotIn("stop",events);self.assertNotIn("stage",events)
+  self.assertIn("stop",events);self.assertIn("rollback",events);self.assertNotIn("stage",events)
 
  def test_failure_after_staging_rolls_back_inside_lock(self):
   for failure in ("stage","swap","readiness_false","commit"):
@@ -112,12 +126,30 @@ class TransactionTest(unittest.TestCase):
     with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
      module.execute_minecraft_serverpack_migration(
       {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
-    if failure=="stage":
-     self.assertNotIn("rollback",events)
-    else:
-     self.assertIn("rollback",events)
-     self.assertLess(events.index("rollback"),events.index("unlock"))
-     self.assertIn("rolled_back",ctx.exception.trace)
+    self.assertIn("rollback",events)
+    self.assertLess(events.index("rollback"),events.index("unlock"))
+    self.assertIn("rolled_back",ctx.exception.trace)
+
+ def test_stop_failure_triggers_compensation_under_lock(self):
+  module,events,_,hooks=self._run(fail_at="stop")
+  with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
+   module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+  self.assertIn("rollback",events)
+  self.assertNotIn("backup",events)
+  self.assertLess(events.index("rollback"),events.index("unlock"))
+  self.assertIn("rolled_back",ctx.exception.trace)
+
+ def test_backup_failure_triggers_compensation_under_lock(self):
+  module,events,_,hooks=self._run(fail_at="backup")
+  with self.assertRaises(module.MinecraftServerPackMigrationExecutionError) as ctx:
+   module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+  self.assertIn("stop",events)
+  self.assertIn("rollback",events)
+  self.assertNotIn("stage",events)
+  self.assertLess(events.index("rollback"),events.index("unlock"))
+  self.assertIn("rolled_back",ctx.exception.trace)
 
  def test_rollback_failure_requires_manual_recovery(self):
   module,events,_,hooks=self._run(fail_at="commit",rollback_fail=True)

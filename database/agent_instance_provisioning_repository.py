@@ -312,6 +312,8 @@ class AgentInstanceProvisioningRepository:
             raise PermissionError("provisioning operation belongs to another Agent")
         if str(result.get("instance_id") or "") != str(current.get("instance_id") or ""):
             raise ValueError("provisioning result instance_id mismatch")
+        if str(current.get("status") or "").lower() in FINAL_STATES:
+            return current
         status = str(result.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
@@ -330,7 +332,31 @@ class AgentInstanceProvisioningRepository:
         minecraft_migration = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
         minecraft_change = minecraft_migration or minecraft_update
         ph = self.dialect.placeholder
+        running_updated = True
         with self.session(transaction=True) as session:
+            # Serialize terminal result publication with the terminal state.
+            # A replay must not publish a second bundle or emit another event.
+            if status in FINAL_STATES:
+                claim = session.execute(
+                    "UPDATE agent_instance_provisioning SET "
+                    f"updated_at={ph} WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
+                    (now, provisioning_id),
+                )
+                if int(getattr(claim, "rowcount", 0) or 0) != 1:
+                    row = session.execute(
+                        f"SELECT * FROM agent_instance_provisioning WHERE provisioning_id={ph}",
+                        (provisioning_id,),
+                    ).fetchone()
+                    if row is None or str(row["status"] or "") not in FINAL_STATES:
+                        raise RuntimeError("provisioning terminal claim lost without terminal state")
+                    terminal = dict(row)
+                    for source, target in (("request_json", "request"), ("result_json", "result")):
+                        raw = terminal.pop(source, None)
+                        try:
+                            terminal[target] = json.loads(raw) if raw else None
+                        except (TypeError, ValueError):
+                            terminal[target] = None
+                    return terminal
             if status == "completed":
                 publication = publish_pending_serverpack_bundle(
                     backend=self.backend,
@@ -343,13 +369,14 @@ class AgentInstanceProvisioningRepository:
                     result = {**result, "controller_bundle_publication": publication}
                     payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
             if status == "running":
-                session.execute(
+                update = session.execute(
                     "UPDATE agent_instance_provisioning SET "
                     f"status={ph},current_step={ph},progress={ph},result_json={ph},last_error={ph},"
                     f"started_at=CASE WHEN started_at IS NULL THEN {ph} ELSE started_at END,updated_at={ph} "
                     f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
                     (status, current_step, progress, payload, error, now, now, provisioning_id),
                 )
+                running_updated = int(getattr(update, "rowcount", 0) or 0) == 1
             else:
                 session.execute(
                     "UPDATE agent_instance_provisioning SET "
@@ -377,6 +404,10 @@ class AgentInstanceProvisioningRepository:
                         )
 
         state = self.snapshot(provisioning_id)
+        if status == "running" and not running_updated:
+            # A terminal result won while this progress update was in flight.
+            # Do not emit a misleading late progress event.
+            return state
         diagnostic = None
         if status == "failed":
             technical_detail = result.get("technical_detail") or result.get("root_cause") or result.get("error")

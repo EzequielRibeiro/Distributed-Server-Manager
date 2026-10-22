@@ -9,6 +9,7 @@ allow-lists on this Agent.
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 import shutil
 import tarfile
@@ -24,11 +25,12 @@ for _path in (_AGENT_COMMON,_PROJECT_ROOT/"core"):
         sys.path.insert(0,str(_path))
 
 from adapters import resolve_adapter
-from backup_client import _create as create_backup
+from backup_client import _create as create_backup, _artifact as find_backup_artifact, MANIFEST_NAME
 from content_upload_quarantine import quarantine_destination, validate_quarantine_archive
 from game_data_executor import _execute as execute_game_data
 import instance_runtime
 from minecraft_serverpack_agent import verify_installed_neoforge
+from minecraft_serverpack_controlled_stop import ensure_stopped
 from minecraft_serverpack_migration_adapter import prepare_migration_inputs
 from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
 from minecraft_serverpack_migration_runtime_stage import build_staged_runtime
@@ -147,7 +149,110 @@ def _verified_backup(config:dict[str,Any],instance_id:str)->dict[str,Any]:
     return {**created,"integrity_verified":True}
 
 
-def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240)->bool:
+def _attest_retained_backup(backup_id:Any,instance_id:str)->dict[str,Any]:
+    """Resolve a backup by ID from the Agent-owned backup store and verify it."""
+    if not isinstance(backup_id,str) or not backup_id.strip():
+        raise MinecraftServerPackProvisioningHomologationError(
+            "an Agent-owned retained backup ID is required before migration"
+        )
+    # Reject glob syntax and path separators before backup_client._artifact
+    # interpolates the ID into its filename glob.
+    if (any(char in backup_id for char in ("*","?","[","]","/","\\"))
+        or backup_id in (".","..")):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "retained Agent backup ID contains unsafe path or glob characters"
+        )
+    try:
+        artifact=find_backup_artifact(instance_id,backup_id)
+        if not artifact.is_file() or artifact.is_symlink():
+            raise ValueError("unsafe backup artifact")
+        size=artifact.stat().st_size
+        if size<=0:
+            raise ValueError("empty backup artifact")
+        checksum=_digest(artifact)
+        with tarfile.open(artifact,"r:*") as package:
+            members=package.getmembers()
+            manifest_member=next((item for item in members if item.name==MANIFEST_NAME),None)
+            if manifest_member is None or not manifest_member.isfile():
+                raise ValueError("backup manifest is missing")
+            stream=package.extractfile(manifest_member)
+            if stream is None:
+                raise ValueError("backup manifest is unreadable")
+            manifest=json.loads(stream.read().decode("utf-8"))
+            if (
+                manifest.get("kind")!="CapivaraInstanceBackup"
+                or manifest.get("backup_format")!="capivara-instance"
+                or manifest.get("backup_id")!=backup_id
+                or manifest.get("source_instance")!=instance_id
+            ):
+                raise ValueError("backup manifest identity mismatch")
+            if len(members)<=1:
+                raise ValueError("backup contains no instance data")
+            for member in members:
+                if member.issym() or member.islnk() or member.isdev():
+                    raise ValueError("backup contains unsafe filesystem entries")
+                member_path=Path(member.name)
+                if member_path.is_absolute() or ".." in member_path.parts:
+                    raise ValueError("backup contains unsafe archive paths")
+    except (OSError,ValueError,LookupError,tarfile.TarError,TypeError) as exc:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "retained Agent backup failed independent verification"
+        ) from exc
+    return {
+        "backup_id":backup_id,
+        "sha256":checksum,
+        "size_bytes":size,
+        "integrity_verified":True,
+    }
+
+
+def _select_retained_backup_id(config:dict[str,Any],instance_id:str)->str:
+    configured=config.get("minecraft_serverpack_retained_backup_id")
+    if configured is not None:
+        if not isinstance(configured,str) or not configured.strip():
+            raise MinecraftServerPackProvisioningHomologationError(
+                "configured retained backup ID must be a nonempty string"
+            )
+        # Explicit backup selection must be independently verified too.
+        _attest_retained_backup(configured,instance_id)
+        return configured
+    # Discover only Agent-owned archives with a matching embedded manifest.
+    # An invalid candidate is skipped; if none qualifies the capacity gate
+    # fails closed before stopping the running server.
+    from backup_client import BACKUP_ROOT
+    directory=BACKUP_ROOT/instance_id
+    if not directory.is_dir() or directory.is_symlink():
+        raise MinecraftServerPackProvisioningHomologationError(
+            "no trusted retained backup directory exists"
+        )
+    candidates=sorted(
+        (p for p in directory.iterdir() if p.is_file() and not p.is_symlink()
+         and (p.name.endswith(".tar.gz") or p.name.endswith(".tar"))),
+        key=lambda p:p.stat().st_mtime,reverse=True,
+    )
+    for artifact in candidates:
+        candidate_id=artifact.name[:-7] if artifact.name.endswith(".tar.gz") else artifact.name[:-4]
+        try:
+            _attest_retained_backup(candidate_id,instance_id)
+            return candidate_id
+        except (MinecraftServerPackProvisioningHomologationError,ValueError):
+            continue
+    raise MinecraftServerPackProvisioningHomologationError(
+        "no verified retained Agent backup is available"
+    )
+
+
+def _readiness_log_baseline(working:Path)->tuple[int,int]|None:
+    """Capture the pre-start log identity and byte offset to exclude stale Done lines."""
+    try:
+        stat=(working/"logs/latest.log").stat()
+        return (stat.st_ino,stat.st_size)
+    except FileNotFoundError:
+        return None
+
+
+def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=600,
+                   baseline:tuple[int,int]|None=None)->bool:
     working=Path(str(record.get("working_directory") or record.get("files_root") or ""))
     log=working/"logs/latest.log"
     started=time.monotonic()
@@ -157,12 +262,32 @@ def _wait_for_done(record:dict[str,Any],adapter:Any,*,timeout_seconds:int=240)->
         if active=="failed":
             return False
         try:
-            if log.is_file() and "Done (" in log.read_text(encoding="utf-8",errors="replace"):
+            stat=log.stat()
+            offset=baseline[1] if baseline and stat.st_ino==baseline[0] and stat.st_size>=baseline[1] else 0
+            with log.open("rb") as stream:
+                stream.seek(offset)
+                recent=stream.read().decode("utf-8",errors="replace")
+            if "Done (" in recent:
                 return active in {"active","activating"}
-        except OSError:
+        except (FileNotFoundError,OSError):
             pass
         time.sleep(2)
     return False
+
+
+
+def _restore_initial_running_state(record:dict[str,Any],adapter:Any,initial_state:str,*,
+                                   working:Path)->str:
+    """Re-establish original availability before committing an irreversible swap."""
+    if initial_state not in {"active","activating"}:
+        return "stopped"
+    baseline=_readiness_log_baseline(working)
+    adapter.start(record)
+    if not _wait_for_done(record,adapter,baseline=baseline):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "updated instance did not become ready after automatic restart"
+        )
+    return "running"
 
 
 def execute_homologated_migration(
@@ -183,9 +308,12 @@ def execute_homologated_migration(
         configuration.get("minecraft_serverpack_migration"),
         instance_id=instance_id,
     )
-    if str(request.get("desired_state") or "").lower()!="stopped":
+    # The requested final state is distinct from the temporary controlled stop.
+    # The transaction restores the instance's original running state on commit.
+    requested_state=str(request.get("desired_state") or "").strip().lower()
+    if requested_state not in {"stopped", "running"}:
         raise MinecraftServerPackProvisioningHomologationError(
-            "PR855 homologation requires desired_state=stopped"
+            "Server Pack migration requires desired_state=running or stopped"
         )
     record=instance_runtime.get_instance(instance_id)
     if not isinstance(record,dict):
@@ -211,11 +339,6 @@ def execute_homologated_migration(
             "homologation instance does not use a private runtime root"
         )
     adapter=resolve_adapter(record)
-    status=adapter.status(record)
-    if str(status.get("active_state") or "").lower() not in {"inactive","deactivating"}:
-        raise MinecraftServerPackProvisioningHomologationError(
-            "PR855 homologation currently requires the instance to be stopped"
-        )
     current=verify_installed_neoforge(active,migration["from_loader_version"])
     if current.get("loader_version")!=migration["from_loader_version"]:
         raise MinecraftServerPackProvisioningHomologationError(
@@ -254,11 +377,7 @@ def execute_homologated_migration(
             "homologation target loader installation is not attested"
         )
 
-    baseline=_verified_backup(config,instance_id)
-    state:dict[str,Any]={
-        "baseline_backup":baseline,
-        "loader_seed":str(loader_seed),
-    }
+    state:dict[str,Any]={}
     pack_stage=Path(str(configuration.get("minecraft_serverpack_homologation_stage") or (instance_root/".dsm/pr855-serverpack-stage")))
     candidate=instance_root/"runtime.migration-stage"
 
@@ -276,30 +395,39 @@ def execute_homologated_migration(
         }
 
     def capacity(evidence:dict[str,Any])->dict[str,Any]:
+        # Estimate backup from the existing runtime before stopping it.
+        runtime_bytes=_tree_bytes(active)
+        expanded=_expanded_zip_bytes(archive)
         return assess_staged_migration(
             available_bytes=shutil.disk_usage(instance_root).free,
-            backup_bytes=int(baseline["size_bytes"]),
+            backup_bytes=runtime_bytes,
             serverpack_zip_bytes=archive.stat().st_size,
-            expanded_pack_bytes=_expanded_zip_bytes(archive),
-            new_runtime_bytes=_tree_bytes(loader_seed)+_expanded_zip_bytes(archive),
-            backup_evidence=baseline,
+            expanded_pack_bytes=expanded,
+            new_runtime_bytes=_tree_bytes(loader_seed)+expanded,
+            # A size estimate is not evidence of an existing verified backup.
+            # Fail closed until the Agent has independently attested the
+            # retained baseline backup before starting the transaction.
+            backup_evidence=_attest_retained_backup(
+                _select_retained_backup_id(config,instance_id),instance_id
+            ),
             plan_evidence={
                 "migration_plan_sha256":evidence["migration_plan_sha256"],
                 "install_allowed":False,
             },
         )
 
+    def stop(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
+        state["stop_attempted"]=True
+        state["initial_active_state"]=str(
+            (adapter.status(record) or {}).get("active_state") or ""
+        ).lower()
+        state["controlled_stop"]=ensure_stopped(record,adapter)
+
     def backup(evidence:dict[str,Any])->dict[str,Any]:
         value=_verified_backup(config,instance_id)
+        state["baseline_backup"]=value
         state["transaction_backup"]=value
         return value
-
-    def stop(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
-        current_state=adapter.status(record)
-        if str(current_state.get("active_state") or "").lower() not in {"inactive","deactivating"}:
-            raise MinecraftServerPackProvisioningHomologationError(
-                "homologation instance became active before staging"
-            )
 
     def stage(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
         if pack_stage.exists():
@@ -334,31 +462,36 @@ def execute_homologated_migration(
         active_record["working_directory"]=str(active)
         active_record["files_root"]=str(active)
         try:
+            baseline=_readiness_log_baseline(active)
             adapter.start(active_record)
-            ready=_wait_for_done(active_record,adapter)
+            ready=_wait_for_done(active_record,adapter,baseline=baseline)
             if ready:
                 verify_installed_neoforge(active,evidence["target_loader_version"])
                 ready=len(list((active/"mods").glob("*.jar")))==evidence["serverpack_mod_count"]
             return bool(ready)
         finally:
-            try:
-                current_state=adapter.status(active_record)
-                if str(current_state.get("active_state") or "").lower() in {"active","activating"}:
-                    adapter.stop(active_record)
-            except Exception:
-                pass
+            # A failed stop must propagate: swap commit or rollback cannot
+            # proceed while the candidate server might still be running.
+            ensure_stopped(active_record,adapter)
 
     def commit(evidence:dict[str,Any],backup_evidence:dict[str,Any])->dict[str,Any]:
-        return migration_swap.commit(instance_root,readiness_passed=True)
+        # Restore the customer's original availability before the irreversible
+        # journal commit. A failed restart must still be able to roll back.
+        restored_state=_restore_initial_running_state(
+            record,adapter,str(state.get("initial_active_state") or ""),working=active
+        )
+        committed=migration_swap.commit(instance_root,readiness_passed=True)
+        return {**committed,"observed_state":restored_state}
 
     def rollback(evidence:dict[str,Any],backup_evidence:dict[str,Any],trace:tuple[str,...])->dict[str,Any]:
-        try:
-            current_state=adapter.status(record)
-            if str(current_state.get("active_state") or "").lower() in {"active","activating"}:
-                adapter.stop(record)
-        except Exception:
-            pass
-        return migration_swap.recover(instance_root)
+        # Never restore or restart while the candidate service may still be running.
+        ensure_stopped(record,adapter)
+        journal=instance_root/".dsm/minecraft-serverpack-migration.json"
+        recovery=migration_swap.recover(instance_root) if journal.is_file() else {"status":"no_swap"}
+        restored_state=_restore_initial_running_state(
+            record,adapter,str(state.get("initial_active_state") or ""),working=active
+        )
+        return {**recovery,"observed_state":restored_state}
 
     # Re-evaluate the complete local feature decision and Controller-bound
     # execution mode immediately before entering the transaction. This closes
@@ -393,9 +526,9 @@ def execute_homologated_migration(
         "quarantine_archive":str(archive),
         "target_loader_seed":str(loader_seed),
         "baseline_backup":{
-            "backup_id":baseline["backup_id"],
-            "sha256":baseline["sha256"],
-            "size_bytes":baseline["size_bytes"],
+            "backup_id":state["baseline_backup"]["backup_id"],
+            "sha256":state["baseline_backup"]["sha256"],
+            "size_bytes":state["baseline_backup"]["size_bytes"],
         },
         "candidate_runtime":state.get("candidate_runtime"),
     }

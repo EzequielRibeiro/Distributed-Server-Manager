@@ -60,6 +60,43 @@ class HomologationGateTest(unittest.TestCase):
                 "agent_id":"agent-production-test-other",
             }))
 
+    def test_hybrid_customer_flow_is_scoped_to_minecraft_005(self):
+        env={
+            "CAPIVARA_SERVERPACK_MIGRATION_MODE":"production",
+            "CAPIVARA_SERVERPACK_MIGRATION_PRODUCTION_ACK":"AUTHORIZED",
+            "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_INSTANCES":"cli-000001-minecraft-005",
+            "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_AGENTS":"agent-horizon-server",
+        }
+        request={
+            "instance_id":"cli-000001-minecraft-005",
+            "agent_id":"agent-horizon-server",
+            "configuration":{"minecraft_serverpack_execution_mode":"production"},
+        }
+        with patch.dict(os.environ,env,clear=True):
+            self.assertTrue(module.enabled_for(request))
+            self.assertFalse(module.enabled_for({**request,"instance_id":"cli-000001-minecraft-003"}))
+            self.assertFalse(module.enabled_for({**request,"agent_id":"agent-node1"}))
+            self.assertFalse(module.enabled_for({**request,"configuration":{}}))
+
+    def test_migration_accepts_running_request_before_instance_lookup(self):
+        request={"instance_id":"pr855-lab","agent_id":"pr839-isolated-agent",
+                 "desired_state":"running","configuration":{"minecraft_serverpack_migration":{}}}
+        with patch.dict(os.environ,{"CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":"YES"},clear=True), \
+             patch.object(module,"validate_minecraft_serverpack_migration",return_value={}), \
+             patch.object(module.instance_runtime,"get_instance",return_value=None):
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "existing disposable instance"):
+                module.execute_homologated_migration({"agent_id":"pr839-isolated-agent"},request)
+
+    def test_migration_rejects_unknown_desired_state(self):
+        request={"instance_id":"pr855-lab","agent_id":"pr839-isolated-agent",
+                 "desired_state":"paused","configuration":{"minecraft_serverpack_migration":{}}}
+        with patch.dict(os.environ,{"CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":"YES"},clear=True), \
+             patch.object(module,"validate_minecraft_serverpack_migration",return_value={}):
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "desired_state=running or stopped"):
+                module.execute_homologated_migration({"agent_id":"pr839-isolated-agent"},request)
+
     def test_production_agent_stays_disabled_without_exact_ack(self):
         request={
             "instance_id":"cli-production-test",
@@ -81,6 +118,51 @@ class HomologationGateTest(unittest.TestCase):
                 "CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":value,
             },clear=False):
                 self.assertFalse(module.enabled_for(self.request()))
+
+
+class AutomaticRestartTest(unittest.TestCase):
+    def test_running_instance_restarts_and_waits_for_fresh_readiness(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        record={"instance_id":"lab"}
+        with patch.object(module,"_readiness_log_baseline",return_value=(42,100)), \
+             patch.object(module,"_wait_for_done",return_value=True) as wait:
+            observed=module._restore_initial_running_state(
+                record,adapter,"active",working=Path("/tmp/pr916-test-runtime"))
+        self.assertEqual(observed,"running")
+        adapter.start.assert_called_once_with(record)
+        wait.assert_called_once_with(record,adapter,baseline=(42,100))
+
+    def test_previously_stopped_instance_stays_stopped(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        with patch.object(module,"_wait_for_done") as wait:
+            observed=module._restore_initial_running_state(
+                {},adapter,"inactive",working=Path("/tmp/pr916-test-runtime"))
+        self.assertEqual(observed,"stopped")
+        adapter.start.assert_not_called()
+        wait.assert_not_called()
+
+    def test_activating_instance_restores_running_state(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        with patch.object(module,"_readiness_log_baseline",return_value=None), \
+             patch.object(module,"_wait_for_done",return_value=True):
+            observed=module._restore_initial_running_state(
+                {},adapter,"activating",working=Path("/tmp/pr916-test-runtime"))
+        self.assertEqual(observed,"running")
+        adapter.start.assert_called_once()
+
+    def test_failed_restart_prevents_commit(self):
+        from unittest.mock import Mock
+        adapter=Mock()
+        with patch.object(module,"_readiness_log_baseline",return_value=None), \
+             patch.object(module,"_wait_for_done",return_value=False):
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "did not become ready"):
+                module._restore_initial_running_state(
+                    {},adapter,"active",working=Path("/tmp/pr916-test-runtime"))
+        adapter.start.assert_called_once()
 
 
 if __name__=="__main__":
