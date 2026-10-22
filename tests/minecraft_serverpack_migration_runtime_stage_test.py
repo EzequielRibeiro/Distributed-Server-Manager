@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -51,16 +54,19 @@ class RuntimeStageTest(unittest.TestCase):
  def test_candidate_replaces_loader_and_mods_but_preserves_private_state(self):
   with tempfile.TemporaryDirectory() as name:
    root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (active/"mods").chmod(0o770)
    result=module.build_staged_runtime(
     active_runtime=active,target_loader_seed=seed,serverpack_stage=pack,
     destination=root/"candidate",target_loader_version="26.1.2.109")
    candidate=root/"candidate"
    self.assertEqual(result["mods"],2)
-   self.assertTrue(result["existing_config_preserved"])
+   self.assertEqual((candidate/"mods").stat().st_mode & 0o777,0o770)
+   self.assertFalse(result["existing_config_preserved"])
    self.assertTrue(result["world_preserved"])
    self.assertFalse(result["activated"])
    self.assertEqual((candidate/"world/level.dat").read_bytes(),b"WORLD")
-   self.assertEqual((candidate/"config/customer.toml").read_text(),"keep=true\n")
+   self.assertFalse((candidate/"config/customer.toml").exists())
+   self.assertEqual((candidate/"config/default.toml").read_text(),"replace=false\n")
    self.assertEqual((candidate/"kubejs/local.js").read_text(),"// keep\n")
    self.assertEqual((candidate/"server.properties").read_text(),"motd=customer\n")
    self.assertFalse((candidate/"mods/old.jar").exists())
@@ -68,6 +74,53 @@ class RuntimeStageTest(unittest.TestCase):
    self.assertFalse((candidate/"server-overrides").exists())
    self.assertTrue((candidate/"libraries/net/neoforged/neoforge/26.1.2.109").is_dir())
    self.assertFalse((candidate/"libraries/net/neoforged/neoforge/26.1.2.94").exists())
+
+ def test_declared_kubejs_override_replaces_old_scripts_and_preserves_world(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   override=pack/"server-overrides/kubejs";override.mkdir(parents=True)
+   (override/"startup_scripts").mkdir();(override/"startup_scripts/new.js").write_text("// new\n")
+   result=module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   candidate=root/"candidate"
+   self.assertFalse((candidate/"kubejs/local.js").exists())
+   self.assertEqual((candidate/"kubejs/startup_scripts/new.js").read_text(),"// new\n")
+   self.assertEqual((candidate/"world/level.dat").read_bytes(),b"WORLD")
+   self.assertEqual((candidate/"server.properties").read_text(),"motd=customer\n")
+   self.assertFalse(result["existing_config_preserved"])
+
+ def test_preserves_owner_and_mode_of_private_world_and_log_files(self):
+  if os.geteuid()!=0:
+   self.skipTest("ownership regression requires root")
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (active/"logs").mkdir();(active/"logs/latest.log").write_text("hello\n")
+   for path in (active/"world/level.dat",active/"logs/latest.log"):
+    path.chmod(0o600);os.chown(path,996,988)
+   module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   for rel in ("world/level.dat","logs/latest.log"):
+    src=(active/rel).stat();dst=(root/"candidate"/rel).stat()
+    self.assertEqual((src.st_uid,src.st_gid,src.st_mode&0o777),
+                     (dst.st_uid,dst.st_gid,dst.st_mode&0o777))
+
+ def test_pack_config_inherits_existing_service_user_acl(self):
+  if not shutil.which("setfacl"):
+   self.skipTest("POSIX ACL tooling unavailable")
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   uid=os.getuid()
+   for path in (active/"config",active/"config/customer.toml"):
+    subprocess.run(["setfacl","-m",f"u:{uid}:rwX",str(path)],check=True)
+   (pack/"server-overrides/config/customer.toml").write_text("replaced=true\n")
+   module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   for name in ("customer.toml","default.toml"):
+    path=root/"candidate/config"/name
+    self.assertIn("system.posix_acl_access",os.listxattr(path))
+    self.assertEqual(os.getxattr(path,"system.posix_acl_access")[:4],b"\x02\x00\x00\x00")
+    with path.open("a") as stream:
+     stream.write("# writable by ACL principal\n")
 
  def test_wrong_loader_seed_or_existing_destination_fails_closed(self):
   with tempfile.TemporaryDirectory() as name:
