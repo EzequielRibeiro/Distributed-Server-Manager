@@ -8,7 +8,9 @@ active by this module.
 """
 from __future__ import annotations
 
+import errno
 import hashlib
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -63,6 +65,18 @@ def _protected_tree_hash(root: Path) -> str:
     return digest.hexdigest()
 
 
+def _copy_preserving_identity(source: str, destination: str) -> str:
+    """Copy private runtime file metadata including its owning UID/GID.
+
+    shutil.copy2 retains contents, modes and xattrs, but not ownership.
+    The destination is always a new, already symlink-validated candidate.
+    """
+    copied = shutil.copy2(source, destination)
+    st = os.stat(source, follow_symlinks=False)
+    os.chown(destination, st.st_uid, st.st_gid, follow_symlinks=False)
+    return copied
+
+
 def _copy_entry(source: Path, destination: Path) -> None:
     if source.is_dir():
         shutil.copytree(source, destination, copy_function=shutil.copy2)
@@ -73,6 +87,33 @@ def _copy_entry(source: Path, destination: Path) -> None:
         raise MinecraftServerPackRuntimeStageError(
             f"required NeoForge seed entry is missing: {source.name}"
         )
+
+
+
+def _inherit_runtime_access(source: Path, target: Path) -> None:
+    """Carry instance owner and POSIX ACL to new pack-owned files.
+
+    Never grant global write access. Failure to apply the existing ACL fails
+    staging closed rather than deploying an unreadable/unwritable candidate.
+    """
+    st = source.stat()
+    os.chown(target, st.st_uid, st.st_gid)
+    try:
+        acl = os.getxattr(source, "system.posix_acl_access")
+    except OSError as exc:
+        if exc.errno not in (errno.ENODATA,):
+            raise
+    else:
+        os.setxattr(target, "system.posix_acl_access", acl)
+    # For a newly created file inherited from a directory, remove execute
+    # bits without removing the service-user ACL write grant.
+    if target.is_file() and source.is_dir():
+        # Remove execute permission while retaining the named-user ACL mask.
+        # The ACL is inherited from a directory that may allow execution.
+        current = target.stat().st_mode
+        os.chmod(target, current & ~0o111)
+        if "system.posix_acl_access" in os.listxattr(target):
+            os.setxattr(target, "system.posix_acl_access", acl)
 
 
 def build_staged_runtime(
@@ -118,7 +159,14 @@ def build_staged_runtime(
 
     protected_before = _protected_tree_hash(active_runtime)
     try:
-        shutil.copytree(active_runtime, destination, copy_function=shutil.copy2)
+        shutil.copytree(active_runtime, destination, copy_function=_copy_preserving_identity)
+        # copytree/copy2 do not preserve directory ownership either. Restore
+        # it only on the isolated candidate, never on the active instance.
+        for source_dir in (active_runtime, *(p for p in active_runtime.rglob("*") if p.is_dir())):
+            relative = source_dir.relative_to(active_runtime)
+            target_dir = destination / relative
+            st = source_dir.stat()
+            os.chown(target_dir, st.st_uid, st.st_gid)
         for name in (*_LOADER_PATHS, "mods"):
             target = destination / name
             if target.is_dir():
@@ -151,6 +199,19 @@ def build_staged_runtime(
             shutil.copytree(source, target, copy_function=shutil.copy2)
             if (active_runtime / name).is_dir():
                 shutil.copystat(active_runtime / name, target)
+                original = active_runtime / name
+                for item in sorted(target.rglob("*")):
+                    relative = item.relative_to(target)
+                    counterpart = original / relative
+                    if counterpart.exists() and counterpart.is_dir() == item.is_dir():
+                        policy = counterpart
+                    else:
+                        parent = original / relative.parent
+                        while not parent.is_dir() and parent != original:
+                            parent = parent.parent
+                        policy = parent
+                    _inherit_runtime_access(policy, item)
+                _inherit_runtime_access(original, target)
         _reject_unsafe_tree(destination, "candidate runtime")
         proof = verify_installed_neoforge(destination, target_loader_version)
         protected_after = _protected_tree_hash(destination)
