@@ -182,6 +182,11 @@ def build_staged_runtime(
         # Keep the instance's existing mods-directory access policy. The ZIP
         # staging tree is not authoritative for customer runtime permissions.
         shutil.copystat(active_runtime / "mods", destination / "mods")
+        # The privileged materializer copies a quarantined Server Pack as root.
+        # Transfer the live mods access policy to new jars before activation.
+        _inherit_runtime_access(active_runtime / "mods", destination / "mods")
+        for installed_mod in (destination / "mods").iterdir():
+            _inherit_runtime_access(active_runtime / "mods", installed_mod)
         # Approved Server Pack overrides replace incompatible modpack-owned
         # scripts/configurations, while world and instance settings stay intact.
         override_root = serverpack_stage / "server-overrides"
