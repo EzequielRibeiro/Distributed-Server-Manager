@@ -17,10 +17,48 @@ import instance_runtime
 from runtime_lock import instance_lock
 from runtime_operations import _atomic, _now, _path, read_operation
 from privileged_materialization import minecraft_serverpack_swap_phase
+from minecraft_serverpack_agent import verify_installed_neoforge
 
 
 class MinecraftServerPackMigrationRecoveryError(RuntimeError):
     pass
+
+
+def _prove_pre_swap_failure(outer:dict[str,Any],record:dict[str,Any],root:Path)->dict[str,Any]:
+    """Fail closed unless a known pre-swap permission failure left original loader intact.
+
+    The outer journal is retained for audit. No game file is modified.
+    This is not an alternative to recovering a missing/failed swap journal.
+    """
+    if outer.get("status")!="failed":
+        raise MinecraftServerPackMigrationRecoveryError("pre-swap recovery requires a failed operation")
+    error=str(outer.get("error") or "")
+    if ("Permission denied" not in error or "runtime.migration-stage" not in error
+            or not error.startswith("migration transaction stopped:")):
+        raise MinecraftServerPackMigrationRecoveryError("pre-swap failure is not a recognized permission denial")
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+        raise MinecraftServerPackMigrationRecoveryError("unsafe instance root")
+    runtime=root/"runtime"
+    if runtime.is_symlink() or not runtime.is_dir():
+        raise MinecraftServerPackMigrationRecoveryError("original runtime is absent or unsafe")
+    if Path(str(record.get("working_directory") or ""))!=runtime:
+        raise MinecraftServerPackMigrationRecoveryError("active runtime does not match registered working directory")
+    control=root/".dsm"
+    if control.is_symlink() or (control.exists() and not control.is_dir()):
+        raise MinecraftServerPackMigrationRecoveryError("unsafe migration control directory")
+    paths=[root/"runtime.migration-stage",root/"runtime.migration-rollback",
+           root/"runtime.migration-failed",control/"minecraft-serverpack-migration.json",
+           control/".minecraft-serverpack-migration.json.tmp"]
+    if any(path.exists() or path.is_symlink() for path in paths):
+        raise MinecraftServerPackMigrationRecoveryError("filesystem transaction evidence exists: require normal recovery")
+    version=str(record.get("build_id") or "").strip()
+    try:
+        proof=verify_installed_neoforge(runtime,version)
+    except (ValueError,OSError) as exc:
+        raise MinecraftServerPackMigrationRecoveryError("original NeoForge loader cannot be verified") from exc
+    return {"status":"recovered","pre_swap_only":True,"failed_runtime_retained":False,
+            "original_loader_version":proof["loader_version"],
+            "reason":"verified_pre_swap_permission_denial"}
 
 
 def recover_minecraft_serverpack_migration(
@@ -63,7 +101,19 @@ def recover_minecraft_serverpack_migration(
             record=instance_runtime._owned(config,iid)
             if Path(str(record.get("instance_state_root") or ""))!=Path(instance_state_root):
                 raise MinecraftServerPackMigrationRecoveryError("recovery instance root differs from registered runtime")
-            filesystem=minecraft_serverpack_swap_phase(config,record,"recover")
+            root=Path(instance_state_root)
+            control=root/".dsm"
+            swap_journal=control/"minecraft-serverpack-migration.json"
+            swap_temp=control/".minecraft-serverpack-migration.json.tmp"
+            if swap_journal.exists() or swap_journal.is_symlink() or swap_temp.exists() or swap_temp.is_symlink():
+                filesystem=minecraft_serverpack_swap_phase(config,record,"recover")
+            elif (outer.get("status")=="failed" and
+                  str(outer.get("error") or "").startswith("migration transaction stopped:") and
+                  "Permission denied" in str(outer.get("error") or "") and
+                  "runtime.migration-stage" in str(outer.get("error") or "")):
+                filesystem=_prove_pre_swap_failure(outer,record,root)
+            else:
+                filesystem=minecraft_serverpack_swap_phase(config,record,"recover")
         except Exception as exc:
             raise MinecraftServerPackMigrationRecoveryError(
                 "filesystem recovery could not prove restoration of the original runtime"
@@ -81,6 +131,8 @@ def recover_minecraft_serverpack_migration(
             "filesystem_status":str(filesystem.get("status") or ""),
             "failed_runtime_retained":bool(filesystem.get("failed_runtime_retained")),
             "manual_recovery_required":False,
+            "pre_swap_only":bool(filesystem.get("pre_swap_only")),
+            "original_loader_version":filesystem.get("original_loader_version"),
         }
         updated.pop("error",None)
         _atomic(_path(iid),updated)
