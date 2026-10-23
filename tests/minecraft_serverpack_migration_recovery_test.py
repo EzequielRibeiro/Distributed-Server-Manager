@@ -148,6 +148,44 @@ class RecoveryCoordinatorTest(unittest.TestCase):
   self.assertEqual((runtime/"world/level.dat").read_bytes(),b"ORIGINAL_WORLD")
   self.assertEqual(state["writes"][0]["recovery"]["pre_swap_only"],True)
 
+ def test_pre_swap_missing_build_id_uses_verified_unique_installed_loader(self):
+  root,runtime=self._pre_swap_fixture()
+  outer={"agent_id":"agent-a","operation":"minecraft_serverpack_migration",
+         "status":"failed","error":"migration transaction stopped: Permission denied: runtime.migration-stage"}
+  module,state=self.load("linux",outer)
+  module.instance_runtime._owned=lambda config,iid:{"instance_id":iid,
+     "instance_state_root":str(root),"working_directory":str(runtime)}
+  result=module.recover_minecraft_serverpack_migration(
+      {"agent_id":"agent-a"},"i1",instance_state_root=root)
+  self.assertEqual(result["filesystem"]["original_loader_version"],"26.1.2.94")
+  self.assertEqual((runtime/"world/level.dat").read_bytes(),b"ORIGINAL_WORLD")
+
+ def test_pre_swap_missing_build_id_rejects_multiple_loader_versions(self):
+  root,runtime=self._pre_swap_fixture()
+  (runtime/"libraries/net/neoforged/neoforge/26.1.2.109").mkdir()
+  module,state=self.load("linux",{"agent_id":"agent-a",
+      "operation":"minecraft_serverpack_migration","status":"failed",
+      "error":"migration transaction stopped: Permission denied: runtime.migration-stage"})
+  module.instance_runtime._owned=lambda config,iid:{"instance_id":iid,
+     "instance_state_root":str(root),"working_directory":str(runtime)}
+  with self.assertRaises(module.MinecraftServerPackMigrationRecoveryError):
+   module.recover_minecraft_serverpack_migration(
+      {"agent_id":"agent-a"},"i1",instance_state_root=root)
+  self.assertEqual(state["writes"],[])
+
+ def test_pre_swap_missing_build_id_rejects_launcher_mismatch(self):
+  root,runtime=self._pre_swap_fixture()
+  (runtime/"capivara-launch.args").write_bytes(b"wrong loader")
+  module,state=self.load("linux",{"agent_id":"agent-a",
+      "operation":"minecraft_serverpack_migration","status":"failed",
+      "error":"migration transaction stopped: Permission denied: runtime.migration-stage"})
+  module.instance_runtime._owned=lambda config,iid:{"instance_id":iid,
+     "instance_state_root":str(root),"working_directory":str(runtime)}
+  with self.assertRaises(module.MinecraftServerPackMigrationRecoveryError):
+   module.recover_minecraft_serverpack_migration(
+      {"agent_id":"agent-a"},"i1",instance_state_root=root)
+  self.assertEqual(state["writes"],[])
+
  def test_pre_swap_denies_any_transaction_artifact(self):
   for marker in ("runtime.migration-stage","runtime.migration-rollback",
                  "runtime.migration-failed",".dsm/minecraft-serverpack-migration.json",

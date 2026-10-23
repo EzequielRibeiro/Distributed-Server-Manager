@@ -53,6 +53,17 @@ def _prove_pre_swap_failure(outer:dict[str,Any],record:dict[str,Any],root:Path)-
         raise MinecraftServerPackMigrationRecoveryError("filesystem transaction evidence exists: require normal recovery")
     version=str(record.get("build_id") or "").strip()
     try:
+        if not version:
+            # The provisioned Agent registry does not always retain build_id.
+            # Derive only an unambiguous installed candidate, then require the
+            # same strong launcher/canonical-args verification as normal.
+            libraries=runtime/"libraries/net/neoforged/neoforge"
+            if libraries.is_symlink() or not libraries.is_dir():
+                raise ValueError("NeoForge libraries missing or unsafe")
+            candidates=list(libraries.iterdir())
+            if len(candidates)!=1 or candidates[0].is_symlink() or not candidates[0].is_dir():
+                raise ValueError("NeoForge loader identity is ambiguous")
+            version=candidates[0].name
         proof=verify_installed_neoforge(runtime,version)
     except (ValueError,OSError) as exc:
         raise MinecraftServerPackMigrationRecoveryError("original NeoForge loader cannot be verified") from exc
