@@ -16,7 +16,7 @@ class RecoveryCoordinatorTest(unittest.TestCase):
  def setUp(self):
   self.saved={name:sys.modules.get(name) for name in (
    "instance_runtime","runtime_lock","runtime_operations",
-   "minecraft_serverpack_migration_swap")}
+   "minecraft_serverpack_migration_swap","privileged_materialization")}
  def tearDown(self):
   for name,value in self.saved.items():
    if value is None:sys.modules.pop(name,None)
@@ -26,6 +26,7 @@ class RecoveryCoordinatorTest(unittest.TestCase):
   state={"writes":[],"locks":[]}
   instance_runtime=types.ModuleType("instance_runtime")
   instance_runtime._token=lambda value,label:str(value)
+  instance_runtime._owned=lambda config,iid:{"instance_id":iid,"instance_state_root":"/isolated"}
   sys.modules["instance_runtime"]=instance_runtime
 
   runtime_lock=types.ModuleType("runtime_lock")
@@ -53,16 +54,20 @@ class RecoveryCoordinatorTest(unittest.TestCase):
     "status":"recovered","failed_runtime_retained":True})
   swap.recover=recover
   sys.modules["minecraft_serverpack_migration_swap"]=swap
+  privileged=types.ModuleType("privileged_materialization")
+  privileged.minecraft_serverpack_swap_phase=lambda config,record,phase:recover(Path(record["instance_state_root"]))
+  sys.modules["privileged_materialization"]=privileged
 
   path=ROOT/"agents"/platform/"runtime"/"minecraft_serverpack_migration_recovery.py"
   spec=importlib.util.spec_from_file_location(f"recovery_{platform}_{id(self)}",path)
   module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
   return module,state
 
- def test_linux_and_windows_coordinator_are_identical(self):
-  self.assertEqual(
-   (ROOT/"agents/linux/runtime/minecraft_serverpack_migration_recovery.py").read_bytes(),
-   (ROOT/"agents/windows/runtime/minecraft_serverpack_migration_recovery.py").read_bytes())
+ def test_linux_uses_privileged_recovery_windows_keeps_native_recovery(self):
+  linux=(ROOT/"agents/linux/runtime/minecraft_serverpack_migration_recovery.py").read_text()
+  windows=(ROOT/"agents/windows/runtime/minecraft_serverpack_migration_recovery.py").read_text()
+  self.assertIn('minecraft_serverpack_swap_phase(config,record,"recover")',linux)
+  self.assertIn('recover_swap(Path(instance_state_root))',windows)
 
  def test_failed_outer_journal_is_cleared_only_after_verified_filesystem_recovery(self):
   outer={"agent_id":"agent-a","instance_id":"i1",

@@ -9,6 +9,7 @@ import os
 import pwd
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,12 @@ from server_settings_surface import materialize_dynamic_values
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 from storage_pools import resolve_storage_pool
+
+COMMON_DIR = INSTALL_ROOT / "common"
+if not COMMON_DIR.is_dir():
+    COMMON_DIR = Path(__file__).resolve().parents[2] / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_DIR))
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -158,6 +165,220 @@ def _within(root: Path, value: str, label: str) -> Path:
     except ValueError as exc:
         raise RuntimeError(f"{label} escapes its allowed root") from exc
     return path
+
+
+def _serverpack_migration_root(spec: dict[str, Any], config: dict[str, Any], *, allow_missing_active: bool = False) -> Path:
+    """Resolve a Minecraft Java instance root without trusting request paths.
+
+    All privileged migration phases must derive their root from the Agent's
+    configured storage pool, not an arbitrary path supplied by the Worker.
+    """
+    if str(spec.get("game_id") or "").lower() != "minecraft":
+        raise RuntimeError("Server Pack migration requires Minecraft")
+    if not str(spec.get("environment_id") or "").lower().startswith("minecraft.java."):
+        raise RuntimeError("Server Pack migration requires Minecraft Java")
+    instance_id = _token(spec["instance_id"])
+    storage_root = _instance_storage_root(config, spec.get("storage_pool_id"))
+    expected = storage_root / instance_id
+    configured = Path(str(spec.get("instance_state_root") or ""))
+    if not configured.is_absolute() or configured != expected:
+        raise RuntimeError("Server Pack migration instance root differs from storage policy")
+    if expected.is_symlink() or not expected.is_dir():
+        raise RuntimeError("Server Pack migration instance root is unsafe")
+    if expected.resolve() != configured.resolve():
+        raise RuntimeError("Server Pack migration instance root resolves outside storage policy")
+    # Never permit root operations through a symlink at a storage boundary.
+    if storage_root.is_symlink() or not storage_root.is_dir():
+        raise RuntimeError("Server Pack migration storage root is unsafe")
+    active = expected / "runtime"
+    if active.is_symlink() or (not active.is_dir() and not (allow_missing_active and not active.exists())):
+        raise RuntimeError("Server Pack migration active runtime is unsafe")
+    if Path(str(spec.get("working_directory") or "")) != active:
+        raise RuntimeError("Server Pack migration working directory differs from storage policy")
+    return expected
+
+
+def _serverpack_migration_paths(spec: dict[str, Any], config: dict[str, Any], *, allow_missing_active: bool = False) -> dict[str, Path]:
+    """Bind privileged migration writes to fixed, instance-local filenames."""
+    root = _serverpack_migration_root(spec, config, allow_missing_active=allow_missing_active)
+    control = root / ".dsm"
+    if control.is_symlink() or (control.exists() and not control.is_dir()):
+        raise RuntimeError("Server Pack migration control directory is unsafe")
+    stage = root / "runtime.migration-stage"
+    rollback = root / "runtime.migration-rollback"
+    failed = root / "runtime.migration-failed"
+    for label, path in (("stage", stage), ("rollback", rollback), ("failed", failed)):
+        if path.is_symlink():
+            raise RuntimeError(f"Server Pack migration {label} directory is unsafe")
+    journal = control / "minecraft-serverpack-migration.json"
+    journal_temp = control / ".minecraft-serverpack-migration.json.tmp"
+    for path in (journal, journal_temp):
+        if path.is_symlink():
+            raise RuntimeError("Server Pack migration journal path is unsafe")
+    return {
+        "root": root, "active": root / "runtime", "control": control,
+        "stage": stage, "rollback": rollback, "failed": failed,
+        "journal": journal, "journal_temp": journal_temp,
+    }
+
+
+def _serverpack_require_inactive(instance_id: str) -> None:
+    """Independently confirm the game unit is stopped before filesystem mutation."""
+    unit = f"capivara-instance-{_token(instance_id)}.service"
+    completed = subprocess.run(
+        ["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--no-pager"],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("Server Pack migration cannot verify instance systemd state")
+    properties = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
+    if properties.get("LoadState") != "loaded" or properties.get("ActiveState") != "inactive":
+        raise RuntimeError("Server Pack migration requires an inactive loaded instance unit")
+
+
+def _serverpack_prepare_inputs(
+    spec: dict[str, Any], config: dict[str, Any], *,
+    migration_value: Any, selection: Any,
+) -> dict[str, Any]:
+    """Extract the re-attested archive under the fixed private control root."""
+    from content_upload_quarantine import quarantine_destination, validate_quarantine_archive
+    from minecraft_serverpack_migration_adapter import prepare_migration_inputs
+    from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
+
+    paths = _serverpack_migration_paths(spec, config)
+    if paths["journal"].exists() or paths["journal_temp"].exists():
+        raise RuntimeError("Server Pack migration journal already exists")
+    if paths["stage"].exists() or paths["rollback"].exists() or paths["failed"].exists():
+        raise RuntimeError("Server Pack migration destination already occupied")
+    migration = validate_minecraft_serverpack_migration(
+        migration_value, instance_id=str(spec["instance_id"])
+    )
+    archive = quarantine_destination(
+        spec["instance_id"], migration["transfer_id"], migration["filename"]
+    )
+    if validate_quarantine_archive(archive).get("archive_type") != "zip":
+        raise RuntimeError("Server Pack migration requires a quarantined ZIP")
+    control = paths["control"]
+    stage = control / "pr855-serverpack-stage"
+    if stage.is_symlink():
+        raise RuntimeError("Server Pack input stage is unsafe")
+    if stage.exists():
+        if not stage.is_dir():
+            raise RuntimeError("Server Pack input stage is not a directory")
+        _reject_symlinks(stage, label="Server Pack input stage")
+        shutil.rmtree(stage)
+    return prepare_migration_inputs(
+        archive=archive, stage_root=stage,
+        migration=migration, selection=selection,
+    )
+
+
+def _serverpack_build_candidate(
+    spec: dict[str, Any], config: dict[str, Any], *,
+    loader_seed_value: Any, target_loader_version: Any,
+) -> dict[str, Any]:
+    """Build an isolated candidate as root, never mutate the live runtime."""
+    from game_data_state import GAME_DATA_ROOT
+    from minecraft_serverpack_migration_runtime_stage import build_staged_runtime
+
+    paths = _serverpack_migration_paths(spec, config)
+    stage = paths["control"] / "pr855-serverpack-stage"
+    if stage.is_symlink() or not stage.is_dir():
+        raise RuntimeError("Server Pack input stage is missing or unsafe")
+    seed_root = Path(GAME_DATA_ROOT) / "minecraft"
+    seed = _within(seed_root, str(loader_seed_value or ""), "NeoForge loader seed")
+    if not seed.is_dir() or seed.is_symlink() or seed == seed_root:
+        raise RuntimeError("NeoForge loader seed is missing or unsafe")
+    version = _token(target_loader_version, "target_loader_version", 80)
+    if paths["stage"].exists() or paths["stage"].is_symlink():
+        raise RuntimeError("Server Pack candidate already exists")
+    if paths["journal"].exists() or paths["journal_temp"].exists():
+        raise RuntimeError("Server Pack migration has a pending journal")
+    return build_staged_runtime(
+        active_runtime=paths["active"], target_loader_seed=seed,
+        serverpack_stage=stage, destination=paths["stage"],
+        target_loader_version=version,
+    )
+
+
+def _serverpack_swap_phase(
+    spec: dict[str, Any], config: dict[str, Any], *,
+    phase: Any, migration_plan_sha256: Any = None,
+    target_loader_version: Any = None, backup: Any = None,
+    readiness_evidence: Any = None,
+) -> dict[str, Any]:
+    """Only expose fixed transaction journal/swap phases to the root helper."""
+    import minecraft_serverpack_migration_swap as swap
+
+    operation = str(phase or "").strip()
+    if operation not in {"prepare", "switch", "commit", "recover"}:
+        raise RuntimeError("unsupported Server Pack migration phase")
+    paths = _serverpack_migration_paths(spec, config, allow_missing_active=(operation == "recover"))
+    if operation == "prepare":
+        if not isinstance(backup, dict) or backup.get("integrity_verified") is not True:
+            raise RuntimeError("verified migration backup is required")
+        return swap.prepare(
+            paths["root"],
+            migration_plan_sha256=str(migration_plan_sha256 or ""),
+            target_loader_version=str(target_loader_version or ""),
+            backup=backup,
+        )
+    if operation == "switch":
+        switched = swap.switch(paths["root"])
+        # Root records a log baseline after the atomic swap, before readiness.
+        log = paths["active"] / "logs/latest.log"
+        if log.is_symlink():
+            raise RuntimeError("Server Pack readiness log is unsafe")
+        baseline = None
+        if log.is_file():
+            stat_result = log.stat()
+            baseline = {"inode": stat_result.st_ino, "size": stat_result.st_size}
+        journal_paths = swap._paths(paths["root"])
+        checkpoint = swap._read(journal_paths)
+        if checkpoint.get("phase") != "swapped":
+            raise RuntimeError("Server Pack swap readiness checkpoint is invalid")
+        checkpoint["readiness_log_baseline"] = baseline
+        checkpoint["readiness_checkpoint_recorded"] = True
+        swap._atomic(journal_paths, checkpoint)
+        return switched
+    if operation == "commit":
+        if not isinstance(readiness_evidence, dict) or readiness_evidence.get("passed") is not True:
+            raise RuntimeError("Server Pack commit requires successful readiness evidence")
+        journal = swap._read(swap._paths(paths["root"]))
+        if (journal.get("phase") != "swapped"
+                or readiness_evidence.get("migration_plan_sha256") != journal.get("migration_plan_sha256")
+                or readiness_evidence.get("target_loader_version") != journal.get("target_loader_version")):
+            raise RuntimeError("Server Pack readiness evidence differs from migration checkpoint")
+        if journal.get("readiness_checkpoint_recorded") is not True:
+            raise RuntimeError("Server Pack readiness checkpoint is missing")
+        log = paths["active"] / "logs/latest.log"
+        if log.is_symlink() or not log.is_file():
+            raise RuntimeError("Server Pack readiness log is unavailable or unsafe")
+        baseline = journal.get("readiness_log_baseline")
+        current = log.stat()
+        offset = (baseline["size"] if isinstance(baseline, dict)
+                  and baseline.get("inode") == current.st_ino
+                  and type(baseline.get("size")) is int
+                  and current.st_size >= baseline["size"] else 0)
+        if (isinstance(baseline, dict) and baseline.get("inode") == current.st_ino
+                and (type(baseline.get("size")) is not int
+                     or current.st_size < baseline["size"])):
+            raise RuntimeError("Server Pack readiness log changed unexpectedly")
+        with log.open("rb") as stream:
+            stream.seek(offset)
+            recent = stream.read(8 * 1024 * 1024 + 1)
+        if len(recent) > 8 * 1024 * 1024 or b"Done (" not in recent:
+            raise RuntimeError("Server Pack has no fresh readiness log confirmation")
+        count = readiness_evidence.get("serverpack_mod_count")
+        if type(count) is not int or count <= 0:
+            raise RuntimeError("Server Pack readiness mod count is invalid")
+        mods = paths["active"] / "mods"
+        if not mods.is_dir() or mods.is_symlink() or len(list(mods.glob("*.jar"))) != count:
+            raise RuntimeError("Server Pack readiness mods differ from active runtime")
+        return swap.commit(paths["root"], readiness_passed=True)
+    if not paths["journal"].is_file():
+        return {"status": "no_swap"}
+    return swap.recover(paths["root"])
 
 
 def _seed_source(spec: dict[str, Any], working_root: Path, value: Any, label: str) -> Path:
@@ -773,6 +994,10 @@ def run(instance_id: str) -> dict[str, Any]:
     dayz_mod_aliases: list[dict[str, Any]] = []
     removed_dayz_mod_aliases: list[str] = []
     content_files: list[str] = []
+    if (action in {"minecraft-serverpack-prepare-inputs", "minecraft-serverpack-build-candidate"}
+            or (action == "minecraft-serverpack-swap-phase"
+                and request.get("phase") in {"prepare", "switch", "recover"})):
+        _serverpack_require_inactive(instance_id)
     if action == "apply":
         _ensure_runtime_identity(spec, config)
         working_file_copies = _sync_working_file_copies(spec)
@@ -803,6 +1028,22 @@ def run(instance_id: str) -> dict[str, Any]:
         removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
         private_state_cleanup = _remove_instance_private_state(spec, config)
         operation = {**operation, "private_state_cleanup": private_state_cleanup}
+    elif action == "minecraft-serverpack-prepare-inputs":
+        operation = _serverpack_prepare_inputs(spec, config, migration_value=request.get("migration"), selection=request.get("selection"))
+    elif action == "minecraft-serverpack-build-candidate":
+        operation = _serverpack_build_candidate(
+            spec, config,
+            loader_seed_value=request.get("loader_seed"),
+            target_loader_version=request.get("target_loader_version"),
+        )
+    elif action == "minecraft-serverpack-swap-phase":
+        operation = _serverpack_swap_phase(
+            spec, config, phase=request.get("phase"),
+            migration_plan_sha256=request.get("migration_plan_sha256"),
+            target_loader_version=request.get("target_loader_version"),
+            backup=request.get("backup"),
+            readiness_evidence=request.get("readiness_evidence"),
+        )
     elif action == "migrate-storage-copy":
         operation = _migrate_storage_copy(
             config,

@@ -104,6 +104,21 @@ class RuntimeStageTest(unittest.TestCase):
     self.assertEqual((src.st_uid,src.st_gid,src.st_mode&0o777),
                      (dst.st_uid,dst.st_gid,dst.st_mode&0o777))
 
+ def test_new_pack_mods_inherit_service_identity_under_root(self):
+  if os.geteuid()!=0:
+   self.skipTest("privileged ownership test requires root")
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   os.chown(active/"mods",996,988)
+   (active/"mods").chmod(0o770)
+   module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   for rel in ("mods", "mods/new-a.jar", "mods/new-b.jar"):
+    obj=root/"candidate"/rel
+    self.assertEqual((obj.stat().st_uid,obj.stat().st_gid),(996,988),rel)
+    if obj.is_file():
+     self.assertFalse(obj.stat().st_mode & 0o111,rel)
+
  def test_pack_config_inherits_existing_service_user_acl(self):
   if not shutil.which("setfacl"):
    self.skipTest("POSIX ACL tooling unavailable")
