@@ -262,6 +262,11 @@ main()
         python3 "${TARGET_ROOT}/update-manager/game-uptime-plan.py" "${INSTALL_ROOT}" "${TARGET_ROOT}" \
             || printf 'PRECHECK GAME UPTIME: fail-closed; managed instance drain remains required\n'
     fi
+    if [[ -f "${TARGET_ROOT}/update-manager/game-uptime-report.py" ]]; then
+        printf 'PRECHECK GAME UPTIME: read-only managed process identity report\n'
+        python3 "${TARGET_ROOT}/update-manager/game-uptime-report.py" \
+            || printf 'PRECHECK GAME UPTIME: process identity inspection failed; maintenance still required\n'
+    fi
     printf 'UPDATE PREFLIGHT READY: nenhuma alteração foi aplicada em %s\n' "${INSTALL_ROOT}"
 }
 
