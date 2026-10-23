@@ -14,6 +14,6 @@
 
 ## Deployment safeguards
 
-- This is a release candidate: automatic publication is disabled pending a separate publication trigger and release gate validation.
+- Release publication is explicit and guarded by the release readiness contract, immutable release identity checks and published-asset smoke tests.
 - Installing/updating DSM may restart active managed game instances. Do not run `cap update run` on horizon-server without separate maintenance authorization.
 - Minecraft 005 customer-triggered Server Pack migration remains reserved for post-release verification; no automatic update of that instance is authorized.
