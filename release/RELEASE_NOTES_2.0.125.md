@@ -11,6 +11,6 @@
 
 - PR #923 passed 19/19 GitHub Actions workflows; PR #925 passed 31/31.
 - Prior isolated Server Pack regression suite passed 218/218 tests, including new CLI permission and exact-instance confirmation tests.
-- This preparation keeps `publish_release: false`; publication requires a separate release trigger after all release candidate checks pass.
+- Publication uses an explicit release trigger and passed release candidate CI; the canonical release workflow validates tag identity, packages, and public assets.
 - Updating the installed DSM may stop/restart managed game instances under the current updater. Do not deploy on horizon-server without a separately planned maintenance procedure.
 - No Minecraft 005 recovery, retry or customer-facing Server Pack migration is authorized merely by publishing this release.
