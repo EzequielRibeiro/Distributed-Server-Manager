@@ -76,6 +76,7 @@ jobs:
           python3 -m unittest tests/customer_management_dashboard_test.py
           python3 -m unittest tests/customer_team_c6_c9_test.py
           python3 -m unittest tests/customer_instance_workspace_v2_test.py
+          python3 -m unittest tests/recovered_provisioning_evidence_test.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
           python3 -m unittest tests/customer_legacy_registered_visibility_test.py
           python3 -m unittest tests/minecraft_eula_visibility_test.py
