@@ -507,6 +507,10 @@ def _parser() -> argparse.ArgumentParser:
         item = instance_sub.add_parser(name)
         item.add_argument("instance_id")
         item.add_argument("--json", action="store_true", dest="as_json")
+    recovery = instance_sub.add_parser("recover-serverpack")
+    recovery.add_argument("instance_id")
+    recovery.add_argument("--confirm", required=True, help="Repeat the exact instance ID")
+    recovery.add_argument("--json", action="store_true", dest="as_json")
     return parser
 
 
@@ -578,6 +582,24 @@ def main(argv: list[str] | None = None) -> int:
                 payload = {"instances": local_instances(config)}
             elif args.instance_action == "status":
                 payload = instance_status(config, args.instance_id)
+            elif args.instance_action == "recover-serverpack":
+                if os.geteuid() != 0:
+                    raise PermissionError("local Server Pack recovery requires root (sudo cap)")
+                if args.confirm != args.instance_id:
+                    raise ValueError("confirmation must exactly match the instance ID")
+                from instance_runtime import _owned
+                from minecraft_serverpack_migration_recovery import recover_minecraft_serverpack_migration
+                record = _owned(config, args.instance_id)
+                if str(record.get("game_id") or "").lower() != "minecraft" or str(
+                    record.get("environment_id") or ""
+                ).lower() != "minecraft.java.neoforge":
+                    raise ValueError("recovery requires an owned Minecraft Java NeoForge instance")
+                root = Path(str(record.get("instance_state_root") or ""))
+                if not root.is_absolute():
+                    raise ValueError("instance state root is missing or not absolute")
+                payload = recover_minecraft_serverpack_migration(
+                    config, args.instance_id, instance_state_root=root
+                )
             else:
                 payload = instance_doctor(config, args.instance_id)
         else:

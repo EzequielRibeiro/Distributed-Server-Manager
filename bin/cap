@@ -226,6 +226,7 @@ Agent local / Hybrid:
   cap instance start <instance> [--json]
   cap instance stop <instance> [--json]
   cap instance restart <instance> [--json]
+  sudo cap instance recover-serverpack <instance> --confirm <instance> [--json]
   cap server start|stop|restart|status|validate|publish ...
   cap start|stop|restart|status ...
   cap monitor
@@ -414,6 +415,7 @@ case "${1:-}" in
     instance)
         case "${2:-}" in
             list|status|doctor|start|stop|restart) require_role "cap instance ${2}" agent hybrid; agent_local_exec "$@" ;;
+            recover-serverpack) require_role "cap instance recover-serverpack" agent hybrid; agent_local_exec "$@" ;;
             create|delete) require_role "cap instance ${2}" controller hybrid; shift; exec python3 "${DSM_ROOT}/database/instance_admin_cli.py" "$@" ;;
             bootstrap|bootstrap-status|create-aurora|purge-orphan) require_role "cap instance ${2}" controller hybrid; shift; instance_maintenance_exec "$@" ;;
             *) usage "$(local_role)" 0; exit 2 ;;
