@@ -16,7 +16,7 @@ if str(_AGENT_COMMON) not in sys.path:sys.path.insert(0,str(_AGENT_COMMON))
 import instance_runtime
 from runtime_lock import instance_lock
 from runtime_operations import _atomic, _now, _path, read_operation
-from minecraft_serverpack_migration_swap import recover as recover_swap
+from privileged_materialization import minecraft_serverpack_swap_phase
 
 
 class MinecraftServerPackMigrationRecoveryError(RuntimeError):
@@ -60,7 +60,10 @@ def recover_minecraft_serverpack_migration(
             )
 
         try:
-            filesystem=recover_swap(Path(instance_state_root))
+            record=instance_runtime._owned(config,iid)
+            if Path(str(record.get("instance_state_root") or ""))!=Path(instance_state_root):
+                raise MinecraftServerPackMigrationRecoveryError("recovery instance root differs from registered runtime")
+            filesystem=minecraft_serverpack_swap_phase(config,record,"recover")
         except Exception as exc:
             raise MinecraftServerPackMigrationRecoveryError(
                 "filesystem recovery could not prove restoration of the original runtime"

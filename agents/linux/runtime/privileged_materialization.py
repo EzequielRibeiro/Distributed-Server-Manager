@@ -61,7 +61,7 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=3600 if action == "migrate-storage-copy" else 60,
+        timeout=3600 if action in {"migrate-storage-copy", "minecraft-serverpack-build-candidate", "minecraft-serverpack-prepare-inputs", "minecraft-serverpack-swap-phase"} else 60,
     )
     if completed.returncode != 0:
         helper_error = None
@@ -98,6 +98,51 @@ def sync_private_content(config: dict[str, Any], spec: dict[str, Any]) -> list[s
     if not isinstance(files, list) or any(not isinstance(item, str) for item in files):
         raise RuntimeError("privileged Minecraft content synchronization returned invalid files")
     return files
+
+
+def prepare_minecraft_serverpack_inputs(
+    config: dict[str, Any], spec: dict[str, Any], *,
+    migration: dict[str, Any], selection: dict[str, Any],
+) -> dict[str, Any]:
+    """Prepare customer content through the constrained materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if (str(normalized.get("game_id") or "").lower() != "minecraft"
+            or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
+        raise ValueError("Server Pack input preparation requires Minecraft Java NeoForge")
+    return _invoke("minecraft-serverpack-prepare-inputs", normalized,
+                   migration=migration, selection=selection)
+
+
+def build_minecraft_serverpack_candidate(
+    config: dict[str, Any], spec: dict[str, Any], *,
+    loader_seed: str, target_loader_version: str,
+) -> dict[str, Any]:
+    """Build a Server Pack candidate through the validated root materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if (str(normalized.get("game_id") or "").lower() != "minecraft"
+            or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
+        raise ValueError("Server Pack candidate requires Minecraft Java NeoForge")
+    return _invoke(
+        "minecraft-serverpack-build-candidate", normalized,
+        loader_seed=str(loader_seed),
+        target_loader_version=str(target_loader_version),
+    )
+
+
+def minecraft_serverpack_swap_phase(
+    config: dict[str, Any], spec: dict[str, Any], phase: str, **evidence: Any,
+) -> dict[str, Any]:
+    """Run a fixed journal/swap phase in the privileged materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if (str(normalized.get("game_id") or "").lower() != "minecraft"
+            or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
+        raise ValueError("Server Pack swap requires Minecraft Java NeoForge")
+    if phase not in {"prepare", "switch", "commit", "recover"}:
+        raise ValueError("unsupported Server Pack migration phase")
+    return _invoke("minecraft-serverpack-swap-phase", normalized, phase=phase, **evidence)
 
 
 def migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], *, target_root: str) -> dict[str, Any]:

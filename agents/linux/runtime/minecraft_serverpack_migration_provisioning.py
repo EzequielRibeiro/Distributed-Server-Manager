@@ -31,11 +31,10 @@ from game_data_executor import _execute as execute_game_data
 import instance_runtime
 from minecraft_serverpack_agent import verify_installed_neoforge
 from minecraft_serverpack_controlled_stop import ensure_stopped
-from minecraft_serverpack_migration_adapter import prepare_migration_inputs
+from privileged_materialization import prepare_minecraft_serverpack_inputs
 from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
-from minecraft_serverpack_migration_runtime_stage import build_staged_runtime
+from privileged_materialization import build_minecraft_serverpack_candidate, minecraft_serverpack_swap_phase
 from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
-import minecraft_serverpack_migration_swap as migration_swap
 from minecraft_staged_migration_safety import assess_staged_migration
 from minecraft_serverpack_migration_feature import migration_feature_decision
 
@@ -390,8 +389,9 @@ def execute_homologated_migration(
         )
 
     state:dict[str,Any]={}
-    pack_stage=Path(str(configuration.get("minecraft_serverpack_homologation_stage") or (instance_root/".dsm/pr855-serverpack-stage")))
-    candidate=instance_root/"runtime.migration-stage"
+    pack_stage=instance_root/".dsm/pr855-serverpack-stage"
+    if configuration.get("minecraft_serverpack_homologation_stage") and Path(str(configuration["minecraft_serverpack_homologation_stage"]))!=pack_stage:
+        raise MinecraftServerPackProvisioningHomologationError("Server Pack stage must remain inside the fixed instance control path")
 
     def revalidate(evidence:dict[str,Any])->dict[str,Any]:
         if _digest(archive)!=evidence["archive_sha256"] or archive.stat().st_size!=evidence["archive_size_bytes"]:
@@ -442,32 +442,27 @@ def execute_homologated_migration(
         return value
 
     def stage(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
-        if pack_stage.exists():
-            shutil.rmtree(pack_stage)
-        prepared=prepare_migration_inputs(
-            archive=archive,
-            stage_root=pack_stage,
-            migration=evidence,
-            selection=selection,
+        prepared=prepare_minecraft_serverpack_inputs(
+            config, record, migration=evidence, selection=selection,
         )
-        built=build_staged_runtime(
-            active_runtime=active,
-            target_loader_seed=loader_seed,
-            serverpack_stage=Path(prepared["serverpack_staging"]["stage_root"]),
-            destination=candidate,
+        if Path(prepared["serverpack_staging"]["stage_root"])!=pack_stage:
+            raise MinecraftServerPackProvisioningHomologationError("prepared Server Pack stage differs from fixed instance control path")
+        built=build_minecraft_serverpack_candidate(
+            config, record,
+            loader_seed=str(loader_seed),
             target_loader_version=evidence["target_loader_version"],
         )
         state["prepared_inputs"]=prepared
         state["candidate_runtime"]=built
-        migration_swap.prepare(
-            instance_root,
+        minecraft_serverpack_swap_phase(
+            config, record, "prepare",
             migration_plan_sha256=evidence["migration_plan_sha256"],
             target_loader_version=evidence["target_loader_version"],
             backup=backup_evidence,
         )
 
     def swap(evidence:dict[str,Any],backup_evidence:dict[str,Any])->None:
-        migration_swap.switch(instance_root)
+        minecraft_serverpack_swap_phase(config, record, "switch")
 
     def readiness(evidence:dict[str,Any],backup_evidence:dict[str,Any])->bool:
         active_record=dict(record)
@@ -480,6 +475,13 @@ def execute_homologated_migration(
             if ready:
                 verify_installed_neoforge(active,evidence["target_loader_version"])
                 ready=len(list((active/"mods").glob("*.jar")))==evidence["serverpack_mod_count"]
+            if ready is True:
+                state["readiness_evidence"]={
+                    "passed":True,
+                    "migration_plan_sha256":evidence["migration_plan_sha256"],
+                    "target_loader_version":evidence["target_loader_version"],
+                    "serverpack_mod_count":evidence["serverpack_mod_count"],
+                }
             return bool(ready)
         finally:
             # A failed stop must propagate: swap commit or rollback cannot
@@ -492,14 +494,16 @@ def execute_homologated_migration(
         restored_state=_restore_initial_running_state(
             record,adapter,str(state.get("initial_active_state") or ""),working=active
         )
-        committed=migration_swap.commit(instance_root,readiness_passed=True)
+        committed=minecraft_serverpack_swap_phase(
+            config, record, "commit",
+            readiness_evidence=state.get("readiness_evidence"),
+        )
         return {**committed,"observed_state":restored_state}
 
     def rollback(evidence:dict[str,Any],backup_evidence:dict[str,Any],trace:tuple[str,...])->dict[str,Any]:
         # Never restore or restart while the candidate service may still be running.
         _ensure_stopped_after_candidate_failure(record,adapter)
-        journal=instance_root/".dsm/minecraft-serverpack-migration.json"
-        recovery=migration_swap.recover(instance_root) if journal.is_file() else {"status":"no_swap"}
+        recovery=minecraft_serverpack_swap_phase(config, record, "recover")
         restored_state=_restore_initial_running_state(
             record,adapter,str(state.get("initial_active_state") or ""),working=active
         )
