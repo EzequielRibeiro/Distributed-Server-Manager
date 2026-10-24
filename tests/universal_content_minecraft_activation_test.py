@@ -226,7 +226,7 @@ class MinecraftActivationTest(unittest.TestCase):
             self.assertEqual(result, ["mods/capivara-a.jar"])
             self.assertEqual(target.read_bytes(), b"same-jar")
             manifest = json.loads((state / ".dsm" / "content-activation-files.json").read_text())
-            self.assertEqual(manifest["targets"], ["mods/a.jar"])
+            self.assertEqual(manifest["targets"], ["mods/capivara-a.jar"])
 
     def test_refuses_unmanaged_target_collision(self):
         module = self._runtime_module("linux")
