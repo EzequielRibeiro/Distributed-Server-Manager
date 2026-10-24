@@ -19,6 +19,22 @@ class PersistenceTest(unittest.TestCase):
         self.assertEqual(stats,{"accepted":1,"created":1})
         self.assertEqual(records[0]["event_type"],"MINECRAFT_SERVERPACK_MIGRATION_RECOVERED")
         self.assertEqual(records[0]["instance_id"],"mc005")
+    def test_repeated_heartbeat_does_not_create_second_event(self):
+        event_ids = set()
+        class Events:
+            def __init__(self, backend):
+                pass
+            def publish(self, event):
+                created = event["event_id"] not in event_ids
+                event_ids.add(event["event_id"])
+                return {"created": created}
+        with patch("minecraft_recovery_event_persistence.UniversalEventRepository", Events):
+            first = persist_recovery_claims(object(), [CLAIM])
+            second = persist_recovery_claims(object(), [CLAIM])
+        self.assertEqual(first, {"accepted": 1, "created": 1})
+        self.assertEqual(second, {"accepted": 1, "created": 0})
+        self.assertEqual(len(event_ids), 1)
+
     def test_invalid_claim_is_not_stored(self):
         with patch("minecraft_recovery_event_persistence.UniversalEventRepository") as repo:
             self.assertEqual(persist_recovery_claims(object(),[{**CLAIM,"status":"failed"}]),{"accepted":0,"created":0})
