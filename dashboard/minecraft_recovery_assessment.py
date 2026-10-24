@@ -75,6 +75,8 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
         and _instant(item["data"].get("recovered_at")) == audit_at
         and _instant(item.get("occurred_at")) is not None
         and _instant(item.get("occurred_at")) >= observed_at
+        and _instant(item.get("occurred_at")) <= health_at
+        and item["data"].get("original_loader_version") == details.get("original_loader_version")
         for item in later_proofs
     )
     result["agent_reported_loader_proof"] = bool(
