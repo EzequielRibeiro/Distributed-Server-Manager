@@ -391,7 +391,13 @@ def materialize_minecraft_files(spec: dict[str, Any]) -> list[str]:
             target = _safe_runtime_target(root, relative)
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists() and relative_text not in previous_set:
-                raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft runtime content")
+                # The transactional Server Pack swap can install the same managed
+                # artifact before the projection manifest is first published.
+                # Adopt only byte-identical regular files; never overwrite an
+                # unknown file or trust its name alone.
+                if not target.is_file() or _file_sha256(target) != _file_sha256(source):
+                    raise MinecraftContentActivationError("refusing to overwrite unmanaged Minecraft runtime content")
+                continue
             # A new pack revision must not recopy unchanged managed JARs.
             if (target.exists() and relative_text in previous_set
                     and target.is_file() and _file_sha256(target) == _file_sha256(source)):
