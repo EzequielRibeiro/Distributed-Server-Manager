@@ -39,7 +39,9 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
         return result
     event = matching[0]
     audit_at = _instant(event.get("occurred_at"))
-    if audit_at is None:
+    details = event.get("data")
+    observed_at = _instant(details.get("observed_at")) if isinstance(details, dict) else None
+    if audit_at is None or observed_at is None or observed_at < audit_at:
         return result
     result["audit_recorded"] = True
     latest = AgentInstanceProvisioningRepository(backend).latest_for_instance(instance_id)
@@ -56,7 +58,7 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
     if not observed:
         return result
     health_at = _instant(observed.get("reported_at"))
-    if health_at is None or health_at < audit_at:
+    if health_at is None or health_at < observed_at:
         return result
     result["healthy"] = (
         str(observed.get("observed_state") or "").lower() == "running"
