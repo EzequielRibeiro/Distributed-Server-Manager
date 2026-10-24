@@ -3,7 +3,8 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"dashboard"))
-from minecraft_recovery_heartbeat_claims import recovery_claims_from_heartbeat
+from minecraft_recovery_heartbeat_claims import recovery_claims_from_heartbeat, validated_heartbeat_recovery_claims
+from unittest.mock import patch
 
 CLAIM = {
     "kind":"MinecraftServerPackRecoveryObservation","schema_version":1,
@@ -26,6 +27,16 @@ class HeartbeatClaimsTests(unittest.TestCase):
         self.assertEqual(project([CLAIM],ids=set()),[])
     def test_reject_invalid_and_duplicate(self):
         self.assertEqual(len(project([CLAIM,CLAIM,{"status":"failed"},None])),1)
+    def test_owned_ids_resolved_on_server(self):
+        with patch("minecraft_recovery_heartbeat_claims.owned_instance_ids_for_agent", return_value={"mc005"}) as owned:
+            result=validated_heartbeat_recovery_claims(object(), {"minecraft_recovery_observations":[CLAIM]},authenticated_agent_id="agent1")
+        owned.assert_called_once()
+        self.assertEqual(len(result),1)
+    def test_server_ownership_denial(self):
+        with patch("minecraft_recovery_heartbeat_claims.owned_instance_ids_for_agent", return_value=set()):
+            result=validated_heartbeat_recovery_claims(object(), {"minecraft_recovery_observations":[CLAIM]},authenticated_agent_id="agent1")
+        self.assertEqual(result,[])
+
     def test_bounded_input(self):
         self.assertEqual(project([CLAIM]*129),[])
     def test_no_privilege_from_claim(self):
