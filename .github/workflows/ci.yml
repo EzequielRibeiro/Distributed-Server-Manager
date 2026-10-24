@@ -92,6 +92,7 @@ jobs:
           python3 -m unittest tests/hybrid_current_neoforge_attestation_test.py
           python3 -m unittest tests/minecraft_current_neoforge_heartbeat_claims_test.py
           python3 -m unittest tests/minecraft_current_neoforge_event_persistence_test.py
+          python3 -m unittest tests/minecraft_current_neoforge_sqlite_integration_test.py
           python3 -m unittest tests/minecraft_current_neoforge_assessment_test.py
           python3 -m unittest tests/minecraft_current_neoforge_full_chain_test.py
           python3 -m unittest tests/instance_tab_availability_diagnosis_test.py
