@@ -120,8 +120,9 @@ def recover_minecraft_serverpack_migration(
                 filesystem=minecraft_serverpack_swap_phase(config,record,"recover")
             elif (outer.get("status")=="failed" and
                   str(outer.get("error") or "").startswith("migration transaction stopped:") and
-                  "Permission denied" in str(outer.get("error") or "") and
-                  "runtime.migration-stage" in str(outer.get("error") or "")):
+                  (("Permission denied" in str(outer.get("error") or "") and
+                    "runtime.migration-stage" in str(outer.get("error") or "")) or
+                   "quarantined content archive is unavailable" in str(outer.get("error") or ""))):
                 filesystem=_prove_pre_swap_failure(outer,record,root)
             else:
                 filesystem=minecraft_serverpack_swap_phase(config,record,"recover")
