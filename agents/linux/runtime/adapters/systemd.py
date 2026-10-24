@@ -151,7 +151,7 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         if not isinstance(record, dict) or record.get("phase") != "committed":
             return
         version = str(record.get("target_loader_version") or "")
-        if not re.fullmatch(r"[0-9]+(?:\\.[0-9]+){3}(?:[-+][A-Za-z0-9.-]+)?", version):
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}(?:[-+][A-Za-z0-9.-]+)?", version):
             raise AdapterError("invalid committed NeoForge loader version")
         runtime = Path(str(instance.get("working_directory") or root / "runtime"))
         args = runtime / "capivara-launch.args"
