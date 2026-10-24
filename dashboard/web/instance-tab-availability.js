@@ -50,6 +50,9 @@
     const status = normalize(provision?.status);
 
     if (status.includes("fail") || status.includes("error")) {
+      if (provision?.current_runtime_diagnosis === "running_verified_installation_history_unresolved") {
+        return "Servidor em execução e instalação atual verificada; histórico de instalação pendente de validação. Acesso mantido restrito por segurança.";
+      }
       return "Indisponível porque a instalação da instância falhou.";
     }
 
