@@ -5,11 +5,22 @@ Fail closed until a separately verified loader attestation is available.
 """
 from __future__ import annotations
 from typing import Any
+from datetime import datetime, timezone
 
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from universal_event_repository import UniversalEventRepository
 
 EVENT_TYPE = "MINECRAFT_SERVERPACK_MIGRATION_RECOVERED"
+
+
+def _instant(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return instant.astimezone(timezone.utc) if instant.tzinfo else None
+    except ValueError:
+        return None
 
 
 def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dict[str, Any]:
@@ -24,10 +35,17 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
                 and e.get("agent_id") == agent_id and e.get("instance_id") == instance_id]
     if not matching:
         return result
+    event = matching[0]
+    audit_at = _instant(event.get("occurred_at"))
+    if audit_at is None:
+        return result
     result["audit_recorded"] = True
     rows = AgentInstanceRuntimeHealthRepository(backend).list_for_agent(agent_id)
     observed = next((r for r in rows if r.get("instance_id") == instance_id), None)
     if not observed:
+        return result
+    health_at = _instant(observed.get("reported_at"))
+    if health_at is None or health_at < audit_at:
         return result
     result["healthy"] = (
         str(observed.get("observed_state") or "").lower() == "running"
