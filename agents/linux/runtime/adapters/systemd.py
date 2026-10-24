@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import re
+import json
+from pathlib import Path
 import subprocess
 import time
 from typing import Any, Callable
@@ -128,9 +130,43 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(detail)
         return self._show(instance)
 
+    @staticmethod
+    def _verify_committed_neoforge_launcher(instance: dict[str, Any]) -> None:
+        """Refuse stale launcher args after a committed Server Pack migration."""
+        if str(instance.get("environment_id") or "").lower() != "minecraft.java.neoforge":
+            return
+        state = str(instance.get("instance_state_root") or "").strip()
+        if not state:
+            return
+        root = Path(state)
+        journal = root / ".dsm" / "minecraft-serverpack-migration.json"
+        if not journal.exists():
+            return
+        if journal.is_symlink() or not journal.is_file():
+            raise AdapterError("unsafe Minecraft migration journal")
+        try:
+            record = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise AdapterError("unreadable Minecraft migration journal") from exc
+        if not isinstance(record, dict) or record.get("phase") != "committed":
+            return
+        version = str(record.get("target_loader_version") or "")
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}(?:[-+][A-Za-z0-9.-]+)?", version):
+            raise AdapterError("invalid committed NeoForge loader version")
+        runtime = Path(str(instance.get("working_directory") or root / "runtime"))
+        args = runtime / "capivara-launch.args"
+        canonical = runtime / "libraries" / "net" / "neoforged" / "neoforge" / version / "unix_args.txt"
+        if (args.is_symlink() or canonical.is_symlink() or not args.is_file()
+                or not canonical.is_file() or args.stat().st_size > 32768
+                or canonical.stat().st_size > 32768
+                or args.read_bytes() != canonical.read_bytes()):
+            raise AdapterError(f"NeoForge launcher does not match committed Server Pack loader {version}")
+
     def _lifecycle(self, action: str, instance: dict[str, Any]) -> dict[str, Any]:
         if action not in {"start", "stop", "restart"}:
             raise AdapterError("unsupported systemd lifecycle action")
+        if action in {"start", "restart"}:
+            self._verify_committed_neoforge_launcher(instance)
         before = self._show(instance)
         if not before["available"]:
             raise AdapterError(f"instance systemd unit is unavailable: {before['unit']}")
