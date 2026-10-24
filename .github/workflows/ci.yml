@@ -85,6 +85,7 @@ jobs:
           python3 -m unittest tests/minecraft_recovery_chain_safety_test.py
           python3 -m unittest tests/minecraft_recovery_assessment_test.py
           python3 -m unittest tests/minecraft_recovery_customer_projection_test.py
+          python3 -m unittest tests/minecraft_recovery_controller_projection_integration_test.py
           python3 -m unittest tests/minecraft_recovery_loader_proof_test.py
           python3 -m unittest tests/minecraft_recovery_evidence_retention_test.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
