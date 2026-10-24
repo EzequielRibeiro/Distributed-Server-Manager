@@ -211,7 +211,7 @@ class MinecraftActivationTest(unittest.TestCase):
             managed = runtime / "content" / "a"
             managed.mkdir(parents=True); state.mkdir()
             (managed / "a.jar").write_bytes(b"same-jar")
-            target = runtime / "mods" / "a.jar"
+            target = runtime / "mods" / "capivara-a.jar"
             target.parent.mkdir(); target.write_bytes(b"same-jar")
             spec = {"instance_id": "adopt", "game_id": "minecraft",
                     "environment_id": "minecraft.java.neoforge",
@@ -223,7 +223,7 @@ class MinecraftActivationTest(unittest.TestCase):
             }]}
             projected = module.project_runtime_spec(spec, snapshot)
             result = module.materialize_content_activation(projected)
-            self.assertEqual(result, ["mods/a.jar"])
+            self.assertEqual(result, ["mods/capivara-a.jar"])
             self.assertEqual(target.read_bytes(), b"same-jar")
             manifest = json.loads((state / ".dsm" / "content-activation-files.json").read_text())
             self.assertEqual(manifest["targets"], ["mods/a.jar"])
