@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from universal_event_repository import UniversalEventRepository
+from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 
 EVENT_TYPE = "MINECRAFT_SERVERPACK_MIGRATION_RECOVERED"
 
@@ -26,6 +27,7 @@ def _instant(value: Any) -> datetime | None:
 def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dict[str, Any]:
     result = {"status": "unverified", "instance_id": instance_id, "agent_id": agent_id,
               "audit_recorded": False, "healthy": False, "loader_verified": False,
+              "failure_matches_recovery": False,
               "allow_clear_previous_failure": False}
     if not instance_id or not agent_id:
         return result
@@ -40,6 +42,15 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
     if audit_at is None:
         return result
     result["audit_recorded"] = True
+    latest = AgentInstanceProvisioningRepository(backend).latest_for_instance(instance_id)
+    if not isinstance(latest, dict) or latest.get("status") != "failed":
+        return result
+    if latest.get("agent_id") != agent_id:
+        return result
+    failed_at = _instant(latest.get("completed_at") or latest.get("updated_at"))
+    if failed_at is None or failed_at >= audit_at:
+        return result
+    result["failure_matches_recovery"] = True
     rows = AgentInstanceRuntimeHealthRepository(backend).list_for_agent(agent_id)
     observed = next((r for r in rows if r.get("instance_id") == instance_id), None)
     if not observed:
