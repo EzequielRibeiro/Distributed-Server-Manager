@@ -808,7 +808,7 @@ def process_hybrid_minecraft_recovery_audit_cycle(backend, root: Path, agent_id:
     """Audit verified journal statements without changing provisioning or runtime."""
     try:
         runtime = _instance_runtime_module(root)
-        from runtime_operations import read_operation
+        from runtime_operations import read_recovered_migration
         from minecraft_recovery_heartbeat_collector import collect_recovery_observations
         from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
         from minecraft_recovery_event_persistence import persist_recovery_claims
@@ -819,7 +819,7 @@ def process_hybrid_minecraft_recovery_audit_cycle(backend, root: Path, agent_id:
             if _SAFE_INSTANCE_ID.fullmatch(instance_id):
                 instance_ids.append(instance_id)
         claims = collect_recovery_observations(
-            instance_ids, agent_id=agent_id, read_operation=read_operation,
+            instance_ids, agent_id=agent_id, read_operation=read_recovered_migration,
             read_instance=runtime.get_instance,
         )
         if not claims:
