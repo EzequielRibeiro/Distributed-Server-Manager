@@ -65,6 +65,14 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
         and str(observed.get("reconcile_status") or "").lower() == "healthy"
         and str(observed.get("health") or "").lower() in {"healthy", "ok"}
     )
-    # Intentionally no assumed loader verification: this function is read-only
-    # and cannot prove that the instance-local launcher is correct.
+    # Agent-reported proof remains an audit claim, not an independent Controller attestation.
+    result["agent_reported_loader_proof"] = bool(
+        isinstance(details, dict) and details.get("agent_reported_loader_proof") is True
+    )
+    if result["healthy"] and result["agent_reported_loader_proof"]:
+        result["status"] = "awaiting_independent_loader_attestation"
+    elif result["healthy"]:
+        result["status"] = "awaiting_loader_proof"
+    else:
+        result["status"] = "awaiting_healthy_reconcile"
     return result
