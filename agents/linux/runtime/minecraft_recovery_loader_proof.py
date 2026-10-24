@@ -1,6 +1,10 @@
 """Read-only current NeoForge proof bound to the installed Agent registry."""
 from __future__ import annotations
 from pathlib import Path
+import sys
+_COMMON = Path(__file__).resolve().parents[2] / 'common'
+if str(_COMMON) not in sys.path:
+    sys.path.insert(0, str(_COMMON))
 from typing import Any
 from minecraft_serverpack_agent import verify_installed_neoforge
 
