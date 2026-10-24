@@ -51,7 +51,8 @@ from resource_profile_client import clear_result as clear_resource_result, read_
 from runtime_events import acknowledge_runtime_events, read_runtime_events
 from runtime_health import health_inventory
 from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
-from runtime_operations import recover_interrupted_operations
+from runtime_operations import recover_interrupted_operations, read_operation
+from minecraft_recovery_heartbeat_collector import collect_recovery_observations
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
@@ -141,6 +142,16 @@ def _inventory(config):
     except OSError:installed_version=str(config.get("capivara_version","unknown"))
     network=collect_network_inventory();network["public_ipv4_observation"]=observe_public_ipv4()
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":network,"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+    # Read-only recovery evidence; authenticated Controller performs ownership
+    # verification and durable audit. This never changes migration state.
+    try:
+        ids = [str(item.get("instance_id") or item.get("id") or "")
+               for item in payload["instances"] if isinstance(item, dict)]
+        payload["minecraft_recovery_observations"] = collect_recovery_observations(
+            ids, agent_id=str(config["agent_id"]), read_operation=read_operation,
+        )
+    except (TypeError, ValueError, OSError):
+        payload["minecraft_recovery_observations"] = []
     payload["agent_logs"]=_recent_logs()
     result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("native_restart_result",read_native_restart_result),("dayz_operation_result",read_dayz_operation_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
     for key,reader in result_readers:
