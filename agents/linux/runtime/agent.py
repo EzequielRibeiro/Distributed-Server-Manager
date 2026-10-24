@@ -42,6 +42,7 @@ from instance_runtime import clear_result as clear_instance_result
 from instance_runtime import handle_command as handle_instance_command
 from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
+from instance_runtime import get_instance as get_registered_instance
 from instance_telemetry import collect_instance_telemetry
 from network_inventory import collect_network_inventory
 from public_ip import observe_public_ipv4
@@ -151,6 +152,7 @@ def _inventory(config):
                and entry["instance_id"]]
         payload["minecraft_recovery_observations"] = collect_recovery_observations(
             ids, agent_id=str(config["agent_id"]), read_operation=read_operation,
+            read_instance=get_registered_instance,
         )
     except (TypeError, ValueError, OSError):
         payload["minecraft_recovery_observations"] = []
