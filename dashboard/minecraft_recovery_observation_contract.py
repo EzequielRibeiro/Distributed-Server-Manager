@@ -39,6 +39,14 @@ def validate_recovery_observation(
     recovered_at, observed_at = _timestamp(payload.get("recovered_at")), _timestamp(payload.get("observed_at"))
     if recovered_at is None or observed_at is None or recovered_at > observed_at:
         return None
+    proof = payload.get("loader_proof")
+    claimed_loader = (
+        isinstance(proof, dict) and proof.get("verified") is True
+        and proof.get("instance_id") == expected_instance_id
+        and proof.get("agent_id") == authenticated_agent_id
+        and proof.get("loader_version") == loader
+        and proof.get("evidence") == "instance-local-launcher"
+    )
     return {
         "instance_id": expected_instance_id,
         "agent_id": authenticated_agent_id,
@@ -48,6 +56,7 @@ def validate_recovery_observation(
         "original_loader_version": loader,
         "recovered_at": payload["recovered_at"],
         "observed_at": payload["observed_at"],
+        "agent_reported_loader_proof": bool(claimed_loader),
         # This validates ownership and shape only. A separate real health
         # observation and loader check are required before UI suppression.
     }
