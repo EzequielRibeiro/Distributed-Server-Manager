@@ -44,4 +44,20 @@ def persist_recovery_claims(backend: Any, claims: list[dict[str, Any]]) -> dict[
             },
         })
         recorded += int(result["created"])
+        # The original immutable event may predate successful loader proof.
+        # Use a separate stable attestation rather than rewriting audit history.
+        if claim.get("agent_reported_loader_proof") is True:
+            attestation = events.publish({
+                "event_id": f"{event_id}-loader-verified",
+                "event_type": "MINECRAFT_SERVERPACK_LOADER_VERIFIED",
+                "occurred_at": str(claim.get("observed_at") or recovered),
+                "source": "controller.authenticated_agent_recovery",
+                "source_id": agent,
+                "agent_id": agent,
+                "instance_id": instance,
+                "severity": "info",
+                "data": {"recovered_at": recovered,
+                         "original_loader_version": claim.get("original_loader_version")},
+            })
+            recorded += int(attestation["created"])
     return {"accepted": len(seen), "created": recorded}
