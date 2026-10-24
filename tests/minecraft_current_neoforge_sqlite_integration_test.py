@@ -36,7 +36,7 @@ class CurrentNeoForgeSQLiteIntegrationTest(unittest.TestCase):
                     agent_id="isolated-agent",instance_id="isolated-mc005")
                 self.assertEqual(historical,[])
                 failed={"status":"failed","agent_id":"isolated-agent",
-                        "instance_id":"isolated-mc005","completed_at":"2026-10-23T20:00:00Z","progress":99, "request":{"content":{"selection":{"loader_version":"26.1.2.94"}}}}
+                        "instance_id":"isolated-mc005","completed_at":"2026-10-23T20:00:00Z","progress":99, "request":{"content":{"selection":{"build":"26.1.2.94"}}}}
                 health={"instance_id":"isolated-mc005","observed_state":"running",
                         "reconcile_status":"healthy","health":"healthy",
                         "reported_at":"2026-10-24T13:01:00Z"}
