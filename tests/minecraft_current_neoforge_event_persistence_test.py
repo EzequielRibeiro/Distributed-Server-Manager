@@ -2,6 +2,7 @@ import sys, unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"dashboard"))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"database"))
 from minecraft_current_neoforge_event_persistence import persist_current_neoforge_attestations
 CLAIM={"kind":"MinecraftNeoForgeCurrentAttestation","agent_id":"a","instance_id":"i",
        "loader_version":"26.1.2.94","observed_at":"2026-10-24T10:00:00Z"}
