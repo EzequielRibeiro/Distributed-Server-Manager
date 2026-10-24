@@ -3,6 +3,7 @@ import sys,unittest
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"dashboard"))
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"database"))
 from minecraft_recovery_event_persistence import persist_recovery_claims
 CLAIM={"instance_id":"mc005","agent_id":"agent1","status":"recovered","recovered_at":"2026-10-23T23:28:00Z","observed_at":"2026-10-23T23:29:00Z","filesystem_status":"recovered","original_loader_version":"26.1.2.94"}
 class PersistenceTest(unittest.TestCase):
