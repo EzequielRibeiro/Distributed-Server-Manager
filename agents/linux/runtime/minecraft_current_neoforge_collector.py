@@ -33,12 +33,29 @@ def collect_current_neoforge_attestations(
         source = record.get("content_root")
         if not isinstance(source, str) or not source:
             source = (record.get("installation") or {}).get("content_root") if isinstance(record.get("installation"), dict) else None
-        if not isinstance(source, str) or not source:
-            continue
-        path = Path(source)
-        if not path.is_absolute() or path.parts[-3:-2] != ("neoforge",):
-            continue
-        version = path.name
+        if isinstance(source, str) and source:
+            path = Path(source)
+            if not path.is_absolute() or path.parts[-3:-2] != ("neoforge",):
+                continue
+            version = path.name
+        else:
+            # Legacy hybrid records have no content_root. Derive a build only
+            # from exactly one local NeoForge library directory; the separate
+            # launcher verifier must still confirm its canonical arguments.
+            base = record.get("working_directory")
+            if not isinstance(base, str) or not Path(base).is_absolute():
+                continue
+            root = Path(base)
+            if root.is_symlink() or not root.is_dir():
+                continue
+            libs = root / "libraries/net/neoforged/neoforge"
+            if libs.is_symlink() or not libs.is_dir():
+                continue
+            installed = [item.name for item in libs.iterdir()
+                         if item.is_dir() and not item.is_symlink()]
+            if len(installed) != 1:
+                continue
+            version = installed[0]
         claim = attest_current_neoforge(record, instance_id=instance_id,
                                         agent_id=agent_id, expected_version=version)
         if claim:
