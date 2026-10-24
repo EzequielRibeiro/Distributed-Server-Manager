@@ -63,6 +63,15 @@ class AssessmentTests(unittest.TestCase):
    health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"degraded","health":"healthy","reported_at":"2026-10-23T23:30:00Z"}]
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
   self.assertFalse(result["allow_clear_previous_failure"])
+ def test_later_loader_proof_unlocks_original_recovery(self):
+  proof={"source":"controller.authenticated_agent_recovery","agent_id":"a","instance_id":"i",
+         "occurred_at":"2026-10-23T23:29:30Z","data":{"recovered_at":"2026-10-23T23:28:00Z"}}
+  with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health,patch("minecraft_recovery_assessment.AgentInstanceProvisioningRepository") as provision:
+   events.return_value.list_events.side_effect=[[EV],[proof]]
+   provision.return_value.latest_for_instance.return_value=FAILED
+   health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:30:00Z"}]
+   result=recovery_assessment(object(),instance_id="i",agent_id="a")
+  self.assertTrue(result["allow_clear_previous_failure"])
  def test_other_agent_event_rejected(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events:
    events.return_value.list_events.return_value=[{**EV,"agent_id":"other"}]
