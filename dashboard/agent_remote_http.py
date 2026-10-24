@@ -34,6 +34,7 @@ from deleted_backup_vault_repository import DeletedBackupVaultRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_provisioning_projection import project_agent_provisioning
 from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
+from minecraft_recovery_event_persistence import persist_recovery_claims
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -412,6 +413,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
             )
             if claims:
                 result["minecraft_recovery_claims_validated"] = len(claims)
+                result["minecraft_recovery_audit"] = persist_recovery_claims(backend, claims)
         except Exception:
             # Recovery evidence is optional; an unavailable ownership query
             # must never turn an ordinary heartbeat into an outage.
