@@ -12,6 +12,7 @@ class AssessmentTests(unittest.TestCase):
  def test_recorded_and_healthy_still_cannot_clear_failure(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health,patch("minecraft_recovery_assessment.AgentInstanceProvisioningRepository") as provision:
    provision.return_value.latest_for_instance.return_value=FAILED
+   provision.return_value.latest_for_instance.return_value=FAILED
    events.return_value.list_events.return_value=[EV]
    health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:30:00Z"}]
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
@@ -20,7 +21,8 @@ class AssessmentTests(unittest.TestCase):
   self.assertFalse(result["loader_verified"])
   self.assertFalse(result["allow_clear_previous_failure"])
  def test_stale_health_cannot_validate_recovery(self):
-  with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health:
+  with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health,patch("minecraft_recovery_assessment.AgentInstanceProvisioningRepository") as provision:
+   provision.return_value.latest_for_instance.return_value=FAILED
    events.return_value.list_events.return_value=[EV]
    health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:27:00Z"}]
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
@@ -29,6 +31,7 @@ class AssessmentTests(unittest.TestCase):
   self.assertFalse(result["allow_clear_previous_failure"])
  def test_newer_failure_cannot_match_old_recovery(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceProvisioningRepository") as provision:
+   provision.return_value.latest_for_instance.return_value=FAILED
    events.return_value.list_events.return_value=[EV]
    provision.return_value.latest_for_instance.return_value={**FAILED,"completed_at":"2026-10-24T00:00:00Z"}
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
