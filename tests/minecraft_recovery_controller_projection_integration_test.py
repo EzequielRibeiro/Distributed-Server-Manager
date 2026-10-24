@@ -44,6 +44,14 @@ class IntegratedRecoveryProjectionTest(unittest.TestCase):
         self.assertIsNone(visible)
         self.assertEqual(FAILED["progress"], 99)  # persisted history remains intact
 
+    def test_missing_historical_evidence_preserves_customer_warning(self):
+        with patch("minecraft_recovery_assessment.UniversalEventRepository") as events:
+            events.return_value.list_events.return_value = []
+            result = recovery_assessment(object(), instance_id="mc005", agent_id="hybrid1")
+        self.assertEqual(result["status"], "missing_recovery_evidence")
+        self.assertEqual(visible_provision_after_recovery(FAILED, result), FAILED)
+        self.assertEqual(FAILED["progress"], 99)
+
     def test_later_failure_stays_visible(self):
         result, visible = self.assess(failed={**FAILED,"completed_at":"2026-10-23T22:00:00Z"})
         self.assertFalse(result["allow_clear_previous_failure"])
