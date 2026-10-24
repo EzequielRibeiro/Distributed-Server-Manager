@@ -135,10 +135,16 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         """Refuse stale launcher args after a committed Server Pack migration."""
         if str(instance.get("environment_id") or "").lower() != "minecraft.java.neoforge":
             return
+        # Runtime specs can omit instance_state_root; the committed journal
+        # belongs to the instance parent of the working runtime directory.
         state = str(instance.get("instance_state_root") or "").strip()
-        if not state:
+        working = str(instance.get("working_directory") or "").strip()
+        if state:
+            root = Path(state)
+        elif working and Path(working).name == "runtime":
+            root = Path(working).parent
+        else:
             return
-        root = Path(state)
         journal = root / ".dsm" / "minecraft-serverpack-migration.json"
         if not journal.exists():
             return
