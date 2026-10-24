@@ -56,7 +56,7 @@ def assess_current_neoforge(*, agent_id: str, instance_id: str,
     selection = ((request.get("content") or {}).get("selection")
                  if isinstance(request, dict) and isinstance(request.get("content"), dict)
                  else None)
-    expected_version = (selection.get("loader_version")
+    expected_version = (selection.get("build") or selection.get("loader_version")
                         if isinstance(selection, dict) else None)
     if not isinstance(expected_version, str) or not expected_version.strip():
         return result
