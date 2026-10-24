@@ -80,6 +80,7 @@ jobs:
           python3 -m unittest tests/minecraft_serverpack_recovery_observation_test.py
           python3 -m unittest tests/minecraft_recovery_observation_contract_test.py
           python3 -m unittest tests/minecraft_recovery_heartbeat_claims_test.py
+          python3 -m unittest tests/minecraft_recovery_event_persistence_test.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
           python3 -m unittest tests/customer_legacy_registered_visibility_test.py
           python3 -m unittest tests/minecraft_eula_visibility_test.py
