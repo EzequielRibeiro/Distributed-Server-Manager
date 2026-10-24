@@ -82,6 +82,12 @@ class AssessmentTests(unittest.TestCase):
    health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:30:00Z"}]
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
   self.assertFalse(result["allow_clear_previous_failure"])
+ def test_missing_historical_recovery_remains_visible_and_actionable(self):
+  with patch("minecraft_recovery_assessment.UniversalEventRepository") as events:
+   events.return_value.list_events.return_value=[]
+   result=recovery_assessment(object(),instance_id="i",agent_id="a")
+  self.assertEqual(result["status"],"missing_recovery_evidence")
+  self.assertFalse(result["allow_clear_previous_failure"])
  def test_other_agent_event_rejected(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events:
    events.return_value.list_events.return_value=[{**EV,"agent_id":"other"}]
