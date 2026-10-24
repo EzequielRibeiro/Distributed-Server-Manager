@@ -61,6 +61,25 @@ class HybridAgentWorkerTest(unittest.TestCase):
             )
         self.assertEqual(state, {"status": "unavailable", "accepted": 0, "created": 0})
 
+    def test_hybrid_recovery_audit_validated_path(self):
+        state_dir = self.root / "runtime" / "hybrid-agent-state" / "instances"
+        state_dir.mkdir(parents=True)
+        (state_dir / "mc005.json").write_text("{}", encoding="utf-8")
+        claim = {"instance_id": "mc005", "agent_id": "hybrid-agent",
+                 "status": "recovered", "recovered_at": "2026-10-23T23:28:00Z"}
+        with patch("hybrid_agent_worker._instance_runtime_module"), \
+             patch("runtime_operations.read_operation", return_value={}), \
+             patch("minecraft_recovery_heartbeat_collector.collect_recovery_observations", return_value=[claim]) as collect, \
+             patch("minecraft_recovery_heartbeat_claims.validated_heartbeat_recovery_claims", return_value=[claim]) as validate, \
+             patch("minecraft_recovery_event_persistence.persist_recovery_claims", return_value={"accepted": 1, "created": 1}) as persist:
+            result = process_hybrid_minecraft_recovery_audit_cycle(
+                self.backend, self.root, "hybrid-agent",
+            )
+        self.assertEqual(result, {"status": "audited", "accepted": 1, "created": 1})
+        self.assertEqual(collect.call_args.args[0], ["mc005"])
+        self.assertEqual(validate.call_args.kwargs["authenticated_agent_id"], "hybrid-agent")
+        persist.assert_called_once()
+
     def test_controller_node_is_inert(self):
         result = heartbeat_cycle(self.root, backend=self.backend)
         self.assertFalse(result["active"])
