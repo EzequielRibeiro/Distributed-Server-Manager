@@ -17,6 +17,24 @@ def _time(value: Any) -> datetime | None:
         return None
 
 
+
+def current_neoforge_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dict[str, Any]:
+    """Load only Controller-owned records; never authorize suppression of history."""
+    from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
+    from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
+    from universal_event_repository import UniversalEventRepository
+
+    failed = AgentInstanceProvisioningRepository(backend).latest_for_instance(instance_id)
+    events = UniversalEventRepository(backend).list_events(
+        limit=100, event_type="MINECRAFT_NEOFORGE_CURRENT_VERIFIED",
+        agent_id=agent_id, instance_id=instance_id)
+    rows = AgentInstanceRuntimeHealthRepository(backend).list_for_agent(agent_id)
+    health = next((row for row in rows if row.get("instance_id") == instance_id), None)
+    return assess_current_neoforge(
+        agent_id=agent_id, instance_id=instance_id, failed_provision=failed,
+        attestation_events=events, runtime_health=health)
+
+
 def assess_current_neoforge(*, agent_id: str, instance_id: str,
                            failed_provision: dict[str, Any] | None,
                            attestation_events: list[dict[str, Any]],
