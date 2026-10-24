@@ -88,6 +88,7 @@ jobs:
           python3 -m unittest tests/minecraft_recovery_controller_projection_integration_test.py
           python3 -m unittest tests/minecraft_recovery_loader_proof_test.py
           python3 -m unittest tests/minecraft_current_neoforge_attestation_test.py
+          python3 -m unittest tests/minecraft_current_neoforge_collector_test.py
           python3 -m unittest tests/minecraft_current_neoforge_heartbeat_claims_test.py
           python3 -m unittest tests/minecraft_recovery_evidence_retention_test.py
           python3 -m unittest tests/dashboard_catalog_v2_test.py
