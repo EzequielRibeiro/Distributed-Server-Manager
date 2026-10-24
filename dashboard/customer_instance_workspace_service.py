@@ -115,6 +115,8 @@ class CustomerInstanceWorkspaceService:
     recovery=recovery_assessment(self.backend,instance_id=instance_id,agent_id=str(context["agent_id"]))
    except Exception:
     recovery={"status":"unavailable","allow_clear_previous_failure":False}
+   if recovery.get("allow_clear_previous_failure") is True:
+    provision=None
   instance={k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")};instance["persisted_status"]=context.get("status");instance["status"]=runtime.get("state") or "unknown"
   return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"recovery":recovery,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
