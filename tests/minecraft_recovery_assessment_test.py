@@ -46,6 +46,15 @@ class AssessmentTests(unittest.TestCase):
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
   self.assertFalse(result["healthy"])
   self.assertFalse(result["allow_clear_previous_failure"])
+ def test_loader_claim_is_visible_but_not_authoritative(self):
+  with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health,patch("minecraft_recovery_assessment.AgentInstanceProvisioningRepository") as provision:
+   events.return_value.list_events.return_value=[{**EV,"data":{**EV["data"],"agent_reported_loader_proof":True}}]
+   provision.return_value.latest_for_instance.return_value=FAILED
+   health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:30:00Z"}]
+   result=recovery_assessment(object(),instance_id="i",agent_id="a")
+  self.assertTrue(result["agent_reported_loader_proof"])
+  self.assertEqual(result["status"],"awaiting_independent_loader_attestation")
+  self.assertFalse(result["allow_clear_previous_failure"])
  def test_other_agent_event_rejected(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events:
    events.return_value.list_events.return_value=[{**EV,"agent_id":"other"}]
