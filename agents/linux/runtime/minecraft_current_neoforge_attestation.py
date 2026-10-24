@@ -10,9 +10,9 @@ def attest_current_neoforge(record: dict[str, Any] | None, *,
                             expected_version: str) -> dict[str, Any] | None:
     if not isinstance(record, dict) or record.get("instance_id") != instance_id or record.get("agent_id") != agent_id:
         return None
-    if not isinstance(expected_version, str) or not expected_version or any(
-        c not in "0123456789." for c in expected_version
-    ):
+    # Require a conventional version identifier, never a user-controlled path.
+    parts = expected_version.split(".") if isinstance(expected_version, str) else []
+    if len(parts) < 3 or len(parts) > 6 or any(not part.isdigit() or len(part) > 8 for part in parts):
         return None
     raw = record.get("working_directory")
     if not isinstance(raw, str) or not raw:
