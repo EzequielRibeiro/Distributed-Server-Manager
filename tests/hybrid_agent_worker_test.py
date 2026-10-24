@@ -23,6 +23,7 @@ from hybrid_agent_worker import (
     process_hybrid_configuration_cycle,
     process_hybrid_native_restart_cycle,
     process_hybrid_runtime_event_cycle,
+    process_hybrid_minecraft_recovery_audit_cycle,
 )
 from infrastructure_role_cli import promote_local_controller
 from registry import installation_profile_identity
@@ -52,6 +53,13 @@ class HybridAgentWorkerTest(unittest.TestCase):
     def tearDown(self):
         self.backend.close()
         self.temp.cleanup()
+
+    def test_recovery_audit_is_nonfatal_when_agent_runtime_unavailable(self):
+        with patch("hybrid_agent_worker._instance_runtime_module", side_effect=ImportError("unavailable")):
+            state = process_hybrid_minecraft_recovery_audit_cycle(
+                self.backend, self.root, "hybrid-test-agent",
+            )
+        self.assertEqual(state, {"status": "unavailable", "accepted": 0, "created": 0})
 
     def test_controller_node_is_inert(self):
         result = heartbeat_cycle(self.root, backend=self.backend)
