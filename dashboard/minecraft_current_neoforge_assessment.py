@@ -50,6 +50,17 @@ def assess_current_neoforge(*, agent_id: str, instance_id: str,
     failure_at = _time(failed_provision.get("completed_at") or failed_provision.get("updated_at"))
     if failure_at is None:
         return result
+    # The expected build must come from the Controller's saved provisioning
+    # request, never from the Agent attestation being assessed.
+    request = failed_provision.get("request")
+    selection = ((request.get("content") or {}).get("selection")
+                 if isinstance(request, dict) and isinstance(request.get("content"), dict)
+                 else None)
+    expected_version = (selection.get("loader_version")
+                        if isinstance(selection, dict) else None)
+    if not isinstance(expected_version, str) or not expected_version.strip():
+        return result
+    expected_version = expected_version.strip()
     matching = []
     for event in attestation_events[:100]:
         if (not isinstance(event, dict)
@@ -59,7 +70,9 @@ def assess_current_neoforge(*, agent_id: str, instance_id: str,
                 or event.get("instance_id") != instance_id):
             continue
         details = event.get("data")
-        if not isinstance(details, dict) or details.get("proof_scope") != "current_runtime_only":
+        if (not isinstance(details, dict)
+                or details.get("proof_scope") != "current_runtime_only"
+                or details.get("loader_version") != expected_version):
             continue
         observed_at = _time(event.get("occurred_at"))
         if observed_at and observed_at > failure_at and observed_at <= datetime.now(timezone.utc):
