@@ -36,6 +36,8 @@ def recovery_assessment(backend: Any, *, instance_id: str, agent_id: str) -> dic
     matching = [e for e in events if e.get("source") == "controller.authenticated_agent_recovery"
                 and e.get("agent_id") == agent_id and e.get("instance_id") == instance_id]
     if not matching:
+        # Running health alone cannot authenticate a lost migration journal.
+        result["status"] = "missing_recovery_evidence"
         return result
     event = matching[0]
     audit_at = _instant(event.get("occurred_at"))
