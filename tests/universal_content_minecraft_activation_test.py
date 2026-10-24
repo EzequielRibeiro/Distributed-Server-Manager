@@ -204,6 +204,30 @@ class MinecraftActivationTest(unittest.TestCase):
                 self.assertEqual(written, ["mods/YetAnotherConfigLib-3.9.6+26.2-neoforge.jar"])
                 self.assertEqual((runtime / "mods" / "YetAnotherConfigLib-3.9.6+26.2-neoforge.jar").read_bytes(), b"mod")
 
+    def test_adopts_identical_migrated_jar_without_overwriting(self):
+        module = self._runtime_module("linux")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); runtime = root / "runtime"; state = root / "state"
+            managed = runtime / "content" / "a"
+            managed.mkdir(parents=True); state.mkdir()
+            (managed / "a.jar").write_bytes(b"same-jar")
+            target = runtime / "mods" / "a.jar"
+            target.parent.mkdir(); target.write_bytes(b"same-jar")
+            spec = {"instance_id": "adopt", "game_id": "minecraft",
+                    "environment_id": "minecraft.java.neoforge",
+                    "working_directory": str(runtime), "instance_state_root": str(state),
+                    "arguments": [], "content_projection": _policy("mod")}
+            snapshot = {"checksum": "migration", "entries": [{
+                "content_id": "a", "game_id": "minecraft", "content_type": "mod",
+                "managed_path": str(managed),
+            }]}
+            projected = module.project_runtime_spec(spec, snapshot)
+            result = module.materialize_content_activation(projected)
+            self.assertEqual(result, ["mods/a.jar"])
+            self.assertEqual(target.read_bytes(), b"same-jar")
+            manifest = json.loads((state / ".dsm" / "content-activation-files.json").read_text())
+            self.assertEqual(manifest["targets"], ["mods/a.jar"])
+
     def test_refuses_unmanaged_target_collision(self):
         module = self._runtime_module("linux")
         with tempfile.TemporaryDirectory() as tmp:
