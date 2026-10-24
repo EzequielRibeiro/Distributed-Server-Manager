@@ -4,7 +4,7 @@ from __future__ import annotations
 import os,stat,tarfile,zipfile
 from pathlib import Path
 from typing import Iterable
-GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_GAME_DATA_ROOT",os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT","/var/lib/capivara-agent/game-data"))).resolve()
+GAME_DATA_ROOT=Path(os.environ.get("CAPIVARA_GAME_DATA_ROOT") or os.environ.get("CAPIVARA_AGENT_GAME_DATA_ROOT") or (Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent")) / "game-data")).resolve()
 QUARANTINE_ROOT=(GAME_DATA_ROOT/"quarantine").resolve()
 _MAX_ENTRIES=100000;_MAX_EXPANDED=128*1024*1024*1024
 _ALLOWED_SUFFIXES=(".zip",".tar",".tar.gz",".tgz",".jar")
