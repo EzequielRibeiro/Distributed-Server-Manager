@@ -34,7 +34,7 @@ class FullCurrentFlowTest(unittest.TestCase):
     self.assertEqual(persist_current_neoforge_attestations(object(),accepted)["created"],1)
    self.assertEqual(published[0]["event_type"],"MINECRAFT_NEOFORGE_CURRENT_VERIFIED")
    failure={"status":"failed","instance_id":"mc005","agent_id":"hybrid",
-            "completed_at":"2026-10-23T20:00:00Z","progress":99, "request":{"content":{"selection":{"loader_version":"26.1.2.94"}}}}
+            "completed_at":"2026-10-23T20:00:00Z","progress":99, "request":{"content":{"selection":{"build":"26.1.2.94"}}}}
    health={"instance_id":"mc005","observed_state":"running","reconcile_status":"healthy",
            "health":"healthy","reported_at":"2026-10-24T10:00:00Z"}
    assessed=assess_current_neoforge(agent_id="hybrid",instance_id="mc005",
