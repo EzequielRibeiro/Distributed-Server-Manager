@@ -36,3 +36,32 @@ def recovery_claims_from_heartbeat(
             accepted.append(result)
             seen.add(instance_id)
     return accepted
+
+
+def owned_instance_ids_for_agent(backend: Any, *, agent_id: str) -> set[str]:
+    """Resolve ownership from Controller persistence, never from heartbeat body."""
+    if not agent_id:
+        return set()
+    from alert_repository import AlertSession, dialect_for_backend
+    dialect = dialect_for_backend(backend)
+    with backend.connect() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            rows = session.execute(
+                f"SELECT id FROM instances WHERE agent_id={dialect.placeholder}",
+                (agent_id,),
+            ).fetchall()
+            return {str(row["id"]) for row in rows}
+        finally:
+            session.close()
+
+
+def validated_heartbeat_recovery_claims(
+    backend: Any, body: dict[str, Any] | None, *, authenticated_agent_id: str,
+) -> list[dict[str, Any]]:
+    """Read-only binding of validated claims to server-owned instances."""
+    owned = owned_instance_ids_for_agent(backend, agent_id=authenticated_agent_id)
+    return recovery_claims_from_heartbeat(
+        body, authenticated_agent_id=authenticated_agent_id,
+        owned_instance_ids=owned,
+    )
