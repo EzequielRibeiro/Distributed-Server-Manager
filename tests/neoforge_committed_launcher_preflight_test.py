@@ -35,6 +35,12 @@ class CommittedLauncherPreflightTest(unittest.TestCase):
             with self.assertRaisesRegex(AdapterError, "does not match committed"):
                 adapter.restart(instance)
             self.assertEqual(calls, [])
+            # Legacy instance registry records may omit state root.
+            without_state = dict(instance)
+            without_state.pop("instance_state_root")
+            with self.assertRaisesRegex(AdapterError, "does not match committed"):
+                adapter.restart(without_state)
+            self.assertEqual(calls, [])
             launch.write_bytes(new.read_bytes())
             result=adapter.restart(instance)
             self.assertEqual(result["action"], "restart")
