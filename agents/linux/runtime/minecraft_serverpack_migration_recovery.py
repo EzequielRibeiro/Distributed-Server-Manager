@@ -33,9 +33,9 @@ def _prove_pre_swap_failure(outer:dict[str,Any],record:dict[str,Any],root:Path)-
     if outer.get("status")!="failed":
         raise MinecraftServerPackMigrationRecoveryError("pre-swap recovery requires a failed operation")
     error=str(outer.get("error") or "")
-    if ("Permission denied" not in error or "runtime.migration-stage" not in error
+    if (not (("Permission denied" in error and "runtime.migration-stage" in error) or "quarantined content archive is unavailable" in error)
             or not error.startswith("migration transaction stopped:")):
-        raise MinecraftServerPackMigrationRecoveryError("pre-swap failure is not a recognized permission denial")
+        raise MinecraftServerPackMigrationRecoveryError("pre-swap failure is not a recognized safe failure")
     if not root.is_absolute() or root.is_symlink() or not root.is_dir():
         raise MinecraftServerPackMigrationRecoveryError("unsafe instance root")
     runtime=root/"runtime"
@@ -69,7 +69,7 @@ def _prove_pre_swap_failure(outer:dict[str,Any],record:dict[str,Any],root:Path)-
         raise MinecraftServerPackMigrationRecoveryError("original NeoForge loader cannot be verified") from exc
     return {"status":"recovered","pre_swap_only":True,"failed_runtime_retained":False,
             "original_loader_version":proof["loader_version"],
-            "reason":"verified_pre_swap_permission_denial"}
+            "reason":"verified_pre_swap_failure"}
 
 
 def recover_minecraft_serverpack_migration(
