@@ -24,6 +24,7 @@ from hybrid_agent_worker import (
     process_hybrid_native_restart_cycle,
     process_hybrid_runtime_event_cycle,
     process_hybrid_minecraft_recovery_audit_cycle,
+    _instance_runtime_module,
 )
 from infrastructure_role_cli import promote_local_controller
 from registry import installation_profile_identity
@@ -67,8 +68,8 @@ class HybridAgentWorkerTest(unittest.TestCase):
         (state_dir / "mc005.json").write_text("{}", encoding="utf-8")
         claim = {"instance_id": "mc005", "agent_id": "hybrid-agent",
                  "status": "recovered", "recovered_at": "2026-10-23T23:28:00Z"}
-        with patch("hybrid_agent_worker._instance_runtime_module"), \
-             patch("runtime_operations.read_operation", return_value={}), \
+        _instance_runtime_module(self.root)
+        with patch("runtime_operations.read_operation", return_value={}), \
              patch("minecraft_recovery_heartbeat_collector.collect_recovery_observations", return_value=[claim]) as collect, \
              patch("minecraft_recovery_heartbeat_claims.validated_heartbeat_recovery_claims", return_value=[claim]) as validate, \
              patch("minecraft_recovery_event_persistence.persist_recovery_claims", return_value={"accepted": 1, "created": 1}) as persist:
