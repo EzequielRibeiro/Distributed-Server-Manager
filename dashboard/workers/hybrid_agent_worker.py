@@ -851,7 +851,11 @@ def process_hybrid_current_neoforge_attestation_cycle(backend, root: Path, agent
             {"minecraft_current_neoforge_attestations": collected},
             authenticated_agent_id=agent_id,
             owned_instance_ids=owned_instance_ids_for_agent(backend, agent_id=agent_id))
-        return {"status": "collected", "verified": len(verified)}
+        if verified:
+            from minecraft_current_neoforge_event_persistence import persist_current_neoforge_attestations
+            stats = persist_current_neoforge_attestations(backend, verified)
+            return {"status": "audited", "verified": len(verified), **stats}
+        return {"status": "collected", "verified": 0}
     except Exception:
         return {"status": "unavailable", "verified": 0}
 
