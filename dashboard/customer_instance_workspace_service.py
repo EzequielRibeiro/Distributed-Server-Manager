@@ -10,6 +10,7 @@ from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthR
 from agent_runtime_repository import AgentRuntimeRepository
 from instance_provisioning_projection import dashboard_provision_state
 from minecraft_recovery_assessment import recovery_assessment
+from minecraft_current_neoforge_assessment import current_neoforge_assessment
 from minecraft_recovery_customer_projection import visible_provision_after_recovery
 from backup_repository import BackupRepository
 from catalog_resource_profiles_http import catalog_resource_profiles
@@ -116,6 +117,15 @@ class CustomerInstanceWorkspaceService:
     recovery=recovery_assessment(self.backend,instance_id=instance_id,agent_id=str(context["agent_id"]))
    except Exception:
     recovery={"status":"unavailable","allow_clear_previous_failure":False}
+   # Independent present-state verification is exposed for diagnosis only.
+   # It cannot impersonate a recovered migration or hide provisioning history.
+   try:
+    current_neoforge=current_neoforge_assessment(
+     self.backend,instance_id=instance_id,agent_id=str(context["agent_id"]))
+   except Exception:
+    current_neoforge={"status":"unavailable","allow_clear_previous_failure":False}
+   if isinstance(recovery,dict):
+    recovery["current_neoforge"]=current_neoforge
    provision=visible_provision_after_recovery(provision,recovery)
   instance={k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")};instance["persisted_status"]=context.get("status");instance["status"]=runtime.get("state") or "unknown"
   return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"recovery":recovery,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
