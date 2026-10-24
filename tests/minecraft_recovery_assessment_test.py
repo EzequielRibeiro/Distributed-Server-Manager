@@ -6,16 +6,24 @@ ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database"):
  sys.path.insert(0,str(path))
 from minecraft_recovery_assessment import recovery_assessment
-EV={"source":"controller.authenticated_agent_recovery","agent_id":"a","instance_id":"i"}
+EV={"source":"controller.authenticated_agent_recovery","agent_id":"a","instance_id":"i","occurred_at":"2026-10-23T23:28:00Z"}
 class AssessmentTests(unittest.TestCase):
  def test_recorded_and_healthy_still_cannot_clear_failure(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health:
    events.return_value.list_events.return_value=[EV]
-   health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy"}]
+   health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:30:00Z"}]
    result=recovery_assessment(object(),instance_id="i",agent_id="a")
   self.assertTrue(result["audit_recorded"])
   self.assertTrue(result["healthy"])
   self.assertFalse(result["loader_verified"])
+  self.assertFalse(result["allow_clear_previous_failure"])
+ def test_stale_health_cannot_validate_recovery(self):
+  with patch("minecraft_recovery_assessment.UniversalEventRepository") as events,patch("minecraft_recovery_assessment.AgentInstanceRuntimeHealthRepository") as health:
+   events.return_value.list_events.return_value=[EV]
+   health.return_value.list_for_agent.return_value=[{"instance_id":"i","observed_state":"running","reconcile_status":"healthy","health":"healthy","reported_at":"2026-10-23T23:27:00Z"}]
+   result=recovery_assessment(object(),instance_id="i",agent_id="a")
+  self.assertTrue(result["audit_recorded"])
+  self.assertFalse(result["healthy"])
   self.assertFalse(result["allow_clear_previous_failure"])
  def test_other_agent_event_rejected(self):
   with patch("minecraft_recovery_assessment.UniversalEventRepository") as events:
