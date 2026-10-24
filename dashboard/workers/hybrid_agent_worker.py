@@ -820,6 +820,7 @@ def process_hybrid_minecraft_recovery_audit_cycle(backend, root: Path, agent_id:
                 instance_ids.append(instance_id)
         claims = collect_recovery_observations(
             instance_ids, agent_id=agent_id, read_operation=read_operation,
+            read_instance=runtime.get_instance,
         )
         if not claims:
             return {"status": "idle", "accepted": 0, "created": 0}
