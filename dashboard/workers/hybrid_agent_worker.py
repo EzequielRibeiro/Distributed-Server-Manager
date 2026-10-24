@@ -804,6 +804,62 @@ def process_hybrid_backup_cycle(
     }
 
 
+def process_hybrid_minecraft_recovery_audit_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Audit verified journal statements without changing provisioning or runtime."""
+    try:
+        runtime = _instance_runtime_module(root)
+        from runtime_operations import read_recovered_migration
+        from minecraft_recovery_heartbeat_collector import collect_recovery_observations
+        from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
+        from minecraft_recovery_event_persistence import persist_recovery_claims
+        state_dir = root / "runtime" / "hybrid-agent-state" / "instances"
+        instance_ids = []
+        for entry in sorted(state_dir.glob("*.json"))[:512]:
+            instance_id = entry.stem
+            if _SAFE_INSTANCE_ID.fullmatch(instance_id):
+                instance_ids.append(instance_id)
+        claims = collect_recovery_observations(
+            instance_ids, agent_id=agent_id, read_operation=read_recovered_migration,
+            read_instance=runtime.get_instance,
+        )
+        if not claims:
+            return {"status": "idle", "accepted": 0, "created": 0}
+        validated = validated_heartbeat_recovery_claims(
+            backend, {"minecraft_recovery_observations": claims},
+            authenticated_agent_id=agent_id,
+        )
+        stats = persist_recovery_claims(backend, validated)
+        return {"status": "audited", **stats}
+    except Exception:
+        return {"status": "unavailable", "accepted": 0, "created": 0}
+
+
+
+def process_hybrid_current_neoforge_attestation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Collect and ownership-check current loader proof without persisting or clearing failures."""
+    try:
+        runtime = _instance_runtime_module(root)
+        from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
+        from minecraft_current_neoforge_heartbeat_claims import current_attestations_from_heartbeat
+        from minecraft_recovery_heartbeat_claims import owned_instance_ids_for_agent
+        state_dir = root / "runtime" / "hybrid-agent-state" / "instances"
+        instance_ids = [entry.stem for entry in sorted(state_dir.glob("*.json"))[:512]
+                        if _SAFE_INSTANCE_ID.fullmatch(entry.stem)]
+        collected = collect_current_neoforge_attestations(
+            instance_ids, agent_id=agent_id, read_instance=runtime.get_instance)
+        verified = current_attestations_from_heartbeat(
+            {"minecraft_current_neoforge_attestations": collected},
+            authenticated_agent_id=agent_id,
+            owned_instance_ids=owned_instance_ids_for_agent(backend, agent_id=agent_id))
+        if verified:
+            from minecraft_current_neoforge_event_persistence import persist_current_neoforge_attestations
+            stats = persist_current_neoforge_attestations(backend, verified)
+            return {"status": "audited", "verified": len(verified), **stats}
+        return {"status": "collected", "verified": 0}
+    except Exception:
+        return {"status": "unavailable", "verified": 0}
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -877,6 +933,8 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
 
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
+    minecraft_recovery_audit = process_hybrid_minecraft_recovery_audit_cycle(effective_backend, root, agent_id)
+    minecraft_current_neoforge = process_hybrid_current_neoforge_attestation_cycle(effective_backend, root, agent_id)
     backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
     response = {
         "active": True,
@@ -892,6 +950,8 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "dayz_operation": dayz_operation,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
+        "minecraft_recovery_audit": minecraft_recovery_audit,
+        "minecraft_current_neoforge": minecraft_current_neoforge,
         "backup": backup,
         "provisioning": provisioning,
         "game_data": game_data,

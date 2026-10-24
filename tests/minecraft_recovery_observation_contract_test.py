@@ -18,6 +18,15 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(result["original_loader_version"],"26.1.2.94")
         self.assertNotIn("authenticated_agent_observation",result)
         self.assertNotIn("original_loader_verified",result)
+    def test_loader_proof_is_scoped_agent_claim_not_controller_attestation(self):
+        proof = {"verified":True, "instance_id":"minecraft-005",
+                 "agent_id":"agent-horizon","loader_version":"26.1.2.94",
+                 "evidence":"instance-local-launcher"}
+        result=check({**CLAIM,"loader_proof":proof})
+        self.assertTrue(result["agent_reported_loader_proof"])
+        self.assertNotIn("original_loader_verified",result)
+        self.assertFalse(check({**CLAIM,"loader_proof":{**proof,"agent_id":"other"}})["agent_reported_loader_proof"])
+
     def test_cross_agent_and_instance(self):
         self.assertIsNone(check(authenticated_agent_id="other"))
         self.assertIsNone(check(expected_instance_id="other"))

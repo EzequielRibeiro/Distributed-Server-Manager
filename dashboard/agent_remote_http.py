@@ -33,6 +33,8 @@ from agent_uninstall_repository import AgentUninstallRepository
 from deleted_backup_vault_repository import DeletedBackupVaultRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
 from instance_provisioning_projection import project_agent_provisioning
+from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
+from minecraft_recovery_event_persistence import persist_recovery_claims
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -403,6 +405,31 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         else:
             _attach_game_data_state(result, body, agent_id=agent_id, backend=backend)
         _attach_instance_state(result, body, agent_id=agent_id, backend=backend)
+        # Validate bounded recovery claims only after Agent credential authentication.
+        # No provisioning mutation or UI suppression until durable proof is implemented.
+        try:
+            claims = validated_heartbeat_recovery_claims(
+                backend, body, authenticated_agent_id=agent_id,
+            )
+            if claims:
+                result["minecraft_recovery_claims_validated"] = len(claims)
+                result["minecraft_recovery_audit"] = persist_recovery_claims(backend, claims)
+        except Exception:
+            # Recovery evidence is optional; an unavailable ownership query
+            # must never turn an ordinary heartbeat into an outage.
+            pass
+        try:
+            from minecraft_current_neoforge_heartbeat_claims import current_attestations_from_heartbeat
+            from minecraft_current_neoforge_event_persistence import persist_current_neoforge_attestations
+            from minecraft_recovery_heartbeat_claims import owned_instance_ids_for_agent
+            owned = owned_instance_ids_for_agent(backend, agent_id=agent_id)
+            verified = current_attestations_from_heartbeat(
+                body, authenticated_agent_id=agent_id, owned_instance_ids=owned)
+            if verified:
+                result["minecraft_current_neoforge_audit"] = persist_current_neoforge_attestations(backend, verified)
+        except Exception:
+            # Optional attestation must not break agent heartbeat.
+            pass
         _attach_doctor_state(result, body, agent_id=agent_id, backend=backend)
         _reconcile_link_incident(result, body, agent_id=agent_id, backend=backend)
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
