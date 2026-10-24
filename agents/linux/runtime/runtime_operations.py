@@ -125,8 +125,15 @@ def _preserve_recovered_migration(instance_id: str, previous: dict[str, Any] | N
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
     except FileExistsError:
-        existing = read_recovered_migration(instance_id)
-        if existing is None or existing.get("recovered_at") != previous.get("recovered_at"):
+        # Do not consult read_recovered_migration here: it prefers the current
+        # journal and could hide a different archived recovery.
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("recovery evidence archive is unsafe")
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("recovery evidence archive is unreadable") from exc
+        if (not isinstance(existing, dict) or existing != previous):
             raise RuntimeError("recovery evidence archive conflicts with the current journal")
         return
     try:
