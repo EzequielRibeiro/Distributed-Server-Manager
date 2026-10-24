@@ -151,7 +151,7 @@ def _inventory(config):
                if isinstance(entry, dict) and isinstance(entry.get("instance_id"), str)
                and entry["instance_id"]]
         payload["minecraft_recovery_observations"] = collect_recovery_observations(
-            ids, agent_id=str(config["agent_id"]), read_operation=read_operation,
+            ids, agent_id=str(config["agent_id"]), read_operation=read_recovered_migration,
             read_instance=get_registered_instance,
         )
     except (TypeError, ValueError, OSError):
