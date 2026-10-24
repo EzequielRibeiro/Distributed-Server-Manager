@@ -8,11 +8,13 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from minecraft_serverpack_recovery_observation import recovery_observation
+from minecraft_recovery_loader_proof import verify_recovered_loader
 
 
 def collect_recovery_observations(
     instance_ids: list[str], *, agent_id: str,
     read_operation: Callable[[str], dict[str, Any] | None],
+    read_instance: Callable[[str], dict[str, Any] | None] | None = None,
     observed_at: str | None = None,
     limit: int = 128,
 ) -> list[dict[str, Any]]:
@@ -34,5 +36,13 @@ def collect_recovery_observations(
         claim = recovery_observation(record, instance_id=instance_id,
                                      agent_id=agent_id, observed_at=timestamp)
         if claim is not None:
+            if read_instance is not None:
+                try:
+                    proof = verify_recovered_loader(read_instance(instance_id), record,
+                        instance_id=instance_id, agent_id=agent_id)
+                except (OSError, ValueError):
+                    proof = None
+                if proof:
+                    claim["loader_proof"] = proof
             observations.append(claim)
     return observations
