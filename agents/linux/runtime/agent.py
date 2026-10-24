@@ -142,11 +142,13 @@ def _inventory(config):
     except OSError:installed_version=str(config.get("capivara_version","unknown"))
     network=collect_network_inventory();network["public_ipv4_observation"]=observe_public_ipv4()
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":network,"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
-    # Read-only recovery evidence; authenticated Controller performs ownership
-    # verification and durable audit. This never changes migration state.
+    # Every inventory record is Agent-owned and supplies instance_id.
+    # Keep malformed inventory entries fail-closed without blocking heartbeat.
     try:
-        ids = [str(item.get("instance_id") or item.get("id") or "")
-               for item in payload["instances"] if isinstance(item, dict)]
+        instances = payload.get("instances")
+        ids = [entry["instance_id"] for entry in instances
+               if isinstance(entry, dict) and isinstance(entry.get("instance_id"), str)
+               and entry["instance_id"]]
         payload["minecraft_recovery_observations"] = collect_recovery_observations(
             ids, agent_id=str(config["agent_id"]), read_operation=read_operation,
         )
