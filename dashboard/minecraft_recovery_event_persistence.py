@@ -40,6 +40,7 @@ def persist_recovery_claims(backend: Any, claims: list[dict[str, Any]]) -> dict[
                 "filesystem_status": claim.get("filesystem_status"),
                 "original_loader_version": claim.get("original_loader_version"),
                 "observed_at": claim.get("observed_at"),
+                "agent_reported_loader_proof": claim.get("agent_reported_loader_proof") is True,
             },
         })
         recorded += int(result["created"])
