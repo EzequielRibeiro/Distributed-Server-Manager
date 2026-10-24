@@ -13,6 +13,22 @@ class CollectorTest(unittest.TestCase):
    self.assertEqual(len(proof),1)
    self.assertEqual(proof[0]["loader_version"],"26.1.2.94")
    self.assertNotIn("recovered_at",proof[0])
+ def test_legacy_hybrid_without_content_root_requires_one_verified_library(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   base=Path(tmp)
+   libs=base/"libraries/net/neoforged/neoforge"
+   (libs/"26.1.2.94").mkdir(parents=True)
+   record={"instance_id":"mc005","agent_id":"hybrid","runtime_id":"minecraft.java.neoforge","working_directory":tmp}
+   with patch("minecraft_current_neoforge_attestation.verify_installed_neoforge",return_value={"evidence":{"launch":"ok"}}) as verify:
+    proof=collect(["mc005"],agent_id="hybrid",read_instance=lambda _:record)
+    self.assertEqual(len(proof),1)
+    self.assertEqual(proof[0]["loader_version"],"26.1.2.94")
+    verify.assert_called_once()
+   (libs/"26.1.2.109").mkdir()
+   self.assertEqual(collect(["mc005"],agent_id="hybrid",read_instance=lambda _:record),[])
+   (libs/"26.1.2.109").rmdir()
+   with patch("minecraft_current_neoforge_attestation.verify_installed_neoforge",return_value={}):
+    self.assertEqual(collect(["mc005"],agent_id="hybrid",read_instance=lambda _:record),[])
  def test_wrong_runtime_and_bad_source_rejected(self):
   record={"instance_id":"mc005","agent_id":"hybrid","runtime_id":"minecraft.java.vanilla",
           "content_root":"/srv/neoforge/26.1.2/26.1.2.94"}
