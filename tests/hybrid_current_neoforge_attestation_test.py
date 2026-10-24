@@ -4,7 +4,6 @@ import sys, tempfile, unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
-from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"dashboard/workers",ROOT/"database"):
  sys.path.insert(0,str(path))
@@ -15,8 +14,6 @@ class HybridCurrentAttestationTests(unittest.TestCase):
    result=process_hybrid_current_neoforge_attestation_cycle(object(),Path("/nonexistent/dsm"),"agent")
   self.assertEqual(result,{"status":"unavailable","verified":0})
  def test_owned_hybrid_instance_publishes_only_current_attestation(self):
-  from minecraft_current_neoforge_heartbeat_claims import current_attestations_from_heartbeat
-  from minecraft_current_neoforge_event_persistence import persist_current_neoforge_attestations
   claim={"kind":"MinecraftNeoForgeCurrentAttestation","agent_id":"agent",
          "instance_id":"mc005","loader_version":"26.1.2.94",
          "observed_at":"2026-10-24T10:00:00Z","verified":True}
