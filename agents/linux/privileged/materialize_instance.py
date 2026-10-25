@@ -445,11 +445,17 @@ def _same_regular_file(source: Path, target: Path) -> bool:
                 return True
 
 
-def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, preserve_committed_launcher: bool = False) -> None:
     _reject_symlinks(source, label="directory seed")
     _reject_symlinks(target, label="directory seed target")
     for current in source.rglob("*"):
         relative = current.relative_to(source)
+        # An already-committed NeoForge Server Pack owns its launch arguments.
+        # Re-seeding the original installer must not revert the upgraded loader.
+        if preserve_committed_launcher and relative.as_posix() in {
+            "capivara-launch.args", "run.sh", "run.bat",
+        }:
+            continue
         destination = target / relative
         if current.is_dir():
             if destination.exists() and (not destination.is_dir() or destination.is_symlink()):
@@ -498,6 +504,19 @@ def _prepare_seed_parent(parent: Path, account: pwd.struct_passwd) -> None:
         os.chmod(directory, 0o700)
 
 
+def _has_committed_minecraft_migration(target: Path) -> bool:
+    journal = target.parent / ".dsm" / "minecraft-serverpack-migration.json"
+    if not journal.exists():
+        return False
+    if journal.is_symlink() or not journal.is_file():
+        raise RuntimeError("unsafe Minecraft migration journal during seed overlay")
+    try:
+        data = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("unreadable Minecraft migration journal during seed overlay") from exc
+    return isinstance(data, dict) and data.get("phase") == "committed"
+
+
 def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False, overlay: bool = False) -> None:
     if not source.is_dir():
         if optional:
@@ -509,7 +528,7 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
             raise RuntimeError(f"seed directory target is not a private directory: {target}")
         if any(target.iterdir()):
             if overlay:
-                _overlay_seed_directory(source, target, account)
+                _overlay_seed_directory(source, target, account, preserve_committed_launcher=_has_committed_minecraft_migration(target))
             else:
                 _reject_symlinks(target, label="directory seed target")
             _repair_private_seed_modes(source, target, account)
