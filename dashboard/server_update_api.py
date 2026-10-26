@@ -39,7 +39,7 @@ def instance_update_policy_view(instance_id,*,backend)->dict[str,Any]:
  except KeyError:
   policy=normalize_policy({});configured=False;content=repo._content_snapshot(iid)
  state=snapshot.get('state') if configured else None
- public_state={key:state.get(key) for key in ('state','installed_version','available_version','last_checked_at')} if isinstance(state,dict) else None
+ public_state={**{key:state.get(key) for key in ('state','installed_version','available_version','last_checked_at')},'in_progress':bool(state.get('active_job_id'))} if isinstance(state,dict) else None
  return {'instance_id':iid,'configured':configured,'policy':policy,'content':content,'game_update':public_state}
 
 def configure_server_update(user,payload,*,backend,root:Path)->dict[str,Any]:
