@@ -108,7 +108,8 @@ install_operation_from_event()
     local GAME_ID="${2:-}"
     local PROVIDER="${3:-unknown}"
     local NODE_ID="${4:-unknown}"
-    local DATA="${5:-{}}"
+    local DATA="${5-}"
+    [[ -n "${DATA}" ]] || DATA="{}"
     local INSTANCE="${6:-${DSM_INSTANCE:-}}"
 
     install_operation_init || return 1
