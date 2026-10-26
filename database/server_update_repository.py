@@ -165,8 +165,29 @@ class ServerUpdateRepository:
    with self.session(transaction=True) as s:s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph}',('update_failed' if operation=='update' else 'unknown','agent_operation_failed',now,iid));s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed','agent_operation_failed',now,now,job['job_id']))
    return
   detail=result.get('update_status') if operation=='check' else result.get('update_status_after')
-  if not isinstance(detail,dict):detail={}
-  state=str(detail.get('state') or ('updated' if operation=='update' else 'unknown'));installed=detail.get('installed_version');available=detail.get('available_version')
+  # A generic Agent completion is not proof that the instance was updated.
+  # Fail closed and retain the last observed versions for subsequent diagnosis.
+  installed=detail.get('installed_version') if isinstance(detail,dict) else None
+  available=detail.get('available_version') if isinstance(detail,dict) else None
+  valid_builds=(isinstance(installed,str) and installed.isdecimal()
+                and isinstance(available,str) and available.isdecimal())
+  valid_update=(operation=='update' and valid_builds
+                and installed==available
+                and detail.get('state')=='up_to_date'
+                and result.get('activation')=='atomic-swap'
+                and result.get('readiness')=='healthy')
+  valid_check=(operation=='check' and isinstance(detail,dict)
+               and detail.get('state') in ('up_to_date','update_available','unknown')
+               and isinstance(available,str) and available.isdecimal()
+               and (installed is None or isinstance(installed,str) and installed.isdecimal()))
+  if not (valid_update or valid_check):
+   error='invalid_update_result' if operation=='update' else 'invalid_check_result'
+   with self.session(transaction=True) as s:
+    cursor=s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',('update_failed' if operation=='update' else 'unknown',error,now,iid,str(job['job_id'])))
+    if cursor.rowcount==1 and operation=='update':
+     s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed',error,now,now,job['job_id']))
+   return
+  state=str(detail['state'])
   with self.session(transaction=True) as s:
    cursor=s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid,str(job['job_id'])))
    if cursor.rowcount != 1:return
