@@ -74,6 +74,17 @@ def main() -> int:
             })
             return 1
 
+    # Never route instance-scoped updates through install-json: it ignores
+    # the registered instance target and cannot report transactional readiness.
+    # Until the Hybrid privileged transaction bridge is wired, fail closed.
+    meta = selection.get("_server_update")
+    if str(command.get("action") or "").strip().lower() == "update" and isinstance(meta, dict):
+        _write_result(result_path, {
+            "job_id": job_id, "status": "failed", "progress": 100,
+            "error": "hybrid_instance_update_transaction_unavailable",
+        })
+        return 1
+
     _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
     installer = root / "installer" / "install_selection.sh"
     environment = {**os.environ, "DSM_ROOT": str(root)}
