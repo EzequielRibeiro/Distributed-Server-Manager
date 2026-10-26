@@ -130,47 +130,63 @@ steamcmd_run_with_progress()
 
 steam_provider_ensure()
 {
+    local CANDIDATE=""
+    local AGENT_STATE="${CAPIVARA_AGENT_STATE_DIR:-${DSM_ROOT}/runtime/hybrid-agent-state}"
+
+    # Preserve the managed installation when it is present. Only discover
+    # external launchers when the managed installation is absent.
     if [[ -x "${STEAMCMD_BIN}" ]]
     then
-        steam_log "SteamCMD disponível:"
-        steam_log "${STEAMCMD_BIN}"
+        steam_log "SteamCMD disponível: ${STEAMCMD_BIN}"
         return 0
     fi
 
-    steam_log "SteamCMD não encontrado."
+    for CANDIDATE in \
+        "${AGENT_STATE}/.local/share/Steam/steamcmd/steamcmd.sh" \
+        "${AGENT_STATE}/tools/steamcmd/steamcmd.sh" \
+        /usr/games/steamcmd
+    do
+        if [[ -f "${CANDIDATE}" && -x "${CANDIDATE}" ]]
+        then
+            STEAMCMD_BIN="${CANDIDATE}"
+            STEAMCMD_ROOT="$(dirname "${CANDIDATE}")"
+            steam_log "SteamCMD externo disponível: ${STEAMCMD_BIN}"
+            return 0
+        fi
+    done
 
+    steam_log "SteamCMD não encontrado; instalando cópia gerenciada."
     if [[ ! -x "${STEAMCMD_INSTALLER}" ]]
     then
-        steam_error "Instalador do SteamCMD não encontrado:"
-        steam_error "${STEAMCMD_INSTALLER}"
+        steam_error "Instalador do SteamCMD não encontrado: ${STEAMCMD_INSTALLER}"
         return 1
     fi
-
-    steam_log "Instalando SteamCMD..."
-
     if ! "${STEAMCMD_INSTALLER}"
     then
         steam_error "Falha ao instalar SteamCMD."
         return 1
     fi
-
+    STEAMCMD_ROOT="${DSM_ROOT}/tools/steamcmd"
+    STEAMCMD_BIN="${STEAMCMD_ROOT}/steamcmd.sh"
     [[ -x "${STEAMCMD_BIN}" ]] || return 1
-    return 0
 }
 
 steam_provider_validate()
 {
     local INTERNAL_BIN=""
-
     steam_provider_ensure || return 1
-
     if [[ ! -x "${STEAMCMD_BIN}" ]]
     then
-        steam_error "Launcher SteamCMD não é executável:"
-        steam_error "${STEAMCMD_BIN}"
+        steam_error "Launcher SteamCMD não é executável: ${STEAMCMD_BIN}"
         return 1
     fi
 
+    # The system package and the Agent-owned launcher have different layouts.
+    # Validate internal binaries only for the DSM-managed installation.
+    if [[ "${STEAMCMD_ROOT}" != "${DSM_ROOT}/tools/steamcmd" ]]
+    then
+        return 0
+    fi
     if [[ -f "${STEAMCMD_ROOT}/linux32/steamcmd" ]]
     then
         INTERNAL_BIN="${STEAMCMD_ROOT}/linux32/steamcmd"
@@ -181,15 +197,11 @@ steam_provider_validate()
         steam_error "Binário interno do SteamCMD não encontrado."
         return 1
     fi
-
     if [[ ! -x "${INTERNAL_BIN}" ]]
     then
-        steam_error "Binário interno do SteamCMD não é executável:"
-        steam_error "${INTERNAL_BIN}"
+        steam_error "Binário interno do SteamCMD não é executável: ${INTERNAL_BIN}"
         return 1
     fi
-
-    return 0
 }
 
 steam_manifest_path()

@@ -106,7 +106,21 @@ def main() -> int:
         output = completed.stdout or ""
         print(output, end="" if output.endswith("\n") else "\n", flush=True)
         if completed.returncode != 0:
-            detail = output.strip().splitlines()[-1] if output.strip() else f"installer exit {completed.returncode}"
+            # Preserve the actionable provider error, rather than only the
+            # generic final INSTALL-ERROR status line. Do not persist the full
+            # SteamCMD transcript (it can contain account/session details).
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            provider_errors = [
+                line for line in lines
+                if "[DSM][STEAM][ERRO]" in line or "[DSM][INSTALL][ERRO]" in line
+            ]
+            detail = provider_errors[-1] if provider_errors else (
+                lines[-1] if lines else f"installer exit {completed.returncode}"
+            )
+            # Fail closed if the selected diagnostic contains possible secrets.
+            # The full installer transcript is available only in the local job log.
+            if re.search(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization|cookie|steamguard|steam guard code)", detail):
+                detail = f"installer failed (exit {completed.returncode}); inspect protected job log"
             raise RuntimeError(detail[:2000])
     except Exception as exc:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]})
