@@ -35,6 +35,7 @@ UPLOAD_FINALIZE=UPLOAD+"/finalize"
 UPLOAD_CANCEL=UPLOAD+"/cancel"
 UPDATE_POLICY=PATH+"/update-policy"
 UPDATE_POLICY_ITEM=UPDATE_POLICY+"/item"
+GAME_UPDATE_OPERATION=UPDATE_POLICY+"/game-operation"
 STREAM=PATH+"/stream"
 _UPLOAD_SLOTS=threading.BoundedSemaphore(2)
 _UPLOAD_IDLE_SECONDS=45
@@ -279,6 +280,23 @@ def install_customer_content_http(legacy,authenticate):
     body=self.read_json_body();instance_id=iid(parsed,body);api=policy_api(user,instance_id,"content.install");api.workspace.require(user,instance_id,"settings.write");policy=body.get("policy")
     if not isinstance(policy,dict):raise ValueError("policy must be an object")
     actor=str(user.get("username") or user.get("id") or "customer");set_instance_update_policy({"instance_id":instance_id,"policy":policy},backend=backend(),root=legacy.DSM_ROOT,requested_by=actor);view=instance_update_policy_view(instance_id,backend=backend());record_policy(user,instance_id,"CONTENT_UPDATE_POLICY_CHANGED",instance_id,{"mode":view["policy"]["mode"],"timezone":view["policy"]["timezone"]});return send(self,200,view)
+   except Exception as exc:return error(self,exc)
+  if parsed.path==GAME_UPDATE_OPERATION:
+   user=require_user(self,area="customer")
+   if user is None:return
+   try:
+    body=self.read_json_body();instance_id=iid(parsed,body)
+    policy_api(user,instance_id,"instance.update")
+    action=str(body.get("action") or "").strip().lower()
+    if action not in {"check","update"}:raise ValueError("action must be check or update")
+    repo=ServerUpdateRepository(backend());repo.initialize()
+    snapshot=repo.snapshot(instance_id);state=snapshot.get("state") or {}
+    if state.get("active_job_id"):return send(self,409,{"error":"update_busy","message":"Já existe uma operação de atualização em andamento."})
+    if action=="update" and state.get("state")!="update_available":raise ValueError("A atualização precisa estar disponível e confirmada antes da execução.")
+    actor=str(user.get("username") or user.get("id") or "customer")
+    result=repo.queue_customer_operation(instance_id,action=action,requested_by=actor)
+    record_policy(user,instance_id,"GAME_UPDATE_"+action.upper()+"_REQUESTED",instance_id,{"action":action})
+    return send(self,202,{"operation":result,"action":action})
    except Exception as exc:return error(self,exc)
   if parsed.path==UPDATE_POLICY_ITEM:
    user=require_user(self)
