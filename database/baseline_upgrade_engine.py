@@ -17,6 +17,7 @@ from agent_public_network_schema import ensure_agent_public_network_schema
 from alert_event_action_schema import action_check_expression
 from alert_scope_history_schema import alert_scope_history_ddl
 from backend import DatabaseMigrationError
+from instance_agent_relocation_schema import instance_agent_relocation_ddl
 from discord_integration_schema import discord_integration_ddl
 from content_contract_v2_schema import content_contract_v2_ddl
 from content_bundle_schema import content_bundle_ddl
@@ -1388,6 +1389,17 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
 
 
+def _upgrade_instance_agent_relocation(backend: Any, connection: Any) -> None:
+    required = {"instance_agent_relocations", "instance_agent_relocation_port_holds"}
+    existing = _table_names(backend, connection) & required
+    if existing and existing != required:
+        raise DatabaseMigrationError("partial instance Agent relocation schema")
+    if not existing:
+        _execute_script(backend, connection, instance_agent_relocation_ddl(backend.name))
+    if not required.issubset(_table_names(backend, connection)):
+        raise DatabaseMigrationError("instance Agent relocation schema incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -1411,6 +1423,7 @@ UPGRADES = (
     BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
     BaselineUpgrade(21, "dayz_management_operations", _upgrade_dayz_management),
     BaselineUpgrade(22, "instance_evidence_parameters", _upgrade_instance_evidence_parameters),
+    BaselineUpgrade(23, "instance_agent_relocation", _upgrade_instance_agent_relocation),
 )
 
 
