@@ -119,6 +119,21 @@ class ServerUpdateRepository:
   with self.session() as s:return s.execute(f'SELECT p.*,s.agent_id,s.state,s.last_checked_at,s.active_job_id,s.available_version,s.installed_version FROM instance_update_policy p JOIN instance_update_state s ON s.instance_id=p.instance_id WHERE p.instance_id={ph}',(instance_id,)).fetchone()
  def _selection(self,row,operation:str)->dict[str,Any]:
   selection=json.loads(row['selection_json']);selection=dict(selection);selection['_server_update']={'instance_id':str(row['instance_id']),'operation':operation,'backup_before_update':bool(row['backup_before_update'])};return selection
+ def queue_customer_operation(self,instance_id:str,*,action:str,requested_by:str)->dict[str,Any]:
+  """Atomically reserve the customer action before dispatching its Agent job."""
+  if action not in {'check','update'}:raise ValueError('invalid update action')
+  iid=str(instance_id or '').strip();ph=self.dialect.placeholder;reservation='reserved-'+uuid.uuid4().hex
+  with self.session(transaction=True) as s:
+   state_guard=f" AND state={ph}" if action=='update' else ''
+   args=(reservation,utc_timestamp(),iid)+(('update_available',) if action=='update' else ())
+   cursor=s.execute(f'UPDATE instance_update_state SET active_job_id={ph},updated_at={ph} WHERE instance_id={ph} AND active_job_id IS NULL{state_guard}',args)
+   if int(getattr(cursor,'rowcount',0) or 0)!=1:raise ValueError('Atualização indisponível ou outra operação em andamento.')
+  try:
+   if action=='check':return {'job':self.queue_check(iid,requested_by=requested_by)}
+   return self.queue_update(iid,requested_by=requested_by,trigger_type='manual')
+  except Exception:
+   with self.session(transaction=True) as s:s.execute(f'UPDATE instance_update_state SET active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',(utc_timestamp(),iid,reservation))
+   raise
  def queue_check(self,instance_id:str,*,requested_by:str='scheduler')->dict[str,Any]:
   row=self._row(instance_id)
   if not row:raise KeyError(instance_id)

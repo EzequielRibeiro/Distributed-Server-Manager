@@ -294,7 +294,7 @@ def install_customer_content_http(legacy,authenticate):
     if state.get("active_job_id"):return send(self,409,{"error":"update_busy","message":"Já existe uma operação de atualização em andamento."})
     if action=="update" and state.get("state")!="update_available":raise ValueError("A atualização precisa estar disponível e confirmada antes da execução.")
     actor=str(user.get("username") or user.get("id") or "customer")
-    result=repo.queue_check(instance_id,requested_by=actor) if action=="check" else repo.queue_update(instance_id,requested_by=actor,trigger_type="manual")
+    result=repo.queue_customer_operation(instance_id,action=action,requested_by=actor)
     record_policy(user,instance_id,"GAME_UPDATE_"+action.upper()+"_REQUESTED",instance_id,{"action":action})
     return send(self,202,{"operation":result,"action":action})
    except Exception as exc:return error(self,exc)
