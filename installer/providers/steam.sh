@@ -103,8 +103,8 @@ steamcmd_run_with_progress()
             while IFS= read -r LINE || [[ -n "${LINE}" ]]
             do
                 [[ -n "${LINE}" ]] || continue
-                printf '%s\n' "${LINE}"
-                printf '%s\n' "${LINE}" >> "${STEAMCMD_PROGRESS_LOG}"
+                # SteamCMD output may contain session/account details. Only
+                # publish progress; never persist raw SteamCMD transcript.
                 steam_progress_parse_line "${LINE}"
             done
 
@@ -117,14 +117,17 @@ steamcmd_run_with_progress()
             while IFS= read -r LINE || [[ -n "${LINE}" ]]
             do
                 [[ -n "${LINE}" ]] || continue
-                printf '%s\n' "${LINE}"
-                printf '%s\n' "${LINE}" >> "${STEAMCMD_PROGRESS_LOG}"
+                # SteamCMD output may contain session/account details. Only
+                # publish progress; never persist raw SteamCMD transcript.
                 steam_progress_parse_line "${LINE}"
             done
 
         STATUS=${PIPESTATUS[0]}
     fi
 
+    if (( STATUS != 0 )); then
+        steam_error "SteamCMD terminou com código ${STATUS}; consulte a autenticação e o estado do Agent."
+    fi
     return "${STATUS}"
 }
 

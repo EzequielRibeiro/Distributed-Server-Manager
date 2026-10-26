@@ -104,7 +104,16 @@ def main() -> int:
             except OSError:
                 pass
         output = completed.stdout or ""
-        print(output, end="" if output.endswith("\n") else "\n", flush=True)
+        # Only DSM-controlled diagnostics/progress may enter the job log.
+        # Do not forward untrusted installer/SteamCMD transcript verbatim.
+        safe_lines = [line for line in output.splitlines()
+                      if line.startswith("[DSM][STEAM][ERRO]")
+                      or line.startswith("[DSM][INSTALL][ERRO]")]
+        for line in safe_lines:
+            if re.search(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization|cookie|steamguard|steam guard code)", line):
+                print("[DSM][INSTALL][ERRO] provider error redacted", flush=True)
+            else:
+                print(line, flush=True)
         if completed.returncode != 0:
             # Preserve the actionable provider error, rather than only the
             # generic final INSTALL-ERROR status line. Do not persist the full
@@ -114,9 +123,9 @@ def main() -> int:
                 line for line in lines
                 if "[DSM][STEAM][ERRO]" in line or "[DSM][INSTALL][ERRO]" in line
             ]
-            detail = provider_errors[-1] if provider_errors else (
-                lines[-1] if lines else f"installer exit {completed.returncode}"
-            )
+            generic = next((line for line in reversed(lines)
+                if re.fullmatch(r"\[DSM\]\[INSTALL-ERROR\] action=[a-z_-]+ error=[a-z_-]+ status=[a-z_-]+", line)), None)
+            detail = provider_errors[-1] if provider_errors else (generic or f"installer exit {completed.returncode}")
             # Fail closed if the selected diagnostic contains possible secrets.
             # The full installer transcript is available only in the local job log.
             if re.search(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization|cookie|steamguard|steam guard code)", detail):
