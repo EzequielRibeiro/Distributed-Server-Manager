@@ -323,7 +323,8 @@ steam_provider_install_authenticated()
 
     if (( AUTH_STATUS != 0 ))
     then
-        printf '%s\n' "${AUTH_OUTPUT}"
+        # Never print raw SteamCMD authentication output into job logs: it can
+        # include account identifiers, challenges, or session information.
         steam_error "Autenticação Steam necessária ou expirada."
         steam_error "Execute 'dsm steam auth' no Agent e tente novamente."
         return 42
