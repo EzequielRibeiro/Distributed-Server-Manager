@@ -29,7 +29,8 @@ install_event_type_valid(){
     esac
 }
 install_event_validate_data(){
-    local data="${1:-{}}"
+    local data="${1-}"
+    [[ -n "${data}" ]] || data="{}"
     jq -e 'type == "object"' >/dev/null 2>&1 <<<"${data}" || {
         install_event_error "Payload precisa ser objeto JSON válido."
         return 1
@@ -37,7 +38,8 @@ install_event_validate_data(){
 }
 
 install_event_emit(){
-    local type="${1:-}" game_id="${2:-}" provider="${3:-unknown}" data="${4:-{}}"
+    local type="${1:-}" game_id="${2:-}" provider="${3:-unknown}" data="${4-}"
+    [[ -n "${data}" ]] || data="{}"
     local severity node_id enriched
     install_event_engine_available || return 1
     install_event_type_valid "${type}" || { install_event_error "Tipo de evento inválido: ${type}"; return 1; }
