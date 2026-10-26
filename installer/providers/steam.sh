@@ -103,8 +103,8 @@ steamcmd_run_with_progress()
             while IFS= read -r LINE || [[ -n "${LINE}" ]]
             do
                 [[ -n "${LINE}" ]] || continue
-                printf '%s\n' "${LINE}"
-                printf '%s\n' "${LINE}" >> "${STEAMCMD_PROGRESS_LOG}"
+                # SteamCMD output may contain session/account details. Only
+                # publish progress; never persist raw SteamCMD transcript.
                 steam_progress_parse_line "${LINE}"
             done
 
@@ -117,60 +117,79 @@ steamcmd_run_with_progress()
             while IFS= read -r LINE || [[ -n "${LINE}" ]]
             do
                 [[ -n "${LINE}" ]] || continue
-                printf '%s\n' "${LINE}"
-                printf '%s\n' "${LINE}" >> "${STEAMCMD_PROGRESS_LOG}"
+                # SteamCMD output may contain session/account details. Only
+                # publish progress; never persist raw SteamCMD transcript.
                 steam_progress_parse_line "${LINE}"
             done
 
         STATUS=${PIPESTATUS[0]}
     fi
 
+    if (( STATUS != 0 )); then
+        steam_error "SteamCMD terminou com código ${STATUS}; consulte a autenticação e o estado do Agent."
+    fi
     return "${STATUS}"
 }
 
 steam_provider_ensure()
 {
+    local CANDIDATE=""
+    local AGENT_STATE="${CAPIVARA_AGENT_STATE_DIR:-${DSM_ROOT}/runtime/hybrid-agent-state}"
+
+    # Preserve the managed installation when it is present. Only discover
+    # external launchers when the managed installation is absent.
     if [[ -x "${STEAMCMD_BIN}" ]]
     then
-        steam_log "SteamCMD disponível:"
-        steam_log "${STEAMCMD_BIN}"
+        steam_log "SteamCMD disponível: ${STEAMCMD_BIN}"
         return 0
     fi
 
-    steam_log "SteamCMD não encontrado."
+    for CANDIDATE in \
+        "${AGENT_STATE}/.local/share/Steam/steamcmd/steamcmd.sh" \
+        "${AGENT_STATE}/tools/steamcmd/steamcmd.sh" \
+        /usr/games/steamcmd
+    do
+        if [[ -f "${CANDIDATE}" && -x "${CANDIDATE}" ]]
+        then
+            STEAMCMD_BIN="${CANDIDATE}"
+            STEAMCMD_ROOT="$(dirname "${CANDIDATE}")"
+            steam_log "SteamCMD externo disponível: ${STEAMCMD_BIN}"
+            return 0
+        fi
+    done
 
+    steam_log "SteamCMD não encontrado; instalando cópia gerenciada."
     if [[ ! -x "${STEAMCMD_INSTALLER}" ]]
     then
-        steam_error "Instalador do SteamCMD não encontrado:"
-        steam_error "${STEAMCMD_INSTALLER}"
+        steam_error "Instalador do SteamCMD não encontrado: ${STEAMCMD_INSTALLER}"
         return 1
     fi
-
-    steam_log "Instalando SteamCMD..."
-
     if ! "${STEAMCMD_INSTALLER}"
     then
         steam_error "Falha ao instalar SteamCMD."
         return 1
     fi
-
+    STEAMCMD_ROOT="${DSM_ROOT}/tools/steamcmd"
+    STEAMCMD_BIN="${STEAMCMD_ROOT}/steamcmd.sh"
     [[ -x "${STEAMCMD_BIN}" ]] || return 1
-    return 0
 }
 
 steam_provider_validate()
 {
     local INTERNAL_BIN=""
-
     steam_provider_ensure || return 1
-
     if [[ ! -x "${STEAMCMD_BIN}" ]]
     then
-        steam_error "Launcher SteamCMD não é executável:"
-        steam_error "${STEAMCMD_BIN}"
+        steam_error "Launcher SteamCMD não é executável: ${STEAMCMD_BIN}"
         return 1
     fi
 
+    # The system package and the Agent-owned launcher have different layouts.
+    # Validate internal binaries only for the DSM-managed installation.
+    if [[ "${STEAMCMD_ROOT}" != "${DSM_ROOT}/tools/steamcmd" ]]
+    then
+        return 0
+    fi
     if [[ -f "${STEAMCMD_ROOT}/linux32/steamcmd" ]]
     then
         INTERNAL_BIN="${STEAMCMD_ROOT}/linux32/steamcmd"
@@ -181,15 +200,11 @@ steam_provider_validate()
         steam_error "Binário interno do SteamCMD não encontrado."
         return 1
     fi
-
     if [[ ! -x "${INTERNAL_BIN}" ]]
     then
-        steam_error "Binário interno do SteamCMD não é executável:"
-        steam_error "${INTERNAL_BIN}"
+        steam_error "Binário interno do SteamCMD não é executável: ${INTERNAL_BIN}"
         return 1
     fi
-
-    return 0
 }
 
 steam_manifest_path()
@@ -311,7 +326,8 @@ steam_provider_install_authenticated()
 
     if (( AUTH_STATUS != 0 ))
     then
-        printf '%s\n' "${AUTH_OUTPUT}"
+        # Never print raw SteamCMD authentication output into job logs: it can
+        # include account identifiers, challenges, or session information.
         steam_error "Autenticação Steam necessária ou expirada."
         steam_error "Execute 'dsm steam auth' no Agent e tente novamente."
         return 42
