@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
   "release_line": "2.0",
-  "release_version": "2.0.127",
-  "tag_name": "v2.0.127",
-  "status": "release-approved",
-  "publish_release": true,
-  "release_authorized": true,
+  "release_version": "2.0.128",
+  "tag_name": "v2.0.128",
+  "status": "release-candidate",
+  "publish_release": false,
+  "release_authorized": false,
   "required_gates": [
     "CI",
     "Agent Instance Runtime",
