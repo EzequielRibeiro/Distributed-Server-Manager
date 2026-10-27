@@ -126,6 +126,28 @@ class UniversalServerUpdateTest(unittest.TestCase):
    self.assertEqual((target/'server.bin').read_text(),'new')
    self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-previous-*')))
    self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+ def test_stale_failed_result_cannot_clear_newer_active_job(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from server_update_repository import ServerUpdateRepository
+  repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  statements=[]
+  class Session:
+   def execute(self,sql,params):
+    statements.append((sql,params))
+    return SimpleNamespace(rowcount=0)
+  @contextmanager
+  def fake_session(transaction=False):
+   yield Session()
+  repo.session=fake_session
+  job={'job_id':'old-job','selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  repo.apply_game_data_result(job,{'status':'failed'})
+  state_updates=[(sql,params) for sql,params in statements if 'UPDATE instance_update_state SET' in sql]
+  self.assertEqual(len(state_updates),1)
+  sql,params=state_updates[0]
+  self.assertIn('AND active_job_id=?',sql)
+  self.assertEqual(params[-1],'old-job')
  def test_schema_parity(self):
   for backend in ('sqlite','postgresql','mysql','mariadb'):
    ddl=server_update_ddl(backend).lower();content=content_update_ddl(backend).lower()
