@@ -148,6 +148,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
   sql,params=state_updates[0]
   self.assertIn('AND active_job_id=?',sql)
   self.assertEqual(params[-1],'old-job')
+  self.assertFalse(any('UPDATE instance_update_runs SET' in sql for sql,_ in statements))
  def test_schema_parity(self):
   for backend in ('sqlite','postgresql','mysql','mariadb'):
    ddl=server_update_ddl(backend).lower();content=content_update_ddl(backend).lower()
