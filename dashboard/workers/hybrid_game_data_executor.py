@@ -85,7 +85,20 @@ def main() -> int:
                 "error": "hybrid_instance_update_transaction_unavailable",
             })
             return 1
-        environment = {**os.environ, "DSM_ROOT": str(root)}
+        # The Hybrid worker may run under a distinct service environment.
+        # Match the embedded Agent context before importing its runtime modules.
+        state_dir = root / "runtime" / "hybrid-agent-state"
+        environment = {
+            **os.environ,
+            "DSM_ROOT": str(root),
+            "CAPIVARA_AGENT_MODE": "hybrid",
+            "CAPIVARA_DSM_ROOT": str(root),
+            "CAPIVARA_AGENT_ROOT": str(root / "agents" / "linux"),
+            "CAPIVARA_AGENT_STATE_DIR": str(state_dir),
+            "CAPIVARA_GAME_DATA_ROOT": str(state_dir / "game-data"),
+            "CAPIVARA_AGENT_CONFIG": str(state_dir / "agent.json"),
+            "CAPIVARA_AGENT_SERVICE": "dsm-dashboard-worker.service",
+        }
         steam_user = _steam_user(root)
         if steam_user and not environment.get("DSM_STEAM_USER"):
             environment["DSM_STEAM_USER"] = steam_user
