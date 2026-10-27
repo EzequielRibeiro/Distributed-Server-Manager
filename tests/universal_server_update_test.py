@@ -87,6 +87,22 @@ class UniversalServerUpdateTest(unittest.TestCase):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
     activate_swap.assert_not_called()
     self.assertEqual((target/'server.bin').read_text(),'old')
+ def test_rollback_refuses_swap_while_instance_remains_running(self):
+  from server_update_agent import perform_update,RollbackError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   states=iter(['running','stopped','stopped','running','running','running'])
+   def detector(*args,**kwargs):
+    if kwargs.get('force_refresh'):
+     return {'state':'update_available','detector_supported':True}
+    return {'state':'update_available','detector_supported':False}
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=detector),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent._stop_running'):
+    with self.assertRaisesRegex(RollbackError,'instance not stopped before rollback'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+    self.assertEqual((target/'server.bin').read_text(),'new')
+    self.assertTrue(list(target.parent.glob('.serverfiles.capivara-update-previous-*')))
  def test_schema_parity(self):
   for backend in ('sqlite','postgresql','mysql','mariadb'):
    ddl=server_update_ddl(backend).lower();content=content_update_ddl(backend).lower()
