@@ -91,6 +91,11 @@ def main() -> int:
             if not isinstance(result, dict) or result.get("job_id") != job_id:
                 raise RuntimeError("invalid transactional executor response")
             if completed.returncode != 0 or result.get("status") != "completed":
+                if result.get("status") == "completed":
+                    _write_result(result_path, {
+                        "job_id": job_id, "status": "failed", "progress": 100,
+                        "error": "hybrid_instance_update_transaction_failed",
+                    })
                 return 1
             return 0
         except Exception:
