@@ -171,11 +171,15 @@ class ServerUpdateRepository:
   available=detail.get('available_version') if isinstance(detail,dict) else None
   valid_builds=(isinstance(installed,str) and installed.isdecimal()
                 and isinstance(available,str) and available.isdecimal())
+  valid_activation=(result.get('activation')=='atomic-swap'
+                    and result.get('readiness')=='healthy')
+  valid_noop=(result.get('readiness')=='unchanged'
+              and not result.get('activation')
+              and detail.get('state')=='up_to_date')
   valid_update=(operation=='update' and valid_builds
                 and installed==available
                 and detail.get('state')=='up_to_date'
-                and result.get('activation')=='atomic-swap'
-                and result.get('readiness')=='healthy')
+                and (valid_activation or valid_noop))
   valid_check=(operation=='check' and isinstance(detail,dict)
                and detail.get('state') in ('up_to_date','update_available','unknown')
                and isinstance(available,str) and available.isdecimal()
