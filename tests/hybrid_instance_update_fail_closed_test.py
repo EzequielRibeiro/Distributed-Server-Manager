@@ -44,6 +44,38 @@ class HybridInstanceUpdateFailClosedTest(unittest.TestCase):
             self.assertFalse((root / "incorrect-generic-target").exists())
 
 
+    def test_nonzero_agent_exit_never_publishes_completed_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent_executor = root / "agents/linux/runtime/game_data_executor.py"
+            agent_executor.parent.mkdir(parents=True)
+            agent_executor.write_text(
+                "import json,sys\n"
+                "from pathlib import Path\n"
+                "job=json.loads(Path(sys.argv[1]).read_text())['job_id']\n"
+                "Path(sys.argv[2]).write_text(json.dumps({'job_id':job,'status':'completed'}))\n"
+                "sys.exit(1)\n",
+                encoding="utf-8",
+            )
+            request = root / "request.json"
+            result = root / "result.json"
+            request.write_text(json.dumps({
+                "job_id": "test-agent-nonzero",
+                "action": "update",
+                "selection": {
+                    "game": "dayz", "provider": "steam",
+                    "_server_update": {"instance_id": "dayz-001", "operation": "update"},
+                },
+            }), encoding="utf-8")
+            process = subprocess.run(
+                [sys.executable, str(EXECUTOR), str(root), str(request), str(result)],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            self.assertNotEqual(process.returncode, 0)
+            payload = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "failed")
+            self.assertEqual(payload["error"], "hybrid_instance_update_transaction_failed")
+
     def test_transactional_executor_receives_hybrid_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
