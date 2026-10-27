@@ -162,7 +162,7 @@ class ServerUpdateRepository:
   iid=str(meta.get('instance_id') or '');operation=str(meta.get('operation') or '');status=str(result.get('status') or '');now=utc_timestamp();ph=self.dialect.placeholder
   if status=='running':return
   if status=='failed':
-   with self.session(transaction=True) as s:s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph}',('update_failed' if operation=='update' else 'unknown','agent_operation_failed',now,iid));s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed','agent_operation_failed',now,now,job['job_id']))
+   with self.session(transaction=True) as s:s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',('update_failed' if operation=='update' else 'unknown','agent_operation_failed',now,iid,str(job['job_id'])));s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed','agent_operation_failed',now,now,job['job_id']))
    return
   detail=result.get('update_status') if operation=='check' else result.get('update_status_after')
   # A generic Agent completion is not proof that the instance was updated.
