@@ -191,8 +191,8 @@ def perform_update(
 
         for current in affected:
             if instance_runtime.status(config, current).get("observed_state") == "running":
-                instance_runtime.lifecycle(config, current, "stop")
                 running.append(current)
+                instance_runtime.lifecycle(config, current, "stop")
 
         for current in affected:
             observed = instance_runtime.status(config, current).get("observed_state")
