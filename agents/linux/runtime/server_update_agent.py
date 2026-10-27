@@ -198,7 +198,7 @@ def perform_update(
             for current in affected:
                 detail = create_backup(
                     config,
-                    {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "live"}},
+                    {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "stopped"}},
                 )
                 backups.append({
                     "instance_id": current,
