@@ -94,10 +94,13 @@ class UniversalServerUpdateTest(unittest.TestCase):
    record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
    states=iter(['running','stopped','stopped','running','running','running'])
+   detector_calls=iter([
+    {'state':'update_available','detector_supported':True},
+    {'state':'up_to_date','detector_supported':True},
+    {'state':'update_available','detector_supported':True},
+   ])
    def detector(*args,**kwargs):
-    if kwargs.get('force_refresh'):
-     return {'state':'update_available','detector_supported':True}
-    return {'state':'update_available','detector_supported':False}
+    return next(detector_calls)
    with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=detector),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent._stop_running'):
     with self.assertRaisesRegex(RollbackError,'instance not stopped before rollback'):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
