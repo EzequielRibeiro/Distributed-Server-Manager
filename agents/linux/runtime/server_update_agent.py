@@ -251,6 +251,12 @@ def perform_update(
         try:
             if activated:
                 _stop_running(config, running)
+                for current in affected:
+                    observed = instance_runtime.status(config, current).get("observed_state")
+                    if observed != "stopped":
+                        raise RollbackError(
+                            "instance not stopped before rollback: " + current + " (" + str(observed) + ")"
+                        )
                 if not rollback(target, previous):
                     raise RollbackError("previous game-data tree is unavailable")
                 previous = None
