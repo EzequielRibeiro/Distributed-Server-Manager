@@ -194,6 +194,13 @@ def perform_update(
                 instance_runtime.lifecycle(config, current, "stop")
                 running.append(current)
 
+        for current in affected:
+            observed = instance_runtime.status(config, current).get("observed_state")
+            if observed != "stopped":
+                raise ServerUpdateError(
+                    "instance did not stop before game-data activation: " + current + " (" + str(observed) + ")"
+                )
+
         if backup_enabled:
             for current in affected:
                 detail = create_backup(
@@ -206,6 +213,13 @@ def perform_update(
                     "sha256": detail.get("sha256"),
                     "size_bytes": detail.get("size_bytes"),
                 })
+
+        for current in affected:
+            observed = instance_runtime.status(config, current).get("observed_state")
+            if observed != "stopped":
+                raise ServerUpdateError(
+                    "instance became active before game-data activation: " + current + " (" + str(observed) + ")"
+                )
 
         previous = activate(target, staging)
         staging = None
