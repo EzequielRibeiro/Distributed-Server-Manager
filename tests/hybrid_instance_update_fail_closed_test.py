@@ -50,15 +50,15 @@ class HybridInstanceUpdateFailClosedTest(unittest.TestCase):
             agent_executor = root / "agents/linux/runtime/game_data_executor.py"
             agent_executor.parent.mkdir(parents=True)
             agent_executor.write_text(
-                "import json, os, sys\\n"
-                "from pathlib import Path\\n"
-                "payload = {\\n"
-                "  'job_id': json.loads(Path(sys.argv[1]).read_text())['job_id'],\\n"
-                "  'status': 'completed',\\n"
-                "  'agent_state': os.environ.get('CAPIVARA_AGENT_STATE_DIR'),\\n"
-                "  'agent_config': os.environ.get('CAPIVARA_AGENT_CONFIG'),\\n"
-                "}\\n"
-                "Path(sys.argv[2]).write_text(json.dumps(payload))\\n",
+                "import json, os, sys\n"
+                "from pathlib import Path\n"
+                "payload = {\n"
+                "  'job_id': json.loads(Path(sys.argv[1]).read_text())['job_id'],\n"
+                "  'status': 'completed',\n"
+                "  'agent_state': os.environ.get('CAPIVARA_AGENT_STATE_DIR'),\n"
+                "  'agent_config': os.environ.get('CAPIVARA_AGENT_CONFIG'),\n"
+                "}\n"
+                "Path(sys.argv[2]).write_text(json.dumps(payload))\n",
                 encoding="utf-8",
             )
             request = root / "request.json"
