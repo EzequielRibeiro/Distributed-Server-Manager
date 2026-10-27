@@ -17,6 +17,8 @@ on:
       - 'agents/windows/runtime/content_client.py'
       - 'agents/windows/runtime/agent.py'
       - 'agents/linux/runtime/game_data_executor.py'
+      - 'dashboard/workers/hybrid_game_data_executor.py'
+      - 'tests/hybrid_instance_update_fail_closed_test.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/content_update_detector.py'
       - 'dashboard/content_update_validation.py'
@@ -88,6 +90,8 @@ jobs:
           node --check dashboard/web/customer-content-update-policy.js
       - name: Run Universal Server Update tests
         run: python3 -m unittest tests/universal_server_update_test.py tests/universal_content_update_policy_test.py tests/controller_content_update_detector_test.py tests/minecraft_modpack_update_resolver_test.py tests/customer_content_update_policy_surface_test.py tests/customer_game_update_concurrency_test.py
+      - name: Run Hybrid instance update routing regression tests
+        run: python3 -m unittest tests/hybrid_instance_update_fail_closed_test.py
       - name: Validate dashboard worker supervision
         run: |
           bash -n dashboard/workers/worker.sh
