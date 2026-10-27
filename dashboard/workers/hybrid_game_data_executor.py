@@ -52,32 +52,10 @@ def main() -> int:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": "runtime selection missing"})
         return 1
 
-    # Verification must never enter install-json, which mutates game files.
-    if str(command.get("action") or "").strip().lower() == "verify":
-        try:
-            provider = str(selection.get("provider") or "").strip().lower()
-            if provider != "steam":
-                raise ValueError("read_only_version_probe_unsupported_provider")
-            from hybrid_steam_version_probe import probe
-            status = probe(selection)
-            target = Path(str(selection.get("install_dir")))
-            _write_result(result_path, {
-                "job_id": job_id, "status": "completed", "progress": 100,
-                "provider": provider, "game": selection.get("game"),
-                "target_path": str(target), "update_status": status,
-            })
-            return 0
-        except Exception as exc:
-            _write_result(result_path, {
-                "job_id": job_id, "status": "failed", "progress": 100,
-                "error": str(exc)[:2000],
-            })
-            return 1
-
-    # Instance-scoped updates must use the Linux Agent transactional executor.
-    # It resolves the registered working directory and validates activation.
+    # Instance-scoped checks and updates must resolve the registered installation.
+    # Never let the generic Steam probe inspect an unrelated install_dir.
     meta = selection.get("_server_update")
-    if str(command.get("action") or "").strip().lower() == "update" and isinstance(meta, dict):
+    if str(command.get("action") or "").strip().lower() in {"verify", "update"} and isinstance(meta, dict):
         agent_executor = root / "agents/linux/runtime/game_data_executor.py"
         if not agent_executor.is_file():
             _write_result(result_path, {
@@ -119,6 +97,28 @@ def main() -> int:
             _write_result(result_path, {
                 "job_id": job_id, "status": "failed", "progress": 100,
                 "error": "hybrid_instance_update_transaction_failed",
+            })
+            return 1
+
+    # Verification must never enter install-json, which mutates game files.
+    if str(command.get("action") or "").strip().lower() == "verify":
+        try:
+            provider = str(selection.get("provider") or "").strip().lower()
+            if provider != "steam":
+                raise ValueError("read_only_version_probe_unsupported_provider")
+            from hybrid_steam_version_probe import probe
+            status = probe(selection)
+            target = Path(str(selection.get("install_dir")))
+            _write_result(result_path, {
+                "job_id": job_id, "status": "completed", "progress": 100,
+                "provider": provider, "game": selection.get("game"),
+                "target_path": str(target), "update_status": status,
+            })
+            return 0
+        except Exception as exc:
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": str(exc)[:2000],
             })
             return 1
 
