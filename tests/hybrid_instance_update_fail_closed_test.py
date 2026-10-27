@@ -79,6 +79,27 @@ class HybridInstanceUpdateFailClosedTest(unittest.TestCase):
             payload = json.loads(result.read_text(encoding="utf-8"))
             self.assertEqual(payload["agent_state"], str(root / "runtime/hybrid-agent-state"))
             self.assertEqual(payload["agent_config"], str(root / "runtime/hybrid-agent-state/agent.json"))
+            # A scoped version check must use the same registered-instance
+            # executor, never the generic install_dir Steam probe.
+            request.write_text(json.dumps({
+                "job_id": "test-scoped-version-check",
+                "action": "verify",
+                "selection": {
+                    "game": "dayz", "provider": "steam",
+                    "install_dir": str(root / "incorrect-generic-target"),
+                    "_server_update": {"instance_id": "cli-000001-dayz-001", "operation": "check"},
+                },
+            }), encoding="utf-8")
+            result.unlink()
+            check = subprocess.run(
+                [sys.executable, str(EXECUTOR), str(root), str(request), str(result)],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            self.assertEqual(check.returncode, 0, check.stderr)
+            checked = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual(checked["job_id"], "test-scoped-version-check")
+            self.assertEqual(checked["agent_state"], str(root / "runtime/hybrid-agent-state"))
+            self.assertFalse((root / "incorrect-generic-target").exists())
 
 
 if __name__ == "__main__":
