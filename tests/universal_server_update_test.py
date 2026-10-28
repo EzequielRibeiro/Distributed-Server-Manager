@@ -74,6 +74,22 @@ class UniversalServerUpdateTest(unittest.TestCase):
    created=root/'steamapps'/'new-created.acf';snapshot=snapshot_files([manifest,created]);staging=prepare_staging(target);(staging/'server.bin').write_text('new',encoding='utf-8')
    previous=activate(target,staging);self.assertEqual((target/'server.bin').read_text(),'new');manifest.write_text('new-manifest',encoding='utf-8');created.write_text('new',encoding='utf-8')
    self.assertTrue(rollback(target,previous));restore_files(snapshot);self.assertEqual((target/'server.bin').read_text(),'old');self.assertEqual(manifest.read_text(),'old-manifest');self.assertFalse(created.exists())
+ def test_scoped_dayz_target_uses_registered_instance_not_generic_install_dir(self):
+  from game_data_executor import _target_for
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);actual=root/'hybrid-instance'/'serverfiles';actual.mkdir(parents=True)
+   executable=actual/'DayZServer';executable.write_text('binary')
+   generic=root/'generic'/'serverfiles';generic.mkdir(parents=True)
+   record={'instance_id':'dayz-001','game_id':'dayz','working_directory':str(actual),'executable':str(executable)}
+   selection={'game':'dayz','install_dir':str(generic),'_server_update':{'operation':'check','instance_id':'dayz-001'}}
+   with patch('instance_runtime.get_instance',return_value=record):
+    self.assertEqual(_target_for(selection),actual.resolve())
+    selection['_server_update']['operation']='update'
+    self.assertEqual(_target_for(selection),actual.resolve())
+   executable.unlink()
+   with patch('instance_runtime.get_instance',return_value=record):
+    with self.assertRaisesRegex(RuntimeError,'executable is outside instance directory or missing'):
+     _target_for(selection)
  def test_transaction_refuses_swap_when_instance_is_not_stopped(self):
   from server_update_agent import perform_update,ServerUpdateError
   from unittest.mock import MagicMock
