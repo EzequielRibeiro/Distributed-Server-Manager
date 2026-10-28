@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -230,6 +231,15 @@ def perform_update(
                         raise ServerUpdateError("instance backup artifact is missing or has unexpected size: " + current)
                 except OSError as exc:
                     raise ServerUpdateError("cannot inspect instance backup artifact: " + current) from exc
+                try:
+                    digest = hashlib.sha256()
+                    with artifact_path.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                except OSError as exc:
+                    raise ServerUpdateError("cannot read instance backup artifact: " + current) from exc
+                if digest.hexdigest().lower() != checksum.lower():
+                    raise ServerUpdateError("instance backup checksum mismatch: " + current)
                 backups.append({
                     "instance_id": current,
                     "backup_id": backup_id,
