@@ -165,6 +165,25 @@ class UniversalServerUpdateTest(unittest.TestCase):
   self.assertIn('AND active_job_id=?',sql)
   self.assertEqual(params[-1],'old-job')
   self.assertFalse(any('UPDATE instance_update_runs SET' in statement for statement,_ in statements))
+ def test_missing_update_status_fails_closed_without_exception(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from server_update_repository import ServerUpdateRepository
+  repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  statements=[]
+  class Session:
+   def execute(self,sql,params):
+    statements.append((sql,params))
+    return SimpleNamespace(rowcount=1)
+  @contextmanager
+  def fake_session(transaction=False):
+   yield Session()
+  repo.session=fake_session
+  job={'job_id':'job-no-detail','selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  repo.apply_game_data_result(job,{'status':'completed','readiness':'unchanged'})
+  self.assertTrue(any('UPDATE instance_update_state SET' in sql and params[1]=='invalid_update_result' for sql,params in statements))
+  self.assertTrue(any('UPDATE instance_update_runs SET' in sql and params[1]=='invalid_update_result' for sql,params in statements))
  def test_active_failed_result_updates_its_own_run(self):
   from contextlib import contextmanager
   from types import SimpleNamespace
