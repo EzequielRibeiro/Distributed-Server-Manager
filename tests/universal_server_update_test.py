@@ -167,8 +167,9 @@ class UniversalServerUpdateTest(unittest.TestCase):
    yield Session()
   repo.session=session
   repo.snapshot=lambda job_id: current
-  with patch('server_update_repository.ServerUpdateRepository.apply_game_data_result') as reconcile:
+  with patch('server_update_repository.ServerUpdateRepository') as repository_type:
    repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100})
+  reconcile=repository_type.return_value.apply_game_data_result
   final=[params for sql,params in writes if 'UPDATE agent_game_data_jobs SET' in sql]
   self.assertEqual(len(final),1)
   self.assertEqual(final[0][0],'failed')
