@@ -149,6 +149,31 @@ class UniversalServerUpdateTest(unittest.TestCase):
   self.assertIn('AND active_job_id=?',sql)
   self.assertEqual(params[-1],'old-job')
   self.assertFalse(any('UPDATE instance_update_runs SET' in sql for sql,_ in statements))
+ def test_agent_job_rejects_unproven_scoped_update_completion(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from agent_game_data_repository import AgentGameDataRepository
+  repo=AgentGameDataRepository.__new__(AgentGameDataRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  current={'job_id':'job-1','agent_id':'agent-1','action':'update','status':'running','progress':10,
+           'selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  writes=[]
+  class Session:
+   def execute(self,sql,params):
+    writes.append((sql,params))
+    return SimpleNamespace(rowcount=1)
+  @contextmanager
+  def session(transaction=False):
+   yield Session()
+  repo.session=session
+  repo.snapshot=lambda job_id: current
+  with patch('server_update_repository.ServerUpdateRepository.apply_game_data_result') as reconcile:
+   repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100})
+  final=[params for sql,params in writes if 'UPDATE agent_game_data_jobs SET' in sql]
+  self.assertEqual(len(final),1)
+  self.assertEqual(final[0][0],'failed')
+  self.assertEqual(final[0][4],'invalid_update_result')
+  self.assertEqual(reconcile.call_args.args[1]['status'],'failed')
  def test_schema_parity(self):
   for backend in ('sqlite','postgresql','mysql','mariadb'):
    ddl=server_update_ddl(backend).lower();content=content_update_ddl(backend).lower()
