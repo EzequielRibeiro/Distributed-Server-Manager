@@ -158,6 +158,18 @@ class UniversalServerUpdateTest(unittest.TestCase):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
     self.assertEqual((target/'server.bin').read_text(),'new')
     self.assertTrue(list(target.parent.glob('.serverfiles.capivara-update-previous-*')))
+ def test_unsupported_or_unknown_detector_never_stops_dayz(self):
+  from server_update_agent import perform_update,VersionValidationError
+  for detail in ({'state':'unsupported','detector_supported':False},{'state':'unknown','detector_supported':True}):
+   with self.subTest(detail=detail),tempfile.TemporaryDirectory() as td:
+    target=Path(td)/'serverfiles';target.mkdir()
+    record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+    with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',return_value=detail),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle:
+     with self.assertRaises(VersionValidationError):
+      perform_update(selection,target,lambda stage:self.fail('installer should not run'))
+     lifecycle.assert_not_called()
+    self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-staging-*')))
  def test_transaction_success_restarts_and_commits_previous_tree(self):
   from server_update_agent import perform_update
   with tempfile.TemporaryDirectory() as td:
