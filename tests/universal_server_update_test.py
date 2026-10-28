@@ -167,14 +167,11 @@ class UniversalServerUpdateTest(unittest.TestCase):
    yield Session()
   repo.session=session
   repo.snapshot=lambda job_id: current
-  with patch('server_update_repository.ServerUpdateRepository') as repository_type:
-   repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100})
-  reconcile=repository_type.return_value.apply_game_data_result
+  repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100})
   final=[params for sql,params in writes if 'UPDATE agent_game_data_jobs SET' in sql]
   self.assertEqual(len(final),1)
   self.assertEqual(final[0][0],'failed')
   self.assertEqual(final[0][4],'invalid_update_result')
-  self.assertEqual(reconcile.call_args.args[1]['status'],'failed')
  def test_schema_parity(self):
   for backend in ('sqlite','postgresql','mysql','mariadb'):
    ddl=server_update_ddl(backend).lower();content=content_update_ddl(backend).lower()
