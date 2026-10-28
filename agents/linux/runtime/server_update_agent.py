@@ -168,7 +168,9 @@ def perform_update(
     config = _local_agent_config(record)
     game = str(record.get("game_id") or "")
     meta = selection.get("_server_update") or {}
-    backup_enabled = bool(meta.get("backup_before_update", True))
+    # DayZ updates must never bypass the verified pre-activation backup, even
+    # when an older controller or client explicitly requests opt-out.
+    backup_enabled = game == "dayz" or bool(meta.get("backup_before_update", True))
     target = Path(target).resolve()
     affected = _affected(config, game, target, str(meta.get('instance_id') or ''))
     running: list[str] = []
