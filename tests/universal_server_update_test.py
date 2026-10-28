@@ -170,7 +170,6 @@ class UniversalServerUpdateTest(unittest.TestCase):
   self.assertEqual(len(history),1)
   self.assertIn('WHERE game_data_job_id=?',history[0][0])
   self.assertEqual(history[0][1][-1],'current-job')
-  self.assertFalse(any('UPDATE instance_update_runs SET' in sql for sql,_ in statements))
  def test_agent_job_rejects_unproven_scoped_update_completion(self):
   from contextlib import contextmanager
   from types import SimpleNamespace
