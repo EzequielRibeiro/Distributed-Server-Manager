@@ -214,6 +214,7 @@ def perform_update(
                 backup_id = detail.get("backup_id") if isinstance(detail, dict) else None
                 checksum = detail.get("sha256") if isinstance(detail, dict) else None
                 size = detail.get("size_bytes") if isinstance(detail, dict) else None
+                artifact = detail.get("artifact_path") if isinstance(detail, dict) else None
                 if (
                     not isinstance(backup_id, str) or not backup_id.strip()
                     or not isinstance(checksum, str) or len(checksum) != 64
@@ -221,6 +222,14 @@ def perform_update(
                     or not isinstance(size, int) or isinstance(size, bool) or size <= 0
                 ):
                     raise ServerUpdateError("instance backup returned incomplete integrity evidence: " + current)
+                if not isinstance(artifact, str) or not artifact.strip():
+                    raise ServerUpdateError("instance backup has no artifact path: " + current)
+                artifact_path = Path(artifact)
+                try:
+                    if not artifact_path.is_file() or artifact_path.stat().st_size != size:
+                        raise ServerUpdateError("instance backup artifact is missing or has unexpected size: " + current)
+                except OSError as exc:
+                    raise ServerUpdateError("cannot inspect instance backup artifact: " + current) from exc
                 backups.append({
                     "instance_id": current,
                     "backup_id": backup_id,
