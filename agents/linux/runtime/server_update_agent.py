@@ -167,6 +167,8 @@ def perform_update(
     provider_snapshot: dict[str, tuple[bool, bytes | None, int | None]] = {}
 
     before = detect_update(selection, target, steamcmd)
+    if not before.get("detector_supported") or before.get("state") not in {"up_to_date", "update_available"}:
+        raise VersionValidationError("server version detection is unsupported or incomplete")
     if before.get("state") == "up_to_date":
         return {
             "update_status_before": before,
@@ -186,7 +188,7 @@ def perform_update(
         installer(staging)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
-        if staged_status.get("detector_supported") and staged_status.get("state") != "up_to_date":
+        if not staged_status.get("detector_supported") or staged_status.get("state") != "up_to_date":
             raise VersionValidationError("staged server version validation failed")
 
         for current in affected:
@@ -226,7 +228,7 @@ def perform_update(
         activated = True
 
         after = detect_update(selection, target, steamcmd, force_refresh=True)
-        if after.get("detector_supported") and after.get("state") != "up_to_date":
+        if not after.get("detector_supported") or after.get("state") != "up_to_date":
             raise VersionValidationError("activated server version validation failed")
 
         restarted, failures = _restart_and_validate(config, running)
