@@ -261,6 +261,25 @@ class UniversalServerUpdateTest(unittest.TestCase):
    self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
    self.assertEqual((target/'server.bin').read_text(),'old')
    self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-staging-*')))
+ def test_restart_waits_for_running_state_before_accepting_readiness(self):
+  from server_update_agent import _restart_and_validate
+  states=iter(['starting','starting','running'])
+  with patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}) as doctor,patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}) as status,patch('server_update_agent.time.sleep') as sleep:
+   restarted,failures=_restart_and_validate({'agent_id':'agent-local'},['dayz-001'])
+  self.assertEqual(restarted,['dayz-001'])
+  self.assertEqual(failures,[])
+  self.assertEqual(status.call_count,3)
+  self.assertEqual(doctor.call_count,3)
+  self.assertEqual(sleep.call_count,2)
+  lifecycle.assert_called_once_with({'agent_id':'agent-local'},'dayz-001','start')
+ def test_restart_rejects_doctor_ready_when_process_never_runs(self):
+  from server_update_agent import _restart_and_validate
+  with patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.instance_runtime.status',return_value={'observed_state':'stopped'}) as status,patch('server_update_agent.time.sleep') as sleep:
+   restarted,failures=_restart_and_validate({'agent_id':'agent-local'},['dayz-001'])
+  self.assertEqual(restarted,['dayz-001'])
+  self.assertEqual(failures,['dayz-001'])
+  self.assertEqual(status.call_count,10)
+  self.assertEqual(sleep.call_count,9)
  def test_successful_recovery_removes_staging_after_failed_stop(self):
   from server_update_agent import perform_update,ServerUpdateError
   with tempfile.TemporaryDirectory() as td:
