@@ -302,7 +302,10 @@ def perform_update(
         except Exception as recovery_exc:
             rollback_error = recovery_exc
         finally:
-            cleanup_staging(staging)
+            # Preserve the staged candidate when rollback failed: it may be
+            # required for forensic inspection or manual recovery.
+            if rollback_error is None:
+                cleanup_staging(staging)
 
         if rollback_error is not None:
             raise RollbackError(f"server update failed ({exc}); rollback failed ({rollback_error})") from exc
