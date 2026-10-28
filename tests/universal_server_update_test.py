@@ -261,6 +261,42 @@ class UniversalServerUpdateTest(unittest.TestCase):
    self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
    self.assertEqual((target/'server.bin').read_text(),'old')
    self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-staging-*')))
+ def test_dayz_bind_targets_survive_directory_swap_and_rollback(self):
+  # systemd BindPaths mounts are private to the service; this exercises
+  # the host-side directory targets and keeps the bind sources untouched.
+  from server_update_transaction import commit
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td)
+   target=root/'game-data'/'serverfiles'
+   target.mkdir(parents=True)
+   (target/'DayZServer').write_text('old')
+   storage=root/'instance-storage'
+   mission_source=storage/'mpmissions'/'hardcore.namalsk'
+   keys_source=storage/'.dsm'/'dayz-keys'
+   mission_source.mkdir(parents=True)
+   keys_source.mkdir(parents=True)
+   (mission_source/'mission.sqm').write_text('private mission')
+   (keys_source/'server.bikey').write_text('private key')
+   mission_target=target/'mpmissions'/'hardcore.namalsk'
+   keys_target=target/'keys'
+   mission_target.mkdir(parents=True)
+   keys_target.mkdir()
+   (mission_target/'mission.sqm').write_text('old placeholder')
+   (keys_target/'server.bikey').write_text('old placeholder')
+   stage=prepare_staging(target)
+   (stage/'DayZServer').write_text('new')
+   previous=activate(target,stage)
+   self.assertTrue(mission_target.is_dir())
+   self.assertTrue(keys_target.is_dir())
+   self.assertEqual((target/'DayZServer').read_text(),'new')
+   self.assertEqual((mission_source/'mission.sqm').read_text(),'private mission')
+   self.assertEqual((keys_source/'server.bikey').read_text(),'private key')
+   self.assertTrue(rollback(target,previous))
+   self.assertTrue(mission_target.is_dir())
+   self.assertTrue(keys_target.is_dir())
+   self.assertEqual((target/'DayZServer').read_text(),'old')
+   self.assertEqual((mission_source/'mission.sqm').read_text(),'private mission')
+   self.assertEqual((keys_source/'server.bikey').read_text(),'private key')
  def test_restart_waits_for_running_state_before_accepting_readiness(self):
   from server_update_agent import _restart_and_validate
   states=iter(['starting','starting','running'])
