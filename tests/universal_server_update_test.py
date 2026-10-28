@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import sys,tempfile,unittest
+import hashlib,sys,tempfile,unittest
 from datetime import datetime,timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +11,11 @@ from server_update_platform import effective_content_update_mode,normalize_conte
 from server_update_provider import parse_manifest_buildid,parse_app_info_buildid,detect_update
 from server_update_schema import content_update_ddl,ensure_server_update_schema,server_update_ddl
 from server_update_transaction import activate,prepare_staging,restore_files,rollback,snapshot_files
+
+def _verified_backup_fixture(target):
+ artifact=target.parent/'verified-pre-update-backup.tar.gz'
+ artifact.write_bytes(b'verified pre-update test fixture')
+ return {'backup_id':'backup-test','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'size_bytes':artifact.stat().st_size,'artifact_path':str(artifact)}
 
 class UniversalServerUpdateTest(unittest.TestCase):
  def test_policy_modes_and_window(self):
@@ -134,7 +139,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
    statuses=iter(['running','running'])
    detector=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_: {'observed_state':next(statuses)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activate_swap:
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_: {'observed_state':next(statuses)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activate_swap,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
     with self.assertRaises(ServerUpdateError):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
     activate_swap.assert_not_called()
@@ -154,7 +159,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
    ])
    def detector(*args,**kwargs):
     return next(detector_calls)
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=detector),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent._stop_running'):
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=detector),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent._stop_running'),patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
     with self.assertRaisesRegex(RollbackError,'instance not stopped before rollback'):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
     self.assertEqual((target/'server.bin').read_text(),'new')
@@ -178,7 +183,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
     target=Path(td)/'serverfiles';target.mkdir()
     record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
     selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
-    with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',return_value=detail),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle:
+    with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',return_value=detail),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
      with self.assertRaises(VersionValidationError):
       perform_update(selection,target,lambda stage:self.fail('installer should not run'))
      lifecycle.assert_not_called()
@@ -190,12 +195,13 @@ class UniversalServerUpdateTest(unittest.TestCase):
    target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
    artifact=Path(td)/'backup.tar.gz';artifact.write_bytes(b'valid backup content')
    record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
-   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':True}}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
    detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
    states=iter(['running','stopped','stopped','running'])
    backup={'backup_id':'backup-1','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'size_bytes':artifact.stat().st_size,'artifact_path':str(artifact)}
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',return_value=backup):
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',return_value=backup) as create_backup:
     detail=perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   create_backup.assert_called_once()
    self.assertEqual(detail['readiness'],'healthy')
    self.assertEqual(detail['activation'],'atomic-swap')
    self.assertEqual(detail['backups'][0]['sha256'],backup['sha256'])
@@ -324,7 +330,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
    detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
    states=iter(['running','running','running'])
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activation:
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activation,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
     with self.assertRaisesRegex(ServerUpdateError,'rollback completed'):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
    activation.assert_not_called()
@@ -339,7 +345,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
    detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
    states=iter(['running','running'])
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent.instance_runtime.doctor',return_value={'ready':False}),patch('server_update_agent.time.sleep'),patch('server_update_agent.activate') as activation:
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent.instance_runtime.doctor',return_value={'ready':False}),patch('server_update_agent.time.sleep'),patch('server_update_agent.activate') as activation,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
     with self.assertRaisesRegex(RollbackError,'runtime recovery failed'):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
    activation.assert_not_called()
@@ -359,7 +365,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
     {'state':'up_to_date','detector_supported':True},
    ])
    states=iter(['running','stopped','stopped','running'])
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}):
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
     detail=perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
    self.assertEqual(detail['readiness'],'healthy')
    self.assertEqual(detail['activation'],'atomic-swap')
