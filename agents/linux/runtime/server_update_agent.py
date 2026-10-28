@@ -211,11 +211,21 @@ def perform_update(
                     config,
                     {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "stopped"}},
                 )
+                backup_id = detail.get("backup_id") if isinstance(detail, dict) else None
+                checksum = detail.get("sha256") if isinstance(detail, dict) else None
+                size = detail.get("size_bytes") if isinstance(detail, dict) else None
+                if (
+                    not isinstance(backup_id, str) or not backup_id.strip()
+                    or not isinstance(checksum, str) or len(checksum) != 64
+                    or any(char not in "0123456789abcdefABCDEF" for char in checksum)
+                    or not isinstance(size, int) or isinstance(size, bool) or size <= 0
+                ):
+                    raise ServerUpdateError("instance backup returned incomplete integrity evidence: " + current)
                 backups.append({
                     "instance_id": current,
-                    "backup_id": detail.get("backup_id"),
-                    "sha256": detail.get("sha256"),
-                    "size_bytes": detail.get("size_bytes"),
+                    "backup_id": backup_id,
+                    "sha256": checksum,
+                    "size_bytes": size,
                 })
 
         for current in affected:
