@@ -177,6 +177,7 @@ class ServerUpdateRepository:
                     and result.get('readiness')=='healthy')
   valid_noop=(result.get('readiness')=='unchanged'
               and not result.get('activation')
+              and isinstance(detail,dict)
               and detail.get('state')=='up_to_date')
   valid_update=(operation=='update' and valid_builds
                 and installed==available
