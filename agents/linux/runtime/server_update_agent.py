@@ -104,6 +104,8 @@ def _provider_metadata_snapshot(selection: dict[str, Any], target: Path) -> dict
     appid = str(install.get("package_id") or "").strip()
     if not appid.isdigit():
         return {}
+    if isinstance(selection.get("_server_update"), dict):
+        return snapshot_files([target / "steamapps" / f"appmanifest_{appid}.acf"])
     return snapshot_files(_manifest_candidates(target, appid))
 
 
