@@ -223,7 +223,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
    yield Session()
   repo.session=session
   repo.snapshot=lambda job_id: current
-  repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100})
+  repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100,'readiness':'unchanged'})
   final=[params for sql,params in writes if 'UPDATE agent_game_data_jobs SET' in sql]
   self.assertEqual(len(final),1)
   self.assertEqual(final[0][0],'failed')
