@@ -148,6 +148,28 @@ class UniversalServerUpdateTest(unittest.TestCase):
   sql,params=state_updates[0]
   self.assertIn('AND active_job_id=?',sql)
   self.assertEqual(params[-1],'old-job')
+  self.assertFalse(any('UPDATE instance_update_runs SET' in statement for statement,_ in statements))
+ def test_active_failed_result_updates_its_own_run(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from server_update_repository import ServerUpdateRepository
+  repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  statements=[]
+  class Session:
+   def execute(self,sql,params):
+    statements.append((sql,params))
+    return SimpleNamespace(rowcount=1)
+  @contextmanager
+  def fake_session(transaction=False):
+   yield Session()
+  repo.session=fake_session
+  job={'job_id':'current-job','selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  repo.apply_game_data_result(job,{'status':'failed'})
+  history=[(sql,params) for sql,params in statements if 'UPDATE instance_update_runs SET' in sql]
+  self.assertEqual(len(history),1)
+  self.assertIn('WHERE game_data_job_id=?',history[0][0])
+  self.assertEqual(history[0][1][-1],'current-job')
   self.assertFalse(any('UPDATE instance_update_runs SET' in sql for sql,_ in statements))
  def test_agent_job_rejects_unproven_scoped_update_completion(self):
   from contextlib import contextmanager
