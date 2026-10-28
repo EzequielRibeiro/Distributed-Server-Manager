@@ -253,7 +253,7 @@ class UniversalServerUpdateTest(unittest.TestCase):
    record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':True}}
    detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
-   states=iter(['running','stopped'])
+   states=iter(['running','stopped','running'])
    with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',side_effect=RuntimeError('backup unavailable')),patch('server_update_agent.activate') as activation:
     with self.assertRaisesRegex(ServerUpdateError,'backup unavailable'):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
