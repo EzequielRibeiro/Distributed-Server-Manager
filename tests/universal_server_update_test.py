@@ -158,6 +158,18 @@ class UniversalServerUpdateTest(unittest.TestCase):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
     self.assertEqual((target/'server.bin').read_text(),'new')
     self.assertTrue(list(target.parent.glob('.serverfiles.capivara-update-previous-*')))
+ def test_scoped_rollback_snapshot_excludes_other_steam_installations(self):
+  from server_update_agent import _provider_metadata_snapshot
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'instance'/'serverfiles';target.mkdir(parents=True)
+   external=root/'instance'/'steamapps';external.mkdir()
+   external_manifest=external/'appmanifest_223350.acf'
+   external_manifest.write_text('"buildid" "25963285"')
+   selection={'provider':'steam','install':{'package_id':'223350'},'_server_update':{'instance_id':'dayz-001','operation':'update'}}
+   snapshot=_provider_metadata_snapshot(selection,target)
+   self.assertEqual(set(snapshot),{str(target/'steamapps'/'appmanifest_223350.acf')})
+   self.assertNotIn(str(external_manifest),snapshot)
+   self.assertEqual(snapshot[str(target/'steamapps'/'appmanifest_223350.acf')][0],False)
  def test_unsupported_or_unknown_detector_never_stops_dayz(self):
   from server_update_agent import perform_update,VersionValidationError
   for detail in ({'state':'unsupported','detector_supported':False},{'state':'unknown','detector_supported':True}):
