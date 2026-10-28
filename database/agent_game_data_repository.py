@@ -109,7 +109,7 @@ class AgentGameDataRepository:
                           and installed==available)
             valid_activation=(result.get("activation")=="atomic-swap" and result.get("readiness")=="healthy")
             valid_noop=(result.get("readiness")=="unchanged" and not result.get("activation"))
-            if not (valid_builds and detail.get("state")=="up_to_date" and (valid_activation or valid_noop)):
+            if not (valid_builds and isinstance(detail,dict) and detail.get("state")=="up_to_date" and (valid_activation or valid_noop)):
                 result={**result,"status":"failed","progress":100,"error":"invalid_update_result"}
                 status="failed"
         if status not in {"running","completed","failed"}:raise ValueError("invalid game-data result status")
