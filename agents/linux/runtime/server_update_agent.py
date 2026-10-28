@@ -294,8 +294,6 @@ def perform_update(
                     raise RollbackError("previous game-data tree is unavailable")
                 previous = None
             restore_files(provider_snapshot)
-            cleanup_staging(staging)
-            staging = None
             _, recovery_failures = _restart_and_validate(config, running)
             if recovery_failures:
                 raise RollbackError("rollback restored files but runtime recovery failed: " + ",".join(recovery_failures))
