@@ -6,6 +6,7 @@ import shutil
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -127,8 +128,17 @@ def _restart_and_validate(config: dict[str, Any], instance_ids: list[str]) -> tu
         try:
             instance_runtime.lifecycle(config, current, "start")
             restarted.append(current)
-            doctor = instance_runtime.doctor(config, current)
-            if not doctor.get("ready"):
+            # Doctor readiness alone does not prove that the game process is running.
+            # Allow asynchronous systemd startup to settle before accepting recovery.
+            healthy = False
+            for attempt in range(10):
+                doctor = instance_runtime.doctor(config, current)
+                if doctor.get("ready") and instance_runtime.status(config, current).get("observed_state") == "running":
+                    healthy = True
+                    break
+                if attempt < 9:
+                    time.sleep(1)
+            if not healthy:
                 failures.append(current)
         except Exception:
             failures.append(current)
