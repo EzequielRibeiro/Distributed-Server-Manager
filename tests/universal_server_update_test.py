@@ -128,16 +128,17 @@ class UniversalServerUpdateTest(unittest.TestCase):
      _target_for(selection)
  def test_transaction_refuses_swap_when_instance_is_not_stopped(self):
   from server_update_agent import perform_update,ServerUpdateError
-  from unittest.mock import MagicMock
   with tempfile.TemporaryDirectory() as td:
    target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
    record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
-   statuses=iter(['running','running','running'])
-   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',return_value={'state':'update_available','detector_supported':False}),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_: {'observed_state':next(statuses)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.activate') as activate_swap:
+   statuses=iter(['running','running'])
+   detector=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_: {'observed_state':next(statuses)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activate_swap:
     with self.assertRaises(ServerUpdateError):
      perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
     activate_swap.assert_not_called()
+    self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
     self.assertEqual((target/'server.bin').read_text(),'old')
  def test_rollback_refuses_swap_while_instance_remains_running(self):
   from server_update_agent import perform_update,RollbackError
