@@ -65,6 +65,24 @@ class UniversalServerUpdateTest(unittest.TestCase):
   with patch('server_update_provider.installed_steam_build',return_value='100'),patch('server_update_provider.upstream_steam_build',return_value='101'):
    for selection in selections:
     detail=detect_update(selection,Path('/tmp/game'),'steamcmd');self.assertEqual(detail['state'],'update_available');self.assertTrue(detail['rollback_supported'])
+ def test_scoped_steam_detector_never_reads_external_manifest(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'instance'/'serverfiles';target.mkdir(parents=True)
+   external=root/'instance'/'steamapps';external.mkdir()
+   (external/'appmanifest_223350.acf').write_text('"buildid" "25963285"')
+   selection={'provider':'steam','game':'dayz','install':{'package_id':'223350'},'_server_update':{'instance_id':'dayz-001','operation':'check'}}
+   with patch('server_update_provider.upstream_steam_build',return_value='25963285'):
+    detail=detect_update(selection,target,'steamcmd')
+    self.assertIsNone(detail['installed_version'])
+    self.assertEqual(detail['state'],'unknown')
+    (target/'steamapps').mkdir()
+    (target/'steamapps'/'appmanifest_223350.acf').write_text('"buildid" "24570360"')
+    detail=detect_update(selection,target,'steamcmd')
+    self.assertEqual(detail['installed_version'],'24570360')
+    self.assertEqual(detail['state'],'update_available')
+   generic={'provider':'steam','game':'dayz','install':{'package_id':'223350'}}
+   with patch('server_update_provider.upstream_steam_build',return_value='25963285'):
+    self.assertEqual(detect_update(generic,target,'steamcmd')['installed_version'],'24570360')
  def test_non_steam_detector_fails_closed(self):
   detail=detect_update({'provider':'http'},Path('/tmp/game'));self.assertEqual(detail['state'],'unsupported');self.assertFalse(detail['detector_supported'])
  def test_transaction_restores_game_data_and_provider_metadata(self):
