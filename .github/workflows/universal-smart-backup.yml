@@ -17,6 +17,7 @@ on:
       - 'release/build_agent_package.sh'
       - 'bin/cap'
       - 'tests/universal_smart_backup_test.py'
+      - 'tests/backup_restore_rollback_safety_test.py'
       - 'tests/smart_backup_intelligence_test.py'
       - 'docs/architecture/smart-backup-v2.md'
       - '.github/workflows/universal-smart-backup.yml'
@@ -34,6 +35,7 @@ jobs:
         run: |
           python3 -m unittest tests/universal_smart_backup_test.py
           python3 -m unittest tests/smart_backup_intelligence_test.py
+          python3 -m unittest tests/backup_restore_rollback_safety_test.py
       - name: Verify composition and package contracts
         run: |
           grep -Fq 'BACKUP_PATH' dashboard/server_part13.py
