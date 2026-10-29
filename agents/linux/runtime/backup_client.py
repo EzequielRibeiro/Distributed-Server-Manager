@@ -319,7 +319,13 @@ def _restore_direct(config, command):
                     "restored server did not become healthy enough to run"
                 )
 
-        shutil.rmtree(previous)
+        # Cleanup is not part of the activation transaction. An incomplete
+        # deletion must not trigger rollback using a partially removed copy.
+        try:
+            shutil.rmtree(previous)
+        except OSError:
+            # Preserve any remaining recovery files for explicit inspection.
+            pass
     except Exception as original_error:
         rollback_errors = []
         if moved_original:
