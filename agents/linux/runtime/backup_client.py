@@ -259,6 +259,24 @@ def _validate_manifest(record, manifest):
         raise ValueError("backup runtime is incompatible with this instance")
 
 
+
+def _preserve_restored_owner(stage: Path, original: Path) -> None:
+    """Restore the instance owner's UID/GID before activating a root-staged tree."""
+    if os.geteuid() != 0:
+        return
+    owner = original.stat()
+    pending = [stage]
+    while pending:
+        current = pending.pop()
+        if current.is_symlink():
+            raise RuntimeError(f"restore staging contains a symlink: {current}")
+        if current.is_dir():
+            pending.extend(current.iterdir())
+        elif not current.is_file():
+            raise RuntimeError(f"unsupported restore staging entry: {current}")
+        os.chown(current, owner.st_uid, owner.st_gid)
+
+
 def _restore_direct(config, command):
     """Restore locally when the Agent process owns the storage boundary."""
     instance_id = str(command["instance_id"])
@@ -288,6 +306,7 @@ def _restore_direct(config, command):
         manifest_path = stage / MANIFEST_NAME
         if manifest_path.exists():
             manifest_path.unlink()
+        _preserve_restored_owner(stage, root)
         os.replace(root, previous)
         moved_original = True
         os.replace(stage, root)
