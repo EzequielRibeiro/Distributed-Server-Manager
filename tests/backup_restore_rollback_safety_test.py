@@ -133,6 +133,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             root.mkdir()
             (root / "world.dat").write_text("original")
             previous = Path(temp) / "instance.c5-previous"
+            (Path(temp) / "backup.tar").write_bytes(b"test-backup")
             rmtree = backup_client.shutil.rmtree
 
             def remove(path, *args, **kwargs):
