@@ -60,5 +60,32 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             self.assertFalse((Path(temp) / "instance.c5-previous").exists())
 
 
+    def test_restart_failure_restores_original_and_reports_recovery_failure(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            (root / "world.dat").write_text("original")
+            starts = []
+
+            def lifecycle(_config, _instance, action):
+                if action == "start":
+                    starts.append(action)
+                    raise RuntimeError("start unavailable")
+
+            with (
+                patch.object(backup_client, "_owned", return_value=({}, root)),
+                patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
+                patch.object(backup_client, "status", return_value={"observed_state": "running"}),
+                patch.object(backup_client, "lifecycle", side_effect=lifecycle),
+                patch.object(backup_client, "_safe_extract", return_value=None),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "restart recovery failed"):
+                    backup_client._restore_direct({}, {"instance_id": "test", "backup_id": "test"})
+
+            self.assertEqual(len(starts), 2)
+            self.assertEqual((root / "world.dat").read_text(), "original")
+            self.assertFalse((Path(temp) / "instance.c5-previous").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
