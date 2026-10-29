@@ -127,5 +127,35 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             chown.assert_not_called()
 
 
+    def test_cleanup_failure_does_not_rollback_successful_activation(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            (root / "world.dat").write_text("original")
+            previous = Path(temp) / "instance.c5-previous"
+            rmtree = backup_client.shutil.rmtree
+
+            def remove(path, *args, **kwargs):
+                if Path(path) == previous:
+                    raise OSError("cleanup unavailable")
+                return rmtree(path, *args, **kwargs)
+
+            with (
+                patch.object(backup_client, "_owned", return_value=({}, root)),
+                patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
+                patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+                patch.object(backup_client, "_safe_extract", return_value=None),
+                patch.object(backup_client.shutil, "rmtree", side_effect=remove),
+                patch.object(backup_client, "_digest", return_value="test"),
+            ):
+                result = backup_client._restore_direct(
+                    {}, {"instance_id": "test", "backup_id": "test"}
+                )
+            self.assertEqual(result["backup_id"], "test")
+            self.assertTrue(root.exists())
+            self.assertTrue(previous.exists())
+            self.assertEqual((previous / "world.dat").read_text(), "original")
+
+
 if __name__ == "__main__":
     unittest.main()
