@@ -259,6 +259,24 @@ def _validate_manifest(record, manifest):
         raise ValueError("backup runtime is incompatible with this instance")
 
 
+
+def _preserve_restored_owner(stage: Path, original: Path) -> None:
+    """Restore the instance owner's UID/GID before activating a root-staged tree."""
+    if os.geteuid() != 0:
+        return
+    owner = original.stat()
+    pending = [stage]
+    while pending:
+        current = pending.pop()
+        if current.is_symlink():
+            raise RuntimeError(f"restore staging contains a symlink: {current}")
+        if current.is_dir():
+            pending.extend(current.iterdir())
+        elif not current.is_file():
+            raise RuntimeError(f"unsupported restore staging entry: {current}")
+        os.chown(current, owner.st_uid, owner.st_gid)
+
+
 def _restore_direct(config, command):
     """Restore locally when the Agent process owns the storage boundary."""
     instance_id = str(command["instance_id"])
@@ -266,6 +284,11 @@ def _restore_direct(config, command):
     artifact = _artifact(instance_id, str(command.get("backup_id") or ""))
     was_running = status(config, instance_id).get("observed_state") == "running"
 
+    previous = root.with_name(root.name + ".c5-previous")
+    if previous.exists():
+        raise RuntimeError(
+            f"refusing restore: pre-existing recovery directory {previous}"
+        )
     if was_running:
         lifecycle(config, instance_id, "stop")
 
@@ -275,8 +298,7 @@ def _restore_direct(config, command):
             dir=str(root.parent),
         )
     )
-    previous = root.with_name(root.name + ".c5-previous")
-    swapped = False
+    moved_original = False
 
     try:
         manifest = _safe_extract(artifact, stage)
@@ -284,11 +306,10 @@ def _restore_direct(config, command):
         manifest_path = stage / MANIFEST_NAME
         if manifest_path.exists():
             manifest_path.unlink()
-        if previous.exists():
-            shutil.rmtree(previous)
+        _preserve_restored_owner(stage, root)
         os.replace(root, previous)
+        moved_original = True
         os.replace(stage, root)
-        swapped = True
 
         if was_running:
             lifecycle(config, instance_id, "start")
@@ -298,21 +319,33 @@ def _restore_direct(config, command):
                     "restored server did not become healthy enough to run"
                 )
 
-        shutil.rmtree(previous, ignore_errors=True)
-    except Exception:
-        if swapped:
+        # Cleanup is not part of the activation transaction. An incomplete
+        # deletion must not trigger rollback using a partially removed copy.
+        try:
+            shutil.rmtree(previous)
+        except OSError:
+            # Preserve any remaining recovery files for explicit inspection.
+            pass
+    except Exception as original_error:
+        rollback_errors = []
+        if moved_original:
             try:
                 if root.exists():
-                    shutil.rmtree(root, ignore_errors=True)
-                if previous.exists():
-                    os.replace(previous, root)
-                if was_running:
-                    try:
-                        lifecycle(config, instance_id, "start")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    shutil.rmtree(root)
+                os.replace(previous, root)
+            except Exception as exc:
+                rollback_errors.append(f"directory recovery failed: {exc}")
+        if was_running:
+            try:
+                lifecycle(config, instance_id, "start")
+            except Exception as exc:
+                rollback_errors.append(f"restart recovery failed: {exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                f"restore failed: {original_error}; "
+                + "; ".join(rollback_errors)
+                + f"; recovery copy may remain at {previous}"
+            ) from original_error
         raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
