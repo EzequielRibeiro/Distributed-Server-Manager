@@ -266,6 +266,11 @@ def _restore_direct(config, command):
     artifact = _artifact(instance_id, str(command.get("backup_id") or ""))
     was_running = status(config, instance_id).get("observed_state") == "running"
 
+    previous = root.with_name(root.name + ".c5-previous")
+    if previous.exists():
+        raise RuntimeError(
+            f"refusing restore: pre-existing recovery directory {previous}"
+        )
     if was_running:
         lifecycle(config, instance_id, "stop")
 
@@ -275,8 +280,7 @@ def _restore_direct(config, command):
             dir=str(root.parent),
         )
     )
-    previous = root.with_name(root.name + ".c5-previous")
-    swapped = False
+    moved_original = False
 
     try:
         manifest = _safe_extract(artifact, stage)
@@ -284,11 +288,9 @@ def _restore_direct(config, command):
         manifest_path = stage / MANIFEST_NAME
         if manifest_path.exists():
             manifest_path.unlink()
-        if previous.exists():
-            shutil.rmtree(previous)
         os.replace(root, previous)
+        moved_original = True
         os.replace(stage, root)
-        swapped = True
 
         if was_running:
             lifecycle(config, instance_id, "start")
@@ -298,21 +300,27 @@ def _restore_direct(config, command):
                     "restored server did not become healthy enough to run"
                 )
 
-        shutil.rmtree(previous, ignore_errors=True)
-    except Exception:
-        if swapped:
+        shutil.rmtree(previous)
+    except Exception as original_error:
+        rollback_errors = []
+        if moved_original:
             try:
                 if root.exists():
-                    shutil.rmtree(root, ignore_errors=True)
-                if previous.exists():
-                    os.replace(previous, root)
-                if was_running:
-                    try:
-                        lifecycle(config, instance_id, "start")
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    shutil.rmtree(root)
+                os.replace(previous, root)
+            except Exception as exc:
+                rollback_errors.append(f"directory recovery failed: {exc}")
+        if was_running:
+            try:
+                lifecycle(config, instance_id, "start")
+            except Exception as exc:
+                rollback_errors.append(f"restart recovery failed: {exc}")
+        if rollback_errors:
+            raise RuntimeError(
+                f"restore failed: {original_error}; "
+                + "; ".join(rollback_errors)
+                + f"; recovery copy may remain at {previous}"
+            ) from original_error
         raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
