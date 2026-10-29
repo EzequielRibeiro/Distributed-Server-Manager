@@ -87,5 +87,45 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             self.assertFalse((Path(temp) / "instance.c5-previous").exists())
 
 
+    def test_privileged_staging_preserves_original_uid_gid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            original = base / "instance"
+            original.mkdir()
+            stage = base / "stage"
+            stage.mkdir()
+            nested = stage / "mpmissions"
+            nested.mkdir()
+            world = nested / "world.dat"
+            world.write_text("unchanged")
+            expected = original.stat()
+            with (
+                patch.object(backup_client.os, "geteuid", return_value=0),
+                patch.object(backup_client.os, "chown") as chown,
+            ):
+                backup_client._preserve_restored_owner(stage, original)
+            self.assertEqual(
+                {call.args[0] for call in chown.call_args_list},
+                {stage, nested, world},
+            )
+            for call in chown.call_args_list:
+                self.assertEqual(call.args[1:], (expected.st_uid, expected.st_gid))
+            self.assertEqual(world.read_text(), "unchanged")
+
+    def test_unprivileged_staging_does_not_attempt_chown(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            original = base / "instance"
+            original.mkdir()
+            stage = base / "stage"
+            stage.mkdir()
+            with (
+                patch.object(backup_client.os, "geteuid", return_value=1000),
+                patch.object(backup_client.os, "chown") as chown,
+            ):
+                backup_client._preserve_restored_owner(stage, original)
+            chown.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
