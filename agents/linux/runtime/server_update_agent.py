@@ -122,23 +122,24 @@ def _stop_running(config: dict[str, Any], instance_ids: list[str]) -> None:
 
 
 def _restart_and_validate(config: dict[str, Any], instance_ids: list[str]) -> tuple[list[str], list[str]]:
+    """Require sustained running and doctor readiness, not one transient observation."""
     restarted: list[str] = []
     failures: list[str] = []
     for current in instance_ids:
         try:
             instance_runtime.lifecycle(config, current, "start")
             restarted.append(current)
-            # Doctor readiness alone does not prove that the game process is running.
-            # Allow asynchronous systemd startup to settle before accepting recovery.
-            healthy = False
-            for attempt in range(10):
+            consecutive = 0
+            # Sixteen successful one-second-spaced observations imply 15s stability.
+            for attempt in range(31):
                 doctor = instance_runtime.doctor(config, current)
-                if doctor.get("ready") and instance_runtime.status(config, current).get("observed_state") == "running":
-                    healthy = True
+                running = instance_runtime.status(config, current).get("observed_state") == "running"
+                consecutive = consecutive + 1 if doctor.get("ready") and running else 0
+                if consecutive >= 16:
                     break
-                if attempt < 9:
+                if attempt < 30:
                     time.sleep(1)
-            if not healthy:
+            else:
                 failures.append(current)
         except Exception:
             failures.append(current)
