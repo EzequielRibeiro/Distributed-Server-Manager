@@ -158,5 +158,27 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             self.assertEqual((previous / "world.dat").read_text(), "original")
 
 
+    def test_extraction_failure_restarts_original_instance(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            sentinel = root / "world.dat"
+            sentinel.write_text("original")
+            actions = []
+            def lifecycle(_config, _instance, action):
+                actions.append(action)
+            with (
+                patch.object(backup_client, "_owned", return_value=({}, root)),
+                patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
+                patch.object(backup_client, "status", return_value={"observed_state": "running"}),
+                patch.object(backup_client, "lifecycle", side_effect=lifecycle),
+                patch.object(backup_client, "_safe_extract", side_effect=ValueError("damaged archive")),
+            ):
+                with self.assertRaisesRegex(ValueError, "damaged archive"):
+                    backup_client._restore_direct({}, {"instance_id": "test", "backup_id": "test"})
+            self.assertEqual(actions, ["stop", "start"])
+            self.assertEqual(sentinel.read_text(), "original")
+
+
 if __name__ == "__main__":
     unittest.main()
