@@ -38,46 +38,84 @@ def _retention_limit() -> int | None:
     return max(2, min(value, 20))
 
 
+def preview_revision_cache_cleanup(
+    revisions_root: Path,
+    *,
+    keep_revision: str,
+    protected_revisions: set[str] | None = None,
+) -> dict[str, Any]:
+    """Read-only retention preview; never remove or mutate revision directories."""
+    if not _REVISION.fullmatch(str(keep_revision)):
+        raise ValueError("Steam Workshop keep_revision must be numeric")
+    protected = set(protected_revisions or ())
+    if any(not _REVISION.fullmatch(str(value)) for value in protected):
+        raise ValueError("Steam Workshop protected revisions must be numeric")
+    root = Path(revisions_root)
+    if root.is_symlink():
+        raise ValueError("Steam Workshop revision root must not be a symlink")
+    limit = _retention_limit()
+    if not root.is_dir():
+        return {"enabled": limit is not None, "keep": [], "prune": []}
+    candidates = [
+        path for path in root.iterdir()
+        if path.is_dir() and not path.is_symlink() and _REVISION.fullmatch(path.name)
+    ]
+    candidates.sort(key=lambda path: int(path.name), reverse=True)
+    if limit is None:
+        return {"enabled": False, "keep": [path.name for path in candidates], "prune": []}
+    protected.add(str(keep_revision))
+    keep = set(protected)
+    normal_slots = max(0, limit - len(keep))
+    for path in candidates:
+        if path.name in keep:
+            continue
+        if normal_slots <= 0:
+            break
+        keep.add(path.name)
+        normal_slots -= 1
+    return {
+        "enabled": True,
+        "keep": [path.name for path in candidates if path.name in keep],
+        "prune": [path.name for path in candidates if path.name not in keep],
+    }
+
+
 def _prune_revision_cache(
     revisions_root: Path,
     *,
     keep_revision: str,
     protected_revisions: set[str] | None = None,
 ) -> list[str]:
-    if not revisions_root.is_dir():
+    plan = preview_revision_cache_cleanup(
+        revisions_root, keep_revision=keep_revision,
+        protected_revisions=protected_revisions,
+    )
+    if not plan["enabled"]:
         return []
-    candidates = [
-        path
-        for path in revisions_root.iterdir()
-        if path.is_dir() and _REVISION.fullmatch(path.name)
-    ]
-    candidates.sort(key=lambda path: int(path.name), reverse=True)
-    limit = _retention_limit()
-    if limit is None:
-        return []
-
-    protected = set(protected_revisions or ())
-    protected.add(keep_revision)
-    # The retention limit is the total normal revision window, including the
-    # current revision. Controller-protected rollback revisions are additive
-    # and are never evicted merely because they exceed that window.
-    keep = set(protected)
-    normal_slots = max(0, limit - 1)
-    kept_normal = 0
-    for path in candidates:
-        if path.name in keep:
+    removed = []
+    root = Path(revisions_root)
+    if root.is_symlink():
+        raise ValueError("Steam Workshop revision root must not be a symlink")
+    # All materialize_steam_workshop consumers hold the same per-revision flock
+    # until their staged payload has been consumed. Do not remove an in-use
+    # revision, including one currently being promoted by another worker.
+    lock_root = root.parent / "locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    for revision in plan["prune"]:
+        path = root / revision
+        if path.is_symlink() or not path.is_dir():
             continue
-        if kept_normal >= normal_slots:
-            break
-        keep.add(path.name)
-        kept_normal += 1
-
-    removed: list[str] = []
-    for path in candidates:
-        if path.name in keep:
-            continue
-        shutil.rmtree(path)
-        removed.append(path.name)
+        with (lock_root / f"{revision}.lock").open("a+") as lease:
+            try:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                    removed.append(revision)
+            finally:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_UN)
     return removed
 
 
@@ -456,4 +494,4 @@ def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, c
 register_provider("steam-workshop", resolve_steam_workshop)
 register_provider("steam", resolve_steam_workshop)
 
-__all__ = ["resolve_steam_workshop", "materialize_steam_workshop"]
+__all__ = ["resolve_steam_workshop", "materialize_steam_workshop", "preview_revision_cache_cleanup"]
