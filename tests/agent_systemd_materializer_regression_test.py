@@ -140,7 +140,7 @@ def test_non_minecraft_runtime_does_not_use_console_supervisor():
 def test_inaccessible_content_paths_renders_only_children():
     root = _spec()["working_directory"]
     unit = render_unit(_spec(inaccessible_content_paths=[root + "/nasdara"]))
-    assert "InaccessiblePaths=" + root + "/nasdara\n" in unit
+    assert "InaccessiblePaths=-" + root + "/nasdara\n" in unit
 
 
 @pytest.mark.parametrize("hidden", [
@@ -151,6 +151,18 @@ def test_inaccessible_content_paths_renders_only_children():
 def test_inaccessible_content_paths_rejects_unsafe_targets(hidden):
     with pytest.raises(MaterializerError):
         render_unit(_spec(inaccessible_content_paths=[hidden]))
+
+
+def test_missing_optional_dlc_directory_is_nonfatal(tmp_path):
+    root = tmp_path / "serverfiles"
+    root.mkdir()
+    missing = root / "nasdara"
+    assert not missing.exists()
+    unit = render_unit(_spec(
+        working_directory=str(root),
+        inaccessible_content_paths=[str(missing)],
+    ))
+    assert f"InaccessiblePaths=-{missing}\\n" in unit
 
 
 def test_inaccessible_content_paths_rejects_symlink_escape(tmp_path):
