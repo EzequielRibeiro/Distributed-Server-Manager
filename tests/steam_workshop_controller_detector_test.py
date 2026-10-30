@@ -532,6 +532,57 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
         )
         self.assertNotIn("1792603787", command["artifact"]["protected_revisions"])
 
+    def test_reconciled_agent_retains_last_good_and_allows_old_cache_pruning(self):
+        """Cache can be pruned in a sandbox after Agent reports the current version."""
+        for version in ("1792603787", "1792700000", "1792800000"):
+            latest = self.content.put({
+                "instance_id": "dayz-1",
+                "content_id": "steam-workshop:2289456201",
+                "content_type": "workshop",
+                "provider": "steam-workshop",
+                "version": version,
+                "desired_state": "installed",
+                "artifact": {
+                    "provider": "steam-workshop",
+                    "package_id": "221100:2289456201",
+                    "revision": version,
+                },
+            }, requested_by="sandbox-test")["assignment"]
+        self.content.record_agent_state("agent-1", [{
+            "instance_id": "dayz-1",
+            "content_id": "steam-workshop:2289456201",
+            "desired_revision": latest["revision"],
+            "applied_revision": latest["revision"],
+            "desired_checksum": latest["checksum"],
+            "applied_checksum": latest["checksum"],
+            "status": "applied",
+            "installed_version": "1792800000",
+            "security_state": "clean",
+        }])
+        self.assertEqual(self.content.desired_for_agent("agent-1"), [])
+        protected = self.content._protected_workshop_revisions(latest)
+        self.assertEqual(set(protected), {"1792700000", "1792800000"})
+        with tempfile.TemporaryDirectory() as td:
+            revisions = Path(td)
+            for version in ("1740499952", "1792603787", "1792700000", "1792800000"):
+                path = revisions / version
+                path.mkdir()
+                (path / "content.pbo").write_bytes(version.encode("ascii"))
+            with patch.dict(os.environ, {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"}):
+                removed = content_provider_steam_workshop._prune_revision_cache(
+                    revisions, keep_revision="1792800000",
+                    protected_revisions=set(protected),
+                )
+            self.assertEqual(set(removed), {"1740499952", "1792603787"})
+            self.assertEqual(
+                {item.name for item in revisions.iterdir() if item.is_dir()},
+                {"1792700000", "1792800000"},
+            )
+            self.assertEqual(
+                (revisions / "1792700000" / "content.pbo").read_bytes(),
+                b"1792700000",
+            )
+
     def test_inventory_persists_and_manual_policy_never_dispatches(self):
         self.assertEqual(self.scan()["available"], 1)
         with self.backend.connect() as conn:
