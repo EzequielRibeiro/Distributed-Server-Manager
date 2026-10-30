@@ -291,8 +291,10 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
             }]
 
         fake_client = SimpleNamespace(content_state=lambda: [], apply_content_commands=emulate_agent_commands)
-        with patch("hybrid_agent_worker._hybrid_agent_config", return_value={"agent_id": "agent-1"}), \\
-             patch("hybrid_agent_worker._content_client_module", return_value=fake_client):
+        with (
+            patch("hybrid_agent_worker._hybrid_agent_config", return_value={"agent_id": "agent-1"}),
+            patch("hybrid_agent_worker._content_client_module", return_value=fake_client),
+        ):
             outcome = process_hybrid_content_cycle(self.backend, ROOT, "agent-1")
         self.assertEqual(outcome["status"], "completed")
         self.assertEqual(outcome["applied"], 1)
