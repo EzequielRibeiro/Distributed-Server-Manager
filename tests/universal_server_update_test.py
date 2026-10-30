@@ -18,6 +18,11 @@ def _verified_backup_fixture(target):
  return {'backup_id':'backup-test','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'size_bytes':artifact.stat().st_size,'artifact_path':str(artifact)}
 
 class UniversalServerUpdateTest(unittest.TestCase):
+ def setUp(self):
+  # Transaction tests exercise mocked update flows; dedicated ACL tests cover setfacl.
+  patcher=patch('server_update_agent._ensure_dayz_staging_root_access')
+  patcher.start()
+  self.addCleanup(patcher.stop)
  def test_policy_modes_and_window(self):
   p=normalize_policy({'mode':'maintenance','timezone':'UTC','weekdays':[3],'start_time':'18:00','duration_minutes':90,'check_interval_seconds':900})
   self.assertTrue(maintenance_window_open(p,datetime(2026,9,3,18,30,tzinfo=timezone.utc)))

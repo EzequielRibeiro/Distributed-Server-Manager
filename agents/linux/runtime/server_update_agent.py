@@ -6,6 +6,7 @@ import shutil
 import hashlib
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -158,6 +159,24 @@ def _local_agent_config(record: dict[str, Any]) -> dict[str, str]:
         return {"agent_id": local_agent_id}
 
 
+def _ensure_dayz_staging_root_access(staging: Path, game: str) -> None:
+    """Grant DayZ runtime only root-directory access before atomic activation.
+
+    Do not recurse into binaries, mods or instance-private storage.
+    """
+    if game != "dayz":
+        return
+    if staging.is_symlink() or not staging.is_dir():
+        raise ServerUpdateError("DayZ staging root must be a real directory")
+    try:
+        subprocess.run(
+            ["setfacl", "-m", "u:capivara-instance:rwx", str(staging)],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise ServerUpdateError("cannot configure DayZ runtime staging permissions") from exc
+
+
 def perform_update(
     selection: dict[str, Any],
     target: Path,
@@ -202,6 +221,7 @@ def perform_update(
         provider_snapshot = _provider_metadata_snapshot(selection, target)
         staging = prepare_staging(target)
         installer(staging)
+        _ensure_dayz_staging_root_access(staging, game)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
         if not staged_status.get("detector_supported") or staged_status.get("state") != "up_to_date":
