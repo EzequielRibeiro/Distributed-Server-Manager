@@ -129,6 +129,60 @@ class DetectorTest(unittest.TestCase):
 
 
 
+class WorkshopAtomicSwapTest(unittest.TestCase):
+    """Exercise the actual filesystem swap and failure rollback on temporary directories."""
+
+    def test_failed_restart_restores_previous_workshop_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            target = base / "workshop" / "steam-workshop:2289456201"
+            target.mkdir(parents=True)
+            (target / "old-version.pbo").write_bytes(b"old-good")
+            stage = base / "staging"
+            stage.mkdir()
+            (stage / "new-version.pbo").write_bytes(b"new-bad")
+            config = {"agent_id": "isolated-sandbox"}
+            calls = []
+
+            def status(_config, _iid):
+                return {"observed_state": "running"}
+
+            def lifecycle(_config, _iid, action):
+                calls.append(action)
+                if action == "start" and calls.count("start") == 1:
+                    raise RuntimeError("simulated startup failure")
+
+            with (
+                patch.object(content_client.instance_runtime, "status", side_effect=status),
+                patch.object(content_client.instance_runtime, "lifecycle", side_effect=lifecycle),
+                patch.object(content_client, "_runtime_ready", return_value=True),
+            ):
+                with self.assertRaises(RuntimeError):
+                    content_client._activate_target(config, "dayz-sandbox", target, stage)
+
+            self.assertEqual(calls, ["stop", "start", "stop", "start"])
+            self.assertEqual((target / "old-version.pbo").read_bytes(), b"old-good")
+            self.assertFalse((target / "new-version.pbo").exists())
+            self.assertFalse(target.with_name(target.name + ".c4-old").exists())
+
+    def test_successful_swap_cleans_transaction_backup(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            target = base / "workshop"
+            target.mkdir()
+            (target / "old.pbo").write_bytes(b"old")
+            stage = base / "stage"
+            stage.mkdir()
+            (stage / "new.pbo").write_bytes(b"new")
+            with patch.object(content_client.instance_runtime, "status", return_value={"observed_state": "stopped"}):
+                content_client._activate_target(
+                    {"agent_id": "isolated-sandbox"}, "dayz-sandbox", target, stage
+                )
+            self.assertEqual((target / "new.pbo").read_bytes(), b"new")
+            self.assertFalse((target / "old.pbo").exists())
+            self.assertFalse(target.with_name(target.name + ".c4-old").exists())
+
+
 class WorkshopAgentInstallSimulationTest(unittest.TestCase):
     """Exercise the real Linux Agent update state-machine with no download or runtime restart."""
 
