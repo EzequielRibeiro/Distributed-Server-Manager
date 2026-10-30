@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 import unittest
@@ -188,7 +189,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
    "list_for_agent":lambda self,agent_id:[{
     "instance_id":"instance-1","desired_state":"running","observed_state":"stopped",
     "reconcile_status":"healthy","health":"offline","operation_status":"idle",
-    "reported_at":"2026-09-14T22:55:00Z",
+    "reported_at":datetime.now(timezone.utc).isoformat(),
    }]
   })()
   service.agent_runtime=type("Agent",(),{
