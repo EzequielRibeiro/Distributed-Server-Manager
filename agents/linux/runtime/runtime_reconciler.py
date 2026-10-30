@@ -89,7 +89,16 @@ def _failure(config: dict[str, Any], record: dict[str, Any], exc: Exception, *, 
     next_retry = _stamp(_now() + timedelta(seconds=delay))
     status = "degraded" if retries >= threshold else "retry_wait"
     error = str(exc)[:2000]
-    updated = _save(record, status=status, drift=drift, retry_count=retries, next_retry_at=next_retry, error=error)
+    # A failed reconciliation must not preserve a historic "running" observation.
+    # Query the adapter for fresh evidence, failing closed when it is unavailable.
+    observed = "unknown"
+    try:
+        adapter_state = instance_runtime._adapter_state(record)
+        observed = instance_runtime._observed_state(adapter_state, "unknown")
+    except Exception:
+        pass
+    updated = _save(record, status=status, observed_state=observed, drift=drift,
+                    retry_count=retries, next_retry_at=next_retry, error=error)
     increment("reconcile_failed")
     if status == "degraded":
         increment("instance_degraded")
