@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from dayz_dlc_policy import inaccessible_dlc_paths
 from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absolute, require_port, require_text, require_within
 
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -167,6 +168,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "CAPIVARA_STEAM_QUERY_PORT": str(steam_query_port),
             "CAPIVARA_BATTLEYE_PORT": str(battleye_port),
         })
+        hidden_content = inaccessible_dlc_paths(install_path, mission) if context.get("isolate_nasdara_for_non_nasdara", True) is True else []
         return {
             "instance_id": instance_id,
             "agent_id": agent_id,
@@ -185,6 +187,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "success_exit_statuses": [255],
             "stop_signal": "SIGINT",
             "private_shared_memory": True,
+            "inaccessible_content_paths": hidden_content,
             "ports": {
                 "game": {"port": game_port, "protocol": "udp"},
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},

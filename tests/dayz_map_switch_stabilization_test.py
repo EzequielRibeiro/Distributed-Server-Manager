@@ -237,3 +237,13 @@ class DayZMapSwitchStabilizationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_map_specific_nasdara_mask_switches_without_mutating_input():
+    root="/opt/dsm/game-data/dayz/serverfiles"
+    original={"game_id":"dayz","working_directory":root,"inaccessible_content_paths":["/tmp/unrelated"]}
+    namalsk=dayz_operation_client._project_nasdara_isolation(original,"hardcore.namalsk")
+    assert namalsk["inaccessible_content_paths"] == ["/tmp/unrelated",root+"/nasdara"]
+    nasdara=dayz_operation_client._project_nasdara_isolation(namalsk,"dayzOffline.nasdara")
+    assert nasdara["inaccessible_content_paths"] == ["/tmp/unrelated"]
+    assert original["inaccessible_content_paths"] == ["/tmp/unrelated"]
