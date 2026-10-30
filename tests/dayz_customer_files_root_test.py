@@ -100,6 +100,5 @@ def test_nasdara_mask_flows_profile_validation_and_systemd():
     spec = validate_runtime_spec(profile.build_runtime_spec(instance, context))
     assert "InaccessiblePaths=" not in render_unit(spec)
     context.update(isolate_nasdara_for_non_nasdara=True, mission="dayzOffline.nasdara")
-    import pytest
-    with pytest.raises(Exception, match="cannot hide"):
-        profile.build_runtime_spec(instance, context)
+    nasdara_spec = validate_runtime_spec(profile.build_runtime_spec(instance, context))
+    assert nasdara_spec["inaccessible_content_paths"] == []

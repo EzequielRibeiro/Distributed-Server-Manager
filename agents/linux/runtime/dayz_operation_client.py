@@ -9,6 +9,7 @@ RUNTIME_DIR=Path(__file__).resolve().parent
 COMMON_DIR=RUNTIME_DIR.parent.parent/"common"
 for item in (RUNTIME_DIR,COMMON_DIR):
     if str(item) not in sys.path:sys.path.insert(0,str(item))
+from dayz_dlc_policy import inaccessible_dlc_paths
 from dayz_management import apply_mission,discover_missions,mod_compatibility_preflight,prepare_mission_persistence,restore_mission_persistence,wipe
 from dayz_community_missions import discover_community_missions
 from content_activation_projection import CONTENT_STATE,activation_snapshot,activation_snapshot_with
@@ -150,11 +151,10 @@ def _project_nasdara_isolation(record,mission):
     root=str(result.get("working_directory") or "").strip()
     if not root or not Path(root).is_absolute():
         return result
-    mask=str(Path(root)/"nasdara")
-    existing=[str(x) for x in result.get("inaccessible_content_paths") or []]
-    existing=[x for x in existing if x!=mask]
-    if not str(mission).lower().endswith(".nasdara"):
-        existing.append(mask)
+    from dayz_dlc_policy import DLC_MISSIONS
+    known={str(Path(root)/directory) for directory in DLC_MISSIONS}
+    existing=[str(x) for x in result.get("inaccessible_content_paths") or [] if str(x) not in known]
+    existing.extend(inaccessible_dlc_paths(root,mission))
     result["inaccessible_content_paths"]=existing
     return result
 
