@@ -112,7 +112,7 @@ class ControllerContentUpdateDetector:
    except ValueError as exc:
     if workshop and str(exc) in {'Workshop content is not applied','Workshop content assignment is not aligned with Agent'}:
      skipped+=1;continue
-    failed+=1;grouped.setdefault(aid,[]).append({**base,'state':'probe_failed','installed_revision':_artifact_revision(item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {}),'available_revision':None,'error':str(exc)[:2000]})
+    failed+=1;grouped.setdefault(aid,[]).append({**base,'state':'probe_failed','installed_revision':None if workshop else _artifact_revision(item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {}),'available_revision':None,'error':str(exc)[:2000]})
    except Exception as exc:
     failed+=1;grouped.setdefault(aid,[]).append({**base,'state':'probe_failed','installed_revision':None if workshop else _artifact_revision(item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {}),'available_revision':None,'error':str(exc)[:2000]})
   for aid,items in grouped.items():self.state.record_content_update_inventory(aid,{'kind':'ContentUpdateInventory','content':items})
