@@ -168,6 +168,45 @@ class WorkshopRevisionCacheRetentionTest(unittest.TestCase):
                 {"100", "200", "300", "400"},
             )
 
+    def test_cleanup_preview_is_read_only_and_protects_last_good(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._revisions(root)
+            with patch.dict(os.environ, {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"}):
+                plan = content_provider_steam_workshop.preview_revision_cache_cleanup(
+                    root, keep_revision="400", protected_revisions={"100"},
+                )
+            self.assertTrue(plan["enabled"])
+            self.assertEqual(set(plan["keep"]), {"100", "400"})
+            self.assertEqual(set(plan["prune"]), {"200", "300"})
+            self.assertEqual(
+                {path.name for path in root.iterdir() if path.is_dir()},
+                {"100", "200", "300", "400"},
+            )
+
+    def test_cleanup_preview_is_disabled_without_retention_setting(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._revisions(root)
+            with patch.dict(os.environ, {}, clear=True):
+                plan = content_provider_steam_workshop.preview_revision_cache_cleanup(
+                    root, keep_revision="400",
+                )
+            self.assertFalse(plan["enabled"])
+            self.assertEqual(plan["prune"], [])
+
+    def test_cleanup_preview_rejects_symlink_root(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            real = base / "real"
+            real.mkdir()
+            alias = base / "alias"
+            alias.symlink_to(real, target_is_directory=True)
+            with self.assertRaises(ValueError):
+                content_provider_steam_workshop.preview_revision_cache_cleanup(
+                    alias, keep_revision="400",
+                )
+
     def test_unprotected_revision_may_be_pruned_with_bounded_cache(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
