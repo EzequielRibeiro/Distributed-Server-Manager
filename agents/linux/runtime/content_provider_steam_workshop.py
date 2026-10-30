@@ -93,12 +93,29 @@ def _prune_revision_cache(
     if not plan["enabled"]:
         return []
     removed = []
+    root = Path(revisions_root)
+    if root.is_symlink():
+        raise ValueError("Steam Workshop revision root must not be a symlink")
+    # All materialize_steam_workshop consumers hold the same per-revision flock
+    # until their staged payload has been consumed. Do not remove an in-use
+    # revision, including one currently being promoted by another worker.
+    lock_root = root.parent / "locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
     for revision in plan["prune"]:
-        path = revisions_root / revision
-        # Existing snapshot-triggered pruning remains unchanged. A separate
-        # post-reconciliation cleanup must acquire cross-revision locks first.
-        shutil.rmtree(path)
-        removed.append(revision)
+        path = root / revision
+        if path.is_symlink() or not path.is_dir():
+            continue
+        with (lock_root / f"{revision}.lock").open("a+") as lease:
+            try:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                    removed.append(revision)
+            finally:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_UN)
     return removed
 
 
