@@ -25,6 +25,7 @@ from content_update_dispatch_repository import ContentUpdateDispatchRepository
 from content_update_worker import ContentUpdateWorker
 from hybrid_agent_worker import process_hybrid_content_cycle
 import content_client
+import content_provider_steam_workshop
 
 
 def assignment():
@@ -127,6 +128,57 @@ class DetectorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _workshop_observation(assignment(), {**applied(), "installed_version": "latest"}, resolver=resolve)
 
+
+
+class WorkshopRevisionCacheRetentionTest(unittest.TestCase):
+    """Test real cache pruning in a temporary directory, not the Agent cache."""
+
+    def _revisions(self, root):
+        for revision in ("100", "200", "300", "400"):
+            path = root / revision
+            path.mkdir()
+            (path / "payload.pbo").write_bytes(revision.encode("ascii"))
+
+    def test_protected_rollback_revision_survives_bounded_pruning(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._revisions(root)
+            with patch.dict(os.environ, {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"}):
+                removed = content_provider_steam_workshop._prune_revision_cache(
+                    root, keep_revision="400", protected_revisions={"100"}
+                )
+            self.assertEqual(set(removed), {"200"})
+            self.assertEqual(
+                {path.name for path in root.iterdir() if path.is_dir()},
+                {"100", "300", "400"},
+            )
+            self.assertEqual((root / "100" / "payload.pbo").read_bytes(), b"100")
+
+    def test_cache_is_unbounded_by_default_and_leaves_old_revisions(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._revisions(root)
+            with patch.dict(os.environ, {}, clear=True):
+                removed = content_provider_steam_workshop._prune_revision_cache(
+                    root, keep_revision="400"
+                )
+            self.assertEqual(removed, [])
+            self.assertEqual(
+                {path.name for path in root.iterdir() if path.is_dir()},
+                {"100", "200", "300", "400"},
+            )
+
+    def test_unprotected_revision_may_be_pruned_with_bounded_cache(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            self._revisions(root)
+            with patch.dict(os.environ, {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"}):
+                removed = content_provider_steam_workshop._prune_revision_cache(
+                    root, keep_revision="400"
+                )
+            self.assertEqual(set(removed), {"100", "200"})
+            self.assertTrue((root / "400").is_dir())
+            self.assertTrue((root / "300").is_dir())
 
 
 class WorkshopAtomicSwapTest(unittest.TestCase):
