@@ -62,7 +62,9 @@ def _prune_revision_cache(
     # current revision. Controller-protected rollback revisions are additive
     # and are never evicted merely because they exceed that window.
     keep = set(protected)
-    normal_slots = max(0, limit - 1)
+    # Protected revisions count toward the normal limit; they can exceed it,
+    # but must not accidentally grant extra unprotected cache slots.
+    normal_slots = max(0, limit - len(keep))
     kept_normal = 0
     for path in candidates:
         if path.name in keep:
