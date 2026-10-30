@@ -77,3 +77,29 @@ class DayZCustomerFilesRootTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+def test_nasdara_mask_flows_profile_validation_and_systemd():
+    from materializers.systemd import render_unit
+    profile = DayZRuntimeProfile()
+    install = "/opt/dsm/game-data/dayz/serverfiles"
+    instance = {"instance_id": "cli-000001-dayz-001", "agent_id": "agent-test"}
+    context = {
+        "install_path": install,
+        "instance_state_root": "/var/lib/capivara-instances/cli-000001-dayz-001",
+        "mission": "hardcore.namalsk",
+        "isolate_nasdara_for_non_nasdara": True,
+        "ports": {"game": {"port": 2302, "protocol": "udp"},
+                  "game_aux": {"port": 2304, "protocol": "udp"},
+                  "battleye": {"port": 2306, "protocol": "udp"},
+                  "steam_query": {"port": 2305, "protocol": "udp"}}
+    }
+    spec = validate_runtime_spec(profile.build_runtime_spec(instance, context))
+    assert spec["inaccessible_content_paths"] == [install + "/nasdara"]
+    assert "InaccessiblePaths=" + install + "/nasdara\n" in render_unit(spec)
+    context["isolate_nasdara_for_non_nasdara"] = False
+    spec = validate_runtime_spec(profile.build_runtime_spec(instance, context))
+    assert "InaccessiblePaths=" not in render_unit(spec)
+    context.update(isolate_nasdara_for_non_nasdara=True, mission="dayzOffline.nasdara")
+    import pytest
+    with pytest.raises(Exception, match="cannot hide"):
+        profile.build_runtime_spec(instance, context)

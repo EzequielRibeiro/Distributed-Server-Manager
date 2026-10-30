@@ -167,6 +167,13 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "CAPIVARA_STEAM_QUERY_PORT": str(steam_query_port),
             "CAPIVARA_BATTLEYE_PORT": str(battleye_port),
         })
+        # Explicitly opt in only after a map-specific client-join test.
+        # No DLC directory is masked by default.
+        hidden_content = []
+        if context.get("isolate_nasdara_for_non_nasdara", True) is True:
+            if mission.lower().endswith(".nasdara"):
+                raise ProfileError("Nasdara mission cannot hide Nasdara content")
+            hidden_content.append(str(Path(install_path) / "nasdara"))
         return {
             "instance_id": instance_id,
             "agent_id": agent_id,
@@ -185,6 +192,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "success_exit_statuses": [255],
             "stop_signal": "SIGINT",
             "private_shared_memory": True,
+            "inaccessible_content_paths": hidden_content,
             "ports": {
                 "game": {"port": game_port, "protocol": "udp"},
                 "game_aux": {"port": game_aux_port, "protocol": "udp"},

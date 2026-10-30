@@ -142,6 +142,22 @@ def _record_with_prepared_maps(record,iid):
         result.pop("_dayz_prepared_map_content",None)
     return result
 
+def _project_nasdara_isolation(record,mission):
+    """Keep the DayZ per-map mask synchronized with the selected mission."""
+    result=dict(record)
+    if str(result.get("game_id") or "").lower()!="dayz":
+        return result
+    root=str(result.get("working_directory") or "").strip()
+    if not root or not Path(root).is_absolute():
+        return result
+    mask=str(Path(root)/"nasdara")
+    existing=[str(x) for x in result.get("inaccessible_content_paths") or []]
+    existing=[x for x in existing if x!=mask]
+    if not str(mission).lower().endswith(".nasdara"):
+        existing.append(mask)
+    result["inaccessible_content_paths"]=existing
+    return result
+
 def _change_mission(config,record,iid,payload):
     record=_record_with_prepared_maps(record,iid);before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
@@ -164,7 +180,7 @@ def _change_mission(config,record,iid,payload):
             updated=dict(record)
             updated["dayz_content_enabled"]=content_mode=="keep"
             updated["dayz_required_content_ids"]=[value for value in prepared_ids if value and value!=str((target_item or {}).get("content_id") or "")]
-            updated=project_runtime_spec(updated,snapshot)
+            updated=_project_nasdara_isolation(project_runtime_spec(updated,snapshot),target)
             privileged_materialization.materialize(config,updated)
             stabilization=None
             if should_run:
@@ -182,7 +198,7 @@ def _change_mission(config,record,iid,payload):
         updated=apply_mission(record,target)
         updated["dayz_content_enabled"]=content_mode=="keep"
         updated["dayz_required_content_ids"]=[value for value in prepared_ids if value and value!=str((target_item or {}).get("content_id") or "")]
-        updated=project_runtime_spec(updated,snapshot)
+        updated=_project_nasdara_isolation(project_runtime_spec(updated,snapshot),target)
         privileged_materialization.materialize(config,updated)
         stabilization=None
         if was_running:
@@ -206,7 +222,7 @@ def _change_mission(config,record,iid,payload):
             try:
                 rollback=apply_mission(record,previous_mission)
                 rollback["dayz_content_enabled"]=previous_content_enabled
-                rollback=project_runtime_spec(rollback,snapshot)
+                rollback=_project_nasdara_isolation(project_runtime_spec(rollback,snapshot),previous_mission)
                 privileged_materialization.materialize(config,rollback)
             except Exception as rollback_exc:rollback_error=(rollback_error+"; " if rollback_error else "")+str(rollback_exc)[:1000]
         if was_running:

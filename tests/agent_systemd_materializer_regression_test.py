@@ -135,3 +135,29 @@ def test_non_minecraft_runtime_does_not_use_console_supervisor():
 
     assert "console_supervisor.py" not in unit
     assert "capivara-instance-console-" not in unit
+
+
+def test_inaccessible_content_paths_renders_only_children():
+    root = _spec()["working_directory"]
+    unit = render_unit(_spec(inaccessible_content_paths=[root + "/nasdara"]))
+    assert "InaccessiblePaths=" + root + "/nasdara\n" in unit
+
+
+@pytest.mark.parametrize("hidden", [
+    "/etc", "/var/lib/capivara-agent/game-data/dayz/serverfiles",
+    "/var/lib/capivara-agent/game-data/dayz/serverfiles/../outside",
+    "/var/lib/capivara-agent/game-data/dayz/serverfiles/nasdara\nExecStart=/bin/false",
+])
+def test_inaccessible_content_paths_rejects_unsafe_targets(hidden):
+    with pytest.raises(MaterializerError):
+        render_unit(_spec(inaccessible_content_paths=[hidden]))
+
+
+def test_inaccessible_content_paths_rejects_symlink_escape(tmp_path):
+    root = tmp_path / "serverfiles"
+    root.mkdir()
+    external = tmp_path / "outside"
+    external.mkdir()
+    (root / "nasdara").symlink_to(external, target_is_directory=True)
+    with pytest.raises(MaterializerError, match="escapes"):
+        render_unit(_spec(working_directory=str(root), inaccessible_content_paths=[str(root / "nasdara")]))

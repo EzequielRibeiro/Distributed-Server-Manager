@@ -95,6 +95,20 @@ def render_unit(spec):
   ])
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  for binding in spec.get("runtime_bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
+ for hidden in spec.get("inaccessible_content_paths", []):
+  root=Path(_working_directory(spec["working_directory"]))
+  candidate=Path(_working_directory(hidden))
+  if any(ch in str(candidate) for ch in (":"," ","\t")) or ".." in candidate.parts:
+   raise MaterializerError("invalid inaccessible content path")
+  if candidate == root or root not in candidate.parents:
+   raise MaterializerError("inaccessible content path must be a child of working directory")
+  # Do not allow a symlink to redirect the mount outside the game's content root.
+  if root.exists() and candidate.exists():
+   try:
+    candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
+   except (ValueError,OSError,RuntimeError) as exc:
+    raise MaterializerError("inaccessible content path escapes working directory") from exc
+  lines.append(f"InaccessiblePaths={candidate}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
  lines.extend(_credential_lines(spec));lines.append("LimitCORE=0");lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
