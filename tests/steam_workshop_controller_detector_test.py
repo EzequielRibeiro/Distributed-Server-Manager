@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +12,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, ROOT / "core", ROOT / "database", ROOT / "dashboard", ROOT / "dashboard/workers"):
+for path in (ROOT, ROOT / "core", ROOT / "database", ROOT / "dashboard", ROOT / "dashboard/workers", ROOT / "agents/linux/runtime"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -23,6 +24,7 @@ from server_update_repository import ServerUpdateRepository
 from content_update_dispatch_repository import ContentUpdateDispatchRepository
 from content_update_worker import ContentUpdateWorker
 from hybrid_agent_worker import process_hybrid_content_cycle
+import content_client
 
 
 def assignment():
@@ -125,6 +127,68 @@ class DetectorTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _workshop_observation(assignment(), {**applied(), "installed_version": "latest"}, resolver=resolve)
 
+
+
+class WorkshopAgentInstallSimulationTest(unittest.TestCase):
+    """Exercise the real Linux Agent update state-machine with no download or runtime restart."""
+
+    def _command(self):
+        return {
+            "instance_id": "dayz-1", "content_id": "steam-workshop:2289456201",
+            "revision": 2, "checksum": "b" * 64,
+            "version": "1792603787", "desired_state": "installed",
+            "provider": "steam-workshop", "content_type": "workshop",
+            "game_id": "dayz", "target": "workshop/steam-workshop:2289456201",
+            "artifact": {"provider": "steam-workshop", "package_id": "221100:2289456201"},
+        }
+
+    def test_install_failure_retains_previous_workshop_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "dayz-1.json"
+            prior = {
+                "instance_id": "dayz-1", "content_id": "steam-workshop:2289456201",
+                "desired_revision": 1, "applied_revision": 1,
+                "desired_checksum": "a" * 64, "applied_checksum": "a" * 64,
+                "status": "applied", "readiness": "healthy",
+                "installed_version": "1740499952",
+                "managed_path": str(Path(tmp) / "old-workshop"),
+                "security_state": "clean", "security_policy_version": 1,
+                "provider": "steam-workshop", "content_type": "workshop",
+                "package_id": "221100:2289456201",
+                "target": "workshop/steam-workshop:2289456201", "game_id": "dayz",
+            }
+            state.write_text(json.dumps(prior), encoding="utf-8")
+            with (
+            patch.object(content_client, "_state_path", return_value=state),
+            patch.object(content_client, "_reuse_installed", return_value=False),
+            patch.object(content_client, "_install", side_effect=content_client.ContentActivationError("simulated SteamCMD failure")) as install,
+        ):
+                report = content_client._apply({}, self._command())
+            install.assert_called_once()
+            self.assertEqual(report["status"], "rolled_back")
+            self.assertEqual(report["readiness"], "rolled_back")
+            self.assertEqual(report["installed_version"], "1740499952")
+            self.assertEqual(report["applied_revision"], 1)
+            self.assertEqual(report["applied_checksum"], "a" * 64)
+            self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["status"], "rolled_back")
+
+    def test_successful_simulated_install_records_new_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "dayz-1.json"
+            managed = str(Path(tmp) / "new-workshop")
+            security = {"security_state": "clean", "engine": "none", "matches": []}
+            with (
+                patch.object(content_client, "_state_path", return_value=state),
+                patch.object(content_client, "_reuse_installed", return_value=False),
+                patch.object(content_client, "_install", return_value=(managed, security)) as install,
+            ):
+                report = content_client._apply({}, self._command())
+            install.assert_called_once()
+            self.assertEqual(report["status"], "applied")
+            self.assertEqual(report["installed_version"], "1792603787")
+            self.assertEqual(report["applied_revision"], 2)
+            self.assertEqual(report["readiness"], "healthy")
+            self.assertEqual(json.loads(state.read_text(encoding="utf-8"))["applied_revision"], 2)
 
 
 class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
