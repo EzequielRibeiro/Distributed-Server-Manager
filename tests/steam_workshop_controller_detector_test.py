@@ -147,10 +147,10 @@ class WorkshopRevisionCacheRetentionTest(unittest.TestCase):
                 removed = content_provider_steam_workshop._prune_revision_cache(
                     root, keep_revision="400", protected_revisions={"100"}
                 )
-            self.assertEqual(set(removed), {"200"})
+            self.assertEqual(set(removed), {"200", "300"})
             self.assertEqual(
                 {path.name for path in root.iterdir() if path.is_dir()},
-                {"100", "300", "400"},
+                {"100", "400"},
             )
             self.assertEqual((root / "100" / "payload.pbo").read_bytes(), b"100")
 
