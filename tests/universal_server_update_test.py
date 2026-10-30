@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import sys,tempfile,unittest
+import hashlib,sys,tempfile,unittest
 from datetime import datetime,timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +11,11 @@ from server_update_platform import effective_content_update_mode,normalize_conte
 from server_update_provider import parse_manifest_buildid,parse_app_info_buildid,detect_update
 from server_update_schema import content_update_ddl,ensure_server_update_schema,server_update_ddl
 from server_update_transaction import activate,prepare_staging,restore_files,rollback,snapshot_files
+
+def _verified_backup_fixture(target):
+ artifact=target.parent/'verified-pre-update-backup.tar.gz'
+ artifact.write_bytes(b'verified pre-update test fixture')
+ return {'backup_id':'backup-test','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'size_bytes':artifact.stat().st_size,'artifact_path':str(artifact)}
 
 class UniversalServerUpdateTest(unittest.TestCase):
  def test_policy_modes_and_window(self):
@@ -65,6 +70,42 @@ class UniversalServerUpdateTest(unittest.TestCase):
   with patch('server_update_provider.installed_steam_build',return_value='100'),patch('server_update_provider.upstream_steam_build',return_value='101'):
    for selection in selections:
     detail=detect_update(selection,Path('/tmp/game'),'steamcmd');self.assertEqual(detail['state'],'update_available');self.assertTrue(detail['rollback_supported'])
+ def test_scoped_steam_detector_never_reads_external_manifest(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'instance'/'serverfiles';target.mkdir(parents=True)
+   external=root/'instance'/'steamapps';external.mkdir()
+   (external/'appmanifest_223350.acf').write_text('"buildid" "25963285"')
+   selection={'provider':'steam','game':'dayz','install':{'package_id':'223350'},'_server_update':{'instance_id':'dayz-001','operation':'check'}}
+   with patch('server_update_provider.upstream_steam_build',return_value='25963285'):
+    detail=detect_update(selection,target,'steamcmd')
+    self.assertIsNone(detail['installed_version'])
+    self.assertEqual(detail['state'],'unknown')
+    (target/'steamapps').mkdir()
+    (target/'steamapps'/'appmanifest_223350.acf').write_text('"buildid" "24570360"')
+    detail=detect_update(selection,target,'steamcmd')
+    self.assertEqual(detail['installed_version'],'24570360')
+    self.assertEqual(detail['state'],'update_available')
+   generic={'provider':'steam','game':'dayz','install':{'package_id':'223350'}}
+   with patch('server_update_provider.upstream_steam_build',return_value='25963285'):
+    self.assertEqual(detect_update(generic,target,'steamcmd')['installed_version'],'24570360')
+ def test_scoped_steam_staging_uses_only_staged_manifest(self):
+  from server_update_transaction import prepare_staging
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'serverfiles';target.mkdir()
+   (target/'steamapps').mkdir()
+   (target/'steamapps'/'appmanifest_223350.acf').write_text('"buildid" "24570360"')
+   selection={'provider':'steam','game':'dayz','install':{'package_id':'223350'},'_server_update':{'instance_id':'dayz-001','operation':'update'}}
+   staging=prepare_staging(target)
+   (staging/'steamapps'/'appmanifest_223350.acf').unlink()
+   with patch('server_update_provider.upstream_steam_build',return_value='25963285'):
+    staged=detect_update(selection,staging,'steamcmd',force_refresh=True)
+    self.assertIsNone(staged['installed_version'])
+    self.assertEqual(staged['state'],'unknown')
+    (staging/'steamapps'/'appmanifest_223350.acf').write_text('"buildid" "25963285"')
+    staged=detect_update(selection,staging,'steamcmd',force_refresh=True)
+    self.assertEqual(staged['installed_version'],'25963285')
+    self.assertEqual(staged['state'],'up_to_date')
+    self.assertEqual(detect_update(selection,target,'steamcmd')['installed_version'],'24570360')
  def test_non_steam_detector_fails_closed(self):
   detail=detect_update({'provider':'http'},Path('/tmp/game'));self.assertEqual(detail['state'],'unsupported');self.assertFalse(detail['detector_supported'])
  def test_transaction_restores_game_data_and_provider_metadata(self):
@@ -74,6 +115,350 @@ class UniversalServerUpdateTest(unittest.TestCase):
    created=root/'steamapps'/'new-created.acf';snapshot=snapshot_files([manifest,created]);staging=prepare_staging(target);(staging/'server.bin').write_text('new',encoding='utf-8')
    previous=activate(target,staging);self.assertEqual((target/'server.bin').read_text(),'new');manifest.write_text('new-manifest',encoding='utf-8');created.write_text('new',encoding='utf-8')
    self.assertTrue(rollback(target,previous));restore_files(snapshot);self.assertEqual((target/'server.bin').read_text(),'old');self.assertEqual(manifest.read_text(),'old-manifest');self.assertFalse(created.exists())
+ def test_scoped_dayz_target_uses_registered_instance_not_generic_install_dir(self):
+  from game_data_executor import _target_for
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);actual=root/'hybrid-instance'/'serverfiles';actual.mkdir(parents=True)
+   executable=actual/'DayZServer';executable.write_text('binary')
+   generic=root/'generic'/'serverfiles';generic.mkdir(parents=True)
+   record={'instance_id':'dayz-001','game_id':'dayz','working_directory':str(actual),'executable':str(executable)}
+   selection={'game':'dayz','install_dir':str(generic),'_server_update':{'operation':'check','instance_id':'dayz-001'}}
+   with patch('instance_runtime.get_instance',return_value=record):
+    self.assertEqual(_target_for(selection),actual.resolve())
+    selection['_server_update']['operation']='update'
+    self.assertEqual(_target_for(selection),actual.resolve())
+   executable.unlink()
+   with patch('instance_runtime.get_instance',return_value=record):
+    with self.assertRaisesRegex(RuntimeError,'executable is outside instance directory or missing'):
+     _target_for(selection)
+ def test_transaction_refuses_swap_when_instance_is_not_stopped(self):
+  from server_update_agent import perform_update,ServerUpdateError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   statuses=iter(['running','running'])
+   detector=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_: {'observed_state':next(statuses)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activate_swap,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
+    with self.assertRaises(ServerUpdateError):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+    activate_swap.assert_not_called()
+    self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+    self.assertEqual((target/'server.bin').read_text(),'old')
+ def test_rollback_refuses_swap_while_instance_remains_running(self):
+  from server_update_agent import perform_update,RollbackError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   states=iter(['running','stopped','stopped','running','running','running'])
+   detector_calls=iter([
+    {'state':'update_available','detector_supported':True},
+    {'state':'up_to_date','detector_supported':True},
+    {'state':'update_available','detector_supported':True},
+   ])
+   def detector(*args,**kwargs):
+    return next(detector_calls)
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=detector),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent._stop_running'),patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
+    with self.assertRaisesRegex(RollbackError,'instance not stopped before rollback'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+    self.assertEqual((target/'server.bin').read_text(),'new')
+    self.assertTrue(list(target.parent.glob('.serverfiles.capivara-update-previous-*')))
+ def test_scoped_rollback_snapshot_excludes_other_steam_installations(self):
+  from server_update_agent import _provider_metadata_snapshot
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'instance'/'serverfiles';target.mkdir(parents=True)
+   external=root/'instance'/'steamapps';external.mkdir()
+   external_manifest=external/'appmanifest_223350.acf'
+   external_manifest.write_text('"buildid" "25963285"')
+   selection={'provider':'steam','install':{'package_id':'223350'},'_server_update':{'instance_id':'dayz-001','operation':'update'}}
+   snapshot=_provider_metadata_snapshot(selection,target)
+   self.assertEqual(set(snapshot),{str(target/'steamapps'/'appmanifest_223350.acf')})
+   self.assertNotIn(str(external_manifest),snapshot)
+   self.assertEqual(snapshot[str(target/'steamapps'/'appmanifest_223350.acf')][0],False)
+ def test_unsupported_or_unknown_detector_never_stops_dayz(self):
+  from server_update_agent import perform_update,VersionValidationError
+  for detail in ({'state':'unsupported','detector_supported':False},{'state':'unknown','detector_supported':True}):
+   with self.subTest(detail=detail),tempfile.TemporaryDirectory() as td:
+    target=Path(td)/'serverfiles';target.mkdir()
+    record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+    selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+    with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',return_value=detail),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
+     with self.assertRaises(VersionValidationError):
+      perform_update(selection,target,lambda stage:self.fail('installer should not run'))
+     lifecycle.assert_not_called()
+    self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-staging-*')))
+ def test_valid_backup_checksum_allows_transactional_activation(self):
+  import hashlib
+  from server_update_agent import perform_update
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   artifact=Path(td)/'backup.tar.gz';artifact.write_bytes(b'valid backup content')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','stopped','stopped','running'])
+   backup={'backup_id':'backup-1','sha256':hashlib.sha256(artifact.read_bytes()).hexdigest(),'size_bytes':artifact.stat().st_size,'artifact_path':str(artifact)}
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',return_value=backup) as create_backup:
+    detail=perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   create_backup.assert_called_once()
+   self.assertEqual(detail['readiness'],'healthy')
+   self.assertEqual(detail['activation'],'atomic-swap')
+   self.assertEqual(detail['backups'][0]['sha256'],backup['sha256'])
+   self.assertEqual((target/'server.bin').read_text(),'new')
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+ def test_corrupted_backup_checksum_aborts_before_activation(self):
+  from server_update_agent import perform_update,ServerUpdateError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   artifact=Path(td)/'backup.tar.gz';artifact.write_bytes(b'corrupted backup')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':True}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','stopped'])
+   backup={'backup_id':'backup-1','sha256':'a'*64,'size_bytes':artifact.stat().st_size,'artifact_path':str(artifact)}
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',return_value=backup),patch('server_update_agent.activate') as activation:
+    with self.assertRaisesRegex(ServerUpdateError,'checksum mismatch'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   activation.assert_not_called()
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+   self.assertEqual((target/'server.bin').read_text(),'old')
+ def test_missing_backup_artifact_aborts_before_activation(self):
+  from server_update_agent import perform_update,ServerUpdateError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':True}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','stopped'])
+   backup={'backup_id':'backup-1','sha256':'a'*64,'size_bytes':100,'artifact_path':str(Path(td)/'missing.tar.gz')}
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',return_value=backup),patch('server_update_agent.activate') as activation:
+    with self.assertRaisesRegex(ServerUpdateError,'artifact is missing'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   activation.assert_not_called()
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+   self.assertEqual((target/'server.bin').read_text(),'old')
+ def test_incomplete_backup_evidence_aborts_before_activation(self):
+  from server_update_agent import perform_update,ServerUpdateError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':True}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','stopped'])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',return_value={'backup_id':'backup-1','size_bytes':100}),patch('server_update_agent.activate') as activation:
+    with self.assertRaisesRegex(ServerUpdateError,'incomplete integrity evidence'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   activation.assert_not_called()
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+   self.assertEqual((target/'server.bin').read_text(),'old')
+ def test_backup_failure_restores_running_instance_without_activation(self):
+  from server_update_agent import perform_update,ServerUpdateError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':True}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','stopped','running'])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',side_effect=RuntimeError('backup unavailable')),patch('server_update_agent.activate') as activation:
+    with self.assertRaisesRegex(ServerUpdateError,'backup unavailable'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   activation.assert_not_called()
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+   self.assertEqual((target/'server.bin').read_text(),'old')
+   self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-staging-*')))
+ def test_dayz_bind_targets_survive_directory_swap_and_rollback(self):
+  # systemd BindPaths mounts are private to the service; this exercises
+  # the host-side directory targets and keeps the bind sources untouched.
+  from server_update_transaction import commit
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td)
+   target=root/'game-data'/'serverfiles'
+   target.mkdir(parents=True)
+   (target/'DayZServer').write_text('old')
+   storage=root/'instance-storage'
+   mission_source=storage/'mpmissions'/'hardcore.namalsk'
+   keys_source=storage/'.dsm'/'dayz-keys'
+   mission_source.mkdir(parents=True)
+   keys_source.mkdir(parents=True)
+   (mission_source/'mission.sqm').write_text('private mission')
+   (keys_source/'server.bikey').write_text('private key')
+   mission_target=target/'mpmissions'/'hardcore.namalsk'
+   keys_target=target/'keys'
+   mission_target.mkdir(parents=True)
+   keys_target.mkdir()
+   (mission_target/'mission.sqm').write_text('old placeholder')
+   (keys_target/'server.bikey').write_text('old placeholder')
+   stage=prepare_staging(target)
+   (stage/'DayZServer').write_text('new')
+   previous=activate(target,stage)
+   self.assertTrue(mission_target.is_dir())
+   self.assertTrue(keys_target.is_dir())
+   self.assertEqual((target/'DayZServer').read_text(),'new')
+   self.assertEqual((mission_source/'mission.sqm').read_text(),'private mission')
+   self.assertEqual((keys_source/'server.bikey').read_text(),'private key')
+   self.assertTrue(rollback(target,previous))
+   self.assertTrue(mission_target.is_dir())
+   self.assertTrue(keys_target.is_dir())
+   self.assertEqual((target/'DayZServer').read_text(),'old')
+   self.assertEqual((mission_source/'mission.sqm').read_text(),'private mission')
+   self.assertEqual((keys_source/'server.bikey').read_text(),'private key')
+ def test_restart_waits_for_running_state_before_accepting_readiness(self):
+  from server_update_agent import _restart_and_validate
+  states=iter(['starting','starting','running'])
+  with patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}) as doctor,patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}) as status,patch('server_update_agent.time.sleep') as sleep:
+   restarted,failures=_restart_and_validate({'agent_id':'agent-local'},['dayz-001'])
+  self.assertEqual(restarted,['dayz-001'])
+  self.assertEqual(failures,[])
+  self.assertEqual(status.call_count,3)
+  self.assertEqual(doctor.call_count,3)
+  self.assertEqual(sleep.call_count,2)
+  lifecycle.assert_called_once_with({'agent_id':'agent-local'},'dayz-001','start')
+ def test_restart_rejects_doctor_ready_when_process_never_runs(self):
+  from server_update_agent import _restart_and_validate
+  with patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.instance_runtime.status',return_value={'observed_state':'stopped'}) as status,patch('server_update_agent.time.sleep') as sleep:
+   restarted,failures=_restart_and_validate({'agent_id':'agent-local'},['dayz-001'])
+  self.assertEqual(restarted,['dayz-001'])
+  self.assertEqual(failures,['dayz-001'])
+  self.assertEqual(status.call_count,10)
+  self.assertEqual(sleep.call_count,9)
+ def test_successful_recovery_removes_staging_after_failed_stop(self):
+  from server_update_agent import perform_update,ServerUpdateError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','running','running'])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.activate') as activation,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
+    with self.assertRaisesRegex(ServerUpdateError,'rollback completed'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   activation.assert_not_called()
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+   self.assertEqual((target/'server.bin').read_text(),'old')
+   self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-staging-*')))
+ def test_failed_recovery_preserves_staging_for_manual_inspection(self):
+  from server_update_agent import perform_update,RollbackError
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   detector_calls=iter([{'state':'update_available','detector_supported':True},{'state':'up_to_date','detector_supported':True}])
+   states=iter(['running','running'])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle'),patch('server_update_agent.instance_runtime.doctor',return_value={'ready':False}),patch('server_update_agent.time.sleep'),patch('server_update_agent.activate') as activation,patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
+    with self.assertRaisesRegex(RollbackError,'runtime recovery failed'):
+     perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   activation.assert_not_called()
+   staged=list(target.parent.glob('.serverfiles.capivara-update-staging-*'))
+   self.assertEqual(len(staged),1)
+   self.assertEqual((staged[0]/'server.bin').read_text(),'new')
+   self.assertEqual((target/'server.bin').read_text(),'old')
+ def test_transaction_success_restarts_and_commits_previous_tree(self):
+  from server_update_agent import perform_update
+  with tempfile.TemporaryDirectory() as td:
+   target=Path(td)/'serverfiles';target.mkdir();(target/'server.bin').write_text('old')
+   record={'instance_id':'dayz-001','agent_id':'agent-local','game_id':'dayz','working_directory':str(target)}
+   selection={'game':'dayz','provider':'steam','_server_update':{'instance_id':'dayz-001','backup_before_update':False}}
+   detector_calls=iter([
+    {'state':'update_available','detector_supported':True},
+    {'state':'up_to_date','detector_supported':True},
+    {'state':'up_to_date','detector_supported':True},
+   ])
+   states=iter(['running','stopped','stopped','running'])
+   with patch('server_update_agent._context',return_value=('dayz-001',record)),patch('server_update_agent._local_agent_config',return_value={'agent_id':'agent-local'}),patch('server_update_agent._affected',return_value=['dayz-001']),patch('server_update_agent.detect_update',side_effect=lambda *a,**k:next(detector_calls)),patch('server_update_agent.instance_runtime.status',side_effect=lambda *_:{'observed_state':next(states)}),patch('server_update_agent.instance_runtime.lifecycle') as lifecycle,patch('server_update_agent.instance_runtime.doctor',return_value={'ready':True}),patch('server_update_agent.create_backup',side_effect=lambda *_: _verified_backup_fixture(target)):
+    detail=perform_update(selection,target,lambda stage:(stage/'server.bin').write_text('new'))
+   self.assertEqual(detail['readiness'],'healthy')
+   self.assertEqual(detail['activation'],'atomic-swap')
+   self.assertEqual(detail['restarted_instances'],['dayz-001'])
+   self.assertEqual((target/'server.bin').read_text(),'new')
+   self.assertFalse(list(target.parent.glob('.serverfiles.capivara-update-previous-*')))
+   self.assertEqual([call.args[-1] for call in lifecycle.call_args_list],['stop','start'])
+ def test_stale_failed_result_cannot_clear_newer_active_job(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from server_update_repository import ServerUpdateRepository
+  repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  statements=[]
+  class Session:
+   def execute(self,sql,params):
+    statements.append((sql,params))
+    return SimpleNamespace(rowcount=0)
+  @contextmanager
+  def fake_session(transaction=False):
+   yield Session()
+  repo.session=fake_session
+  job={'job_id':'old-job','selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  repo.apply_game_data_result(job,{'status':'failed'})
+  state_updates=[(sql,params) for sql,params in statements if 'UPDATE instance_update_state SET' in sql]
+  self.assertEqual(len(state_updates),1)
+  sql,params=state_updates[0]
+  self.assertIn('AND active_job_id=?',sql)
+  self.assertEqual(params[-1],'old-job')
+  self.assertFalse(any('UPDATE instance_update_runs SET' in statement for statement,_ in statements))
+ def test_missing_update_status_fails_closed_without_exception(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from server_update_repository import ServerUpdateRepository
+  repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  statements=[]
+  class Session:
+   def execute(self,sql,params):
+    statements.append((sql,params))
+    return SimpleNamespace(rowcount=1)
+  @contextmanager
+  def fake_session(transaction=False):
+   yield Session()
+  repo.session=fake_session
+  job={'job_id':'job-no-detail','selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  repo.apply_game_data_result(job,{'status':'completed','readiness':'unchanged'})
+  self.assertTrue(any('UPDATE instance_update_state SET' in sql and params[1]=='invalid_update_result' for sql,params in statements))
+  self.assertTrue(any('UPDATE instance_update_runs SET' in sql and params[1]=='invalid_update_result' for sql,params in statements))
+ def test_active_failed_result_updates_its_own_run(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from server_update_repository import ServerUpdateRepository
+  repo=ServerUpdateRepository.__new__(ServerUpdateRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  statements=[]
+  class Session:
+   def execute(self,sql,params):
+    statements.append((sql,params))
+    return SimpleNamespace(rowcount=1)
+  @contextmanager
+  def fake_session(transaction=False):
+   yield Session()
+  repo.session=fake_session
+  job={'job_id':'current-job','selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  repo.apply_game_data_result(job,{'status':'failed'})
+  history=[(sql,params) for sql,params in statements if 'UPDATE instance_update_runs SET' in sql]
+  self.assertEqual(len(history),1)
+  self.assertIn('WHERE game_data_job_id=?',history[0][0])
+  self.assertEqual(history[0][1][-1],'current-job')
+ def test_agent_job_rejects_unproven_scoped_update_completion(self):
+  from contextlib import contextmanager
+  from types import SimpleNamespace
+  from agent_game_data_repository import AgentGameDataRepository
+  repo=AgentGameDataRepository.__new__(AgentGameDataRepository)
+  repo.dialect=SimpleNamespace(placeholder='?')
+  current={'job_id':'job-1','agent_id':'agent-1','action':'update','status':'running','progress':10,
+           'selection':{'_server_update':{'instance_id':'dayz-001','operation':'update'}}}
+  writes=[]
+  class Session:
+   def execute(self,sql,params):
+    writes.append((sql,params))
+    return SimpleNamespace(rowcount=1)
+  @contextmanager
+  def session(transaction=False):
+   yield Session()
+  repo.session=session
+  repo.snapshot=lambda job_id: current
+  repo.apply_result('agent-1',{'job_id':'job-1','status':'completed','progress':100,'readiness':'unchanged'})
+  final=[params for sql,params in writes if 'UPDATE agent_game_data_jobs SET' in sql]
+  self.assertEqual(len(final),1)
+  self.assertEqual(final[0][0],'failed')
+  self.assertEqual(final[0][4],'invalid_update_result')
  def test_schema_parity(self):
   for backend in ('sqlite','postgresql','mysql','mariadb'):
    ddl=server_update_ddl(backend).lower();content=content_update_ddl(backend).lower()

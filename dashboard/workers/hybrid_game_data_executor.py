@@ -52,6 +52,59 @@ def main() -> int:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": "runtime selection missing"})
         return 1
 
+    # Instance-scoped checks and updates must resolve the registered installation.
+    # Never let the generic Steam probe inspect an unrelated install_dir.
+    meta = selection.get("_server_update")
+    if str(command.get("action") or "").strip().lower() in {"verify", "update"} and isinstance(meta, dict):
+        agent_executor = root / "agents/linux/runtime/game_data_executor.py"
+        if not agent_executor.is_file():
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": "hybrid_instance_update_transaction_unavailable",
+            })
+            return 1
+        # The Hybrid worker may run under a distinct service environment.
+        # Match the embedded Agent context before importing its runtime modules.
+        state_dir = root / "runtime" / "hybrid-agent-state"
+        environment = {
+            **os.environ,
+            "DSM_ROOT": str(root),
+            "CAPIVARA_AGENT_MODE": "hybrid",
+            "CAPIVARA_DSM_ROOT": str(root),
+            "CAPIVARA_AGENT_ROOT": str(root / "agents" / "linux"),
+            "CAPIVARA_AGENT_STATE_DIR": str(state_dir),
+            "CAPIVARA_GAME_DATA_ROOT": str(state_dir / "game-data"),
+            "CAPIVARA_AGENT_CONFIG": str(state_dir / "agent.json"),
+            "CAPIVARA_AGENT_SERVICE": "dsm-dashboard-worker.service",
+        }
+        steam_user = _steam_user(root)
+        if steam_user and not environment.get("DSM_STEAM_USER"):
+            environment["DSM_STEAM_USER"] = steam_user
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(agent_executor), str(request_path), str(result_path)],
+                cwd=str(root), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, timeout=7200, check=False,
+                env=environment,
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if not isinstance(result, dict) or result.get("job_id") != job_id:
+                raise RuntimeError("invalid transactional executor response")
+            if completed.returncode != 0 or result.get("status") != "completed":
+                if result.get("status") == "completed":
+                    _write_result(result_path, {
+                        "job_id": job_id, "status": "failed", "progress": 100,
+                        "error": "hybrid_instance_update_transaction_failed",
+                    })
+                return 1
+            return 0
+        except Exception:
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": "hybrid_instance_update_transaction_failed",
+            })
+            return 1
+
     # Verification must never enter install-json, which mutates game files.
     if str(command.get("action") or "").strip().lower() == "verify":
         try:

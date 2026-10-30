@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import shutil
+import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -104,6 +106,8 @@ def _provider_metadata_snapshot(selection: dict[str, Any], target: Path) -> dict
     appid = str(install.get("package_id") or "").strip()
     if not appid.isdigit():
         return {}
+    if isinstance(selection.get("_server_update"), dict):
+        return snapshot_files([target / "steamapps" / f"appmanifest_{appid}.acf"])
     return snapshot_files(_manifest_candidates(target, appid))
 
 
@@ -124,8 +128,17 @@ def _restart_and_validate(config: dict[str, Any], instance_ids: list[str]) -> tu
         try:
             instance_runtime.lifecycle(config, current, "start")
             restarted.append(current)
-            doctor = instance_runtime.doctor(config, current)
-            if not doctor.get("ready"):
+            # Doctor readiness alone does not prove that the game process is running.
+            # Allow asynchronous systemd startup to settle before accepting recovery.
+            healthy = False
+            for attempt in range(10):
+                doctor = instance_runtime.doctor(config, current)
+                if doctor.get("ready") and instance_runtime.status(config, current).get("observed_state") == "running":
+                    healthy = True
+                    break
+                if attempt < 9:
+                    time.sleep(1)
+            if not healthy:
                 failures.append(current)
         except Exception:
             failures.append(current)
@@ -155,7 +168,9 @@ def perform_update(
     config = _local_agent_config(record)
     game = str(record.get("game_id") or "")
     meta = selection.get("_server_update") or {}
-    backup_enabled = bool(meta.get("backup_before_update", True))
+    # DayZ updates must never bypass the verified pre-activation backup, even
+    # when an older controller or client explicitly requests opt-out.
+    backup_enabled = game == "dayz" or bool(meta.get("backup_before_update", True))
     target = Path(target).resolve()
     affected = _affected(config, game, target, str(meta.get('instance_id') or ''))
     running: list[str] = []
@@ -167,6 +182,8 @@ def perform_update(
     provider_snapshot: dict[str, tuple[bool, bytes | None, int | None]] = {}
 
     before = detect_update(selection, target, steamcmd)
+    if not before.get("detector_supported") or before.get("state") not in {"up_to_date", "update_available"}:
+        raise VersionValidationError("server version detection is unsupported or incomplete")
     if before.get("state") == "up_to_date":
         return {
             "update_status_before": before,
@@ -186,33 +203,75 @@ def perform_update(
         installer(staging)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
-        if staged_status.get("detector_supported") and staged_status.get("state") != "up_to_date":
+        if not staged_status.get("detector_supported") or staged_status.get("state") != "up_to_date":
             raise VersionValidationError("staged server version validation failed")
 
         for current in affected:
             if instance_runtime.status(config, current).get("observed_state") == "running":
-                instance_runtime.lifecycle(config, current, "stop")
                 running.append(current)
+                instance_runtime.lifecycle(config, current, "stop")
+
+        for current in affected:
+            observed = instance_runtime.status(config, current).get("observed_state")
+            if observed != "stopped":
+                raise ServerUpdateError(
+                    "instance did not stop before game-data activation: " + current + " (" + str(observed) + ")"
+                )
 
         if backup_enabled:
             for current in affected:
                 detail = create_backup(
                     config,
-                    {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "live"}},
+                    {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "stopped"}},
                 )
+                backup_id = detail.get("backup_id") if isinstance(detail, dict) else None
+                checksum = detail.get("sha256") if isinstance(detail, dict) else None
+                size = detail.get("size_bytes") if isinstance(detail, dict) else None
+                artifact = detail.get("artifact_path") if isinstance(detail, dict) else None
+                if (
+                    not isinstance(backup_id, str) or not backup_id.strip()
+                    or not isinstance(checksum, str) or len(checksum) != 64
+                    or any(char not in "0123456789abcdefABCDEF" for char in checksum)
+                    or not isinstance(size, int) or isinstance(size, bool) or size <= 0
+                ):
+                    raise ServerUpdateError("instance backup returned incomplete integrity evidence: " + current)
+                if not isinstance(artifact, str) or not artifact.strip():
+                    raise ServerUpdateError("instance backup has no artifact path: " + current)
+                artifact_path = Path(artifact)
+                try:
+                    if not artifact_path.is_file() or artifact_path.stat().st_size != size:
+                        raise ServerUpdateError("instance backup artifact is missing or has unexpected size: " + current)
+                except OSError as exc:
+                    raise ServerUpdateError("cannot inspect instance backup artifact: " + current) from exc
+                try:
+                    digest = hashlib.sha256()
+                    with artifact_path.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                except OSError as exc:
+                    raise ServerUpdateError("cannot read instance backup artifact: " + current) from exc
+                if digest.hexdigest().lower() != checksum.lower():
+                    raise ServerUpdateError("instance backup checksum mismatch: " + current)
                 backups.append({
                     "instance_id": current,
-                    "backup_id": detail.get("backup_id"),
-                    "sha256": detail.get("sha256"),
-                    "size_bytes": detail.get("size_bytes"),
+                    "backup_id": backup_id,
+                    "sha256": checksum,
+                    "size_bytes": size,
                 })
+
+        for current in affected:
+            observed = instance_runtime.status(config, current).get("observed_state")
+            if observed != "stopped":
+                raise ServerUpdateError(
+                    "instance became active before game-data activation: " + current + " (" + str(observed) + ")"
+                )
 
         previous = activate(target, staging)
         staging = None
         activated = True
 
         after = detect_update(selection, target, steamcmd, force_refresh=True)
-        if after.get("detector_supported") and after.get("state") != "up_to_date":
+        if not after.get("detector_supported") or after.get("state") != "up_to_date":
             raise VersionValidationError("activated server version validation failed")
 
         restarted, failures = _restart_and_validate(config, running)
@@ -237,19 +296,26 @@ def perform_update(
         try:
             if activated:
                 _stop_running(config, running)
+                for current in affected:
+                    observed = instance_runtime.status(config, current).get("observed_state")
+                    if observed != "stopped":
+                        raise RollbackError(
+                            "instance not stopped before rollback: " + current + " (" + str(observed) + ")"
+                        )
                 if not rollback(target, previous):
                     raise RollbackError("previous game-data tree is unavailable")
                 previous = None
             restore_files(provider_snapshot)
-            cleanup_staging(staging)
-            staging = None
             _, recovery_failures = _restart_and_validate(config, running)
             if recovery_failures:
                 raise RollbackError("rollback restored files but runtime recovery failed: " + ",".join(recovery_failures))
         except Exception as recovery_exc:
             rollback_error = recovery_exc
         finally:
-            cleanup_staging(staging)
+            # Preserve the staged candidate when rollback failed: it may be
+            # required for forensic inspection or manual recovery.
+            if rollback_error is None:
+                cleanup_staging(staging)
 
         if rollback_error is not None:
             raise RollbackError(f"server update failed ({exc}); rollback failed ({rollback_error})") from exc

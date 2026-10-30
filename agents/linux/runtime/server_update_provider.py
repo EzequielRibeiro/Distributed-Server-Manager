@@ -42,10 +42,10 @@ def _manifest_candidates(target:Path,appid:str)->list[Path]:
  name=f'appmanifest_{appid}.acf';home=Path.home();state=Path(__import__('os').environ.get('CAPIVARA_AGENT_STATE_DIR','/var/lib/capivara-agent'))
  return [target/'steamapps'/name,target.parent/'steamapps'/name,home/'.steam/steam/steamapps'/name,home/'.local/share/Steam/steamapps'/name,state/'tools/steamcmd/steamapps'/name]
 
-def installed_steam_build(target:Path,appid:str)->str|None:
+def installed_steam_build(target:Path,appid:str,*,strict_target:bool=False)->str|None:
  appid=_safe(appid,'Steam AppID')
  if not appid.isdigit():raise ValueError('invalid Steam AppID')
- for p in _manifest_candidates(target,appid):
+ for p in ([target/'steamapps'/f'appmanifest_{appid}.acf'] if strict_target else _manifest_candidates(target,appid)):
   try:v=parse_manifest_buildid(p.read_text(encoding='utf-8',errors='replace'))
   except OSError:continue
   if v:return v
@@ -69,7 +69,7 @@ def detect_update(selection:dict[str,Any],target:Path,steamcmd:str|None=None,*,r
  if steamcmd is None:
   from game_data_executor import _steamcmd
   steamcmd=_steamcmd()
- installed=installed_steam_build(target,appid);available=upstream_steam_build(appid,branch,steamcmd,runner=runner,force_refresh=force_refresh)
+ installed=installed_steam_build(target,appid,strict_target=isinstance(selection.get('_server_update'),dict));available=upstream_steam_build(appid,branch,steamcmd,runner=runner,force_refresh=force_refresh)
  state='unknown' if not installed else 'up_to_date' if installed==available else 'update_available'
  return {'schema_version':1,'provider':'steam','detector_supported':True,'app_id':appid,'branch':branch,'installed_version':installed,'available_version':available,'state':state,'rollback_supported':True}
 
