@@ -108,7 +108,9 @@ def render_unit(spec):
     candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
    except (ValueError,OSError,RuntimeError) as exc:
     raise MaterializerError("inaccessible content path escapes working directory") from exc
-  lines.append(f"InaccessiblePaths={candidate}")
+  # Optional DLC roots may be absent after a game-data update.
+  # The systemd '-' prefix ignores missing paths rather than failing startup.
+  lines.append(f"InaccessiblePaths=-{candidate}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
  lines.extend(_credential_lines(spec));lines.append("LimitCORE=0");lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
