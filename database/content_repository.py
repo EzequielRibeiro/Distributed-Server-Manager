@@ -462,13 +462,23 @@ class ContentRepository:
   package=str(artifact.get("package_id") or "").strip()
   if provider not in {"steam","steam-workshop"} or ":" not in package:return []
   revisions=set()
+  current=str(artifact.get("revision") or assignment.get("version") or "").strip()
+  if current.isdigit():revisions.add(current)
+  # Keep the last distinct historical revision as a recovery candidate, not
+  # every version that has ever been assigned to this content item.
   for item in self.history(str(assignment.get("assignment_id") or "")):
    hist_artifact=item.get("artifact") if isinstance(item.get("artifact"),dict) else {}
    if str(hist_artifact.get("package_id") or "").strip()!=package:continue
    value=str(hist_artifact.get("revision") or item.get("version") or "").strip()
+   if value.isdigit() and value!=current:
+    revisions.add(value);break
+  # A pending update may leave the Agent running an older known-good version.
+  # Protect that reported version even when it is not the newest history item.
+  states=self.agent_state_for_instance(str(assignment.get("instance_id") or ""))
+  applied=states.get(str(assignment.get("content_id") or "")) or {}
+  if str(applied.get("status") or "").lower() in {"applied","rolled_back","failed","security_scan_failed","security_blocked"}:
+   value=str(applied.get("installed_version") or "").strip()
    if value.isdigit():revisions.add(value)
-  current=str(artifact.get("revision") or assignment.get("version") or "").strip()
-  if current.isdigit():revisions.add(current)
   return sorted(revisions,key=int)
 
  def _applied(self,agent_id):
