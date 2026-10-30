@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
-for path in (ROOT, ROOT / "core", ROOT / "database", ROOT / "dashboard"):
+for path in (ROOT, ROOT / "core", ROOT / "database", ROOT / "dashboard", ROOT / "dashboard/workers"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
@@ -20,6 +20,7 @@ from backend_factory import create_backend
 from content_repository import ContentRepository
 from server_update_repository import ServerUpdateRepository
 from content_update_dispatch_repository import ContentUpdateDispatchRepository
+from content_update_worker import ContentUpdateWorker
 
 
 def assignment():
@@ -189,6 +190,77 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
         )
         with patch.dict(os.environ, {"DSM_WORKSHOP_UPDATE_DETECTION_ENABLED": "1"}):
             return detector.scan(force=True)
+
+    def _worker(self, *, resolved_version="1792603787"):
+        repository = self.content
+
+        class SimulatedCanonicalService:
+            content = repository
+
+            def mutate(self, user, instance_id, content_id, action, body):
+                assert user["role"] == "admin"
+                assert action == "update"
+                assert body == {}
+                repository.put({
+                    "instance_id": instance_id,
+                    "content_id": content_id,
+                    "content_type": "workshop",
+                    "provider": "steam-workshop",
+                    "version": resolved_version,
+                    "desired_state": "installed",
+                    "artifact": {
+                        "provider": "steam-workshop",
+                        "package_id": "221100:2289456201",
+                    },
+                }, requested_by="sandbox-test")
+
+        class NoScan:
+            def scan(self, **_kwargs):
+                return {"checked": 0, "available": 0, "current": 0, "failed": 0, "skipped": 0}
+
+        return ContentUpdateWorker(
+            self.backend, ROOT, repository=self.dispatch,
+            service=SimulatedCanonicalService(), detector=NoScan(),
+        )
+
+    def test_worker_dispatch_creates_versioned_assignment_and_dedupes(self):
+        self.assertEqual(self.scan()["available"], 1)
+        self.state.set_content_policy(
+            instance_id="dayz-1", content_id="steam-workshop:2289456201",
+            mode="automatic", requested_by="test",
+        )
+        report = self._worker().tick()
+        self.assertEqual((report["due"], report["claimed"], report["updated"], report["failed"]),
+                         (1, 1, 1, 0))
+        current = self.content.get("dayz-1", "steam-workshop:2289456201")
+        self.assertEqual(current["version"], "1792603787")
+        self.assertEqual(current["revision"], self.current["revision"] + 1)
+        self.assertEqual(self.dispatch.due(), [])
+        # The isolated Agent has not applied the new desired revision.
+        self.assertEqual(self.content.agent_state_for_instance("dayz-1")[
+            "steam-workshop:2289456201"]["applied_revision"], self.current["revision"])
+
+    def test_worker_rejects_wrong_upstream_revision_and_preserves_rollback(self):
+        self.assertEqual(self.scan()["available"], 1)
+        self.state.set_content_policy(
+            instance_id="dayz-1", content_id="steam-workshop:2289456201",
+            mode="automatic", requested_by="test",
+        )
+        result = self._worker(resolved_version="1792523756").tick()
+        self.assertEqual((result["claimed"], result["updated"], result["failed"]), (1, 0, 1))
+        with self.backend.connect() as conn:
+            error = conn.execute(
+                "SELECT dispatch_error FROM content_update_state"
+            ).fetchone()[0]
+        self.assertIn("does not match detected upstream revision", error)
+        before = self.content.get("dayz-1", "steam-workshop:2289456201")
+        self.assertGreater(before["revision"], self.current["revision"])
+        restored = self.content.rollback(
+            "dayz-1", "steam-workshop:2289456201", self.current["revision"],
+            requested_by="test", reason="revision mismatch",
+        )["assignment"]
+        self.assertEqual(restored["version"], "1740499952")
+        self.assertGreater(restored["revision"], before["revision"])
 
     def test_inventory_persists_and_manual_policy_never_dispatches(self):
         self.assertEqual(self.scan()["available"], 1)
