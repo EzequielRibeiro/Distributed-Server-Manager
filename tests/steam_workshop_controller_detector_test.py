@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import json
+import fcntl
 import tempfile
 import unittest
 from pathlib import Path
@@ -206,6 +207,33 @@ class WorkshopRevisionCacheRetentionTest(unittest.TestCase):
                 content_provider_steam_workshop.preview_revision_cache_cleanup(
                     alias, keep_revision="400",
                 )
+
+    def test_prune_skips_revision_held_by_another_consumer(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "revisions"
+            root.mkdir()
+            self._revisions(root)
+            locks = root.parent / "locks"
+            locks.mkdir()
+            held = locks / "100.lock"
+            with held.open("a+") as lease:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                try:
+                    with patch.dict(os.environ, {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"}):
+                        removed = content_provider_steam_workshop._prune_revision_cache(
+                            root, keep_revision="400"
+                        )
+                    self.assertEqual(set(removed), {"200"})
+                    self.assertTrue((root / "100" / "payload.pbo").exists())
+                    self.assertTrue((root / "300" / "payload.pbo").exists())
+                finally:
+                    fcntl.flock(lease.fileno(), fcntl.LOCK_UN)
+            with patch.dict(os.environ, {"CAPIVARA_WORKSHOP_CACHE_REVISIONS": "2"}):
+                removed = content_provider_steam_workshop._prune_revision_cache(
+                    root, keep_revision="400"
+                )
+            self.assertEqual(removed, ["100"])
+            self.assertFalse((root / "100").exists())
 
     def test_unprotected_revision_may_be_pruned_with_bounded_cache(self):
         with tempfile.TemporaryDirectory() as td:
