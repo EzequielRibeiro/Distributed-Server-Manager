@@ -1,6 +1,9 @@
 """Regression tests for global update artifact cleanup eligibility."""
 from dataclasses import replace
 import unittest
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'database'))
 from artifact_cleanup_policy import CleanupEvidence, eligible_for_cleanup
 
 BASE = CleanupEvidence(
