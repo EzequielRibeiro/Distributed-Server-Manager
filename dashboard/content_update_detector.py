@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Controller-side update detection for providers that require runtime compatibility context."""
 from __future__ import annotations
+import os
 import time
 from pathlib import Path
 from typing import Any,Mapping
@@ -13,6 +14,31 @@ from server_update_repository import ServerUpdateRepository
 
 _STRUCTURED_PROVIDERS=frozenset({'modrinth','curseforge'})
 _SUPPORTED_TYPES=frozenset({'mod','plugin','modpack'})
+_WORKSHOP_PROVIDERS=frozenset({'steam','steam-workshop'})
+
+
+def _workshop_detection_enabled()->bool:
+ return os.environ.get('DSM_WORKSHOP_UPDATE_DETECTION_ENABLED','').strip().lower() in {'1','true','yes'}
+
+
+def _workshop_observation(item:Mapping[str,Any],applied:Mapping[str,Any],*,resolver)->dict[str,Any]:
+ """Compare the effective Agent revision with Steam; never trust stale desired-state alone."""
+ artifact=item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {}
+ package=str(artifact.get('package_id') or '').strip()
+ if not package or len(package.split(':'))!=2:raise ValueError('Workshop AppID:PublishedFileId is required')
+ app_id,published_id=package.split(':',1)
+ if not app_id.isdecimal() or not published_id.isdecimal():raise ValueError('invalid Workshop package identity')
+ if str(applied.get('status') or '').lower()!='applied':raise ValueError('Workshop content is not applied')
+ if int(applied.get('applied_revision') or 0)!=int(item.get('revision') or 0) or str(applied.get('applied_checksum') or '')!=str(item.get('checksum') or ''):
+  raise ValueError('Workshop content assignment is not aligned with Agent')
+ installed=str(applied.get('installed_version') or '').strip()
+ if not installed.isdecimal():raise ValueError('applied Workshop revision is unavailable')
+ result=resolver(published_id,expected_app_id=app_id)
+ metadata=result.get('metadata') if isinstance(result,Mapping) else None
+ available=str((metadata or {}).get('time_updated') or '').strip()
+ if not available.isdecimal():raise ValueError('upstream Workshop revision is unavailable')
+ return {'installed_revision':installed,'available_revision':available,'state':'up_to_date' if installed==available else 'update_available'}
+
 
 
 def _artifact_revision(artifact:Mapping[str,Any]|None)->str:
@@ -41,8 +67,8 @@ def _bundle_child(item:Mapping[str,Any])->bool:
 
 
 class ControllerContentUpdateDetector:
- def __init__(self,backend,root:Path,*,content=None,instances=None,state=None,resolver=None,modpack_resolver=None,interval_seconds:int=900):
-  self.backend=backend;self.root=Path(root);self.content=content or ContentRepository(backend);self.instances=instances or InstanceWorkspaceRepository(backend);self.state=state or ServerUpdateRepository(backend);self.resolver=resolver or resolve_minecraft_content;self.modpack_resolver=modpack_resolver or resolve_minecraft_modpack_update;self.interval_seconds=max(60,min(int(interval_seconds),86400));self._last_scan_monotonic=0.0
+ def __init__(self,backend,root:Path,*,content=None,instances=None,state=None,resolver=None,modpack_resolver=None,workshop_resolver=None,interval_seconds:int=900):
+  self.backend=backend;self.root=Path(root);self.content=content or ContentRepository(backend);self.instances=instances or InstanceWorkspaceRepository(backend);self.state=state or ServerUpdateRepository(backend);self.resolver=resolver or resolve_minecraft_content;self.modpack_resolver=modpack_resolver or resolve_minecraft_modpack_update;self.workshop_resolver=workshop_resolver;self.interval_seconds=max(60,min(int(interval_seconds),86400));self._last_scan_monotonic=0.0
   self.content.initialize();self.instances.initialize();self.state.initialize()
  def scan(self,*,limit:int=500,force:bool=False)->dict[str,int]:
   now=time.monotonic()
@@ -51,12 +77,22 @@ class ControllerContentUpdateDetector:
   for item in self.content.list(desired_state='installed',limit=max(1,min(int(limit),2000))):
    provider=str(item.get('provider') or '').strip().lower();ctype=str(item.get('content_type') or '').strip().lower();metadata=item.get('metadata') if isinstance(item.get('metadata'),Mapping) else {};revision_source=metadata.get('revision_source') if isinstance(metadata.get('revision_source'),Mapping) else {}
    if ctype=='modpack' and str(revision_source.get('kind') or '').strip().lower()=='external-upload':skipped+=1;continue
-   if provider not in _STRUCTURED_PROVIDERS:continue
-   if ctype not in _SUPPORTED_TYPES or _bundle_child(item):skipped+=1;continue
+   workshop=provider in _WORKSHOP_PROVIDERS and ctype=='workshop'
+   if workshop and not _workshop_detection_enabled():continue
+   if not workshop and provider not in _STRUCTURED_PROVIDERS:continue
+   if (not workshop and ctype not in _SUPPORTED_TYPES) or _bundle_child(item):skipped+=1;continue
    iid=str(item.get('instance_id') or '');cid=str(item.get('content_id') or '');aid=str(item.get('agent_id') or '')
    if not iid or not cid or not aid:skipped+=1;continue
    checked+=1;base={'instance_id':iid,'content_id':cid,'provider':provider,'content_type':ctype,'detector_supported':True,'rollback_supported':True}
    try:
+    if workshop:
+     from steam_workshop_resolver import resolve_workshop_item
+     applied=self.content.agent_state_for_instance(iid).get(cid) or {}
+     observation=_workshop_observation(item,applied,resolver=self.workshop_resolver or resolve_workshop_item)
+     if observation['state']=='update_available':available+=1
+     else:current+=1
+     grouped.setdefault(aid,[]).append({**base,**observation})
+     continue
     context=self.instances.instance_context(iid);game=str(context.get('game_id') or '').strip().lower();runtime_id=str(context.get('runtime_id') or '').strip();game_version=str(context.get('game_version') or '').strip()
     if game!='minecraft' or not runtime_id or not game_version:raise ValueError('structured content runtime identity is unavailable')
     definition=runtime_definition(self.root,game,runtime_id)
@@ -73,8 +109,12 @@ class ControllerContentUpdateDetector:
     if status=='update_available':available+=1
     else:current+=1
     grouped.setdefault(aid,[]).append({**base,'state':status,'installed_revision':installed_revision,'available_revision':candidate_revision})
-   except Exception as exc:
+   except ValueError as exc:
+    if workshop and str(exc) in {'Workshop content is not applied','Workshop content assignment is not aligned with Agent'}:
+     skipped+=1;continue
     failed+=1;grouped.setdefault(aid,[]).append({**base,'state':'probe_failed','installed_revision':_artifact_revision(item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {}),'available_revision':None,'error':str(exc)[:2000]})
+   except Exception as exc:
+    failed+=1;grouped.setdefault(aid,[]).append({**base,'state':'probe_failed','installed_revision':None if workshop else _artifact_revision(item.get('artifact') if isinstance(item.get('artifact'),Mapping) else {}),'available_revision':None,'error':str(exc)[:2000]})
   for aid,items in grouped.items():self.state.record_content_update_inventory(aid,{'kind':'ContentUpdateInventory','content':items})
   self._last_scan_monotonic=now
   return {'checked':checked,'available':available,'current':current,'failed':failed,'skipped':skipped}
