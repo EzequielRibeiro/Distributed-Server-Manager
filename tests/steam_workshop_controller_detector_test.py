@@ -479,6 +479,35 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
             state = conn.execute("SELECT state FROM content_update_state").fetchone()[0]
         self.assertEqual(state, "up_to_date")
 
+    def test_controller_passes_rollback_cache_protection_to_hybrid_agent(self):
+        """The real desired command retains the previous Workshop cache revision."""
+        new = self.content.put({
+            "instance_id": "dayz-1",
+            "content_id": "steam-workshop:2289456201",
+            "content_type": "workshop",
+            "provider": "steam-workshop",
+            "version": "1792603787",
+            "desired_state": "installed",
+            "artifact": {
+                "provider": "steam-workshop",
+                "package_id": "221100:2289456201",
+                "revision": "1792603787",
+            },
+        }, requested_by="sandbox-test")["assignment"]
+        commands = self.content.desired_for_agent("agent-1")
+        command = next(cmd for cmd in commands if cmd["content_id"] == "steam-workshop:2289456201")
+        self.assertEqual(command["revision"], new["revision"])
+        self.assertEqual(
+            set(command["artifact"]["protected_revisions"]),
+            {"1740499952", "1792603787"},
+        )
+        self.assertNotIn("protected_revisions", new["artifact"])
+        self.assertEqual(
+            self.content.agent_state_for_instance("dayz-1")[
+                "steam-workshop:2289456201"]["applied_revision"],
+            self.current["revision"],
+        )
+
     def test_inventory_persists_and_manual_policy_never_dispatches(self):
         self.assertEqual(self.scan()["available"], 1)
         with self.backend.connect() as conn:
