@@ -162,7 +162,7 @@ def test_missing_optional_dlc_directory_is_nonfatal(tmp_path):
         working_directory=str(root),
         inaccessible_content_paths=[str(missing)],
     ))
-    assert f"InaccessiblePaths=-{missing}\\n" in unit
+    assert f"InaccessiblePaths=-{missing}\n" in unit
 
 
 def test_inaccessible_content_paths_rejects_symlink_escape(tmp_path):
