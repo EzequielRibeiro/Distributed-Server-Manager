@@ -95,7 +95,7 @@ def test_nasdara_mask_flows_profile_validation_and_systemd():
     }
     spec = validate_runtime_spec(profile.build_runtime_spec(instance, context))
     assert spec["inaccessible_content_paths"] == [install + "/nasdara"]
-    assert "InaccessiblePaths=" + install + "/nasdara\n" in render_unit(spec)
+    assert "InaccessiblePaths=-" + install + "/nasdara\n" in render_unit(spec)
     context["isolate_nasdara_for_non_nasdara"] = False
     spec = validate_runtime_spec(profile.build_runtime_spec(instance, context))
     assert "InaccessiblePaths=" not in render_unit(spec)
