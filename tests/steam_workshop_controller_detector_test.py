@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +22,7 @@ from content_repository import ContentRepository
 from server_update_repository import ServerUpdateRepository
 from content_update_dispatch_repository import ContentUpdateDispatchRepository
 from content_update_worker import ContentUpdateWorker
+from hybrid_agent_worker import process_hybrid_content_cycle
 
 
 def assignment():
@@ -261,6 +263,49 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
         )["assignment"]
         self.assertEqual(restored["version"], "1740499952")
         self.assertGreater(restored["revision"], before["revision"])
+
+    def test_hybrid_agent_roundtrip_records_new_applied_version(self):
+        self.assertEqual(self.scan()["available"], 1)
+        self.state.set_content_policy(
+            instance_id="dayz-1", content_id="steam-workshop:2289456201",
+            mode="automatic", requested_by="test",
+        )
+        self.assertEqual(self._worker().tick()["updated"], 1)
+        new_assignment = self.content.get("dayz-1", "steam-workshop:2289456201")
+        self.assertEqual(new_assignment["version"], "1792603787")
+        seen = []
+
+        def emulate_agent_commands(_config, commands):
+            chosen = next(cmd for cmd in commands if cmd["content_id"] == "steam-workshop:2289456201")
+            seen.append(chosen)
+            return [{
+                "instance_id": chosen["instance_id"],
+                "content_id": chosen["content_id"],
+                "desired_revision": chosen["revision"],
+                "applied_revision": chosen["revision"],
+                "desired_checksum": chosen["checksum"],
+                "applied_checksum": chosen["checksum"],
+                "status": "applied",
+                "installed_version": chosen["version"],
+                "security_state": "clean",
+            }]
+
+        fake_client = SimpleNamespace(content_state=lambda: [], apply_content_commands=emulate_agent_commands)
+        with patch("hybrid_agent_worker._hybrid_agent_config", return_value={"agent_id": "agent-1"}), \\
+             patch("hybrid_agent_worker._content_client_module", return_value=fake_client):
+            outcome = process_hybrid_content_cycle(self.backend, ROOT, "agent-1")
+        self.assertEqual(outcome["status"], "completed")
+        self.assertEqual(outcome["applied"], 1)
+        self.assertEqual(outcome["failed"], 0)
+        self.assertEqual(len(seen), 1)
+        persisted = self.content.agent_state_for_instance("dayz-1")[
+            "steam-workshop:2289456201"]
+        self.assertEqual(persisted["installed_version"], "1792603787")
+        self.assertEqual(persisted["applied_revision"], new_assignment["revision"])
+        self.assertEqual(self.scan()["current"], 1)
+        with self.backend.connect() as conn:
+            state = conn.execute("SELECT state FROM content_update_state").fetchone()[0]
+        self.assertEqual(state, "up_to_date")
 
     def test_inventory_persists_and_manual_policy_never_dispatches(self):
         self.assertEqual(self.scan()["available"], 1)
