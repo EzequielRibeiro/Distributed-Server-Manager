@@ -508,6 +508,30 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
             self.current["revision"],
         )
 
+    def test_protected_revisions_do_not_grow_with_complete_assignment_history(self):
+        """Protect current, latest prior, and Agent-applied revision only."""
+        for version in ("1792603787", "1792700000", "1792800000"):
+            self.content.put({
+                "instance_id": "dayz-1",
+                "content_id": "steam-workshop:2289456201",
+                "content_type": "workshop",
+                "provider": "steam-workshop",
+                "version": version,
+                "desired_state": "installed",
+                "artifact": {
+                    "provider": "steam-workshop",
+                    "package_id": "221100:2289456201",
+                    "revision": version,
+                },
+            }, requested_by="sandbox-test")
+        commands = self.content.desired_for_agent("agent-1")
+        command = next(item for item in commands if item["content_id"] == "steam-workshop:2289456201")
+        self.assertEqual(
+            set(command["artifact"]["protected_revisions"]),
+            {"1740499952", "1792700000", "1792800000"},
+        )
+        self.assertNotIn("1792603787", command["artifact"]["protected_revisions"])
+
     def test_inventory_persists_and_manual_policy_never_dispatches(self):
         self.assertEqual(self.scan()["available"], 1)
         with self.backend.connect() as conn:
