@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'database'))
-from artifact_cleanup_policy import CleanupEvidence, eligible_for_cleanup
+from artifact_cleanup_policy import CleanupEvidence, eligible_for_cleanup, classify_expired_upload
 
 BASE = CleanupEvidence(
     transfer_status='completed', operation_status='applied',
@@ -67,6 +67,28 @@ class CleanupPolicyTests(unittest.TestCase):
 
     def test_boolean_not_accepted_as_reference_count(self):
         self.assertFalse(eligible_for_cleanup(replace(BASE, active_consumers=False)))
+
+
+    def test_audit_classifies_current_reference(self):
+        self.assertEqual(classify_expired_upload(
+            transfer_status='expired', has_current_reference=True,
+            has_historical_reference=True), 'current_reference')
+
+    def test_audit_classifies_historical_reference(self):
+        self.assertEqual(classify_expired_upload(
+            transfer_status='expired', has_current_reference=False,
+            has_historical_reference=True), 'historical_reference')
+
+    def test_audit_classifies_unreferenced_expired_upload(self):
+        self.assertEqual(classify_expired_upload(
+            transfer_status='expired', has_current_reference=False,
+            has_historical_reference=False), 'unreferenced_expired')
+
+    def test_audit_does_not_treat_completed_as_expired(self):
+        self.assertEqual(classify_expired_upload(
+            transfer_status='completed', has_current_reference=False,
+            has_historical_reference=False), 'not_expired')
+
 
 
 if __name__ == '__main__':
