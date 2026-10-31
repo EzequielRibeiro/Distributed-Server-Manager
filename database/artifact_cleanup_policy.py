@@ -48,3 +48,20 @@ def eligible_for_cleanup(evidence: CleanupEvidence) -> bool:
     if evidence.operation_status == 'applied' and evidence.applied_revision_aligned is not True:
         return False
     return True
+
+
+def classify_expired_upload(*, transfer_status: str,
+                            has_current_reference: bool,
+                            has_historical_reference: bool) -> str:
+    """Audit-only classification: historical references are *not* deletable.
+
+    An explicit, verified applied revision and rollback decision are still
+    required before relaxing historical-reference protection.
+    """
+    if transfer_status != 'expired':
+        return 'not_expired'
+    if has_current_reference:
+        return 'current_reference'
+    if has_historical_reference:
+        return 'historical_reference'
+    return 'unreferenced_expired'
