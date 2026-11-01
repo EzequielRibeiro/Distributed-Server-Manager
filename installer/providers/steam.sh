@@ -337,12 +337,21 @@ steam_provider_install_authenticated()
             +login "${STEAM_USER}" +quit </dev/null 2>&1)" || AUTH_STATUS=$?
     fi
 
-    if (( AUTH_STATUS != 0 ))
+    # SteamCMD may exit zero despite an authentication error. A successful
+    # bootstrap or anonymous user-info readiness does not prove account login.
+    # Examine the captured output internally; never print its raw contents.
+    local AUTH_NORMALIZED=""
+    AUTH_NORMALIZED="$(printf '%s' "${AUTH_OUTPUT}" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g; s/\r/\n/g')"
+    if (( AUTH_STATUS != 0 )) || \
+        printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+          'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied' || \
+        ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+          'Logged in OK|Logging in user .* to Steam Public.*OK'
     then
         # Never print raw SteamCMD authentication output into job logs: it can
         # include account identifiers, challenges, or session information.
         steam_error "Autenticação Steam necessária ou expirada."
-        steam_error "Execute 'dsm steam auth' no Agent e tente novamente."
+        steam_error "Verifique a sessão SteamCMD persistente no contexto do Agent."
         return 42
     fi
 
