@@ -1,0 +1,35 @@
+name: Steam Session Authentication Safety
+
+on:
+  pull_request:
+    paths:
+      - 'core/steam_auth.sh'
+      - 'core/steam_session_audit.py'
+      - 'tests/steam_auth_runtime_context_test.py'
+      - 'tests/steam_session_audit_test.py'
+      - 'tests/steam_provider_auth_log_safety_test.sh'
+      - '.github/workflows/steam-session-auth.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  steam-session:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependency
+        run: python3 -m pip install pytest==8.3.5
+      - name: Shell syntax and Python audit compilation
+        run: |
+          bash -n core/steam_auth.sh tests/steam_provider_auth_log_safety_test.sh
+          python3 -m py_compile core/steam_session_audit.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
+      - name: Session safety and persistence regression tests
+        run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
+      - name: Steam provider log secret redaction
+        run: bash tests/steam_provider_auth_log_safety_test.sh
