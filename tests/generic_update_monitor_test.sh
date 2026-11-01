@@ -50,4 +50,38 @@ grep -q 'provider_remote_version' "${ROOT}/installer/provider_versions/steam-wor
 grep -q 'GetPublishedFileDetails' "${ROOT}/installer/provider_versions/steam-workshop.sh"
 grep -q 'app_info_print' "${ROOT}/installer/provider_versions/steam.sh"
 
+# Legacy Steam version adapter must use isolated SteamCMD HOME as well.
+mkdir -p "${TMP}/agent-state" "${TMP}/fakebin"
+cat >"${TMP}/fakebin/steamcmd" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${HOME}" > "${DSM_STEAM_PROBE_HOME_MARKER}"
+printf '%s\n' '"branches"' '{' '"public"' '{' '"buildid" "123456"' '}' '}'
+EOF
+chmod 700 "${TMP}/fakebin/steamcmd"
+# Source only the adapter; never run installation or real SteamCMD.
+OUT="$(
+  export STEAMCMD_BIN="${TMP}/fakebin/steamcmd"
+  export CAPIVARA_AGENT_STATE_DIR="${TMP}/agent-state"
+  export DSM_STEAM_PROBE_HOME_MARKER="${TMP}/steam-home-marker"
+  export HOME="${TMP}/authenticated-home"
+  mkdir -p "${HOME}"
+  source "${ROOT}/installer/provider_versions/steam.sh"
+  provider_remote_version 223350
+)"
+[[ "${OUT}" == "123456" ]]
+[[ "$(cat "${TMP}/steam-home-marker")" == "${TMP}/agent-state/steam-anonymous-metadata-home" ]]
+[[ "$(stat -c '%a' "${TMP}/agent-state/steam-anonymous-metadata-home")" == "700" ]]
+# A symbolic-link destination must fail closed without invoking SteamCMD.
+rm -rf "${TMP}/agent-state/steam-anonymous-metadata-home"
+ln -s "${TMP}/authenticated-home" "${TMP}/agent-state/steam-anonymous-metadata-home"
+if (
+  export STEAMCMD_BIN="${TMP}/fakebin/steamcmd"
+  export CAPIVARA_AGENT_STATE_DIR="${TMP}/agent-state"
+  source "${ROOT}/installer/provider_versions/steam.sh"
+  provider_remote_version 223350
+) >/dev/null 2>&1; then
+  echo "legacy Steam adapter followed an unsafe session symlink" >&2
+  exit 1
+fi
+
 echo "generic update monitor: OK"
