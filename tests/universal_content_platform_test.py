@@ -122,9 +122,19 @@ class ContentContractTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);path=root/"tools/steamcmd/steamapps/workshop/appworkshop_221100.acf";path.parent.mkdir(parents=True);path.write_text(manifest,encoding="utf-8")
    def opener(request,timeout=30):return _Response({"response":{"publishedfiledetails":[{"time_updated":101}]}})
-   detail=detect_content_update({"provider":"steam","content_type":"workshop","package_id":"221100:123456"},root,opener=opener,force_refresh=True)
+   detail=detect_content_update({"provider":"steam","content_type":"workshop","package_id":"221100:123456","installed_version":"100"},root,opener=opener,force_refresh=True)
    self.assertEqual(detail["state"],"update_available");self.assertEqual(detail["installed_revision"],"100");self.assertEqual(detail["available_revision"],"101");self.assertTrue(detail["rollback_supported"])
-   canonical=detect_content_update({"provider":"steam-workshop","content_type":"workshop","package_id":"221100:123456"},root,opener=opener,force_refresh=True);self.assertTrue(canonical["detector_supported"]);self.assertEqual(canonical["state"],"update_available")
+   canonical=detect_content_update({"provider":"steam-workshop","content_type":"workshop","package_id":"221100:123456","installed_version":"100"},root,opener=opener,force_refresh=True);self.assertTrue(canonical["detector_supported"]);self.assertEqual(canonical["state"],"update_available")
+ def test_workshop_detector_prefers_applied_revision_over_newer_steam_cache(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);path=root/"tools/steamcmd/steamapps/workshop/appworkshop_221100.acf";path.parent.mkdir(parents=True)
+   path.write_text('"123456"\n{\n "timeupdated" "101"\n}',encoding="utf-8")
+   def opener(request,timeout=30):return _Response({"response":{"publishedfiledetails":[{"time_updated":101}]}})
+   detail=detect_content_update({"provider":"steam-workshop","content_type":"workshop","package_id":"221100:123456","installed_version":"100"},root,opener=opener,force_refresh=True)
+   self.assertEqual(detail["state"],"update_available")
+   self.assertEqual(detail["installed_revision"],"100")
+   unknown=detect_content_update({"provider":"steam-workshop","content_type":"workshop","package_id":"221100:123456"},root,opener=opener,force_refresh=True)
+   self.assertEqual(unknown["state"],"unknown")
  def test_non_workshop_content_detector_fails_closed(self):
   detail=detect_content_update({"provider":"http","content_type":"mod","package_id":"x"},Path("/tmp"));self.assertFalse(detail["detector_supported"]);self.assertEqual(detail["state"],"unsupported")
  def test_update_inventory_is_game_neutral_and_windows_parity_exists(self):

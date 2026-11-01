@@ -231,6 +231,33 @@ def _content_cache_inventory_module(root: Path):
     return content_cache_inventory
 
 
+def _content_update_inventory_module(root: Path):
+    _instance_runtime_module(root)
+    import content_update_inventory
+    return content_update_inventory
+
+
+_LAST_PUBLISHED_CONTENT_UPDATE_CHECKED_AT: str | None = None
+
+
+def process_hybrid_content_update_inventory_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Publish completed nonblocking Workshop probes via the canonical repository."""
+    global _LAST_PUBLISHED_CONTENT_UPDATE_CHECKED_AT
+    payload = _content_update_inventory_module(root).inventory()
+    checked_at = str(payload.get("checked_at") or "")
+    entries = payload.get("content")
+    if not checked_at or not isinstance(entries, list):
+        return {"status": "pending", "accepted": 0, "rejected": 0}
+    if checked_at == _LAST_PUBLISHED_CONTENT_UPDATE_CHECKED_AT:
+        return {"status": "unchanged", "accepted": 0, "rejected": 0}
+    from server_update_repository import ServerUpdateRepository
+    repository = ServerUpdateRepository(backend)
+    repository.initialize()
+    result = repository.record_content_update_inventory(agent_id, payload)
+    _LAST_PUBLISHED_CONTENT_UPDATE_CHECKED_AT = checked_at
+    return {"status": "completed", **result}
+
+
 def _prepare_hybrid_customer_files_access(instance_id: str) -> None:
     if not _SAFE_INSTANCE_ID.fullmatch(instance_id):
         raise ValueError("invalid instance_id for Hybrid files access helper")
@@ -896,6 +923,11 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         instance_reconcile = process_hybrid_instance_reconcile_cycle(root, agent_id)
         configuration = process_hybrid_configuration_cycle(effective_backend, root, agent_id)
         content = process_hybrid_content_cycle(effective_backend, root, agent_id)
+        try:
+            content_updates = process_hybrid_content_update_inventory_cycle(effective_backend, root, agent_id)
+        except Exception as exc:
+            _append_hybrid_agent_log(root, f"Hybrid content update inventory failed: {exc}", error=True)
+            content_updates = {"status": "probe_failed", "accepted": 0, "rejected": 0}
         runtime_events = process_hybrid_runtime_event_cycle(effective_backend, root, agent_id)
         yarax_admin = process_hybrid_yarax_admin_cycle(effective_backend, root, agent_id)
         instance_runtime = process_hybrid_instance_runtime_cycle(effective_backend, root, agent_id)
@@ -918,6 +950,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         }
         configuration = {"status": "blocked", "applied": 0, "failed": 0}
         content = {"status": "blocked", "applied": 0, "failed": 0}
+        content_updates = {"status": "blocked", "accepted": 0, "rejected": 0}
         runtime_events = {"status": "blocked", "accepted": 0, "rejected": 0}
         yarax_admin = {"status": "blocked"}
         instance_runtime = process_hybrid_instance_runtime_cycle(
@@ -943,6 +976,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "instance_reconcile": instance_reconcile,
         "configuration": configuration,
         "content": content,
+        "content_updates": content_updates,
         "runtime_events": runtime_events,
         "yarax_admin": yarax_admin,
         "instance_runtime": instance_runtime,
@@ -988,6 +1022,13 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
 
 
 def run_forever(root: Path = ROOT) -> None:
+    # Upstream probes run on a daemon thread, never on the heartbeat path.
+    agent_id = str(_read_shell_values(root / "config" / "agent.conf").get("AGENT_ID") or "").strip()
+    config = _hybrid_agent_config(root, agent_id, optional=True) if agent_id else None
+    if config is not None:
+        _content_update_inventory_module(root).start_background(
+            config, logger=lambda message: _append_hybrid_agent_log(root, message, error=True)
+        )
     while True:
         try:
             result = heartbeat_cycle(root)

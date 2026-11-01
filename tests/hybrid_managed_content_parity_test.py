@@ -111,6 +111,36 @@ class HybridManagedContentParityTest(unittest.TestCase):
             "steam-workshop:1828439124",
         )
 
+    def test_hybrid_content_update_inventory_publishes_completed_probe_once(self):
+        from unittest.mock import Mock
+        client = Mock()
+        client.inventory.return_value = {
+            "kind": "ContentUpdateInventory",
+            "checked_at": "2026-11-01T12:00:00Z",
+            "content": [{"instance_id": "inst-1", "content_id": "steam-workshop:2289456201", "state": "update_available"}],
+        }
+        repository = Mock()
+        repository.record_content_update_inventory.return_value = {"accepted": 1, "rejected": 0}
+        with (
+            patch.object(worker, "_content_update_inventory_module", return_value=client),
+            patch("server_update_repository.ServerUpdateRepository", return_value=repository),
+            patch.object(worker, "_LAST_PUBLISHED_CONTENT_UPDATE_CHECKED_AT", None),
+        ):
+            first = worker.process_hybrid_content_update_inventory_cycle(object(), ROOT, "agent-hybrid")
+            second = worker.process_hybrid_content_update_inventory_cycle(object(), ROOT, "agent-hybrid")
+        self.assertEqual(first["status"], "completed")
+        self.assertEqual(first["accepted"], 1)
+        self.assertEqual(second["status"], "unchanged")
+        repository.record_content_update_inventory.assert_called_once()
+
+    def test_hybrid_inventory_skips_unfinished_probe(self):
+        from unittest.mock import Mock
+        client = Mock()
+        client.inventory.return_value = {"kind": "ContentUpdateInventory", "checked_at": None, "content": []}
+        with patch.object(worker, "_content_update_inventory_module", return_value=client):
+            result = worker.process_hybrid_content_update_inventory_cycle(object(), ROOT, "agent-hybrid")
+        self.assertEqual(result["status"], "pending")
+
     def test_hybrid_content_cycle_fails_closed_when_config_is_missing(self):
         with patch.object(worker, "_hybrid_agent_config", return_value=None):
             result = worker.process_hybrid_content_cycle(
