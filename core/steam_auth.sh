@@ -160,6 +160,43 @@ steam_auth_resolve_runtime_steamcmd()
     printf '%s\n' "${RESULT}"
 }
 
+# Check noninteractive login without exposing SteamCMD output (which may contain
+# sensitive authentication details). SteamCMD can return 0 on a command error,
+# so both exit code and explicit login success are required.
+steam_auth_probe_reusable_session()
+{
+    local RUNTIME_USER="$1"
+    local RUNTIME_HOME="$2"
+    local STATE_DIR="$3"
+    local STEAMCMD="$4"
+    local STEAM_USER="$5"
+    local PROBE_OUTPUT=""
+    local NORMALIZED=""
+
+    if ! PROBE_OUTPUT="$(
+        steam_auth_exec_as_runtime \
+            "${RUNTIME_USER}" "${RUNTIME_HOME}" "${STATE_DIR}" \
+            "${STEAMCMD}" +login "${STEAM_USER}" +quit </dev/null 2>&1
+    )"; then
+        return 1
+    fi
+
+    # Strip terminal colors and carriage returns before interpreting status.
+    NORMALIZED="$(printf '%s' "${PROBE_OUTPUT}" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g; s/\r/\n/g')"
+    # Error text takes precedence even when SteamCMD exits with status 0.
+    if printf '%s\n' "${NORMALIZED}" | grep -Eiq \
+        'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied'; then
+        return 1
+    fi
+    # Do not infer authentication from generic Steam API/bootstrap OK messages.
+    if printf '%s\n' "${NORMALIZED}" | grep -Eiq \
+        'Logged in OK|Logging in user .* to Steam Public.*OK|Waiting for user info[.[:space:]]*OK'; then
+        return 0
+    fi
+    return 1
+}
+
+
 steam_auth_run()
 {
     local ROOT="${1:-/opt/dsm}"
@@ -219,17 +256,12 @@ steam_auth_run()
     # Prove that Steam persisted a reusable login token in the exact runtime
     # context used by unattended game/Workshop installs. No password or Guard
     # code is supplied on this second invocation.
-    local PROBE_STATUS=0
-    steam_auth_exec_as_runtime \
-        "${RUNTIME_USER}" "${RUNTIME_HOME}" "${STATE_DIR}" \
-        "${STEAMCMD}" +login "${STEAM_USER}" +quit \
-        </dev/null >/dev/null 2>&1 || PROBE_STATUS=$?
-
-    if (( PROBE_STATUS != 0 ))
+    if ! steam_auth_probe_reusable_session \
+        "${RUNTIME_USER}" "${RUNTIME_HOME}" "${STATE_DIR}" "${STEAMCMD}" "${STEAM_USER}"
     then
-        steam_auth_error "A Steam aceitou o login interativo, mas não persistiu uma sessão reutilizável."
-        steam_auth_error "Repita 'sudo cap steam auth' e confirme Steam Guard/lembrar sessão quando solicitado."
-        return "${PROBE_STATUS}"
+        steam_auth_error "Não foi comprovado login reutilizável no contexto persistente do Agent."
+        steam_auth_error "Verifique o diagnóstico da sessão SteamCMD; o código de saída não comprova autenticação."
+        return 1
     fi
 
     echo "[DSM][STEAM] Autenticação Steam concluída no contexto persistente do Agent."
