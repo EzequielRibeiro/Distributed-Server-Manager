@@ -51,13 +51,13 @@ def installed_steam_build(target:Path,appid:str,*,strict_target:bool=False)->str
   if v:return v
  return None
 
-def _anonymous_steam_env()->dict[str,str]:
+def _anonymous_steam_env(state_root:Path|None=None)->dict[str,str]:
  """Use dedicated state for metadata checks, never the authenticated Steam HOME.
 
  SteamCMD uses both HOME and XDG_DATA_HOME; setting only HOME could still
  direct its configuration into the authenticated user's shared Steam path.
  """
- state=Path(os.environ.get('CAPIVARA_AGENT_STATE_DIR') or '/var/lib/capivara-agent').resolve()
+ state=Path(state_root or os.environ.get('CAPIVARA_AGENT_STATE_DIR') or '/var/lib/capivara-agent').resolve()
  home=state/'steam-anonymous-metadata-home'
  home.mkdir(mode=0o700,parents=True,exist_ok=True)
  # Reject a pre-existing redirect, foreign owner or non-private directory.
