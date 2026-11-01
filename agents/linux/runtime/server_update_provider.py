@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Typed, secret-free upstream version detection for game servers."""
 from __future__ import annotations
-import re, subprocess, time
+import os, re, stat, subprocess, time
 from pathlib import Path
 from typing import Any, Callable
 _CACHE:dict[tuple[str,str],tuple[float,str]]={}
@@ -51,12 +51,28 @@ def installed_steam_build(target:Path,appid:str,*,strict_target:bool=False)->str
   if v:return v
  return None
 
+def _anonymous_steam_env()->dict[str,str]:
+ """Use dedicated state for metadata checks, never the authenticated Steam HOME.
+
+ SteamCMD uses both HOME and XDG_DATA_HOME; setting only HOME could still
+ direct its configuration into the authenticated user's shared Steam path.
+ """
+ state=Path(os.environ.get('CAPIVARA_AGENT_STATE_DIR') or '/var/lib/capivara-agent').resolve()
+ home=state/'steam-anonymous-metadata-home'
+ home.mkdir(mode=0o700,parents=True,exist_ok=True)
+ # Reject a pre-existing redirect, foreign owner or non-private directory.
+ metadata=home.lstat()
+ if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid!=os.geteuid() or stat.S_IMODE(metadata.st_mode)&0o077:
+  raise RuntimeError('Private Steam metadata HOME is not secure')
+ env={**os.environ,'HOME':str(home),'XDG_DATA_HOME':str(home/'.local/share'),'CAPIVARA_STEAM_HOME':str(home)}
+ return env
+
 def upstream_steam_build(appid:str,branch:str,steamcmd:str,*,ttl:int=300,runner:Callable[...,Any]=subprocess.run,force_refresh:bool=False)->str:
  appid=_safe(appid,'Steam AppID');branch=_safe(branch or 'public','Steam branch')
  if not appid.isdigit():raise ValueError('invalid Steam AppID')
  key=(appid,branch);now=time.monotonic();cached=_CACHE.get(key)
  if cached and not force_refresh and now-cached[0]<ttl:return cached[1]
- cp=runner([steamcmd,'+login','anonymous','+app_info_update','1','+app_info_print',appid,'+quit'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180,check=False)
+ cp=runner([steamcmd,'+login','anonymous','+app_info_update','1','+app_info_print',appid,'+quit'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180,check=False,env=_anonymous_steam_env())
  if cp.returncode!=0:raise RuntimeError('Steam update metadata lookup failed')
  build=parse_app_info_buildid(cp.stdout or '',branch)
  if not build:raise RuntimeError('Steam branch build metadata unavailable')

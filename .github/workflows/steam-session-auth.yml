@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'core/steam_auth.sh'
+      - 'agents/linux/runtime/server_update_provider.py'
+      - 'tests/universal_server_update_test.py'
       - 'core/steam_session_audit.py'
       - 'tests/steam_auth_runtime_context_test.py'
       - 'tests/steam_session_audit_test.py'
@@ -28,8 +30,10 @@ jobs:
       - name: Shell syntax and Python audit compilation
         run: |
           bash -n core/steam_auth.sh tests/steam_provider_auth_log_safety_test.sh
-          python3 -m py_compile core/steam_session_audit.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
+          python3 -m py_compile core/steam_session_audit.py agents/linux/runtime/server_update_provider.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
       - name: Session safety and persistence regression tests
         run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
+      - name: Anonymous Steam metadata isolation regression
+        run: python3 -m pytest tests/universal_server_update_test.py -q -k steam_metadata_probe
       - name: Steam provider log secret redaction
         run: bash tests/steam_provider_auth_log_safety_test.sh
