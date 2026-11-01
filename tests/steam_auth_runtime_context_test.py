@@ -136,13 +136,19 @@ def _probe_fake_steamcmd(output: str, exit_code: int = 0) -> subprocess.Complete
 
 
 def test_noninteractive_auth_probe_requires_actual_login_marker():
-    result = _probe_fake_steamcmd("Loading Steam API...OK\nWaiting for user info...OK\n")
-    assert result.returncode == 0, result.stderr
+    for output in (
+        "Loading Steam API...OK\nLogging in user 'account' to Steam Public...OK\n",
+        "Logged in OK\n",
+    ):
+        result = _probe_fake_steamcmd(output)
+        assert result.returncode == 0, result.stderr
 
 
 def test_noninteractive_auth_probe_fails_closed_on_zero_exit_without_login():
     for output in (
         "Loading Steam API...OK\n",
+        "Connecting anonymously to Steam Public...OK\nWaiting for user info...OK\n",
+        "Waiting for user info...OK\n",
         "ERROR! Login Failure: Invalid Password\n",
         "Steam Guard code required\n",
         "ERROR! Download item 2289456201 failed (Failure).\n",
@@ -153,5 +159,5 @@ def test_noninteractive_auth_probe_fails_closed_on_zero_exit_without_login():
 
 
 def test_noninteractive_auth_probe_rejects_nonzero_exit_with_success_marker():
-    result = _probe_fake_steamcmd("Waiting for user info...OK\n", exit_code=1)
+    result = _probe_fake_steamcmd("Logging in user 'account' to Steam Public...OK\n", exit_code=1)
     assert result.returncode != 0

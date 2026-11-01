@@ -188,9 +188,10 @@ steam_auth_probe_reusable_session()
         'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied'; then
         return 1
     fi
-    # Do not infer authentication from generic Steam API/bootstrap OK messages.
+    # The anonymous SteamCMD flow ALSO prints "Waiting for user info...OK".
+    # Only an explicit *account login* success is sufficient evidence.
     if printf '%s\n' "${NORMALIZED}" | grep -Eiq \
-        'Logged in OK|Logging in user .* to Steam Public.*OK|Waiting for user info[.[:space:]]*OK'; then
+        'Logged in OK|Logging in user .* to Steam Public.*OK'; then
         return 0
     fi
     return 1
