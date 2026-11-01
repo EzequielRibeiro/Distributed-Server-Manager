@@ -342,6 +342,16 @@ steam_provider_install_authenticated()
     # Examine the captured output internally; never print its raw contents.
     local AUTH_NORMALIZED=""
     AUTH_NORMALIZED="$(printf '%s' "${AUTH_OUTPUT}" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g; s/\r/\n/g')"
+    if printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+        'Logging in user .* to Steam Public'; then
+        # A cached login for another account, including anonymous, is invalid.
+        if ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Fiq \
+            "Logging in user '${STEAM_USER}' to Steam Public...OK"; then
+            AUTH_STATUS=42
+        fi
+    elif ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq 'Logged in OK'; then
+        AUTH_STATUS=42
+    fi
     if (( AUTH_STATUS != 0 )) || \
         printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
           'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied' || \

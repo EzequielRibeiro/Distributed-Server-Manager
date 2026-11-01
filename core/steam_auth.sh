@@ -188,10 +188,19 @@ steam_auth_probe_reusable_session()
         'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied'; then
         return 1
     fi
-    # The anonymous SteamCMD flow ALSO prints "Waiting for user info...OK".
-    # Only an explicit *account login* success is sufficient evidence.
+    # Reject a successful login message for an account other than the one
+    # requested. SteamCMD can be pointed at the wrong cached account.
     if printf '%s\n' "${NORMALIZED}" | grep -Eiq \
-        'Logged in OK|Logging in user .* to Steam Public.*OK'; then
+        'Logging in user .* to Steam Public'; then
+        if printf '%s\n' "${NORMALIZED}" | grep -Fiq \
+            "Logging in user '${STEAM_USER}' to Steam Public...OK"; then
+            return 0
+        fi
+        return 1
+    fi
+    # The anonymous SteamCMD flow ALSO prints "Waiting for user info...OK".
+    # Only an explicit account login marker is sufficient evidence.
+    if printf '%s\n' "${NORMALIZED}" | grep -Eiq 'Logged in OK'; then
         return 0
     fi
     return 1

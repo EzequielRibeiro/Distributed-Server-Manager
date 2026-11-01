@@ -57,6 +57,23 @@ set -e
 [[ ! -e "$DSM_STEAM_MOCK_APP_UPDATE_MARKER" ]]
 [[ "$OUTPUT" != *'session expired'* ]]
 
+# A successful login for the wrong Steam account must not authorize installs.
+cat > "$STEAMCMD_BIN" <<'MOCK'
+#!/bin/sh
+case "$*" in
+  *+app_update*) touch "$DSM_STEAM_MOCK_APP_UPDATE_MARKER"; exit 0 ;;
+esac
+printf '%s\n' "Logging in user 'anonymous' to Steam Public...OK" 'Logged in OK'
+exit 0
+MOCK
+chmod +x "$STEAMCMD_BIN"
+set +e
+OUTPUT="$(steam_provider_install_authenticated 223350 "$TMP/install" steam-test-user 2>&1)"
+STATUS=$?
+set -e
+[[ "$STATUS" -eq 42 ]]
+[[ ! -e "$DSM_STEAM_MOCK_APP_UPDATE_MARKER" ]]
+
 # A real account login marker permits the follow-on installer command.
 cat > "$STEAMCMD_BIN" <<'MOCK'
 #!/bin/sh

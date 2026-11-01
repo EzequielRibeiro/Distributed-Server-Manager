@@ -158,6 +158,17 @@ def test_noninteractive_auth_probe_fails_closed_on_zero_exit_without_login():
         assert result.stdout == ""  # no sensitive SteamCMD output
 
 
+def test_noninteractive_auth_probe_rejects_login_for_another_account():
+    for output in (
+        "Logging in user 'anonymous' to Steam Public...OK\n",
+        "Logging in user 'other-user' to Steam Public...OK\n",
+        "Logging in user 'anonymous' to Steam Public...OK\nLogged in OK\n",
+    ):
+        result = _probe_fake_steamcmd(output)
+        assert result.returncode != 0
+        assert result.stdout == ""
+
+
 def test_noninteractive_auth_probe_rejects_nonzero_exit_with_success_marker():
     result = _probe_fake_steamcmd("Logging in user 'account' to Steam Public...OK\n", exit_code=1)
     assert result.returncode != 0
