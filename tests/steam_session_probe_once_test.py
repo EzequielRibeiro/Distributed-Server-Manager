@@ -12,13 +12,25 @@ sys.path.insert(0,str(ROOT/'core'))
 from steam_session_probe_once import classify, check_once
 
 class SteamSessionProbeOnceTest(unittest.TestCase):
- def test_classification_fails_closed(self):
-  self.assertEqual(classify("Logging in user 'tester' to Steam Public...OK",0,'tester'),'verified')
-  self.assertEqual(classify("Logged in OK",0,'tester'),'verified')
-  self.assertEqual(classify("Logging in user 'anonymous' to Steam Public...OK\nLogged in OK",0,'tester'),'not_verified')
-  self.assertEqual(classify("Loading Steam API...OK\nWaiting for user info...OK",0,'tester'),'not_verified')
-  self.assertEqual(classify("Logging in user 'tester' to Steam Public...OK\nERROR! Login Failure",0,'tester'),'not_verified')
-  self.assertEqual(classify("Logging in user 'tester' to Steam Public...OK",1,'tester'),'not_verified')
+ def test_classification_reason_codes_do_not_expose_output(self):
+  examples=(
+   ("Logging in user 'tester' to Steam Public...OK",0,'verified'),
+   ('Logged in OK',0,'verified'),
+   ("Logging in user 'anonymous' to Steam Public...OK\nLogged in OK",0,'account_mismatch'),
+   ('Loading Steam API...OK\nWaiting for user info...OK',0,'no_explicit_login_confirmation'),
+   ("Logging in user 'tester' to Steam Public...OK\nERROR! Login Failure",0,'authentication_rejected'),
+   ("Logging in user 'tester' to Steam Public...OK",1,'steamcmd_nonzero_exit'),
+   ('ERROR! Login Failure: Invalid Password PASSWORD=PRIVATE',0,'authentication_rejected'),
+   ('No connection / failed to connect to Steam',0,'connection_failure'),
+   ('ERROR! Unknown action',0,'steamcmd_reported_error'),
+   ('some private SteamCMD output',6,'steamcmd_nonzero_exit'),
+  )
+  for output,code,expected in examples:
+   with self.subTest(expected=expected,code=code):
+    got=classify(output,code,'tester')
+    self.assertEqual(got,expected)
+    self.assertNotIn('PRIVATE',got)
+
  def test_default_is_plan_only(self):
   with tempfile.TemporaryDirectory() as td:
    p=subprocess.run([sys.executable,str(ROOT/'core/steam_session_probe_once.py'),'--home',td,'--steamcmd',str(Path(td)/'missing')],capture_output=True,text=True)

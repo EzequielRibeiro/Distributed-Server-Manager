@@ -14,23 +14,31 @@ import subprocess
 import sys
 from steam_session_audit import compare, snapshot
 
-_ERROR = re.compile(r'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied', re.I)
+# Fixed status codes only. Raw SteamCMD messages and account identifiers are
+# processed in memory, never printed, persisted or included in exceptions.
+_AUTH_FAILURE = re.compile(r'ERROR!.*(?:Login|Password|Authentication)|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|Access Denied', re.I)
+_CONNECTION_FAILURE = re.compile(r'No connection|Failed to connect|Could not connect|Connection timed out|Network is unreachable|Offline mode', re.I)
+_GENERIC_FAILURE = re.compile(r'ERROR!|FAILED!', re.I)
 _NAMED = re.compile(r'Logging in user (.+?) to Steam Public(?:\.\.\.|\s*:\s*)', re.I)
 _SUCCESS = re.compile(r'Logged in OK|Logging in user .+? to Steam Public\.\.\.OK', re.I)
 
 
 def classify(output: str, code: int, expected_account: str) -> str:
-    """Interpret output only in-memory; return fixed, non-sensitive states."""
-    if code != 0 or _ERROR.search(output):
-        return 'not_verified'
-    named = _NAMED.findall(output)
-    if named:
-        # If any account is identified, every named login must match.
-        if any(name.strip().strip("'\"").casefold() != expected_account.casefold() for name in named):
-            return 'not_verified'
-    if _SUCCESS.search(output) and (not named or expected_account.casefold() in [name.strip().strip("'\"").casefold() for name in named]):
+    """Return one reason code without retaining or displaying SteamCMD output."""
+    if _AUTH_FAILURE.search(output):
+        return 'authentication_rejected'
+    if _CONNECTION_FAILURE.search(output):
+        return 'connection_failure'
+    if _GENERIC_FAILURE.search(output):
+        return 'steamcmd_reported_error'
+    if code != 0:
+        return 'steamcmd_nonzero_exit'
+    named = [name.strip().strip("'\"").casefold() for name in _NAMED.findall(output)]
+    if named and any(name != expected_account.casefold() for name in named):
+        return 'account_mismatch'
+    if _SUCCESS.search(output):
         return 'verified'
-    return 'not_verified'
+    return 'no_explicit_login_confirmation'
 
 
 def check_once(binary: Path, home: Path, account: str, *, runner=subprocess.run) -> dict:
