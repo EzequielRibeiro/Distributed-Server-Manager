@@ -68,5 +68,53 @@ class SteamSessionAuditTest(unittest.TestCase):
             self.assertNotIn('NEVER_READ', str(result))
 
 
+    def test_opt_in_hardening_preserves_bytes_and_inode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / module.SESSION_FILES[0]
+            path.parent.mkdir(parents=True)
+            payload = b'FAKE_AUTH_TEST_BYTES'
+            path.write_bytes(payload)
+            path.chmod(0o755)
+            before = path.stat()
+            self.assertEqual(module.harden_session_file(root, module.SESSION_FILES[0]), 'secured')
+            after = path.stat()
+            self.assertEqual(after.st_ino, before.st_ino)
+            self.assertEqual(after.st_size, before.st_size)
+            self.assertEqual(path.read_bytes(), payload)
+            self.assertEqual(stat.S_IMODE(after.st_mode), 0o600)
+            self.assertEqual(module.harden_session_file(root, module.SESSION_FILES[0]), 'already_secure')
+
+    def test_opt_in_hardening_refuses_symlink_target(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / module.SESSION_FILES[0]
+            path.parent.mkdir(parents=True)
+            secret = root / 'secret'
+            secret.write_text('DO_NOT_ACCESS')
+            secret.chmod(0o755)
+            path.symlink_to(secret)
+            with self.assertRaises(OSError):
+                module.harden_session_file(root, module.SESSION_FILES[0])
+            self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o755)
+
+    def test_opt_in_hardening_refuses_intermediate_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            outside = root / 'outside'
+            outside.mkdir()
+            (root / '.local').symlink_to(outside, target_is_directory=True)
+            with self.assertRaises(OSError):
+                module.harden_session_file(root, module.SESSION_FILES[0])
+
+    def test_opt_in_hardening_rejects_other_paths_and_absent_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                module.harden_session_file(Path(tmp), 'secrets.txt')
+            p = Path(tmp) / module.SESSION_FILES[0]
+            p.parent.mkdir(parents=True)
+            self.assertEqual(module.harden_session_file(Path(tmp), module.SESSION_FILES[0]), 'absent')
+
+
 if __name__ == '__main__':
     unittest.main()
