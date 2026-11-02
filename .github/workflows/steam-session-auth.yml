@@ -5,6 +5,8 @@ on:
     paths:
       - 'core/steam_auth.sh'
       - 'agents/linux/runtime/server_update_provider.py'
+      - 'agents/linux/runtime/game_data_executor.py'
+      - 'tests/agent_steam_install_session_isolation_test.py'
       - 'dashboard/workers/hybrid_steam_version_probe.py'
       - 'installer/provider_versions/steam.sh'
       - 'installer/providers/steam.sh'
@@ -38,13 +40,15 @@ jobs:
       - name: Shell syntax and Python audit compilation
         run: |
           bash -n core/steam_auth.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
-          python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
+          python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/game_data_executor.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
       - name: Session safety and persistence regression tests
         run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
       - name: Opt-in one-shot authenticated probe (simulated only)
         run: python3 -m pytest tests/steam_session_probe_once_test.py -q
       - name: Anonymous Steam metadata isolation regression
         run: python3 -m pytest tests/universal_server_update_test.py -q -k steam_metadata_probe
+      - name: Agent anonymous installs do not share authenticated Steam HOME
+        run: python3 -m pytest tests/agent_steam_install_session_isolation_test.py -q
       - name: Hybrid anonymous Steam version probe isolation
         run: python3 -m pytest tests/hybrid_game_data_verify_read_only_test.py -q
       - name: Legacy Steam anonymous version probe isolation
