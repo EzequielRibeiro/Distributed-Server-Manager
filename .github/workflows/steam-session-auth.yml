@@ -6,6 +6,8 @@ on:
       - 'core/steam_auth.sh'
       - 'update.sh'
       - 'tests/update_steam_home_preservation_test.sh'
+      - 'tests/update_backup_retention_days_test.sh'
+      - 'tests/update_manager_test.sh'
       - 'agents/linux/runtime/server_update_provider.py'
       - 'agents/linux/runtime/game_data_executor.py'
       - 'agents/linux/runtime/capabilities.py'
@@ -47,7 +49,7 @@ jobs:
         run: python3 -m pip install pytest==8.3.5
       - name: Shell syntax and Python audit compilation
         run: |
-          bash -n core/steam_auth.sh update.sh tests/update_steam_home_preservation_test.sh installer/providers/steam-workshop.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
+          bash -n core/steam_auth.sh update.sh tests/update_steam_home_preservation_test.sh tests/update_backup_retention_days_test.sh installer/providers/steam-workshop.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
           python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/game_data_executor.py agents/linux/runtime/capabilities.py agents/linux/runtime/content_provider_steam_workshop.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
       - name: Session safety and persistence regression tests
         run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
@@ -65,6 +67,8 @@ jobs:
         run: python3 -m pytest tests/hybrid_game_data_verify_read_only_test.py -q
       - name: DSM updater preserves persistent Steam login across releases
         run: bash tests/update_steam_home_preservation_test.sh
+      - name: DSM update backup retention 14 days plus latest valid
+        run: bash tests/update_backup_retention_days_test.sh
       - name: Legacy Steam anonymous version probe isolation
         run: bash tests/generic_update_monitor_test.sh
       - name: Anonymous install isolation and log redaction

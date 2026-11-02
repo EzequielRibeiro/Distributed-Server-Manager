@@ -49,7 +49,7 @@ fi
 INSTALL_DIR="/opt/dsm"
 CONFIG_FILE="${INSTALL_DIR}/config/dsm.conf"
 BACKUP_DIR="/opt/dsm-backup"
-UPDATE_BACKUP_RETENTION="${DSM_UPDATE_BACKUP_RETENTION:-10}"
+UPDATE_BACKUP_RETENTION_DAYS="${DSM_UPDATE_BACKUP_RETENTION_DAYS:-14}"
 STAGING_DIR="/opt/dsm-update-stage"
 SYSTEMD_DIR="/etc/systemd/system"
 CAP_LINK="/usr/local/bin/cap"
@@ -551,27 +551,87 @@ create_backup() {
     fi
 }
 
+# Keep every recent update snapshot, irrespective of the number created in a
+# day. Also keep the newest verified snapshot even if it is older than the
+# retention window. Never delete backups of uncertain validity.
 prune_update_backups() {
-    local retention="${UPDATE_BACKUP_RETENTION:-10}"
-    local archive stem
+    local days="${UPDATE_BACKUP_RETENTION_DAYS:-14}"
+    local archive stem stamp epoch cutoff now selected="" companion=""
     local -a archives=()
+    local -a expired=()
 
-    if [[ ! "${retention}" =~ ^[0-9]+$ ]] || (( retention < 1 )); then
-        echo "Retenção de backups inválida; limpeza automática ignorada: ${retention}" >&2
+    if [[ ! "${days}" =~ ^[0-9]+$ ]] || (( ${#days} > 4 )) || (( 10#${days} < 1 )); then
+        echo "Dias de retenção inválidos; nenhuma limpeza efetuada: ${days}" >&2
         return 0
     fi
-    [[ -n "${BACKUP_DIR:-}" && "${BACKUP_DIR}" != "/" && -d "${BACKUP_DIR}" ]] || return 0
+    [[ -n "${BACKUP_DIR:-}" && "${BACKUP_DIR}" != "/" && -d "${BACKUP_DIR}" && ! -L "${BACKUP_DIR}" ]] || return 0
+    now="$(date +%s)" || return 0
+    cutoff=$((now - 10#${days} * 86400))
 
     mapfile -t archives < <(
-        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' -printf '%f\n' |
-            sort -r
+        find "${BACKUP_DIR}" -maxdepth 1 -type f ! -type l \
+            -name 'dsm-before-update-*.tar.gz' -printf '%f\n' | sort -r
     )
-    (( ${#archives[@]} > retention )) || return 0
+    for archive in "${archives[@]}"; do
+        # Do not infer timestamps from file mtime; copying a backup changes it.
+        stamp="${archive#dsm-before-update-}"
+        stamp="${stamp%.tar.gz}"
+        if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+            echo "Backup com data inválida preservado: ${archive}" >&2
+            continue
+        fi
+        epoch="$(date -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s 2>/dev/null)" || continue
+        # Future timestamps and snapshots within N*24 hours are preserved.
+        (( epoch < cutoff )) || continue
+        expired+=("${archive}")
+    done
+    (( ${#expired[@]} > 0 )) || return 0
 
-    echo "Aplicando retenção de backups de atualização: mantendo ${retention} snapshots mais recentes."
-    for archive in "${archives[@]:retention}"; do
+    # The latest valid expired snapshot is the fallback if no recent valid
+    # backup survives. Validate gzip CRC and the database companion for
+    # database-backed installations before allowing *any* deletion.
+    for archive in "${archives[@]}"; do
         stem="${archive%.tar.gz}"
-        rm -f --             "${BACKUP_DIR}/${archive}"             "${BACKUP_DIR}/${stem}.database.dump"             "${BACKUP_DIR}/${stem}.database.sql"
+        companion=""
+        if [[ -f "${BACKUP_DIR}/${stem}.database.dump" && ! -L "${BACKUP_DIR}/${stem}.database.dump" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.dump"
+        elif [[ -f "${BACKUP_DIR}/${stem}.database.sql" && ! -L "${BACKUP_DIR}/${stem}.database.sql" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.sql"
+        fi
+        if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" && ( -z "${companion}" || ! -s "${companion}" ) ]]; then
+            continue
+        fi
+        [[ -s "${BACKUP_DIR}/${archive}" ]] || continue
+        if gzip -t -- "${BACKUP_DIR}/${archive}" 2>/dev/null; then
+            selected="${archive}"
+            break
+        fi
+    done
+    if [[ -z "${selected}" ]]; then
+        echo "Nenhum backup íntegro encontrado; limpeza cancelada para evitar perda de rollback." >&2
+        return 0
+    fi
+
+    echo "Retenção DSM: ${days} dias, preservando último backup íntegro (${selected})."
+    for archive in "${expired[@]}"; do
+        [[ "${archive}" == "${selected}" ]] && continue
+        stem="${archive%.tar.gz}"
+        # Conservative cleanup: never delete a damaged, incomplete or linked
+        # backup or an unpaired dump. Those require manual investigation.
+        [[ -f "${BACKUP_DIR}/${archive}" && ! -L "${BACKUP_DIR}/${archive}" ]] || continue
+        companion=""
+        if [[ -f "${BACKUP_DIR}/${stem}.database.dump" && ! -L "${BACKUP_DIR}/${stem}.database.dump" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.dump"
+        elif [[ -f "${BACKUP_DIR}/${stem}.database.sql" && ! -L "${BACKUP_DIR}/${stem}.database.sql" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.sql"
+        fi
+        if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" && ( -z "${companion}" || ! -s "${companion}" ) ]]; then
+            continue
+        fi
+        [[ -s "${BACKUP_DIR}/${archive}" ]] || continue
+        gzip -t -- "${BACKUP_DIR}/${archive}" 2>/dev/null || continue
+        rm -f -- "${BACKUP_DIR}/${archive}" || continue
+        [[ -z "${companion}" ]] || rm -f -- "${companion}"
     done
 }
 
