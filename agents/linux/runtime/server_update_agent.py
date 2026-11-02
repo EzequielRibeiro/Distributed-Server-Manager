@@ -16,9 +16,9 @@ from backup_client import _create as create_backup
 from server_update_provider import _manifest_candidates, detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback, snapshot_files
 try:
-    from .dayz_update_content_preflight import inspect_update_content_preflight
+    from .dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 except ImportError:
-    from dayz_update_content_preflight import inspect_update_content_preflight
+    from dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 
 
 class ServerUpdateError(RuntimeError):
@@ -227,6 +227,7 @@ def perform_update(
         staging = prepare_staging(target)
         installer(staging)
         content_preflight = inspect_update_content_preflight(staging, game)
+        reject_unsafe_staged_dayz_content(content_preflight)
         _ensure_dayz_staging_root_access(staging, game)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
