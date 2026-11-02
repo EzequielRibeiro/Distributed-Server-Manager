@@ -46,4 +46,35 @@ def inspect_update_content_preflight(
     }
 
 
-__all__ = ["inspect_update_content_preflight"]
+class UnsafeDayZStagingContent(RuntimeError):
+    """The staged content is unsafe or incomplete; never activate it."""
+
+
+# Ownership mismatch remains a diagnostic warning until the engine-specific
+# minimum-permission remediation and rollback are proven in a sandbox.
+BLOCKED_REASONS = frozenset({
+    "invalid_install_root", "top_level_symlink", "dlc_root_symlink",
+    "unsafe_dlc_addons", "dlc_addon_symlink", "known_dlc_missing_addons",
+    "known_dlc_no_packages", "dlc_root_limit", "dlc_addon_entry_limit",
+    "install_root_entry_limit",
+})
+
+
+def reject_unsafe_staged_dayz_content(preflight: dict[str, Any] | None) -> None:
+    """Fail closed only on explicit unsafe/incomplete DLC evidence.
+
+    The warning status from owner mismatch alone must *not* imply a safe
+    repair or block ongoing updates until remediation has been validated.
+    """
+    if not preflight:
+        return
+    status = str(preflight.get("status") or "unknown")
+    reason = str(preflight.get("reason") or "")
+    if status == "unsafe" or (status == "unknown" and reason in BLOCKED_REASONS):
+        raise UnsafeDayZStagingContent(f"DayZ staged DLC content rejected: {reason or status}")
+
+
+__all__ = [
+    "BLOCKED_REASONS", "UnsafeDayZStagingContent",
+    "inspect_update_content_preflight", "reject_unsafe_staged_dayz_content",
+]
