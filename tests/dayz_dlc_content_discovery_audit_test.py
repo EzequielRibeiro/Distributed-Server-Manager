@@ -102,6 +102,22 @@ class DayZDLCDiscoveryAuditTest(unittest.TestCase):
             self.assertEqual(result["status"], "unknown")
             self.assertEqual(result["reason"], "known_dlc_missing_addons")
 
+    def test_known_dlc_empty_addons_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "nasdara" / "addons").mkdir(parents=True)
+            result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
+            self.assertEqual(result["status"], "unknown")
+            self.assertEqual(result["reason"], "known_dlc_no_packages")
+
+    def test_unknown_folder_with_empty_addons_is_not_dlc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "some_other_folder" / "addons").mkdir(parents=True)
+            result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["roots"], [])
+
     def test_install_root_entry_count_is_bounded(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory() as tmp:
