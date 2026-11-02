@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 MAX_DLC_ROOTS = 32
+MAX_ADDON_ENTRIES = 4096
 # The base-game package and mod directories are not optional DLC roots.
 EXCLUDED = frozenset({
     "addons", "dta", "keys", "battleye", "mpmissions", "mods",
@@ -57,7 +58,11 @@ def audit_dayz_dlc_roots(
             # Check only immediate addon entries and keep work bounded.
             packages = 0
             mismatched_files = 0
+            addon_entries = 0
             for item in addons.iterdir():
+                addon_entries += 1
+                if addon_entries > MAX_ADDON_ENTRIES:
+                    return {"status": "unknown", "reason": "dlc_addon_entry_limit", "roots": findings}
                 item_stat = item.lstat()
                 if stat.S_ISLNK(item_stat.st_mode):
                     return {"status": "unsafe", "reason": "dlc_addon_symlink", "roots": findings}
@@ -74,6 +79,10 @@ def audit_dayz_dlc_roots(
                 "packages": packages,
                 "package_owner_mismatch_count": mismatched_files,
                 "owner_uid": entry.st_uid,
+                "owner_gid": entry.st_gid,
+                "owner_mode": oct(stat.S_IMODE(entry.st_mode)),
+                "addons_owner_uid": addon_stat.st_uid,
+                "addons_mode": oct(stat.S_IMODE(addon_stat.st_mode)),
                 "expected_uid": expected_uid,
                 "owner_matches_runner": entry.st_uid == expected_uid,
                 "addons_owner_matches_runner": addon_stat.st_uid == expected_uid,
@@ -100,4 +109,4 @@ def audit_dayz_dlc_roots(
     }
 
 
-__all__ = ["MAX_DLC_ROOTS", "audit_dayz_dlc_roots"]
+__all__ = ["MAX_ADDON_ENTRIES", "MAX_DLC_ROOTS", "audit_dayz_dlc_roots"]
