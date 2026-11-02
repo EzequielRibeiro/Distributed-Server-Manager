@@ -2,6 +2,7 @@
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -40,7 +41,10 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
             "game": "dayz", "provider": provider, "install": {"package_id": package_id, "branch": branch},
             "install_dir": str(self.target),
         }}))
-        env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""), HOME=str(self.base / "home"))
+        env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
+                   HOME=str(self.base / "home"), CAPIVARA_STEAM_HOME=str(self.base / "home"),
+                   CAPIVARA_AGENT_STATE_DIR=str(self.base / "agent-state"),
+                   DSM_TEST_PROBE_HOME_FILE=str(self.base / "probe-home.txt"))
         p = subprocess.run([sys.executable, str(EXECUTOR), str(self.root), str(request), str(result)],
                            env=env, capture_output=True, text=True, timeout=15)
         self.assertFalse(self.marker.exists())
@@ -52,6 +56,29 @@ class HybridVerifyReadOnlyTest(unittest.TestCase):
         self.assertEqual(result["update_status"]["installed_version"], "1001")
         self.assertEqual(result["update_status"]["available_version"], "1002")
         self.assertEqual(result["update_status"]["state"], "update_available")
+
+    def test_anonymous_steamcmd_probe_uses_private_home_not_authenticated_session(self):
+        authenticated_home = self.base / "home"
+        authenticated_config = authenticated_home / ".local/share/Steam/config/config.vdf"
+        authenticated_config.parent.mkdir(parents=True)
+        authenticated_config.write_text("FAKE_AUTHENTICATED_TEST_DATA")
+        authenticated_config.chmod(0o600)
+        self.bin.joinpath("steamcmd").write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$HOME" > "$DSM_TEST_PROBE_HOME_FILE"\n'
+            "printf '%s\\n' '\"branches\"' '{' '\"public\"' '{' '\"buildid\" \"1002\"' '}' '}'\n"
+        )
+        self.bin.joinpath("steamcmd").chmod(0o755)
+        before = authenticated_config.stat()
+        p, result = self.run_probe()
+        self.assertEqual(p.returncode, 0, result)
+        anonymous_home = Path((self.base / "probe-home.txt").read_text().strip())
+        self.assertEqual(anonymous_home, self.base / "agent-state/steam-anonymous-metadata-home")
+        self.assertEqual(stat.S_IMODE(anonymous_home.stat().st_mode), 0o700)
+        self.assertNotEqual(anonymous_home, authenticated_home)
+        after = authenticated_config.stat()
+        self.assertEqual((before.st_ino, before.st_size, before.st_mtime_ns),
+                         (after.st_ino, after.st_size, after.st_mtime_ns))
+        self.assertEqual(authenticated_config.read_text(), "FAKE_AUTHENTICATED_TEST_DATA")
 
     def test_up_to_date(self):
         (self.target / "steamapps/appmanifest_223350.acf").write_text('"buildid" "1002"\n')

@@ -49,7 +49,7 @@ fi
 INSTALL_DIR="/opt/dsm"
 CONFIG_FILE="${INSTALL_DIR}/config/dsm.conf"
 BACKUP_DIR="/opt/dsm-backup"
-UPDATE_BACKUP_RETENTION="${DSM_UPDATE_BACKUP_RETENTION:-10}"
+UPDATE_BACKUP_RETENTION_DAYS="${DSM_UPDATE_BACKUP_RETENTION_DAYS:-14}"
 STAGING_DIR="/opt/dsm-update-stage"
 SYSTEMD_DIR="/etc/systemd/system"
 CAP_LINK="/usr/local/bin/cap"
@@ -536,6 +536,8 @@ create_backup() {
     wait_with_progress "${BACKUP_PROCESS_PID}" "Validando backup | Validating backup"
     BACKUP_PROCESS_PID=""
 
+    # Backups may contain authenticated SteamCMD session state and secrets.
+    chmod 0600 -- "${BACKUP_PART}"
     mv -- "${BACKUP_PART}" "${BACKUP_FILE}"
     BACKUP_PART=""
     echo
@@ -549,27 +551,103 @@ create_backup() {
     fi
 }
 
-prune_update_backups() {
-    local retention="${UPDATE_BACKUP_RETENTION:-10}"
-    local archive stem
-    local -a archives=()
+# Keep every recent update snapshot, irrespective of the number created in a
+# day. Also keep the newest verified snapshot even if it is older than the
+# retention window. Never delete backups of uncertain validity.
+# Fail closed: a gzip stream can be valid without containing a TAR snapshot.
+backup_snapshot_is_readable() {
+    local archive="$1" companion="$2"
+    local listing=""
+    [[ -s "${archive}" && -f "${archive}" && ! -L "${archive}" ]] || return 1
+    gzip -t -- "${archive}" 2>/dev/null || return 1
+    listing="$(tar -tzf "${archive}" 2>/dev/null)" || return 1
+    [[ -n "${listing}" ]] || return 1
+    if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" ]]; then
+        [[ -n "${companion}" && -s "${companion}" && -f "${companion}" && ! -L "${companion}" ]] || return 1
+        if [[ "${DSM_DATABASE_DRIVER}" == "postgresql" ]]; then
+            command -v pg_restore >/dev/null 2>&1 || return 1
+            pg_restore --list "${companion}" >/dev/null 2>&1 || return 1
+        fi
+    fi
+    return 0
+}
 
-    if [[ ! "${retention}" =~ ^[0-9]+$ ]] || (( retention < 1 )); then
-        echo "Retenção de backups inválida; limpeza automática ignorada: ${retention}" >&2
+prune_update_backups() {
+    local days="${UPDATE_BACKUP_RETENTION_DAYS:-14}"
+    local archive stem stamp epoch cutoff now selected="" companion=""
+    local -a archives=()
+    local -a expired=()
+
+    if [[ ! "${days}" =~ ^[0-9]+$ ]] || (( ${#days} > 4 )) || (( 10#${days} < 1 )); then
+        echo "Dias de retenção inválidos; nenhuma limpeza efetuada: ${days}" >&2
         return 0
     fi
-    [[ -n "${BACKUP_DIR:-}" && "${BACKUP_DIR}" != "/" && -d "${BACKUP_DIR}" ]] || return 0
+    [[ -n "${BACKUP_DIR:-}" && "${BACKUP_DIR}" != "/" && -d "${BACKUP_DIR}" && ! -L "${BACKUP_DIR}" ]] || return 0
+    now="$(date +%s)" || return 0
+    cutoff=$((now - 10#${days} * 86400))
 
     mapfile -t archives < <(
-        find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' -printf '%f\n' |
-            sort -r
+        find "${BACKUP_DIR}" -maxdepth 1 -type f ! -type l \
+            -name 'dsm-before-update-*.tar.gz' -printf '%f\n' | sort -r
     )
-    (( ${#archives[@]} > retention )) || return 0
+    for archive in "${archives[@]}"; do
+        # Do not infer timestamps from file mtime; copying a backup changes it.
+        stamp="${archive#dsm-before-update-}"
+        stamp="${stamp%.tar.gz}"
+        if [[ ! "${stamp}" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+            echo "Backup com data inválida preservado: ${archive}" >&2
+            continue
+        fi
+        epoch="$(date -d "${stamp:0:4}-${stamp:4:2}-${stamp:6:2} ${stamp:9:2}:${stamp:11:2}:${stamp:13:2}" +%s 2>/dev/null)" || continue
+        # Future timestamps and snapshots within N*24 hours are preserved.
+        (( epoch < cutoff )) || continue
+        expired+=("${archive}")
+    done
+    (( ${#expired[@]} > 0 )) || return 0
 
-    echo "Aplicando retenção de backups de atualização: mantendo ${retention} snapshots mais recentes."
-    for archive in "${archives[@]:retention}"; do
+    # The latest valid expired snapshot is the fallback if no recent valid
+    # backup survives. Validate gzip CRC and the database companion for
+    # database-backed installations before allowing *any* deletion.
+    for archive in "${archives[@]}"; do
         stem="${archive%.tar.gz}"
-        rm -f --             "${BACKUP_DIR}/${archive}"             "${BACKUP_DIR}/${stem}.database.dump"             "${BACKUP_DIR}/${stem}.database.sql"
+        companion=""
+        if [[ -f "${BACKUP_DIR}/${stem}.database.dump" && ! -L "${BACKUP_DIR}/${stem}.database.dump" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.dump"
+        elif [[ -f "${BACKUP_DIR}/${stem}.database.sql" && ! -L "${BACKUP_DIR}/${stem}.database.sql" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.sql"
+        fi
+        if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" && ( -z "${companion}" || ! -s "${companion}" ) ]]; then
+            continue
+        fi
+        if backup_snapshot_is_readable "${BACKUP_DIR}/${archive}" "${companion}"; then
+            selected="${archive}"
+            break
+        fi
+    done
+    if [[ -z "${selected}" ]]; then
+        echo "Nenhum backup íntegro encontrado; limpeza cancelada para evitar perda de rollback." >&2
+        return 0
+    fi
+
+    echo "Retenção DSM: ${days} dias, preservando último backup íntegro (${selected})."
+    for archive in "${expired[@]}"; do
+        [[ "${archive}" == "${selected}" ]] && continue
+        stem="${archive%.tar.gz}"
+        # Conservative cleanup: never delete a damaged, incomplete or linked
+        # backup or an unpaired dump. Those require manual investigation.
+        [[ -f "${BACKUP_DIR}/${archive}" && ! -L "${BACKUP_DIR}/${archive}" ]] || continue
+        companion=""
+        if [[ -f "${BACKUP_DIR}/${stem}.database.dump" && ! -L "${BACKUP_DIR}/${stem}.database.dump" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.dump"
+        elif [[ -f "${BACKUP_DIR}/${stem}.database.sql" && ! -L "${BACKUP_DIR}/${stem}.database.sql" ]]; then
+            companion="${BACKUP_DIR}/${stem}.database.sql"
+        fi
+        if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" && ( -z "${companion}" || ! -s "${companion}" ) ]]; then
+            continue
+        fi
+        backup_snapshot_is_readable "${BACKUP_DIR}/${archive}" "${companion}" || continue
+        rm -f -- "${BACKUP_DIR}/${archive}" || continue
+        [[ -z "${companion}" ]] || rm -f -- "${companion}"
     done
 }
 
@@ -585,6 +663,7 @@ create_database_backup() {
     echo "Criando backup consistente do banco ${DSM_DATABASE_DRIVER}..."
     python3 "${MANAGER}" --root "${INSTALL_DIR}" \
         backup "${DATABASE_BACKUP_FILE}"
+    chmod 0600 -- "${DATABASE_BACKUP_FILE}"
 }
 
 restore_database_backup() {
@@ -921,12 +1000,22 @@ preserve_data() {
         "logs"
         "backups"
         "custom"
+        # Persistent SteamCMD HOME is runtime state, not release product code.
+        # Keep both cache/config and the symlink aliases across DSM updates.
+        ".local"
+        ".steam"
     )
     local ITEM
 
     for ITEM in "${PRESERVE_ITEMS[@]}"
     do
-        if [[ -d "${INSTALL_DIR}/${ITEM}" ]]
+        # A top-level symlink must be copied as a link, never followed by
+        # rsync's trailing slash (which could traverse outside the DSM tree).
+        if [[ -L "${INSTALL_DIR}/${ITEM}" ]]
+        then
+            echo "Preservando | Preserving: ${ITEM} (symlink)"
+            cp -a -- "${INSTALL_DIR}/${ITEM}" "${STAGING_DIR}/${ITEM}"
+        elif [[ -d "${INSTALL_DIR}/${ITEM}" ]]
         then
             echo "Preservando | Preserving: ${ITEM}"
             mkdir -p "${STAGING_DIR}/${ITEM}"
@@ -1675,8 +1764,11 @@ main() {
     # Stop writers before creating a consistent filesystem/database snapshot pair.
     capture_service_state
     UPDATE_TRANSACTION_STARTED=1
-    stop_game_instances
+    # Quiesce the Controller/Workers first. Otherwise a live reconciler can
+    # restart a managed game in the gap after its graceful stop (observed on
+    # horizon-server during the 2.0.132-rc.3 homologation attempt).
     stop_services
+    stop_game_instances
     # With Controller/Workers stopped, no new managed instance can race the update.
     # Any remaining process is unmanaged or failed to drain and must block mutation.
     run_process_guard
@@ -1842,6 +1934,28 @@ rollback() {
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
         done
+
+        # Rollback restores source templates, so render the runtime account
+        # before systemd sees the restored units.
+        for UNIT_TEMPLATE in \
+            "${SYSTEMD_DIR}/"dsm-*.service \
+            "${SYSTEMD_DIR}/"dsm-*.timer
+        do
+            [[ -e "${UNIT_TEMPLATE}" ]] || continue
+            sed -i \
+                -e "s|{{DSM_USER}}|${DSM_USER}|g" \
+                -e "s|{{DSM_GROUP}}|${DSM_GROUP}|g" \
+                "${UNIT_TEMPLATE}"
+        done
+
+        if grep -RqsE '\{\{DSM_(USER|GROUP)\}\}' \
+            "${SYSTEMD_DIR}/"dsm-*.service \
+            "${SYSTEMD_DIR}/"dsm-*.timer 2>/dev/null
+        then
+            echo "[ERROR] Rollback deixou placeholders DSM em unidades systemd." >&2
+            echo "[ERROR] Rollback left DSM placeholders in systemd units." >&2
+            return 1
+        fi
     fi
     # Reconcile privileged Hybrid substrate from the restored package.
     if [[ "${SYSTEMD_ENABLED}" -eq 1 ]]

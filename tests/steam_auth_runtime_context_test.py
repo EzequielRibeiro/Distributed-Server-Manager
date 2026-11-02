@@ -95,7 +95,8 @@ def test_services_pin_persistent_steam_session_home():
 def test_auth_uses_same_persistent_home_and_probes_noninteractive_reuse():
     text = HELPER.read_text(encoding="utf-8")
     assert 'CAPIVARA_STEAM_HOME="${RUNTIME_HOME}"' in text
-    assert '</dev/null >/dev/null 2>&1 || PROBE_STATUS=$?' in text
+    assert "steam_auth_probe_reusable_session" in text
+    assert "</dev/null 2>&1" in text
     assert "Sessão não interativa validada" in text
 
 
@@ -114,3 +115,60 @@ def test_cap_steam_auth_no_longer_sources_provider_config_or_legacy_provider():
     assert 'require_role "cap steam auth" agent hybrid' in block
     assert "installer/providers/steam.sh" not in block
     assert 'source "${conf}"' not in block
+
+
+def _probe_fake_steamcmd(output: str, exit_code: int = 0) -> subprocess.CompletedProcess:
+    """Exercise the actual shell probe without accessing Steam accounts."""
+    with tempfile.TemporaryDirectory() as td:
+        binary = Path(td) / "mock-steamcmd"
+        # The response text is written to a file, never interpreted as code.
+        response = Path(td) / "response.txt"
+        response.write_text(output, encoding="utf-8")
+        binary.write_text(
+            '#!/usr/bin/env bash\ncat "$(dirname "$0")/response.txt"\n'
+            f'exit {exit_code}\n', encoding="utf-8"
+        )
+        binary.chmod(0o700)
+        return subprocess.run(
+            ["bash", "-c", 'source "$1"; steam_auth_exec_as_runtime(){ shift 3; "$@"; }; steam_auth_probe_reusable_session tester /tmp /tmp "$2" account' , "_", str(HELPER), str(binary)],
+            capture_output=True, text=True, check=False,
+        )
+
+
+def test_noninteractive_auth_probe_requires_actual_login_marker():
+    for output in (
+        "Loading Steam API...OK\nLogging in user 'account' to Steam Public...OK\n",
+        "Logged in OK\n",
+    ):
+        result = _probe_fake_steamcmd(output)
+        assert result.returncode == 0, result.stderr
+
+
+def test_noninteractive_auth_probe_fails_closed_on_zero_exit_without_login():
+    for output in (
+        "Loading Steam API...OK\n",
+        "Connecting anonymously to Steam Public...OK\nWaiting for user info...OK\n",
+        "Waiting for user info...OK\n",
+        "ERROR! Login Failure: Invalid Password\n",
+        "Steam Guard code required\n",
+        "ERROR! Download item 2289456201 failed (Failure).\n",
+    ):
+        result = _probe_fake_steamcmd(output)
+        assert result.returncode != 0, output
+        assert result.stdout == ""  # no sensitive SteamCMD output
+
+
+def test_noninteractive_auth_probe_rejects_login_for_another_account():
+    for output in (
+        "Logging in user 'anonymous' to Steam Public...OK\n",
+        "Logging in user 'other-user' to Steam Public...OK\n",
+        "Logging in user 'anonymous' to Steam Public...OK\nLogged in OK\n",
+    ):
+        result = _probe_fake_steamcmd(output)
+        assert result.returncode != 0
+        assert result.stdout == ""
+
+
+def test_noninteractive_auth_probe_rejects_nonzero_exit_with_success_marker():
+    result = _probe_fake_steamcmd("Logging in user 'account' to Steam Public...OK\n", exit_code=1)
+    assert result.returncode != 0
