@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents" / "linux" / "runtime"))
-from content_discovery_audit import audit_dayz_dlc_roots
+from content_discovery_audit import MAX_ADDON_ENTRIES, audit_dayz_dlc_roots
 from game_data_integrity import inspect_game_data
 
 
@@ -73,6 +73,26 @@ class DayZDLCDiscoveryAuditTest(unittest.TestCase):
             (root / "nasdara").symlink_to(target, target_is_directory=True)
             result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
             self.assertEqual(result["status"], "unsafe")
+
+    def test_dlc_inventory_has_bounded_addon_scan(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            addon = self._make_dlc(root, "nasdara")
+            (addon / "second.pbo").write_bytes(b"data")
+            with patch("content_discovery_audit.MAX_ADDON_ENTRIES", 1):
+                result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
+            self.assertEqual(result["status"], "unknown")
+            self.assertEqual(result["reason"], "dlc_addon_entry_limit")
+
+    def test_non_dayz_integrity_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_dlc(root, "nasdara")
+            for game in ("minecraft", "palworld"):
+                report = inspect_game_data(root, {"game": game})
+                self.assertNotIn("content_discovery", report)
+                self.assertEqual(report["health"], "ok")
 
     def test_symlink_in_dlc_addons_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
