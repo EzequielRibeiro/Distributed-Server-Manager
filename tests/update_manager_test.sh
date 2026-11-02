@@ -554,9 +554,9 @@ grep -Fq 'restart_game_instances' "${UPDATE}" || fail "update.sh does not restor
     (( preflight_line < capture_game_line )) || fail "managed preflight runs after game-state capture"
     (( capture_game_line < capture_line )) || fail "game-state capture runs after DSM service-state capture"
     (( capture_line < transaction_line )) || fail "update transaction starts before service state capture"
-    (( transaction_line < stop_game_line )) || fail "managed game instances stop before update transaction starts"
-    (( stop_game_line < stop_line )) || fail "DSM services stop before managed game instances"
-    (( stop_line < strict_guard_line )) || fail "strict Process Guard runs before writers are stopped"
+    (( transaction_line < stop_line )) || fail "DSM services stop before update transaction starts"
+    (( stop_line < stop_game_line )) || fail "managed game instances stop before reconciling DSM services"
+    (( stop_game_line < strict_guard_line )) || fail "strict Process Guard runs before games are drained"
 )
 (
     while IFS= read -r line; do

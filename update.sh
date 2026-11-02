@@ -1748,8 +1748,11 @@ main() {
     # Stop writers before creating a consistent filesystem/database snapshot pair.
     capture_service_state
     UPDATE_TRANSACTION_STARTED=1
-    stop_game_instances
+    # Quiesce the Controller/Workers first. Otherwise a live reconciler can
+    # restart a managed game in the gap after its graceful stop (observed on
+    # horizon-server during the 2.0.132-rc.3 homologation attempt).
     stop_services
+    stop_game_instances
     # With Controller/Workers stopped, no new managed instance can race the update.
     # Any remaining process is unmanaged or failed to drain and must block mutation.
     run_process_guard
