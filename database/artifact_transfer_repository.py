@@ -7,6 +7,7 @@ import hashlib,os,shutil
 from pathlib import Path
 import uuid
 from alert_repository import AlertSession,dialect_for_backend
+from artifact_cleanup_policy import classify_expired_upload
 
 FINAL={"completed","failed","cancelled","expired"};ACTIVE={"staging","queued","delivered","transferring"}
 _ARTIFACT_CHUNK_BYTES=1024*1024
@@ -246,6 +247,48 @@ class ArtifactTransferRepository:
    with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='expired',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status<>'expired'",(str(row["transfer_id"]),))
    count+=1
   return count
+
+ def audit_expired_content_uploads(self,limit=200):
+  """Read-only preflight for cleanup backlog: never dispatch or delete.
+
+  Historical revision references remain protected. Report separate counts so
+  cleanup improvements do not silently weaken rollback/reference safeguards.
+  """
+  batch=max(1,min(int(limit),1000));ph=self.dialect.placeholder
+  with self.session() as s:
+   rows=s.execute(
+    "SELECT transfer_id,status,COALESCE(size_bytes,0) AS size_bytes "
+    "FROM artifact_transfers WHERE purpose='content_upload' "
+    "AND direction='controller_to_agent' AND status='expired' "
+    "AND destination_ref IS NOT NULL ORDER BY updated_at ASC LIMIT "
+    f"{batch}"
+   ).fetchall()
+   counts={"scanned":0,"unreferenced_expired":0,"current_reference":0,
+           "historical_reference":0,"not_expired":0,
+           "unreferenced_bytes":0,"protected_bytes":0}
+   for row in rows:
+    tid=str(row["transfer_id"])
+    pattern="%"+tid.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
+    current=s.execute(
+     f"SELECT 1 FROM content_assignments WHERE artifact_json LIKE {ph} "
+     f"OR provenance_json LIKE {ph} LIMIT 1",(pattern,pattern)
+    ).fetchone() is not None
+    historical=False
+    if not current:
+     historical=s.execute(
+      f"SELECT 1 FROM content_assignment_revisions WHERE artifact_json LIKE {ph} "
+      f"OR provenance_json LIKE {ph} LIMIT 1",(pattern,pattern)
+     ).fetchone() is not None
+    category=classify_expired_upload(
+     transfer_status=str(row["status"]),
+     has_current_reference=current,has_historical_reference=historical,
+    )
+    size=max(0,int(row["size_bytes"] or 0))
+    counts["scanned"]+=1
+    counts[category]+=1
+    if category=="unreferenced_expired":counts["unreferenced_bytes"]+=size
+    else:counts["protected_bytes"]+=size
+   return counts
 
  def enqueue_expired_content_upload_cleanup(self):
   """Queue at most one cleanup for each expired, unreferenced upload.
