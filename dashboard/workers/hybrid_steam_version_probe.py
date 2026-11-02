@@ -1,10 +1,18 @@
 """Steam build probe for Hybrid jobs; never modifies managed game installations."""
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+# Share the Agent update detector’s private SteamCMD HOME policy.
+_RUNTIME = Path(__file__).resolve().parents[2] / "agents" / "linux" / "runtime"
+if str(_RUNTIME) not in sys.path:
+    sys.path.insert(0, str(_RUNTIME))
+from server_update_provider import _anonymous_steam_env
 
 _APP_ID = re.compile(r"[0-9]{1,20}")
 _BRANCH = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -45,6 +53,8 @@ def probe(selection: dict) -> dict:
          "+app_info_print", app_id, "+quit"],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT, text=True, timeout=180, check=False,
+        env=_anonymous_steam_env(Path(os.environ.get('CAPIVARA_AGENT_STATE_DIR') or
+                                   Path(__file__).resolve().parents[2] / 'runtime' / 'hybrid-agent-state')),
     )
     if completed.returncode:
         raise RuntimeError("read_only_version_probe_steam_lookup_failed")

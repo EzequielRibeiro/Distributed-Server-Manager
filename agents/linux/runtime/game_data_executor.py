@@ -70,7 +70,8 @@ def _install_steamcmd()->dict[str,Any]:
  binary=root/"steamcmd.sh"
  if not binary.is_file():raise RuntimeError("SteamCMD installer did not provide steamcmd.sh")
  binary.chmod(binary.stat().st_mode|0o111)
- completed=subprocess.run([str(binary),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,env={**os.environ,"HOME":str(Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent")))})
+ from server_update_provider import _anonymous_steam_env
+ completed=subprocess.run([str(binary),"+quit"],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=300,check=False,env=_anonymous_steam_env(purpose="metadata"))
  if completed.returncode!=0:raise RuntimeError("SteamCMD validation failed")
  cache=Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR","/var/lib/capivara-agent"))/"capabilities"/"steamcmd.json"
  try:cache.unlink(missing_ok=True)
@@ -86,7 +87,12 @@ def _run_steam(selection:dict[str,Any],target:Path)->None:
  if branch!="public":argv.extend(["-beta",branch])
  argv.extend(["validate","+quit"]);target.mkdir(parents=True,exist_ok=True)
  session_home=str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or "/var/lib/capivara-agent").resolve())
- cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env={**os.environ,"HOME":session_home,"CAPIVARA_STEAM_HOME":session_home});output=cp.stdout or ""
+ if auth=="anonymous":
+  from server_update_provider import _anonymous_steam_env
+  steam_env=_anonymous_steam_env(purpose="install")
+ else:
+  steam_env={**os.environ,"HOME":session_home,"CAPIVARA_STEAM_HOME":session_home}
+ cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env=steam_env);output=cp.stdout or ""
  if cp.returncode!=0:
   lowered=output.lower()
   if "no subscription" in lowered:raise RuntimeError("Steam account has no subscription for this app; configure an authorized Steam account on the Agent")

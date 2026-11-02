@@ -247,7 +247,20 @@ steam_provider_install_anonymous()
 
     mkdir -p "${INSTALL_PATH}"
 
-    steamcmd_run_with_progress \
+    # Anonymous installs must not overwrite the authenticated Agent's HOME.
+    # Fail closed on an unsafe or redirected state directory.
+    local STATE_ROOT="${CAPIVARA_AGENT_STATE_DIR:-${DSM_ROOT}/runtime/hybrid-agent-state}"
+    local ANON_HOME="${STATE_ROOT}/steam-anonymous-install-home"
+    [[ -d "${STATE_ROOT}" && ! -L "${STATE_ROOT}" && -O "${STATE_ROOT}" ]] || return 1
+    [[ ! -L "${ANON_HOME}" ]] || return 1
+    if [[ ! -e "${ANON_HOME}" ]]; then
+        (umask 077; mkdir -m 700 -- "${ANON_HOME}") || return 1
+    fi
+    [[ -d "${ANON_HOME}" && ! -L "${ANON_HOME}" && -O "${ANON_HOME}" ]] || return 1
+    [[ "$(stat -c '%a' -- "${ANON_HOME}")" == "700" ]] || return 1
+
+    HOME="${ANON_HOME}" XDG_DATA_HOME="${ANON_HOME}/.local/share" \
+        CAPIVARA_STEAM_HOME="${ANON_HOME}" steamcmd_run_with_progress \
         +force_install_dir "${INSTALL_PATH}" \
         +login anonymous \
         +app_update "${APP_ID}" validate \
@@ -324,12 +337,31 @@ steam_provider_install_authenticated()
             +login "${STEAM_USER}" +quit </dev/null 2>&1)" || AUTH_STATUS=$?
     fi
 
-    if (( AUTH_STATUS != 0 ))
+    # SteamCMD may exit zero despite an authentication error. A successful
+    # bootstrap or anonymous user-info readiness does not prove account login.
+    # Examine the captured output internally; never print its raw contents.
+    local AUTH_NORMALIZED=""
+    AUTH_NORMALIZED="$(printf '%s' "${AUTH_OUTPUT}" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g; s/\r/\n/g')"
+    if printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+        'Logging in user .* to Steam Public'; then
+        # A cached login for another account, including anonymous, is invalid.
+        if ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Fiq \
+            "Logging in user '${STEAM_USER}' to Steam Public...OK"; then
+            AUTH_STATUS=42
+        fi
+    elif ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq 'Logged in OK'; then
+        AUTH_STATUS=42
+    fi
+    if (( AUTH_STATUS != 0 )) || \
+        printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+          'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied' || \
+        ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+          'Logged in OK|Logging in user .* to Steam Public.*OK'
     then
         # Never print raw SteamCMD authentication output into job logs: it can
         # include account identifiers, challenges, or session information.
         steam_error "Autenticação Steam necessária ou expirada."
-        steam_error "Execute 'dsm steam auth' no Agent e tente novamente."
+        steam_error "Verifique a sessão SteamCMD persistente no contexto do Agent."
         return 42
     fi
 
