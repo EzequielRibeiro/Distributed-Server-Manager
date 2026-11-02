@@ -56,7 +56,19 @@ class DayZUpdateContentPreflightTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "nasdara" / "addons").mkdir(parents=True)
-            report = inspect_update_content_preflight(root, "dayz")
+            from unittest.mock import patch
+            from content_discovery_audit import audit_dayz_dlc_roots
+            with patch(
+                "dayz_update_content_preflight.audit_dayz_dlc_roots",
+                side_effect=lambda root, runtime_user: audit_dayz_dlc_roots(root, expected_uid=os.getuid()),
+            ):
+                from unittest.mock import patch
+            from content_discovery_audit import audit_dayz_dlc_roots
+            with patch(
+                "dayz_update_content_preflight.audit_dayz_dlc_roots",
+                side_effect=lambda root, runtime_user: audit_dayz_dlc_roots(root, expected_uid=os.getuid()),
+            ):
+                report = inspect_update_content_preflight(root, "dayz")
             with self.assertRaises(UnsafeDayZStagingContent):
                 reject_unsafe_staged_dayz_content(report)
 
