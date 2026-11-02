@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Read-only, fail-closed audit of DayZ DLC package discovery preconditions.
+
+A readable PBO is not necessarily discovered by the DayZ engine. In a DayZ 1.30
+incident, DLC package directories owned by a different UID from the instance
+runner were skipped even though the runner had POSIX read access. This audit
+records that discrepancy; it deliberately does NOT change permissions or claim
+that matching ownership guarantees a successful engine load.
+"""
+from __future__ import annotations
+
+import pwd
+import stat
+from pathlib import Path
+from typing import Any
+
+MAX_DLC_ROOTS = 32
+# The base-game package and mod directories are not optional DLC roots.
+EXCLUDED = frozenset({
+    "addons", "dta", "keys", "battleye", "mpmissions", "mods",
+    "profiles", "steamapps", "logs", "config", "cfg", "bin",
+})
+
+
+def audit_dayz_dlc_roots(
+    root: Path, *, runtime_user: str = "capivara-instance", expected_uid: int | None = None
+) -> dict[str, Any]:
+    """Describe DLC roots, never follow symlinks or write to the installation."""
+    root = Path(root)
+    try:
+        info = root.lstat()
+        if not stat.S_ISDIR(info.st_mode) or root.is_symlink():
+            return {"status": "unsafe", "reason": "invalid_install_root", "roots": []}
+        if expected_uid is None:
+            expected_uid = pwd.getpwnam(runtime_user).pw_uid
+    except (OSError, KeyError, ValueError):
+        return {"status": "unknown", "reason": "root_or_runtime_user_unavailable", "roots": []}
+
+    findings: list[dict[str, Any]] = []
+    try:
+        children = sorted(root.iterdir(), key=lambda p: p.name.casefold())
+    except OSError:
+        return {"status": "unknown", "reason": "cannot_list_install_root", "roots": []}
+    for path in children:
+        if path.name.lower() in EXCLUDED or path.name.startswith((".", "@")):
+            continue
+        try:
+            entry = path.lstat()
+            if stat.S_ISLNK(entry.st_mode):
+                return {"status": "unsafe", "reason": "top_level_symlink", "roots": findings}
+            if not stat.S_ISDIR(entry.st_mode):
+                continue
+            addons = path / "addons"
+            addon_stat = addons.lstat()
+            if not stat.S_ISDIR(addon_stat.st_mode):
+                return {"status": "unsafe", "reason": "unsafe_dlc_addons", "roots": findings}
+            # Check only immediate addon entries and keep work bounded.
+            packages = 0
+            mismatched_files = 0
+            for item in addons.iterdir():
+                item_stat = item.lstat()
+                if stat.S_ISLNK(item_stat.st_mode):
+                    return {"status": "unsafe", "reason": "dlc_addon_symlink", "roots": findings}
+                if stat.S_ISREG(item_stat.st_mode) and item.suffix.lower() in (".pbo", ".ebo"):
+                    packages += 1
+                    if item_stat.st_uid != expected_uid:
+                        mismatched_files += 1
+            if not packages:
+                continue
+            if len(findings) >= MAX_DLC_ROOTS:
+                return {"status": "unknown", "reason": "dlc_root_limit", "roots": findings}
+            findings.append({
+                "directory": path.name,
+                "packages": packages,
+                "package_owner_mismatch_count": mismatched_files,
+                "owner_uid": entry.st_uid,
+                "expected_uid": expected_uid,
+                "owner_matches_runner": entry.st_uid == expected_uid,
+                "addons_owner_matches_runner": addon_stat.st_uid == expected_uid,
+            })
+        except FileNotFoundError:
+            # A concurrent Steam update can remove a directory while audited.
+            continue
+        except OSError:
+            return {"status": "unknown", "reason": "cannot_inspect_dlc", "roots": findings}
+
+    mismatch = any(
+        not r["owner_matches_runner"]
+        or not r["addons_owner_matches_runner"]
+        or r["package_owner_mismatch_count"] > 0
+        for r in findings
+    )
+    return {
+        "status": "warning" if mismatch else "ok",
+        "reason": "dlc_owner_mismatch_may_skip_packages" if mismatch else None,
+        "roots": findings,
+        "runtime_user": runtime_user,
+        "expected_uid": expected_uid,
+        "read_only": True,
+    }
+
+
+__all__ = ["MAX_DLC_ROOTS", "audit_dayz_dlc_roots"]
