@@ -86,6 +86,10 @@ def audit_dayz_dlc_roots(
                     if item_stat.st_uid != expected_uid:
                         mismatched_files += 1
             if not packages:
+                # A known DLC directory left behind by an interrupted update
+                # is not healthy merely because it contains no PBOs.
+                if name in KNOWN_DAYZ_DLC_ROOTS:
+                    return {"status": "unknown", "reason": "known_dlc_no_packages", "roots": findings}
                 continue
             if len(findings) >= MAX_DLC_ROOTS:
                 return {"status": "unknown", "reason": "dlc_root_limit", "roots": findings}
