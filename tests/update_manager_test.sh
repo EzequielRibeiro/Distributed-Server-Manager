@@ -177,6 +177,8 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
     BACKUP_DIR="${TMP_DIR}/retention-backups"
     UPDATE_BACKUP_RETENTION_DAYS=14
     DSM_DATABASE_DRIVER=postgresql
+    # In this unit test, pg_restore emulates only custom-format header checks.
+    pg_restore() { [[ "$1" == "--list" && "$(head -c 5 -- "$2")" == "PGDMP" ]]; }
     mkdir -p "${BACKUP_DIR}"
     current="$(date '+%Y%m%d-%H%M%S')"
     old="$(date -d '20 days ago' '+%Y%m%d-%H%M%S')"
@@ -184,7 +186,7 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
     oldest="$(date -d '40 days ago' '+%Y%m%d-%H%M%S')"
     for stamp in "${current}" "${old}" "${older}" "${oldest}"; do
         tar -czf "${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
-        printf 'db snapshot' >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
+        printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
     done
     : >"${BACKUP_DIR}/manual-preserve.tar.gz"
 
@@ -200,12 +202,28 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
     rm -f -- "${BACKUP_DIR}/dsm-before-update-${current}.tar.gz" "${BACKUP_DIR}/dsm-before-update-${current}.database.dump"
     for stamp in "${old}" "${older}" "${oldest}"; do
         tar -czf "${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
-        printf 'db snapshot' >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
+        printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
     done
     prune_update_backups >/dev/null
     [[ -f "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" ]] || fail "last valid fallback deleted"
     [[ ! -f "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" ]] || fail "expired archive not pruned"
     [[ ! -f "${BACKUP_DIR}/dsm-before-update-${oldest}.database.dump" ]] || fail "expired database dump not pruned"
+
+    # Gzip CRC can pass for a stream with no TAR entries; never select it.
+    rm -f -- "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" "${BACKUP_DIR}/dsm-before-update-${old}.database.dump"
+    printf 'not a tar file' | gzip -c >"${BACKUP_DIR}/dsm-before-update-${old}.tar.gz"
+    printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${old}.database.dump"
+    tar -czf "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
+    printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${older}.database.dump"
+    prune_update_backups >/dev/null
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" ]] || fail "gzip-only fake replaced the last actual TAR"
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" ]] || fail "unreadable compressed file not preserved for investigation"
+
+    # A non-PostgreSQL dump is never accepted as fallback either.
+    tar -czf "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
+    printf 'invalid pgdump' >"${BACKUP_DIR}/dsm-before-update-${old}.database.dump"
+    prune_update_backups >/dev/null
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" ]] || fail "invalid pgdump replaced last valid snapshot"
 
 )
 

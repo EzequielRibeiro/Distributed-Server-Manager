@@ -554,6 +554,24 @@ create_backup() {
 # Keep every recent update snapshot, irrespective of the number created in a
 # day. Also keep the newest verified snapshot even if it is older than the
 # retention window. Never delete backups of uncertain validity.
+# Fail closed: a gzip stream can be valid without containing a TAR snapshot.
+backup_snapshot_is_readable() {
+    local archive="$1" companion="$2"
+    local listing=""
+    [[ -s "${archive}" && -f "${archive}" && ! -L "${archive}" ]] || return 1
+    gzip -t -- "${archive}" 2>/dev/null || return 1
+    listing="$(tar -tzf "${archive}" 2>/dev/null)" || return 1
+    [[ -n "${listing}" ]] || return 1
+    if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" ]]; then
+        [[ -n "${companion}" && -s "${companion}" && -f "${companion}" && ! -L "${companion}" ]] || return 1
+        if [[ "${DSM_DATABASE_DRIVER}" == "postgresql" ]]; then
+            command -v pg_restore >/dev/null 2>&1 || return 1
+            pg_restore --list "${companion}" >/dev/null 2>&1 || return 1
+        fi
+    fi
+    return 0
+}
+
 prune_update_backups() {
     local days="${UPDATE_BACKUP_RETENTION_DAYS:-14}"
     local archive stem stamp epoch cutoff now selected="" companion=""
@@ -601,8 +619,7 @@ prune_update_backups() {
         if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" && ( -z "${companion}" || ! -s "${companion}" ) ]]; then
             continue
         fi
-        [[ -s "${BACKUP_DIR}/${archive}" ]] || continue
-        if gzip -t -- "${BACKUP_DIR}/${archive}" 2>/dev/null; then
+        if backup_snapshot_is_readable "${BACKUP_DIR}/${archive}" "${companion}"; then
             selected="${archive}"
             break
         fi
@@ -628,8 +645,7 @@ prune_update_backups() {
         if [[ "${DSM_DATABASE_DRIVER:-sqlite}" != "sqlite" && ( -z "${companion}" || ! -s "${companion}" ) ]]; then
             continue
         fi
-        [[ -s "${BACKUP_DIR}/${archive}" ]] || continue
-        gzip -t -- "${BACKUP_DIR}/${archive}" 2>/dev/null || continue
+        backup_snapshot_is_readable "${BACKUP_DIR}/${archive}" "${companion}" || continue
         rm -f -- "${BACKUP_DIR}/${archive}" || continue
         [[ -z "${companion}" ]] || rm -f -- "${companion}"
     done
