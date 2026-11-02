@@ -16,6 +16,8 @@ from typing import Any
 
 MAX_DLC_ROOTS = 32
 MAX_ADDON_ENTRIES = 4096
+MAX_TOP_LEVEL_ENTRIES = 2048
+KNOWN_DAYZ_DLC_ROOTS = frozenset({"nasdara", "sakhal"})
 # The base-game package and mod directories are not optional DLC roots.
 EXCLUDED = frozenset({
     "addons", "dta", "keys", "battleye", "mpmissions", "mods",
@@ -42,17 +44,30 @@ def audit_dayz_dlc_roots(
         children = sorted(root.iterdir(), key=lambda p: p.name.casefold())
     except OSError:
         return {"status": "unknown", "reason": "cannot_list_install_root", "roots": []}
+    if len(children) > MAX_TOP_LEVEL_ENTRIES:
+        return {"status": "unknown", "reason": "install_root_entry_limit", "roots": []}
     for path in children:
-        if path.name.lower() in EXCLUDED or path.name.startswith((".", "@")):
+        name = path.name.lower()
+        if name in EXCLUDED or name.startswith((".", "@")):
             continue
         try:
             entry = path.lstat()
             if stat.S_ISLNK(entry.st_mode):
-                return {"status": "unsafe", "reason": "top_level_symlink", "roots": findings}
+                if name in KNOWN_DAYZ_DLC_ROOTS:
+                    return {"status": "unsafe", "reason": "dlc_root_symlink", "roots": findings}
+                # Unrelated top-level links are not evidence of DLC packages.
+                continue
             if not stat.S_ISDIR(entry.st_mode):
                 continue
             addons = path / "addons"
-            addon_stat = addons.lstat()
+            try:
+                addon_stat = addons.lstat()
+            except FileNotFoundError:
+                # Many legitimate game-data directories have no addons folder.
+                # A missing one within a known DLC is instead incomplete.
+                if name in KNOWN_DAYZ_DLC_ROOTS:
+                    return {"status": "unknown", "reason": "known_dlc_missing_addons", "roots": findings}
+                continue
             if not stat.S_ISDIR(addon_stat.st_mode):
                 return {"status": "unsafe", "reason": "unsafe_dlc_addons", "roots": findings}
             # Check only immediate addon entries and keep work bounded.
@@ -109,4 +124,7 @@ def audit_dayz_dlc_roots(
     }
 
 
-__all__ = ["MAX_ADDON_ENTRIES", "MAX_DLC_ROOTS", "audit_dayz_dlc_roots"]
+__all__ = [
+    "KNOWN_DAYZ_DLC_ROOTS", "MAX_ADDON_ENTRIES", "MAX_DLC_ROOTS",
+    "MAX_TOP_LEVEL_ENTRIES", "audit_dayz_dlc_roots",
+]
