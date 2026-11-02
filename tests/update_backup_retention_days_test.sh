@@ -2,7 +2,8 @@
 set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT}/update.sh"
-trap - ERR
+# Fail with an actionable assertion, also on runners without PostgreSQL tools.
+trap 'result=$?; printf "Retention regression failed at line %s (exit %s): %s\n" "${LINENO}" "${result}" "${BASH_COMMAND}" >&2' ERR
 TMP="$(mktemp -d)"
 trap 'rm -rf -- "${TMP}"' EXIT
 BACKUP_DIR="${TMP}/backups"
