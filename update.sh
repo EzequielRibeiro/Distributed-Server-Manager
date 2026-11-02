@@ -536,6 +536,8 @@ create_backup() {
     wait_with_progress "${BACKUP_PROCESS_PID}" "Validando backup | Validating backup"
     BACKUP_PROCESS_PID=""
 
+    # Backups may contain authenticated SteamCMD session state and secrets.
+    chmod 0600 -- "${BACKUP_PART}"
     mv -- "${BACKUP_PART}" "${BACKUP_FILE}"
     BACKUP_PART=""
     echo
@@ -585,6 +587,7 @@ create_database_backup() {
     echo "Criando backup consistente do banco ${DSM_DATABASE_DRIVER}..."
     python3 "${MANAGER}" --root "${INSTALL_DIR}" \
         backup "${DATABASE_BACKUP_FILE}"
+    chmod 0600 -- "${DATABASE_BACKUP_FILE}"
 }
 
 restore_database_backup() {
@@ -921,12 +924,22 @@ preserve_data() {
         "logs"
         "backups"
         "custom"
+        # Persistent SteamCMD HOME is runtime state, not release product code.
+        # Keep both cache/config and the symlink aliases across DSM updates.
+        ".local"
+        ".steam"
     )
     local ITEM
 
     for ITEM in "${PRESERVE_ITEMS[@]}"
     do
-        if [[ -d "${INSTALL_DIR}/${ITEM}" ]]
+        # A top-level symlink must be copied as a link, never followed by
+        # rsync's trailing slash (which could traverse outside the DSM tree).
+        if [[ -L "${INSTALL_DIR}/${ITEM}" ]]
+        then
+            echo "Preservando | Preserving: ${ITEM} (symlink)"
+            cp -a -- "${INSTALL_DIR}/${ITEM}" "${STAGING_DIR}/${ITEM}"
+        elif [[ -d "${INSTALL_DIR}/${ITEM}" ]]
         then
             echo "Preservando | Preserving: ${ITEM}"
             mkdir -p "${STAGING_DIR}/${ITEM}"
