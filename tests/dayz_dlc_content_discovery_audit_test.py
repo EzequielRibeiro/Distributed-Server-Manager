@@ -32,6 +32,17 @@ class DayZDLCDiscoveryAuditTest(unittest.TestCase):
             self.assertFalse(result["roots"][0]["owner_matches_runner"])
             self.assertEqual(addon.joinpath("ai_nasdara.pbo").read_bytes(), before)
 
+    def test_runner_identity_is_explicit_and_changes_classification(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_dlc(root, "nasdara")
+            actual_owner = os.getuid()
+            mismatched = audit_dayz_dlc_roots(root, expected_uid=actual_owner + 1)
+            correct = audit_dayz_dlc_roots(root, expected_uid=actual_owner)
+            self.assertEqual(mismatched["status"], "warning")
+            self.assertEqual(correct["status"], "ok")
+            self.assertEqual(correct["expected_uid"], actual_owner)
+
     def test_matching_owner_is_not_a_claim_of_loaded_pbos(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
