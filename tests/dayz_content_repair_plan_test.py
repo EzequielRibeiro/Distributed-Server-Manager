@@ -64,6 +64,52 @@ class DayZContentRepairPlanTest(unittest.TestCase):
             p = plan_dayz_dlc_ownership(root, expected_uid=os.getuid() + 1)
             self.assertTrue(all(x["relative_path"].startswith("nasdara/") or x["relative_path"] == "nasdara" for x in p["candidates"]))
 
+    def test_update_between_inventory_passes_is_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            addon = self.make_dlc(root)
+            from content_repair_plan import audit_dayz_dlc_roots as original
+            calls = [0]
+
+            def inventory(*args, **kwargs):
+                report = original(*args, **kwargs)
+                calls[0] += 1
+                if calls[0] == 2:
+                    (addon / "new.pbo").write_bytes(b"updating")
+                return report
+
+            with patch("content_repair_plan.audit_dayz_dlc_roots", side_effect=inventory):
+                plan = plan_dayz_dlc_ownership(root, expected_uid=os.getuid() + 1)
+            self.assertEqual(plan["status"], "blocked")
+            self.assertEqual(plan["candidates"], [])
+
+    def test_removed_package_during_review_is_blocked(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            addon = self.make_dlc(root)
+            from content_repair_plan import audit_dayz_dlc_roots as original
+            calls = [0]
+
+            def inventory(*args, **kwargs):
+                report = original(*args, **kwargs)
+                calls[0] += 1
+                if calls[0] == 1:
+                    (addon / "ai_nasdara.pbo").unlink()
+                return report
+
+            with patch("content_repair_plan.audit_dayz_dlc_roots", side_effect=inventory):
+                plan = plan_dayz_dlc_ownership(root, expected_uid=os.getuid() + 1)
+            self.assertEqual(plan["status"], "blocked")
+            self.assertEqual(plan["candidates"], [])
+
+    def test_read_only_plan_has_no_mutation_authority(self):
+        with tempfile.TemporaryDirectory() as td:
+            self.make_dlc(Path(td))
+            plan = plan_dayz_dlc_ownership(Path(td), expected_uid=os.getuid() + 1)
+            self.assertEqual(plan["mode"], "dry-run")
+            self.assertFalse(plan["executable"])
+            self.assertTrue(plan["requires_manual_validation"])
+
     def test_unexpected_directory_change_blocks(self):
         with tempfile.TemporaryDirectory() as td:
             self.make_dlc(Path(td))
