@@ -20,9 +20,9 @@ from server_update_agent import ServerUpdateError, _affected, _ensure_staging_sp
 from server_update_provider import detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback
 try:
-    from .dayz_update_content_preflight import inspect_update_content_preflight
+    from .dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 except ImportError:
-    from dayz_update_content_preflight import inspect_update_content_preflight
+    from dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 
 STATE_ROOT = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 TRANSACTION_ROOT = STATE_ROOT / "server-update-maintenance"
@@ -146,7 +146,7 @@ def prepare(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],
     if before.get("state")=="up_to_date":return {"changed":False,"transaction_id":None,"affected_instances":affected,"update_status_before":before,"update_status_after":before}
     staging=None;previous=None;activated=False;provider_snapshot={};backups=[];content_preflight=None
     try:
-        _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);content_preflight=inspect_update_content_preflight(staging,game);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
+        _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);content_preflight=inspect_update_content_preflight(staging,game);reject_unsafe_staged_dayz_content(content_preflight);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
         if staged.get("detector_supported") and staged.get("state")!="up_to_date":raise MaintenanceGameUpdateError("staged server version validation failed")
         if bool(meta.get("backup_before_update",True)):
             for current in affected:
