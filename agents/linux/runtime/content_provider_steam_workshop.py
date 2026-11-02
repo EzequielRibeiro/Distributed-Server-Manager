@@ -249,7 +249,16 @@ def _validate_revision_source(source: Path, app_id: str, item_id: str, revision:
         )
 
 
-def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str) -> list[Path]:
+def _workshop_steam_env(login: str) -> dict[str, str]:
+    """Never run an anonymous Workshop SteamCMD in authenticated HOME."""
+    if login == "anonymous":
+        from server_update_provider import _anonymous_steam_env
+        return _anonymous_steam_env(purpose="install")
+    session_home = str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or "/var/lib/capivara-agent").resolve())
+    return {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
+
+
+def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str, *, steam_home: Path | None = None) -> list[Path]:
     state_root = Path(game_data_root).resolve().parent
     agent_state_root = Path(
         os.environ.get("CAPIVARA_AGENT_STATE_DIR") or str(state_root)
@@ -263,7 +272,14 @@ def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_i
     # Capivara-managed bootstrap, a distro package, or an existing user Steam
     # installation. Keep discovery bounded to explicit approved roots instead of
     # scanning the host filesystem.
+    # A fresh anonymous download is stored under its isolated HOME; ensure
+    # we can locate that cache rather than searching only authenticated HOME.
+    private = Path(steam_home) if steam_home is not None else home
     roots = [
+        private / ".steam" / "steamcmd",
+        private / ".steam" / "steam",
+        private / ".local" / "share" / "Steam" / "steamcmd",
+        private / ".local" / "share" / "Steam",
         executable_dir,
         executable_dir.parent,
         agent_state_root / "tools" / "steamcmd",
@@ -294,14 +310,7 @@ def _download_and_resolve(
 ) -> Path:
     executable = _steamcmd()
     login = _login(artifact)
-    session_home = str(
-        Path(
-            os.environ.get("CAPIVARA_STEAM_HOME")
-            or os.environ.get("HOME")
-            or str(Path(game_data_root).resolve().parent)
-        ).resolve()
-    )
-    env = {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
+    env = _workshop_steam_env(login)
     completed = subprocess.run(
         [executable, "+login", login, "+workshop_download_item", app_id, item_id, "validate", "+quit"],
         stdin=subprocess.DEVNULL,
@@ -323,7 +332,7 @@ def _download_and_resolve(
         reason = failure.group(1).strip()
         raise RuntimeError(f"Steam Workshop download failed: {reason}")
     revision_errors: list[str] = []
-    for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
+    for candidate in _cache_candidates(executable, game_data_root, app_id, item_id, steam_home=Path(env["HOME"])):
         if not candidate.is_dir():
             continue
         if revision:
@@ -418,8 +427,7 @@ def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, c
             record_cache_event("hit")
             return consume(frozen)
         login = _login(artifact)
-        session_home = str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or str(Path(game_data_root).resolve().parent)).resolve())
-        env = {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
+        env = _workshop_steam_env(login)
         completed = subprocess.run(
             [executable, "+login", login, "+workshop_download_item", app_id, item_id, "validate", "+quit"],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -435,7 +443,7 @@ def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, c
         if failure:
             raise RuntimeError(f"Steam Workshop download failed: {failure.group(1).strip()}")
         errors = []
-        for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
+        for candidate in _cache_candidates(executable, game_data_root, app_id, item_id, steam_home=Path(env["HOME"])):
             if not candidate.is_dir():
                 continue
             try:
