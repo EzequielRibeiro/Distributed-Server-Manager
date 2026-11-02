@@ -34,7 +34,24 @@ def plan_dayz_dlc_ownership(root: Path, *, runtime_user: str = "capivara-instanc
     uid = audit["expected_uid"]
     root = Path(root)
     candidates: list[dict[str, Any]] = []
+    # Metadata snapshots reduce false review plans during concurrent updates.
+    # They are NOT a lock or authority to execute filesystem mutations.
+    observed: list[tuple[Path, tuple[int, int, int, int, int, int, int]]] = []
+
+    def observe(path: Path):
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise RuntimeError("unsafe_link")
+        observed.append((path, (
+            info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_gid,
+            info.st_size, info.st_mtime_ns,
+        )))
+        return info
+
     try:
+        root_info = observe(root)
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise RuntimeError("unsafe_root")
         for finding in audit["roots"]:
             name = finding["directory"]
             # Explicit fail-closed allowlist; do not treat arbitrary game/mod
@@ -62,9 +79,12 @@ def plan_dayz_dlc_ownership(root: Path, *, runtime_user: str = "capivara-instanc
                 if package_count > MAX_ADDON_ENTRIES:
                     raise RuntimeError("addon_entry_limit")
             for entry in entries:
-                meta = entry.lstat()
-                if stat.S_ISLNK(meta.st_mode):
-                    raise RuntimeError("symlink")
+                meta = observe(entry)
+                if entry in (directory, addons):
+                    if not stat.S_ISDIR(meta.st_mode):
+                        raise RuntimeError("unsafe_directory")
+                elif not stat.S_ISREG(meta.st_mode):
+                    raise RuntimeError("unsafe_package")
                 if meta.st_uid != uid:
                     if len(candidates) >= MAX_PLAN_ENTRIES:
                         raise RuntimeError("plan_limit")
@@ -76,6 +96,18 @@ def plan_dayz_dlc_ownership(root: Path, *, runtime_user: str = "capivara-instanc
                         "expected_uid": uid,
                         "issue": "ownership_mismatch",
                     })
+        # A second inventory detects common concurrent SteamCMD modifications.
+        # Even when this agrees, a future executor MUST re-open by descriptor,
+        # validate identity under an exclusive update lock, and roll back safely.
+        second = audit_dayz_dlc_roots(root, runtime_user=runtime_user, expected_uid=uid)
+        if second != audit:
+            raise RuntimeError("inventory_changed")
+        for path, fingerprint in observed:
+            info = path.lstat()
+            current = (info.st_dev, info.st_ino, info.st_mode, info.st_uid,
+                       info.st_gid, info.st_size, info.st_mtime_ns)
+            if current != fingerprint:
+                raise RuntimeError("entry_changed")
     except (OSError, RuntimeError, ValueError):
         result["status"] = "blocked"
         result["reason"] = "filesystem_changed_or_unsafe"
