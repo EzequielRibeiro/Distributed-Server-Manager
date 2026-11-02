@@ -19,6 +19,10 @@ from backup_client import _create as create_backup
 from server_update_agent import ServerUpdateError, _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config
 from server_update_provider import detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback
+try:
+    from .dayz_update_content_preflight import inspect_update_content_preflight
+except ImportError:
+    from dayz_update_content_preflight import inspect_update_content_preflight
 
 STATE_ROOT = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 TRANSACTION_ROOT = STATE_ROOT / "server-update-maintenance"
@@ -140,9 +144,9 @@ def _load(selection: dict[str, Any], transaction_id: str) -> tuple[dict[str, Any
 def prepare(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],steamcmd:str|None=None)->dict[str,Any]:
     instance_id,record,meta=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);before=detect_update(selection,target,steamcmd)
     if before.get("state")=="up_to_date":return {"changed":False,"transaction_id":None,"affected_instances":affected,"update_status_before":before,"update_status_after":before}
-    staging=None;previous=None;activated=False;provider_snapshot={};backups=[]
+    staging=None;previous=None;activated=False;provider_snapshot={};backups=[];content_preflight=None
     try:
-        _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
+        _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);content_preflight=inspect_update_content_preflight(staging,game);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
         if staged.get("detector_supported") and staged.get("state")!="up_to_date":raise MaintenanceGameUpdateError("staged server version validation failed")
         if bool(meta.get("backup_before_update",True)):
             for current in affected:
@@ -150,7 +154,7 @@ def prepare(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],
         previous=activate(target,staging);staging=None;activated=True;after=detect_update(selection,target,steamcmd,force_refresh=True)
         if after.get("detector_supported") and after.get("state")!="up_to_date":raise MaintenanceGameUpdateError("activated server version validation failed")
         transaction_id="game-update-"+uuid.uuid4().hex;checkpoint={"schema_version":1,"kind":"CapivaraMaintenanceGameUpdateTransaction","transaction_id":transaction_id,"state":"prepared","instance_id":instance_id,"agent_id":str(record.get("agent_id") or ""),"game_id":game,"target":str(target),"previous":str(previous) if previous is not None else None,"provider_snapshot":_encode_snapshot(provider_snapshot),"affected_instances":affected};_write(_path(transaction_id),checkpoint)
-        return {"changed":True,"transaction_id":transaction_id,"affected_instances":affected,"backups":backups,"update_status_before":before,"update_status_after":after,"rollback_supported":True}
+        return {"changed":True,"transaction_id":transaction_id,"affected_instances":affected,"backups":backups,"update_status_before":before,"update_status_after":after,"rollback_supported":True,**({"content_discovery_preflight":content_preflight} if content_preflight is not None else {})}
     except Exception:
         try:
             if activated:rollback(target,previous)
