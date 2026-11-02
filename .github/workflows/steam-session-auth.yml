@@ -12,6 +12,8 @@ on:
       - 'dashboard/workers/hybrid_steam_version_probe.py'
       - 'installer/provider_versions/steam.sh'
       - 'installer/providers/steam.sh'
+      - 'installer/providers/steam-workshop.sh'
+      - 'tests/steam_workshop_content_provider_test.sh'
       - 'tests/steam_provider_install_log_safety_test.sh'
       - 'tests/generic_update_monitor_test.sh'
       - 'tests/hybrid_game_data_verify_read_only_test.py'
@@ -41,7 +43,7 @@ jobs:
         run: python3 -m pip install pytest==8.3.5
       - name: Shell syntax and Python audit compilation
         run: |
-          bash -n core/steam_auth.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
+          bash -n core/steam_auth.sh installer/providers/steam-workshop.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
           python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/game_data_executor.py agents/linux/runtime/content_provider_steam_workshop.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
       - name: Session safety and persistence regression tests
         run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
@@ -59,5 +61,7 @@ jobs:
         run: bash tests/generic_update_monitor_test.sh
       - name: Anonymous install isolation and log redaction
         run: bash tests/steam_provider_install_log_safety_test.sh
+      - name: Legacy Workshop session isolation and fail-closed authentication
+        run: bash tests/steam_workshop_content_provider_test.sh
       - name: Steam provider log secret redaction
         run: bash tests/steam_provider_auth_log_safety_test.sh
