@@ -148,10 +148,10 @@ class WorkshopRevisionCacheRetentionTest(unittest.TestCase):
                 removed = content_provider_steam_workshop._prune_revision_cache(
                     root, keep_revision="400", protected_revisions={"100"}
                 )
-            self.assertEqual(set(removed), {"200", "300"})
+            self.assertEqual(set(removed), {"200"})
             self.assertEqual(
                 {path.name for path in root.iterdir() if path.is_dir()},
-                {"100", "400"},
+                {"100", "300", "400"},
             )
             self.assertEqual((root / "100" / "payload.pbo").read_bytes(), b"100")
 
@@ -178,8 +178,8 @@ class WorkshopRevisionCacheRetentionTest(unittest.TestCase):
                     root, keep_revision="400", protected_revisions={"100"},
                 )
             self.assertTrue(plan["enabled"])
-            self.assertEqual(set(plan["keep"]), {"100", "400"})
-            self.assertEqual(set(plan["prune"]), {"200", "300"})
+            self.assertEqual(set(plan["keep"]), {"100", "300", "400"})
+            self.assertEqual(set(plan["prune"]), {"200"})
             self.assertEqual(
                 {path.name for path in root.iterdir() if path.is_dir()},
                 {"100", "200", "300", "400"},
@@ -576,7 +576,7 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
         )
 
     def test_protected_revisions_do_not_grow_with_complete_assignment_history(self):
-        """Protect current, latest prior, and Agent-applied revision only."""
+        """Protect all historical rollback references and Agent-applied revision."""
         for version in ("1792603787", "1792700000", "1792800000"):
             self.content.put({
                 "instance_id": "dayz-1",
@@ -595,12 +595,12 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
         command = next(item for item in commands if item["content_id"] == "steam-workshop:2289456201")
         self.assertEqual(
             set(command["artifact"]["protected_revisions"]),
-            {"1740499952", "1792700000", "1792800000"},
+            {"1740499952", "1792603787", "1792700000", "1792800000"},
         )
-        self.assertNotIn("1792603787", command["artifact"]["protected_revisions"])
+        self.assertIn("1792603787", command["artifact"]["protected_revisions"])
 
     def test_reconciled_agent_retains_last_good_and_allows_old_cache_pruning(self):
-        """Cache can be pruned in a sandbox after Agent reports the current version."""
+        """Protect history until transactional rollback eligibility is proven."""
         for version in ("1792603787", "1792700000", "1792800000"):
             latest = self.content.put({
                 "instance_id": "dayz-1",
@@ -628,7 +628,7 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
         }])
         self.assertEqual(self.content.desired_for_agent("agent-1"), [])
         protected = self.content._protected_workshop_revisions(latest)
-        self.assertEqual(set(protected), {"1792700000", "1792800000"})
+        self.assertEqual(set(protected), {"1740499952", "1792603787", "1792700000", "1792800000"})
         with tempfile.TemporaryDirectory() as td:
             revisions = Path(td)
             for version in ("1740499952", "1792603787", "1792700000", "1792800000"):
@@ -640,10 +640,10 @@ class WorkshopInventorySQLiteIntegrationTest(unittest.TestCase):
                     revisions, keep_revision="1792800000",
                     protected_revisions=set(protected),
                 )
-            self.assertEqual(set(removed), {"1740499952", "1792603787"})
+            self.assertEqual(removed, [])
             self.assertEqual(
                 {item.name for item in revisions.iterdir() if item.is_dir()},
-                {"1792700000", "1792800000"},
+                {"1740499952", "1792603787", "1792700000", "1792800000"},
             )
             self.assertEqual(
                 (revisions / "1792700000" / "content.pbo").read_bytes(),

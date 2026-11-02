@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib,sys,tempfile,unittest,itertools
+import hashlib,os,stat,subprocess,sys,tempfile,unittest,itertools
 from datetime import datetime,timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -44,6 +44,45 @@ class UniversalServerUpdateTest(unittest.TestCase):
   self.assertEqual(parse_manifest_buildid('"AppState" { "buildid" "12345" }'),'12345')
   text='''"branches"\n{\n "public"\n {\n  "buildid" "100"\n }\n "beta"\n {\n  "buildid" "200"\n }\n}'''
   self.assertEqual(parse_app_info_buildid(text,'public'),'100');self.assertEqual(parse_app_info_buildid(text,'beta'),'200')
+ def test_steam_metadata_probe_never_shares_authenticated_home(self):
+  from server_update_provider import upstream_steam_build
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/'agent-state';state.mkdir()
+   login=Path(td)/'authenticated-steam-home';login.mkdir()
+   marker=login/'keep.txt';marker.write_text('untouched')
+   observed=[]
+   def fake_runner(argv,**kwargs):
+    observed.append((argv,kwargs))
+    return subprocess.CompletedProcess(argv,0,'"branches"\n{\n "public"\n {\n "buildid" "123456"\n }\n}')
+   with patch.dict(os.environ,{'CAPIVARA_AGENT_STATE_DIR':str(state),'HOME':str(login),'CAPIVARA_STEAM_HOME':str(login),'XDG_DATA_HOME':str(login/'xdg')}):
+    result=upstream_steam_build('223350','public','steamcmd',runner=fake_runner,force_refresh=True)
+   self.assertEqual(result,'123456')
+   self.assertEqual(len(observed),1)
+   argv,options=observed[0]
+   self.assertEqual(argv[1:3],['+login','anonymous'])
+   private_home=state/'steam-anonymous-metadata-home'
+   self.assertEqual(options['env']['HOME'],str(private_home))
+   self.assertEqual(options['env']['XDG_DATA_HOME'],str(private_home/'.local/share'))
+   self.assertEqual(options['env']['CAPIVARA_STEAM_HOME'],str(private_home))
+   self.assertEqual(stat.S_IMODE(private_home.stat().st_mode),0o700)
+   self.assertEqual(marker.read_text(),'untouched')
+ def test_steam_metadata_probe_rejects_symlinked_home(self):
+  from server_update_provider import upstream_steam_build
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/'state';state.mkdir()
+   bad=Path(td)/'sensitive';bad.mkdir()
+   (state/'steam-anonymous-metadata-home').symlink_to(bad,target_is_directory=True)
+   with patch.dict(os.environ,{'CAPIVARA_AGENT_STATE_DIR':str(state)}):
+    with self.assertRaises(RuntimeError):
+     upstream_steam_build('223350','public','steamcmd',runner=lambda *a,**kw:None,force_refresh=True)
+ def test_steam_metadata_probe_rejects_unsafe_mode(self):
+  from server_update_provider import upstream_steam_build
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/'state';state.mkdir()
+   private=state/'steam-anonymous-metadata-home';private.mkdir(mode=0o755)
+   with patch.dict(os.environ,{'CAPIVARA_AGENT_STATE_DIR':str(state)}):
+    with self.assertRaises(RuntimeError):
+     upstream_steam_build('223350','public','steamcmd',runner=lambda *a,**kw:None,force_refresh=True)
  def test_steam_build_parser_ignores_depot_public_manifest(self):
   text='''"223350"
 {

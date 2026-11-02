@@ -464,18 +464,19 @@ class ContentRepository:
   revisions=set()
   current=str(artifact.get("revision") or assignment.get("version") or "").strip()
   if current.isdigit():revisions.add(current)
-  # Keep the last distinct historical revision as a recovery candidate, not
-  # every version that has ever been assigned to this content item.
+  # All historical rollback references are protected, not just the latest.
+  # Old revisions can remain required by customer rollback or another consumer.
   for item in self.history(str(assignment.get("assignment_id") or "")):
    hist_artifact=item.get("artifact") if isinstance(item.get("artifact"),dict) else {}
    if str(hist_artifact.get("package_id") or "").strip()!=package:continue
    value=str(hist_artifact.get("revision") or item.get("version") or "").strip()
-   if value.isdigit() and value!=current:
-    revisions.add(value);break
+   if value.isdigit():revisions.add(value)
   # A pending update may leave the Agent running an older known-good version.
   # Protect that reported version even when it is not the newest history item.
-  states=self.agent_state_for_instance(str(assignment.get("instance_id") or ""))
-  applied=states.get(str(assignment.get("content_id") or "")) or {}
+  instance_id=str(assignment.get("instance_id") or "")
+  content_id=str(assignment.get("content_id") or "")
+  states=self.agent_state_for_instance(instance_id) if instance_id and content_id else {}
+  applied=states.get(content_id) or {}
   if str(applied.get("status") or "").lower() in {"applied","rolled_back","failed","security_scan_failed","security_blocked"}:
    value=str(applied.get("installed_version") or "").strip()
    if value.isdigit():revisions.add(value)

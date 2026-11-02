@@ -175,25 +175,56 @@ tar -xzf "${TMP_DIR}/backup.tar.gz" -C "${TMP_DIR}/opt"
 (
     source "${UPDATE}"
     BACKUP_DIR="${TMP_DIR}/retention-backups"
-    UPDATE_BACKUP_RETENTION=3
+    UPDATE_BACKUP_RETENTION_DAYS=14
+    DSM_DATABASE_DRIVER=postgresql
+    # In this unit test, pg_restore emulates only custom-format header checks.
+    pg_restore() { [[ "$1" == "--list" && "$(head -c 5 -- "$2")" == "PGDMP" ]]; }
     mkdir -p "${BACKUP_DIR}"
-    for stamp in 20260920-000001 20260920-000002 20260920-000003 20260920-000004 20260920-000005
-    do
-        : >"${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz"
-        : >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
+    current="$(date '+%Y%m%d-%H%M%S')"
+    old="$(date -d '20 days ago' '+%Y%m%d-%H%M%S')"
+    older="$(date -d '30 days ago' '+%Y%m%d-%H%M%S')"
+    oldest="$(date -d '40 days ago' '+%Y%m%d-%H%M%S')"
+    for stamp in "${current}" "${old}" "${older}" "${oldest}"; do
+        tar -czf "${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
+        printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
     done
     : >"${BACKUP_DIR}/manual-preserve.tar.gz"
 
     prune_update_backups >/dev/null
 
-    [[ "$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' | wc -l)" -eq 3 ]] \
-        || fail "update backup retention did not keep exactly three archives"
-    [[ "$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.database.dump' | wc -l)" -eq 3 ]] \
-        || fail "update backup retention did not prune matching database dumps"
-    [[ -f "${BACKUP_DIR}/dsm-before-update-20260920-000005.tar.gz" ]] \
-        || fail "newest update backup was pruned"
-    [[ -f "${BACKUP_DIR}/manual-preserve.tar.gz" ]] \
-        || fail "backup retention pruned a non-update backup"
+    [[ "$(find "${BACKUP_DIR}" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' | wc -l)" -eq 1 ]] \
+        || fail "14-day policy did not keep the recent snapshot and prune expired ones"
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${current}.tar.gz" ]] || fail "recent archive was deleted"
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${current}.database.dump" ]] || fail "recent database dump was deleted"
+    [[ -f "${BACKUP_DIR}/manual-preserve.tar.gz" ]] || fail "non-update backup was deleted"
+
+    # When the newest backup is outside the window, it remains as fallback.
+    rm -f -- "${BACKUP_DIR}/dsm-before-update-${current}.tar.gz" "${BACKUP_DIR}/dsm-before-update-${current}.database.dump"
+    for stamp in "${old}" "${older}" "${oldest}"; do
+        tar -czf "${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
+        printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
+    done
+    prune_update_backups >/dev/null
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" ]] || fail "last valid fallback deleted"
+    [[ ! -f "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" ]] || fail "expired archive not pruned"
+    [[ ! -f "${BACKUP_DIR}/dsm-before-update-${oldest}.database.dump" ]] || fail "expired database dump not pruned"
+
+    # Gzip CRC can pass for a stream with no TAR entries; never select it.
+    rm -f -- "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" "${BACKUP_DIR}/dsm-before-update-${old}.database.dump"
+    printf 'not a tar file' | gzip -c >"${BACKUP_DIR}/dsm-before-update-${old}.tar.gz"
+    printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${old}.database.dump"
+    tar -czf "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
+    printf 'PGDMPmock snapshot' >"${BACKUP_DIR}/dsm-before-update-${older}.database.dump"
+    prune_update_backups >/dev/null
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" ]] || fail "gzip-only fake replaced the last actual TAR"
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" ]] || fail "unreadable compressed file not preserved for investigation"
+
+    # A non-PostgreSQL dump is never accepted as fallback either.
+    tar -czf "${BACKUP_DIR}/dsm-before-update-${old}.tar.gz" -C "${TMP_DIR}" backup.tar.gz
+    printf 'invalid pgdump' >"${BACKUP_DIR}/dsm-before-update-${old}.database.dump"
+    prune_update_backups >/dev/null
+    [[ -f "${BACKUP_DIR}/dsm-before-update-${older}.tar.gz" ]] || fail "invalid pgdump replaced last valid snapshot"
+
 )
 
 (
@@ -541,9 +572,9 @@ grep -Fq 'restart_game_instances' "${UPDATE}" || fail "update.sh does not restor
     (( preflight_line < capture_game_line )) || fail "managed preflight runs after game-state capture"
     (( capture_game_line < capture_line )) || fail "game-state capture runs after DSM service-state capture"
     (( capture_line < transaction_line )) || fail "update transaction starts before service state capture"
-    (( transaction_line < stop_game_line )) || fail "managed game instances stop before update transaction starts"
-    (( stop_game_line < stop_line )) || fail "DSM services stop before managed game instances"
-    (( stop_line < strict_guard_line )) || fail "strict Process Guard runs before writers are stopped"
+    (( transaction_line < stop_line )) || fail "DSM services stop before update transaction starts"
+    (( stop_line < stop_game_line )) || fail "managed game instances stop before reconciling DSM services"
+    (( stop_game_line < strict_guard_line )) || fail "strict Process Guard runs before games are drained"
 )
 (
     while IFS= read -r line; do
