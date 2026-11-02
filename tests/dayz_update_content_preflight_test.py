@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents" / "linux" / "runtime"))
 
-from dayz_update_content_preflight import inspect_update_content_preflight
+from dayz_update_content_preflight import (inspect_update_content_preflight, reject_unsafe_staged_dayz_content, UnsafeDayZStagingContent)
 
 
 class DayZUpdateContentPreflightTest(unittest.TestCase):
@@ -52,6 +52,34 @@ class DayZUpdateContentPreflightTest(unittest.TestCase):
             self.assertTrue(result["requires_review"])
             self.assertFalse(result["repair_performed"])
 
+    def test_partial_dlc_is_rejected_before_activation(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "nasdara" / "addons").mkdir(parents=True)
+            report = inspect_update_content_preflight(root, "dayz")
+            with self.assertRaises(UnsafeDayZStagingContent):
+                reject_unsafe_staged_dayz_content(report)
+
+    def test_unsafe_symlink_is_rejected_before_activation(self):
+        with tempfile.TemporaryDirectory() as td, tempfile.TemporaryDirectory() as outside:
+            root = Path(td)
+            (root / "nasdara").symlink_to(Path(outside), target_is_directory=True)
+            report = inspect_update_content_preflight(root, "dayz")
+            with self.assertRaises(UnsafeDayZStagingContent):
+                reject_unsafe_staged_dayz_content(report)
+
+    def test_owner_mismatch_only_is_not_treated_as_executable_repair(self):
+        report = {
+            "status": "warning",
+            "reason": "dlc_owner_mismatch_may_skip_packages",
+            "read_only": True,
+            "repair_performed": False,
+        }
+        self.assertIsNone(reject_unsafe_staged_dayz_content(report))
+
+    def test_other_games_are_unaffected_by_gate(self):
+        self.assertIsNone(reject_unsafe_staged_dayz_content(None))
+
     def test_both_update_paths_have_pre_activation_hook(self):
         """Contract: no update path should omit this read-only check."""
         normal = (ROOT / "agents/linux/runtime/server_update_agent.py").read_text()
@@ -64,6 +92,8 @@ class DayZUpdateContentPreflightTest(unittest.TestCase):
                         maintenance.index("previous=activate(target,staging)"))
         self.assertIn('"content_discovery_preflight": content_preflight', normal)
         self.assertIn('"content_discovery_preflight":content_preflight', maintenance)
+        self.assertIn("reject_unsafe_staged_dayz_content(content_preflight)", normal)
+        self.assertIn("reject_unsafe_staged_dayz_content(content_preflight)", maintenance)
 
 
 if __name__ == "__main__":
