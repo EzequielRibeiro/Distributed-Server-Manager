@@ -103,6 +103,18 @@ def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
         except Exception as exc:
             print(f"observability retention worker failed: {exc}", file=sys.stderr, flush=True)
         try:
+            if os.environ.get("DSM_ARTIFACT_CLEANUP_AUDIT", "0") == "1":
+                audit = artifact_transfers.audit_expired_content_uploads()
+                if audit["scanned"]:
+                    print(
+                        "artifact upload cleanup audit "
+                        f"scanned={audit['scanned']} "
+                        f"unreferenced={audit['unreferenced_expired']} "
+                        f"current_refs={audit['current_reference']} "
+                        f"historical_refs={audit['historical_reference']} "
+                        f"potential_bytes={audit['unreferenced_bytes']}",
+                        flush=True,
+                    )
             expired = artifact_transfers.cleanup_expired()
             cleanup_queued = artifact_transfers.enqueue_expired_content_upload_cleanup()
             if expired or cleanup_queued:
