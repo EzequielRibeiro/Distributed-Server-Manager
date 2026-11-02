@@ -6,6 +6,8 @@ on:
       - 'core/steam_auth.sh'
       - 'agents/linux/runtime/server_update_provider.py'
       - 'agents/linux/runtime/game_data_executor.py'
+      - 'agents/linux/runtime/capabilities.py'
+      - 'tests/agent_steamcmd_bootstrap_home_test.py'
       - 'agents/linux/runtime/content_provider_steam_workshop.py'
       - 'tests/workshop_steam_anonymous_home_test.py'
       - 'tests/agent_steam_install_session_isolation_test.py'
@@ -44,7 +46,7 @@ jobs:
       - name: Shell syntax and Python audit compilation
         run: |
           bash -n core/steam_auth.sh installer/providers/steam-workshop.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
-          python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/game_data_executor.py agents/linux/runtime/content_provider_steam_workshop.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
+          python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/game_data_executor.py agents/linux/runtime/capabilities.py agents/linux/runtime/content_provider_steam_workshop.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
       - name: Session safety and persistence regression tests
         run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
       - name: Opt-in one-shot authenticated probe (simulated only)
@@ -53,6 +55,8 @@ jobs:
         run: python3 -m pytest tests/universal_server_update_test.py -q -k steam_metadata_probe
       - name: Agent anonymous installs do not share authenticated Steam HOME
         run: python3 -m pytest tests/agent_steam_install_session_isolation_test.py -q
+      - name: Agent SteamCMD bootstrap and capability probe isolation
+        run: python3 -m pytest tests/agent_steamcmd_bootstrap_home_test.py -q
       - name: Anonymous Workshop download HOME and cache isolation
         run: python3 -m pytest tests/workshop_steam_anonymous_home_test.py -q
       - name: Hybrid anonymous Steam version probe isolation
