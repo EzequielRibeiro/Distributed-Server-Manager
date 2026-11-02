@@ -66,6 +66,42 @@ class DayZDLCDiscoveryAuditTest(unittest.TestCase):
             result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
             self.assertEqual([p["directory"] for p in result["roots"]], ["nasdara"])
 
+    def test_unrelated_directories_without_addons_are_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_dlc(root, "nasdara")
+            (root / "cache").mkdir()
+            (root / "serverfiles.lock").write_bytes(b"x")
+            result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual([r["directory"] for r in result["roots"]], ["nasdara"])
+
+    def test_unrelated_symlink_does_not_block_dlc_audit(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
+            root = Path(tmp)
+            self._make_dlc(root, "sakhal")
+            (root / "steam_cache_alias").symlink_to(Path(external), target_is_directory=True)
+            result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
+            self.assertEqual(result["status"], "ok")
+
+    def test_known_dlc_missing_addons_is_unknown_not_healthy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "nasdara").mkdir()
+            result = audit_dayz_dlc_roots(Path(tmp), expected_uid=os.getuid())
+            self.assertEqual(result["status"], "unknown")
+            self.assertEqual(result["reason"], "known_dlc_missing_addons")
+
+    def test_install_root_entry_count_is_bounded(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_dlc(root, "nasdara")
+            (root / "other").mkdir()
+            with patch("content_discovery_audit.MAX_TOP_LEVEL_ENTRIES", 1):
+                result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
+            self.assertEqual(result["status"], "unknown")
+            self.assertEqual(result["reason"], "install_root_entry_limit")
+
     def test_symlink_to_external_dlc_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as external:
             root = Path(tmp)
