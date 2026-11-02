@@ -15,6 +15,10 @@ import instance_runtime
 from backup_client import _create as create_backup
 from server_update_provider import _manifest_candidates, detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback, snapshot_files
+try:
+    from .dayz_update_content_preflight import inspect_update_content_preflight
+except ImportError:
+    from dayz_update_content_preflight import inspect_update_content_preflight
 
 
 class ServerUpdateError(RuntimeError):
@@ -200,6 +204,7 @@ def perform_update(
     previous: Path | None = None
     activated = False
     provider_snapshot: dict[str, tuple[bool, bytes | None, int | None]] = {}
+    content_preflight: dict[str, Any] | None = None
 
     before = detect_update(selection, target, steamcmd)
     if not before.get("detector_supported") or before.get("state") not in {"up_to_date", "update_available"}:
@@ -221,6 +226,7 @@ def perform_update(
         provider_snapshot = _provider_metadata_snapshot(selection, target)
         staging = prepare_staging(target)
         installer(staging)
+        content_preflight = inspect_update_content_preflight(staging, game)
         _ensure_dayz_staging_root_access(staging, game)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
@@ -311,6 +317,7 @@ def perform_update(
             "rollback_supported": True,
             "rollback_performed": False,
             "activation": "atomic-swap",
+            **({"content_discovery_preflight": content_preflight} if content_preflight is not None else {}),
         }
     except Exception as exc:
         rollback_error: Exception | None = None
