@@ -49,6 +49,7 @@ def _validate(info: os.stat_result, *, directory: bool, device: int) -> None:
 def plan_or_normalize_dayz_staging(
     staging: Path, *, target_uid: int, target_gid: int,
     apply: bool = False, authorized: bool = False,
+    transaction_target: Path | None = None,
 ) -> dict[str, Any]:
     """Review or change known DLC packages only inside an isolated update stage.
 
@@ -67,6 +68,8 @@ def plan_or_normalize_dayz_staging(
         raise StagingOwnershipError("explicit_authorization_required")
     if apply and os.geteuid() != 0:
         raise StagingOwnershipError("privileged_agent_required")
+    if apply and transaction_target is None:
+        raise StagingOwnershipError("transaction_target_required")
 
     # Keep descriptors open so path swaps after validation cannot redirect
     # fchown onto a different inode. Never follow symlinks in child traversal.
@@ -74,6 +77,23 @@ def plan_or_normalize_dayz_staging(
         root_fd = _fd(stack, root, _FLAGS)
         root_info = os.fstat(root_fd)
         _validate(root_info, directory=True, device=root_info.st_dev)
+        if apply:
+            # A staging-looking basename alone is not Agent authorization.
+            target = Path(transaction_target)
+            if (
+                not target.is_absolute()
+                or target.parent != root.parent
+                or not root.name.startswith(
+                    f".{target.name}.capivara-update-staging-"
+                )
+                or target.is_symlink()
+            ):
+                raise StagingOwnershipError("transaction_target_mismatch")
+            target_fd = _fd(stack, target, _FLAGS)
+            target_info = os.fstat(target_fd)
+            _validate(target_info, directory=True, device=root_info.st_dev)
+            if target_info.st_ino == root_info.st_ino:
+                raise StagingOwnershipError("staging_aliases_target")
         actions: list[tuple[int, str, int, int]] = []
         scanned = []
         for dlc in sorted(KNOWN_DAYZ_DLC_ROOTS):
