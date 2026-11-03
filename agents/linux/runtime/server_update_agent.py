@@ -16,6 +16,10 @@ from backup_client import _create as create_backup
 from server_update_provider import _manifest_candidates, detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback, snapshot_files
 try:
+    from .game_data_update_lock import game_data_update_lock
+except ImportError:
+    from game_data_update_lock import game_data_update_lock
+try:
     from .dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 except ImportError:
     from dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
@@ -181,7 +185,7 @@ def _ensure_dayz_staging_root_access(staging: Path, game: str) -> None:
         raise ServerUpdateError("cannot configure DayZ runtime staging permissions") from exc
 
 
-def perform_update(
+def _perform_update_locked(
     selection: dict[str, Any],
     target: Path,
     installer: Callable[[Path], None],
@@ -349,6 +353,29 @@ def perform_update(
         if rollback_error is not None:
             raise RollbackError(f"server update failed ({exc}); rollback failed ({rollback_error})") from exc
         raise ServerUpdateError(f"server update failed and rollback completed: {exc}") from exc
+
+
+def perform_update(
+    selection: dict[str, Any],
+    target: Path,
+    installer: Callable[[Path], None],
+    steamcmd: str | None = None,
+) -> dict[str, Any]:
+    """Serialize shared DayZ updates; recheck identity while lock is held.
+
+    Validate Agent identity and tenant ownership before opening a lock file.
+    The inner transaction repeats those checks under the acquired lock.
+    """
+    _, record = _context(selection)
+    config = _local_agent_config(record)
+    game = str(record.get("game_id") or "")
+    meta = selection.get("_server_update") or {}
+    resolved = Path(target).resolve(strict=True)
+    _affected(config, game, resolved, str(meta.get("instance_id") or ""))
+    if game != "dayz":
+        return _perform_update_locked(selection, resolved, installer, steamcmd)
+    with game_data_update_lock(resolved, timeout=3):
+        return _perform_update_locked(selection, resolved, installer, steamcmd)
 
 
 __all__ = [
