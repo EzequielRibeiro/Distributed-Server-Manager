@@ -74,7 +74,7 @@ class PreparedGameDataGuardTests(unittest.TestCase):
             target = base / "dayz"
             target.mkdir()
             root = base / "state"
-            write_checkpoint(root, target)
+            write_checkpoint(root, target, state="committed")
             (root / "other.json").symlink_to(root / "game-update-checkpoint.json")
             with self.assertRaisesRegex(PreparedGameDataTransactionError, "unsafe_maintenance_checkpoint"):
                 reject_prepared_dayz_transaction(target, transaction_root=root)
