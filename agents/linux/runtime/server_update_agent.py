@@ -20,6 +20,10 @@ try:
 except ImportError:
     from game_data_update_lock import game_data_update_lock
 try:
+    from .prepared_game_data_guard import reject_prepared_dayz_transaction
+except ImportError:
+    from prepared_game_data_guard import reject_prepared_dayz_transaction
+try:
     from .dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 except ImportError:
     from dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
@@ -210,6 +214,8 @@ def _perform_update_locked(
     provider_snapshot: dict[str, tuple[bool, bytes | None, int | None]] = {}
     content_preflight: dict[str, Any] | None = None
 
+    if game == "dayz":
+        reject_prepared_dayz_transaction(target)
     before = detect_update(selection, target, steamcmd)
     if not before.get("detector_supported") or before.get("state") not in {"up_to_date", "update_available"}:
         raise VersionValidationError("server version detection is unsupported or incomplete")
