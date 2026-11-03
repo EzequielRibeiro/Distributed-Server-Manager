@@ -91,6 +91,32 @@ class DayZStagingOwnershipTest(unittest.TestCase):
             self.assertEqual(len(calls), 3)
             self.assertEqual(calls[-1][1], os.getuid())
 
+    def test_failure_across_two_dlcs_rolls_back_all_prior_fds_in_reverse_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            sakhal = stage / "sakhal" / "addons"
+            sakhal.mkdir(parents=True)
+            (sakhal / "worlds_sakhal.ebo").write_bytes(b"synthetic")
+            (stage.parent / "serverfiles").mkdir()
+            calls = []
+
+            def changer(fd, uid, gid):
+                calls.append((fd, uid, gid))
+                if len(calls) == 5:
+                    raise OSError("simulated second DLC failure")
+
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
+                with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown", side_effect=changer):
+                    with self.assertRaisesRegex(StagingOwnershipError, "normalization_failed_rolled_back"):
+                        plan_or_normalize_dayz_staging(
+                            stage, target_uid=88888, target_gid=88888,
+                            apply=True, authorized=True,
+                            transaction_target=stage.parent / "serverfiles",
+                        )
+            self.assertEqual(len(calls), 9)
+            self.assertEqual([c[0] for c in calls[-4:]], [c[0] for c in reversed(calls[:4])])
+            self.assertTrue(all(c[1:] == (os.getuid(), os.getgid()) for c in calls[-4:]))
+
     def test_rollback_failure_is_explicit_and_never_reports_success(self):
         with tempfile.TemporaryDirectory() as td:
             stage = self.create_stage(Path(td))
