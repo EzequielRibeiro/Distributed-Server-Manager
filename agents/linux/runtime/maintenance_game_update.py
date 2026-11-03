@@ -24,6 +24,10 @@ try:
 except ImportError:
     from game_data_update_lock import game_data_update_lock
 try:
+    from .prepared_game_data_guard import reject_prepared_dayz_transaction
+except ImportError:
+    from prepared_game_data_guard import reject_prepared_dayz_transaction
+try:
     from .dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
 except ImportError:
     from dayz_update_content_preflight import inspect_update_content_preflight, reject_unsafe_staged_dayz_content
@@ -146,7 +150,7 @@ def _load(selection: dict[str, Any], transaction_id: str) -> tuple[dict[str, Any
 
 
 def _prepare_locked(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],steamcmd:str|None=None)->dict[str,Any]:
-    instance_id,record,meta=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);before=detect_update(selection,target,steamcmd)
+    instance_id,record,meta=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);reject_prepared_dayz_transaction(target,transaction_root=TRANSACTION_ROOT) if game=="dayz" else None;before=detect_update(selection,target,steamcmd)
     if before.get("state")=="up_to_date":return {"changed":False,"transaction_id":None,"affected_instances":affected,"update_status_before":before,"update_status_after":before}
     staging=None;previous=None;activated=False;provider_snapshot={};backups=[];content_preflight=None
     try:
