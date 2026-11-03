@@ -91,6 +91,57 @@ class DayZStagingOwnershipTest(unittest.TestCase):
             self.assertEqual(len(calls), 3)
             self.assertEqual(calls[-1][1], os.getuid())
 
+    def test_rollback_failure_is_explicit_and_never_reports_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            (stage.parent / "serverfiles").mkdir()
+            calls = []
+
+            def changer(fd, uid, gid):
+                calls.append((fd, uid, gid))
+                if len(calls) in (2, 3):
+                    raise OSError("simulated change or rollback failure")
+
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
+                with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown", side_effect=changer):
+                    with self.assertRaisesRegex(
+                        StagingOwnershipError, "normalization_failed_rollback_incomplete"
+                    ):
+                        plan_or_normalize_dayz_staging(
+                            stage, target_uid=88888, target_gid=88888,
+                            apply=True, authorized=True,
+                            transaction_target=stage.parent / "serverfiles",
+                        )
+            self.assertEqual(len(calls), 3)
+
+    def test_nested_dlc_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            stage = root / STAGE
+            stage.mkdir()
+            external = root / "external"
+            (external / "addons").mkdir(parents=True)
+            (external / "addons" / "ai_nasdara.pbo").write_bytes(b"test")
+            (stage / "nasdara").symlink_to(external, target_is_directory=True)
+            with self.assertRaises(OSError):
+                plan_or_normalize_dayz_staging(
+                    stage, target_uid=88888, target_gid=88888,
+                )
+
+    def test_addons_directory_symlink_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            stage = root / STAGE
+            (stage / "nasdara").mkdir(parents=True)
+            external = root / "external"
+            external.mkdir()
+            (external / "ai_nasdara.pbo").write_bytes(b"test")
+            (stage / "nasdara" / "addons").symlink_to(external, target_is_directory=True)
+            with self.assertRaises(OSError):
+                plan_or_normalize_dayz_staging(
+                    stage, target_uid=88888, target_gid=88888,
+                )
+
     def test_apply_without_target_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             stage = self.create_stage(Path(td))
