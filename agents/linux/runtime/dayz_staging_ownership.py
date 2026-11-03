@@ -95,14 +95,32 @@ def plan_or_normalize_dayz_staging(
             if target_info.st_ino == root_info.st_ino:
                 raise StagingOwnershipError("staging_aliases_target")
         actions: list[tuple[int, str, int, int]] = []
+        # Verify the *names* still point to the same inodes as our open FDs
+        # throughout apply; stable FDs alone do not detect Steam replacing a PBO.
+        watched: list[tuple[int, str, int]] = []
+
+        def watch(parent_fd: int, name: str, fd: int) -> None:
+            watched.append((parent_fd, name, fd))
+
+        def check_watched() -> None:
+            for parent_fd, name, fd in watched:
+                named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+                opened = os.fstat(fd)
+                if (named.st_dev, named.st_ino, named.st_mode) != (
+                    opened.st_dev, opened.st_ino, opened.st_mode
+                ):
+                    raise StagingOwnershipError("staged_entry_replaced")
+
         scanned = []
         for dlc in sorted(KNOWN_DAYZ_DLC_ROOTS):
             if dlc not in os.listdir(root_fd):
                 continue
             directory_fd = _fd(stack, dlc, _FLAGS, parent=root_fd)
             _validate(os.fstat(directory_fd), directory=True, device=root_info.st_dev)
+            watch(root_fd, dlc, directory_fd)
             addons_fd = _fd(stack, "addons", _FLAGS, parent=directory_fd)
             _validate(os.fstat(addons_fd), directory=True, device=root_info.st_dev)
+            watch(directory_fd, "addons", addons_fd)
             names = os.listdir(addons_fd)
             if len(names) > MAX_ADDON_ENTRIES:
                 raise StagingOwnershipError("addon_entry_limit")
@@ -117,6 +135,7 @@ def plan_or_normalize_dayz_staging(
                     file_fd = _fd(stack, name, _FILE_FLAGS, parent=addons_fd)
                     _validate(os.fstat(file_fd), directory=False, device=root_info.st_dev)
                     package_fds.append((file_fd, f"{dlc}/addons/{name}"))
+                    watch(addons_fd, name, file_fd)
             if not package_fds:
                 raise StagingOwnershipError("known_dlc_without_packages")
             scanned.append({"dlc": dlc, "packages": len(package_fds)})
@@ -140,10 +159,13 @@ def plan_or_normalize_dayz_staging(
 
         applied: list[tuple[int, int, int]] = []
         try:
+            check_watched()
             for fd, _, old_uid, old_gid in actions:
+                check_watched()
                 os.fchown(fd, target_uid, target_gid)
                 applied.append((fd, old_uid, old_gid))
-        except OSError as exc:
+            check_watched()
+        except (OSError, StagingOwnershipError) as exc:
             failed_rollback = []
             for fd, old_uid, old_gid in reversed(applied):
                 try:
