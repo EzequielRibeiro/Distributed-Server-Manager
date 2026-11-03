@@ -34,8 +34,11 @@ make_backup "${old}"
 make_backup "${older}"
 make_backup "${corrupt}" corrupt
 make_backup "${unpaired}" unpaired
+# Reuse the exact fixtures for cleanup; recalculating the clock can cross a second.
+recent_stamps=()
 for offset in {1..16}; do
     stamp="$(date -d "${offset} hours ago" +%Y%m%d-%H%M%S)"
+    recent_stamps+=("${stamp}")
     make_backup "${stamp}"
 done
 prune_update_backups >/dev/null
@@ -47,8 +50,7 @@ prune_update_backups >/dev/null
 [[ -f "${BACKUP_DIR}/dsm-before-update-${corrupt}.tar.gz" ]]
 [[ -f "${BACKUP_DIR}/dsm-before-update-${unpaired}.tar.gz" ]]
 # Fall back to latest valid past the window; invalid newer ones cannot win.
-for offset in {1..16}; do
-    stamp="$(date -d "${offset} hours ago" +%Y%m%d-%H%M%S)"
+for stamp in "${recent_stamps[@]}"; do
     rm -f -- "${BACKUP_DIR}/dsm-before-update-${stamp}.tar.gz" \
         "${BACKUP_DIR}/dsm-before-update-${stamp}.database.dump"
 done
