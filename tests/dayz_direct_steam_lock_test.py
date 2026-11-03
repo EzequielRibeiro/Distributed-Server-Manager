@@ -45,24 +45,19 @@ class DayZDirectSteamLockTest(unittest.TestCase):
     def test_pending_maintenance_blocks_direct_install(self):
         with tempfile.TemporaryDirectory() as td:
             root,target=self.fixture(td)
-            from agents.linux.runtime import prepared_game_data_guard as guard
-            state=Path(td)/"state"
+            state=Path(td)/"server-update-maintenance"
             state.mkdir()
             (state/"checkpoint.json").write_text(json.dumps({
                 "kind":"CapivaraMaintenanceGameUpdateTransaction",
                 "state":"prepared","game_id":"dayz","target":str(target)
             }))
             selection={"game":"dayz","provider":"steam","install_dir":"serverfiles"}
-            with patch.object(executor,"GAME_DATA_ROOT",root),patch.dict(
-                    "os.environ",{"CAPIVARA_AGENT_STATE_DIR":str(state.parent)}),patch.object(
-                    guard,"reject_prepared_dayz_transaction",
-                    wraps=lambda target: guard.reject_prepared_dayz_transaction(target,transaction_root=state)) as ignored:
-                # Checkpoint guard is in imported standalone module, not mocked
-                # in executor. Use correctly named default state directory.
-                actual=Path(td)/"server-update-maintenance"
-                state.rename(actual)
+            with patch.object(executor,"GAME_DATA_ROOT",root), patch.dict(
+                    "os.environ",{"CAPIVARA_AGENT_STATE_DIR":str(td)}), patch.object(
+                    executor,"_execute_without_direct_game_data_lock") as inner:
                 with self.assertRaisesRegex(PreparedGameDataTransactionError,"prepared_dayz_transaction_pending"):
                     executor._execute({"action":"install","selection":selection})
+                inner.assert_not_called()
 
     def test_scoped_direct_install_and_repair_rejected(self):
         for action in ("install","ensure","repair"):
