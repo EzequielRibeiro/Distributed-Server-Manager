@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.linux.runtime import game_data_executor as executor
-from agents.linux.runtime.game_data_update_lock import GameDataUpdateLockError, game_data_update_lock
-from agents.linux.runtime.prepared_game_data_guard import PreparedGameDataTransactionError
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
+import game_data_executor as executor
+from game_data_update_lock import GameDataUpdateLockError, game_data_update_lock
+from prepared_game_data_guard import PreparedGameDataTransactionError
 
 
 class DayZDirectSteamLockTest(unittest.TestCase):
