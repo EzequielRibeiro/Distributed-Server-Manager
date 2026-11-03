@@ -68,6 +68,35 @@ class DayZTransactionLockIntegrationTest(unittest.TestCase):
                     server_update_agent.perform_update(selection, target, lambda _: None)
             self.assertFalse((target.parent / ".serverfiles.capivara-game-data-update.lock").exists())
 
+    def test_normal_update_rejects_prepared_checkpoint_before_version_detection(self):
+        with tempfile.TemporaryDirectory() as td:
+            target, cfg, record = self.make_context(Path(td))
+            selection = {"game": "dayz", "_server_update": {"instance_id": "dayz-one"}}
+            with patch.object(server_update_agent.instance_runtime, "get_instance", return_value=record), patch.object(
+                    server_update_agent.instance_runtime, "list_instances", return_value=[record]), patch.dict(
+                    "os.environ", {"CAPIVARA_AGENT_CONFIG": str(cfg)}), patch.object(
+                    server_update_agent, "reject_prepared_dayz_transaction",
+                    side_effect=RuntimeError("prepared_dayz_transaction_pending")), patch.object(
+                    server_update_agent, "detect_update") as detect:
+                with self.assertRaisesRegex(RuntimeError, "prepared_dayz_transaction_pending"):
+                    server_update_agent.perform_update(selection, target, lambda _: self.fail("installer ran"))
+                detect.assert_not_called()
+
+    def test_maintenance_prepare_rejects_pending_checkpoint_before_detection(self):
+        with tempfile.TemporaryDirectory() as td:
+            target, cfg, record = self.make_context(Path(td))
+            selection = {"game": "dayz", "_maintenance_game_update": {"instance_id": "dayz-one"}}
+            with patch.object(maintenance_game_update.instance_runtime, "get_instance", return_value=record), patch.object(
+                    maintenance_game_update.instance_runtime, "list_instances", return_value=[record]), patch.dict(
+                    "os.environ", {"CAPIVARA_AGENT_CONFIG": str(cfg)}), patch.object(
+                    maintenance_game_update, "reject_prepared_dayz_transaction",
+                    side_effect=RuntimeError("prepared_dayz_transaction_pending")), patch.object(
+                    maintenance_game_update, "detect_update") as detect:
+                with patch.object(maintenance_game_update, "_all_stopped"):
+                    with self.assertRaisesRegex(RuntimeError, "prepared_dayz_transaction_pending"):
+                        maintenance_game_update.prepare(selection, target, lambda _: self.fail("installer ran"))
+                detect.assert_not_called()
+
     def test_finalize_and_rollback_must_use_lock(self):
         # Validate both call sites use the same installation-bound lock and
         # the original operation revalidates state after lock acquisition.
