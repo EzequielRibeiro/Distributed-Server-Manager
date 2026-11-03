@@ -48,7 +48,10 @@ def audit_dayz_dlc_roots(
         return {"status": "unknown", "reason": "install_root_entry_limit", "roots": []}
     for path in children:
         name = path.name.lower()
-        if name in EXCLUDED or name.startswith((".", "@")):
+        # Ownership normalization and its review plan are restricted to the
+        # same explicit DLC allowlist. Unknown addon directories may be mods,
+        # custom content or future DLCs; never flag them as repair candidates.
+        if name not in KNOWN_DAYZ_DLC_ROOTS:
             continue
         try:
             entry = path.lstat()

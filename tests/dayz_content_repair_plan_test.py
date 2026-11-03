@@ -39,10 +39,12 @@ class DayZContentRepairPlanTest(unittest.TestCase):
             self.assertEqual(plan["status"], "no_owner_mismatch")
             self.assertEqual(plan["candidates"], [])
 
-    def test_unknown_dlc_root_never_planned(self):
+    def test_unknown_addon_root_never_planned(self):
         with tempfile.TemporaryDirectory() as td:
             self.make_dlc(Path(td), "arbitrary")
-            self.assertEqual(plan_dayz_dlc_ownership(Path(td), expected_uid=os.getuid() + 1)["status"], "blocked")
+            plan = plan_dayz_dlc_ownership(Path(td), expected_uid=os.getuid() + 1)
+            self.assertEqual(plan["status"], "no_owner_mismatch")
+            self.assertEqual(plan["candidates"], [])
 
     def test_missing_known_dlc_packages_blocks(self):
         with tempfile.TemporaryDirectory() as td:

@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents" / "linux" / "runtime"))
 from content_discovery_audit import MAX_ADDON_ENTRIES, audit_dayz_dlc_roots
+from content_repair_plan import plan_dayz_dlc_ownership
 from game_data_integrity import inspect_game_data
 
 
@@ -117,6 +118,19 @@ class DayZDLCDiscoveryAuditTest(unittest.TestCase):
             result = audit_dayz_dlc_roots(root, expected_uid=os.getuid())
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["roots"], [])
+
+    def test_unrecognized_addons_with_packages_do_not_enter_repair_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_dlc(root, "nasdara")
+            self._make_dlc(root, "unrelated_content")
+            audit = audit_dayz_dlc_roots(root, expected_uid=os.getuid() + 7)
+            plan = plan_dayz_dlc_ownership(root, expected_uid=os.getuid() + 7)
+            self.assertEqual([r["directory"] for r in audit["roots"]], ["nasdara"])
+            self.assertEqual(audit["status"], "warning")
+            self.assertEqual(plan["status"], "review_required")
+            self.assertTrue(plan["candidates"])
+            self.assertTrue(all(c["relative_path"] == "nasdara" or c["relative_path"].startswith("nasdara/") for c in plan["candidates"]))
 
     def test_install_root_entry_count_is_bounded(self):
         from unittest.mock import patch
