@@ -61,11 +61,13 @@ class DayZStagingOwnershipTest(unittest.TestCase):
     def test_authorized_apply_calls_fd_scoped_chown_only(self):
         with tempfile.TemporaryDirectory() as td:
             stage = self.create_stage(Path(td))
+            (stage.parent / "serverfiles").mkdir()
             with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
                 with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown") as chown:
                     result = plan_or_normalize_dayz_staging(stage, target_uid=88888,
                                                             target_gid=88888, apply=True,
-                                                            authorized=True)
+                                                            authorized=True,
+                                                            transaction_target=stage.parent / "serverfiles")
             self.assertTrue(result["applied"])
             self.assertTrue(result["transaction_activation_required"])
             self.assertEqual(result["modified_count"], 3)
@@ -74,6 +76,7 @@ class DayZStagingOwnershipTest(unittest.TestCase):
     def test_midway_failure_rolls_back_prior_fds(self):
         with tempfile.TemporaryDirectory() as td:
             stage = self.create_stage(Path(td))
+            (stage.parent / "serverfiles").mkdir()
             calls = []
             def changer(fd, uid, gid):
                 calls.append((fd, uid, gid))
@@ -83,9 +86,42 @@ class DayZStagingOwnershipTest(unittest.TestCase):
                 with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown", side_effect=changer):
                     with self.assertRaisesRegex(StagingOwnershipError, "normalization_failed_rolled_back"):
                         plan_or_normalize_dayz_staging(stage, target_uid=88888, target_gid=88888,
-                                                      apply=True, authorized=True)
+                                                      apply=True, authorized=True,
+                                                      transaction_target=stage.parent / "serverfiles")
             self.assertEqual(len(calls), 3)
             self.assertEqual(calls[-1][1], os.getuid())
+
+    def test_apply_without_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
+                with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown") as chown:
+                    with self.assertRaisesRegex(StagingOwnershipError, "transaction_target_required"):
+                        plan_or_normalize_dayz_staging(
+                            stage, target_uid=88888, target_gid=88888,
+                            apply=True, authorized=True)
+                    chown.assert_not_called()
+
+    def test_fake_staging_for_other_target_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            (stage.parent / "other-game").mkdir()
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
+                with self.assertRaisesRegex(StagingOwnershipError, "transaction_target_mismatch"):
+                    plan_or_normalize_dayz_staging(
+                        stage, target_uid=88888, target_gid=88888,
+                        apply=True, authorized=True,
+                        transaction_target=stage.parent / "other-game")
+
+    def test_missing_transaction_target_is_not_accepted(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
+                with self.assertRaises(OSError):
+                    plan_or_normalize_dayz_staging(
+                        stage, target_uid=88888, target_gid=88888,
+                        apply=True, authorized=True,
+                        transaction_target=stage.parent / "serverfiles")
 
     def test_symlinked_dlc_file_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
