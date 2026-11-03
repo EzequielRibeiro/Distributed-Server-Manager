@@ -163,11 +163,26 @@ def _prepare_locked(selection:dict[str,Any],target:Path,installer:Callable[[Path
         if after.get("detector_supported") and after.get("state")!="up_to_date":raise MaintenanceGameUpdateError("activated server version validation failed")
         transaction_id="game-update-"+uuid.uuid4().hex;checkpoint={"schema_version":1,"kind":"CapivaraMaintenanceGameUpdateTransaction","transaction_id":transaction_id,"state":"prepared","instance_id":instance_id,"agent_id":str(record.get("agent_id") or ""),"game_id":game,"target":str(target),"previous":str(previous) if previous is not None else None,"provider_snapshot":_encode_snapshot(provider_snapshot),"affected_instances":affected};_write(_path(transaction_id),checkpoint)
         return {"changed":True,"transaction_id":transaction_id,"affected_instances":affected,"backups":backups,"update_status_before":before,"update_status_after":after,"rollback_supported":True,**({"content_discovery_preflight":content_preflight} if content_preflight is not None else {})}
-    except Exception:
+    except Exception as exc:
+        # Do not mask an unsuccessful tree restore with the original update
+        # error. A failed rollback may require forensic/manual recovery.
+        rollback_verified = not activated
         try:
-            if activated:rollback(target,previous)
+            if activated:
+                try:
+                    rollback_verified = bool(rollback(target, previous))
+                except Exception as rollback_exc:
+                    raise MaintenanceGameUpdateError(
+                        "maintenance rollback failed"
+                    ) from rollback_exc
+                if not rollback_verified:
+                    raise MaintenanceGameUpdateError(
+                        "maintenance rollback tree is unavailable"
+                    ) from exc
             restore_files(provider_snapshot)
-        finally:cleanup_staging(staging)
+        finally:
+            if rollback_verified:
+                cleanup_staging(staging)
         raise
 
 
