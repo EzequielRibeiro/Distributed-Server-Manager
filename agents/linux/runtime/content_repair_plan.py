@@ -37,6 +37,7 @@ def plan_dayz_dlc_ownership(root: Path, *, runtime_user: str = "capivara-instanc
     # Metadata snapshots reduce false review plans during concurrent updates.
     # They are NOT a lock or authority to execute filesystem mutations.
     observed: list[tuple[Path, tuple[int, int, int, int, int, int, int]]] = []
+    addon_names_seen: list[tuple[Path, tuple[str, ...]]] = []
 
     def observe(path: Path):
         info = path.lstat()
@@ -65,6 +66,10 @@ def plan_dayz_dlc_ownership(root: Path, *, runtime_user: str = "capivara-instanc
             addons = directory / "addons"
             entries = [directory, addons]
             package_count = 0
+            # Directory mtime alone may not distinguish two fast updates on
+            # some filesystems. Compare names before/after the second audit.
+            first_names = tuple(sorted(p.name for p in addons.iterdir()))
+            addon_names_seen.append((addons, first_names))
             for entry in addons.iterdir():
                 if entry.suffix.lower() not in {".pbo", ".ebo"}:
                     continue
@@ -102,6 +107,9 @@ def plan_dayz_dlc_ownership(root: Path, *, runtime_user: str = "capivara-instanc
         second = audit_dayz_dlc_roots(root, runtime_user=runtime_user, expected_uid=uid)
         if second != audit:
             raise RuntimeError("inventory_changed")
+        for addons, first_names in addon_names_seen:
+            if tuple(sorted(p.name for p in addons.iterdir())) != first_names:
+                raise RuntimeError("addon_entries_changed")
         for path, fingerprint in observed:
             info = path.lstat()
             current = (info.st_dev, info.st_ino, info.st_mode, info.st_uid,
