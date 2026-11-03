@@ -24,6 +24,7 @@ on:
       - 'tests/game_data_update_lock_test.py'
       - 'tests/dayz_update_lock_integration_test.py'
       - 'tests/prepared_game_data_guard_test.py'
+      - 'tests/dayz_direct_steam_lock_test.py'
       - 'tests/game_data_file_manager_test.py'
       - 'tests/agent_package_test.sh'
       - '.github/workflows/agent-game-data.yml'
@@ -72,6 +73,7 @@ jobs:
             tests/game_data_update_lock_test.py \
             tests/dayz_update_lock_integration_test.py \
             tests/prepared_game_data_guard_test.py \
+            tests/dayz_direct_steam_lock_test.py \
             tests/game_data_file_manager_test.py
       - name: Test game-data orchestration
         run: |
@@ -84,6 +86,7 @@ jobs:
           python3 -m unittest discover -s tests -p game_data_update_lock_test.py
           python3 -m unittest discover -s tests -p dayz_update_lock_integration_test.py
           python3 -m unittest discover -s tests -p prepared_game_data_guard_test.py
+          python3 -m unittest discover -s tests -p dayz_direct_steam_lock_test.py
       - name: Test Linux Agent package
         run: bash tests/agent_package_test.sh
       - name: Validate Dashboard JavaScript
