@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -41,6 +42,22 @@ class DayZPboLogCompareTest(unittest.TestCase):
         self.assertTrue(report["base_count_stable"])
         self.assertEqual(report["dlc_delta"], {"nasdara": 1, "sakhal": 1})
         self.assertFalse(report["causality_established"])
+
+    def test_compares_actual_package_names_not_only_counts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for dlc in ("nasdara", "sakhal"):
+                (root / dlc / "addons").mkdir(parents=True)
+            (root / "nasdara/addons/a.pbo").write_bytes(b"x")
+            (root / "nasdara/addons/b.pbo").write_bytes(b"x")
+            (root / "sakhal/addons/c.ebo").write_bytes(b"x")
+            report = module.compare_installed("\n".join([
+                line("nasdara", "a"), line("nasdara", "unexpected"),
+                line("sakhal", "c")]), root)
+            self.assertEqual(report["nasdara"]["missing_from_engine"], ["b"])
+            self.assertEqual(report["nasdara"]["unexpected_in_engine"], ["unexpected"])
+            self.assertEqual(report["sakhal"]["missing_from_engine"], [])
+            self.assertEqual(report["sakhal"]["unexpected_in_engine"], [])
 
     def test_does_not_count_non_engine_or_duplicate_packages_as_unique(self):
         match = line("nasdara", "foo")
