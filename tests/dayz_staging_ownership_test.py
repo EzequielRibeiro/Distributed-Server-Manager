@@ -142,6 +142,33 @@ class DayZStagingOwnershipTest(unittest.TestCase):
                     stage, target_uid=88888, target_gid=88888,
                 )
 
+    def test_concurrent_pbo_replacement_never_reports_success(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            (stage.parent / "serverfiles").mkdir()
+            package = stage / "nasdara/addons/ai_nasdara.pbo"
+            calls = []
+
+            def mock_chown(fd, uid, gid):
+                calls.append((fd, uid, gid))
+                if len(calls) == 1:
+                    package.unlink()
+                    package.write_bytes(b"steam-replaced-package")
+
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.geteuid", return_value=0):
+                with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown", side_effect=mock_chown):
+                    with self.assertRaisesRegex(StagingOwnershipError, "normalization_failed_rolled_back"):
+                        plan_or_normalize_dayz_staging(
+                            stage, target_uid=88888, target_gid=88888,
+                            apply=True, authorized=True,
+                            transaction_target=stage.parent / "serverfiles",
+                        )
+            # The first change is reverted by descriptor rather than via the
+            # replaced path; the new package never gets unintended ownership.
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(package.read_bytes(), b"steam-replaced-package")
+            self.assertEqual(package.stat().st_uid, os.getuid())
+
     def test_apply_without_target_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             stage = self.create_stage(Path(td))
