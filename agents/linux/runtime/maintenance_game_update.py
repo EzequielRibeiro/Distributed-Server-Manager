@@ -156,7 +156,7 @@ def _prepare_locked(selection:dict[str,Any],target:Path,installer:Callable[[Path
     try:
         _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);content_preflight=inspect_update_content_preflight(staging,game);reject_unsafe_staged_dayz_content(content_preflight);_ensure_dayz_staging_root_access(staging,game);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
         if staged.get("detector_supported") and staged.get("state")!="up_to_date":raise MaintenanceGameUpdateError("staged server version validation failed")
-        if bool(meta.get("backup_before_update",True)):
+        if game == "dayz" or bool(meta.get("backup_before_update",True)):
             for current in affected:
                 detail=create_backup(config,{"instance_id":current,"policy":{"mode":"full","compression":"gzip","retention_count":7,"consistency":"live"}});backups.append({"instance_id":current,"backup_id":detail.get("backup_id"),"sha256":detail.get("sha256"),"size_bytes":detail.get("size_bytes")})
         previous=activate(target,staging);staging=None;activated=True;after=detect_update(selection,target,steamcmd,force_refresh=True)

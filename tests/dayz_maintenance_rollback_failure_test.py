@@ -35,7 +35,7 @@ class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
             patches = [
                 patch.object(maintenance, "_context", return_value=("i1", record, {"backup_before_update": False})),
                 patch.object(maintenance, "_local_agent_config", return_value={}),
-                patch.object(maintenance, "_affected", return_value=[]),
+                patch.object(maintenance, "_affected", return_value=["i1"]),
                 patch.object(maintenance, "_all_stopped"),
                 patch.object(maintenance, "reject_prepared_dayz_transaction"),
                 patch.object(maintenance, "_ensure_staging_space"),
@@ -49,6 +49,7 @@ class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
                 patch.object(maintenance, "restore_files"),
                 patch.object(maintenance, "cleanup_staging"),
                 patch.object(maintenance, "_ensure_dayz_staging_root_access"),
+                patch.object(maintenance, "create_backup", return_value={"backup_id": "validated-test-backup"}),
             ]
             with __import__("contextlib").ExitStack() as stack:
                 mocks = [stack.enter_context(p) for p in patches]
@@ -58,9 +59,10 @@ class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
                 mocks[12].assert_called_once_with(target, previous)
                 mocks[14].assert_not_called()
                 mocks[15].assert_called_once_with(stage, "dayz")
+                mocks[16].assert_called_once()  # DayZ backup cannot be disabled
 
             # Staging ACL errors must stop before an atomic activation.
-            patches[-1] = patch.object(
+            patches[15] = patch.object(
                 maintenance, "_ensure_dayz_staging_root_access",
                 side_effect=RuntimeError("simulated ACL setup failure"),
             )
