@@ -37,6 +37,45 @@ class DayZStagingOwnershipTest(unittest.TestCase):
             self.assertEqual(result["candidate_count"], 3)
             self.assertEqual(file.stat().st_uid, before.st_uid)
 
+    def test_two_dlc_dry_run_is_complete_and_leaves_metadata_unchanged(self):
+        with tempfile.TemporaryDirectory() as td:
+            stage = self.create_stage(Path(td))
+            sakhal = stage / "sakhal" / "addons"
+            sakhal.mkdir(parents=True)
+            (sakhal / "worlds_sakhal.ebo").write_bytes(b"synthetic")
+            tracked = [
+                stage / dlc / relative
+                for dlc in ("nasdara", "sakhal")
+                for relative in ("", "addons")
+            ] + [
+                stage / "nasdara/addons/ai_nasdara.pbo",
+                stage / "sakhal/addons/worlds_sakhal.ebo",
+            ]
+            before = {str(path): (path.stat().st_dev, path.stat().st_ino,
+                                  path.stat().st_uid, path.stat().st_gid,
+                                  path.stat().st_mode)
+                      for path in tracked}
+            with patch("agents.linux.runtime.dayz_staging_ownership.os.fchown") as chown:
+                report = plan_or_normalize_dayz_staging(
+                    stage, target_uid=os.getuid() + 1000,
+                    target_gid=os.getgid() + 1000,
+                )
+                chown.assert_not_called()
+            self.assertEqual(report["mode"], "dry-run")
+            self.assertTrue(report["read_only"])
+            self.assertFalse(report["applied"])
+            self.assertEqual(report["candidate_count"], 6)
+            self.assertEqual(report["dlcs"], [
+                {"dlc": "nasdara", "packages": 1},
+                {"dlc": "sakhal", "packages": 1},
+            ])
+            self.assertEqual(
+                {str(path): (path.stat().st_dev, path.stat().st_ino,
+                             path.stat().st_uid, path.stat().st_gid,
+                             path.stat().st_mode)
+                 for path in tracked}, before,
+            )
+
     def test_arbitrary_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             plain = Path(td) / "production"
