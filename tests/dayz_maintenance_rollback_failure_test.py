@@ -2,12 +2,15 @@
 """Fail-closed rollback tests for DayZ maintenance update transactions."""
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agents.linux.runtime import maintenance_game_update as maintenance
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agents" / "linux" / "runtime"))
+import maintenance_game_update as maintenance
 
 
 class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
