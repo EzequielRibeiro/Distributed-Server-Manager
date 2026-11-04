@@ -138,6 +138,7 @@ def _probe_fake_steamcmd(output: str, exit_code: int = 0) -> subprocess.Complete
 def test_noninteractive_auth_probe_requires_actual_login_marker():
     for output in (
         "Loading Steam API...OK\nLogging in user 'account' to Steam Public...OK\n",
+        "Logging in using cached credentials.\nLogging in user 'account' [U:1:1234567] to Steam Public...OK\n",
         "Logged in OK\n",
     ):
         result = _probe_fake_steamcmd(output)
@@ -162,6 +163,8 @@ def test_noninteractive_auth_probe_rejects_login_for_another_account():
     for output in (
         "Logging in user 'anonymous' to Steam Public...OK\n",
         "Logging in user 'other-user' to Steam Public...OK\n",
+        "Logging in user 'other-user' [U:1:1234567] to Steam Public...OK\n",
+        "Logging in user 'account-suffix' [U:1:1234567] to Steam Public...OK\n",
         "Logging in user 'anonymous' to Steam Public...OK\nLogged in OK\n",
     ):
         result = _probe_fake_steamcmd(output)

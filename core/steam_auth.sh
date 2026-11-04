@@ -192,8 +192,15 @@ steam_auth_probe_reusable_session()
     # requested. SteamCMD can be pointed at the wrong cached account.
     if printf '%s\n' "${NORMALIZED}" | grep -Eiq \
         'Logging in user .* to Steam Public'; then
+        # Newer SteamCMD versions insert a numeric Steam account ID before
+        # "to Steam Public"; accept both formats without matching another user.
         if printf '%s\n' "${NORMALIZED}" | grep -Fiq \
             "Logging in user '${STEAM_USER}' to Steam Public...OK"; then
+            return 0
+        fi
+        if printf '%s\n' "${NORMALIZED}" | grep -Fi \
+            "Logging in user '${STEAM_USER}' [U:" | \
+            grep -Eq ' \[U:[0-9]+:[0-9]+\] to Steam Public\.\.\.OK'; then
             return 0
         fi
         return 1
