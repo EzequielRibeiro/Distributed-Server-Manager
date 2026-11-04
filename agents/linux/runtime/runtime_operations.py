@@ -163,7 +163,7 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
         if previous is None and _path(instance_id).exists():
             raise RuntimeError("instance operation journal is unreadable; manual recovery required")
         if (previous and previous.get("operation") == "minecraft_serverpack_migration"
-                and previous.get("status") in {"running", "interrupted", "failed"}):
+                and previous.get("status") in {"running", "interrupted", "failed", "finalization_pending"}):
             raise RuntimeError("interrupted staged Minecraft migration requires manual recovery; instance operation blocked")
         journal = {
             "schema_version": 1,
@@ -187,7 +187,10 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
             _atomic(_path(instance_id), journal)
             raise
         else:
-            journal["status"] = "completed"
+            # A committed migration with pending archival is not ready for
+            # another operation; retain this durable barrier.
+            if journal.get("status") not in {"finalization_pending"}:
+                journal["status"] = "completed"
             journal["finished_at"] = _now()
             journal["duration_ms"] = int((time.monotonic() - started) * 1000)
             _atomic(_path(instance_id), journal)
