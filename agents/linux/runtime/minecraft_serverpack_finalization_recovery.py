@@ -101,4 +101,5 @@ def retry_archived_restart(
     if state != original:
         raise FinalizationRecoveryError("post-restart state differs from original availability")
     return {"status": "restart_recovered", "instance_id": instance_id,
+            "migration_plan_sha256": archived_journal["migration_plan_sha256"],
             "observed_state": state, "rollback_performed": False}
