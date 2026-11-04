@@ -66,6 +66,24 @@ def _failure_diagnostics(request: dict[str, Any], exc: Exception) -> dict[str, A
     }
 
 
+def _serverpack_completion_state(detail: Any) -> str:
+    """Fail closed: only a finalized migration may publish completion."""
+    if not isinstance(detail, dict):
+        raise ValueError("Server Pack result must be a mapping")
+    status = str(detail.get("status") or "")
+    if status == "finalization_pending":
+        return status
+    if status != "completed":
+        raise ValueError("Server Pack migration did not complete")
+    trace = detail.get("trace")
+    if not isinstance(trace, list) or "committed" not in trace or "finalized" not in trace:
+        raise ValueError("Server Pack migration lacks finalization evidence")
+    final = detail.get("finalization")
+    if not isinstance(final, dict) or final.get("status") not in {"archived", "already_archived"}:
+        raise ValueError("Server Pack archival evidence is missing")
+    return "completed"
+
+
 def _workspace(instance_id: str) -> Path:
     base = Path(os.environ.get("CAPIVARA_INSTANCE_WORKSPACE_ROOT", str(Path(instance_runtime.STATE_DIR) / "instance-workspaces")))
     root = (base / instance_id).resolve()
@@ -348,14 +366,36 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 data=dict(mode_event),
             )
             detail = execute_serverpack_migration(config, request)
+            completion = _serverpack_completion_state(detail)
+            if completion == "finalization_pending":
+                result = _result(
+                    result_path, request,
+                    # Persist as running: Controller and supported DB schemas
+                    # currently accept only queued/delivered/running/completed/failed.
+                    status="running",
+                    current_step="minecraft_serverpack_finalization",
+                    progress=99,
+                    finalization_state="pending",
+                    minecraft_serverpack_migration=detail,
+                    # A committed runtime must not be rolled back because of
+                    # a post-commit archival failure.
+                    recovery_required="retry_committed_finalization",
+                )
+                _event(
+                    "INSTANCE_PROVISIONING_FINALIZATION_PENDING", request,
+                    step="minecraft_serverpack_finalization", progress=99,
+                    data={**mode_event, "recovery_required": "retry_committed_finalization"},
+                )
+                observe_duration("provisioning", int((time.monotonic() - started) * 1000))
+                return result
             result = _result(
                 result_path,
                 request,
                 status="completed",
                 current_step="completed",
                 progress=100,
-                desired_state=str((detail.get("commit") or {}).get("observed_state") or "stopped"),
-                observed_state=str((detail.get("commit") or {}).get("observed_state") or "stopped"),
+                desired_state=str((detail.get("finalization") or {}).get("observed_state") or "stopped"),
+                observed_state=str((detail.get("finalization") or {}).get("observed_state") or "stopped"),
                 minecraft_serverpack_migration=detail,
             )
             increment("provisioning_completed")
@@ -364,7 +404,7 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
                 request,
                 step="completed",
                 progress=100,
-                data={**mode_event, "observed_state": str((detail.get("commit") or {}).get("observed_state") or "stopped")},
+                data={**mode_event, "observed_state": str((detail.get("finalization") or {}).get("observed_state") or "stopped")},
             )
         except Exception as exc:
             increment("provisioning_failed")
