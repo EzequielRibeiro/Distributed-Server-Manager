@@ -74,6 +74,22 @@ class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
                 mocks[12].assert_not_called()  # rollback(): no activation
                 mocks[14].assert_called_once_with(stage)  # staging cleanup
 
+            # Even explicit opt-out cannot bypass DayZ backup. If backup fails,
+            # the new tree must never be activated and staging is discarded.
+            patches[15] = patch.object(maintenance, "_ensure_dayz_staging_root_access")
+            patches[16] = patch.object(
+                maintenance, "create_backup",
+                side_effect=RuntimeError("simulated backup failure"),
+            )
+            with __import__("contextlib").ExitStack() as stack:
+                mocks = [stack.enter_context(p) for p in patches]
+                with self.assertRaisesRegex(RuntimeError, "simulated backup failure"):
+                    maintenance._prepare_locked(selection, target, lambda _: None)
+                mocks[16].assert_called_once()
+                mocks[11].assert_not_called()  # activate()
+                mocks[12].assert_not_called()  # rollback(): no activation
+                mocks[14].assert_called_once_with(stage)  # staging cleanup
+
 
 if __name__ == "__main__":
     unittest.main()
