@@ -77,27 +77,54 @@ def _install_steamcmd()->dict[str,Any]:
  try:cache.unlink(missing_ok=True)
  except OSError:pass
  return {"tool":"steamcmd","path":str(binary),"functional":True}
+def _configured_steam_user()->str:
+ """Find the Agent's configured username without exposing a password or token."""
+ user=str(os.environ.get("DSM_STEAM_USER") or "").strip()
+ if user:return user
+ import re
+ config=Path(os.environ.get("DSM_ROOT") or "/opt/dsm")/"config"/"providers"/"steam.conf"
+ try:
+  match=re.search(r"""(?m)^\s*DSM_STEAM_USER\s*=\s*['"]?([^'"\s#]+)""",config.read_text(encoding="utf-8"))
+ except (OSError,UnicodeError):return ""
+ return match.group(1) if match else ""
+
 def _run_steam(selection:dict[str,Any],target:Path)->None:
  install=selection.get("install") if isinstance(selection.get("install"),dict) else {};app_id=str(install.get("package_id") or "").strip()
  if not app_id.isdigit():raise ValueError("Steam package_id is missing or invalid")
  branch=str(install.get("branch") or selection.get("branch") or "public").strip();_safe_name(branch,"Steam branch")
- auth=str(selection.get("auth") or "anonymous").strip().lower();login="anonymous" if auth=="anonymous" else str(os.environ.get("DSM_STEAM_USER") or "").strip()
- if not login:raise RuntimeError("Steam authentication is required on this Agent")
- argv=[_steamcmd(),"+@sSteamCmdForcePlatformType","linux","+force_install_dir",str(target),"+login",login,"+app_update",app_id]
- if branch!="public":argv.extend(["-beta",branch])
- argv.extend(["validate","+quit"]);target.mkdir(parents=True,exist_ok=True)
+ auth=str(selection.get("auth") or "anonymous").strip().lower()
+ if auth not in {"anonymous","required","steam-session"}:raise RuntimeError("unsupported Steam authentication mode")
+ target.mkdir(parents=True,exist_ok=True)
  session_home=str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or "/var/lib/capivara-agent").resolve())
+ def attempt(login:str,env:dict[str,str])->subprocess.CompletedProcess[str]:
+  argv=[_steamcmd(),"+@sSteamCmdForcePlatformType","linux","+force_install_dir",str(target),"+login",login,"+app_update",app_id]
+  if branch!="public":argv.extend(["-beta",branch])
+  argv.extend(["validate","+quit"])
+  return subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env=env)
+ def failed(cp:subprocess.CompletedProcess[str])->bool:
+  # SteamCMD occasionally exits 0 with an old build and this timeout text.
+  return cp.returncode!=0 or "timed out waiting for update to start" in (cp.stdout or "").lower()
+ username=_configured_steam_user() if auth!="anonymous" else ""
  if auth=="anonymous":
   from server_update_provider import _anonymous_steam_env
-  steam_env=_anonymous_steam_env(purpose="install")
+  cp=attempt("anonymous",_anonymous_steam_env(purpose="install"))
+  if not failed(cp):return
+  # Retry once with the Agent's existing authenticated session. Never prompt for
+  # credentials, reuse the anonymous HOME, or loop over passwords/Steam Guard.
+  username=_configured_steam_user()
+  if not username:
+   raise RuntimeError("Steam anonymous installation failed; configure an authenticated Steam account on the Agent")
  else:
-  steam_env={**os.environ,"HOME":session_home,"CAPIVARA_STEAM_HOME":session_home}
- cp=subprocess.run(argv,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=7200,check=False,env=steam_env);output=cp.stdout or ""
- if cp.returncode!=0:
-  lowered=output.lower()
-  if "no subscription" in lowered:raise RuntimeError("Steam account has no subscription for this app; configure an authorized Steam account on the Agent")
-  if "password" in lowered or "steam guard" in lowered or "two-factor" in lowered:raise RuntimeError("Steam authentication is required or expired on this Agent")
-  raise RuntimeError(f"SteamCMD failed with exit code {cp.returncode}")
+  if not username:raise RuntimeError("Steam authentication is required on this Agent")
+ authenticated_env={**os.environ,"HOME":session_home,"CAPIVARA_STEAM_HOME":session_home}
+ cp=attempt(username,authenticated_env)
+ if failed(cp):
+  lowered=(cp.stdout or "").lower()
+  if "cached credentials not found" in lowered or "password" in lowered or "steam guard" in lowered or "two-factor" in lowered:
+   raise RuntimeError("Steam authenticated session is missing or expired; reauthenticate securely on the Agent")
+  if "no subscription" in lowered:raise RuntimeError("Configured Steam account has no subscription for this app")
+  if "timed out waiting for update to start" in lowered:raise RuntimeError("SteamCMD timed out before starting the update; installation is not verified")
+  raise RuntimeError(f"SteamCMD authenticated update failed with exit code {cp.returncode}")
 def _download(url:str,destination:Path)->None:
  request=urllib.request.Request(url,headers={"User-Agent":"Capivara-Agent/1"})
  with urllib.request.urlopen(request,timeout=60) as response,destination.open("wb") as output:shutil.copyfileobj(response,output,length=1024*1024)
