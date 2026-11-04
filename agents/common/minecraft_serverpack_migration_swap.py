@@ -233,4 +233,130 @@ def recover(instance_state_root:Path)->dict[str,Any]:
     return {"status":"recovered","failed_runtime_retained":paths["failed"].exists(),"journal":dict(data)}
 
 
-__all__=["MinecraftServerPackMigrationSwapError","prepare","switch","commit","recover"]
+
+def _archive_checkpoint(paths: dict[str, Path], digest: str) -> None:
+    """Durably identify the transaction being archived before either rename."""
+    target = paths["control"] / "minecraft-serverpack-archive-checkpoint.json"
+    temp = paths["control"] / ".minecraft-serverpack-archive-checkpoint.tmp"
+    if target.is_symlink() or temp.exists():
+        raise MinecraftServerPackMigrationSwapError("unsafe archival checkpoint")
+    if target.exists():
+        try:
+            old = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise MinecraftServerPackMigrationSwapError("corrupted archival checkpoint") from exc
+        if old.get("sha256") == digest:
+            return
+        old_archive = paths["control"] / "migration-history" / old.get("sha256", "")[:24]
+        old_journal = old_archive / "minecraft-serverpack-migration.json"
+        if (old_archive.is_symlink() or old_journal.is_symlink()
+                or not old_journal.is_file()
+                or hashlib.sha256(old_journal.read_bytes()).hexdigest() != old.get("sha256")):
+            raise MinecraftServerPackMigrationSwapError("prior archival is not complete")
+    content = json.dumps({"schema_version": 1, "sha256": digest}, sort_keys=True) + "\n"
+    with temp.open("x", encoding="utf-8") as stream:
+        stream.write(content)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temp, target)
+    _sync_dir(paths["control"])
+
+
+def archive_committed(instance_state_root: Path) -> dict[str, Any]:
+    """Idempotently finalize a committed transaction; preserve prior rollback.
+
+    Caller holds the per-instance lock and proves the instance is stopped.
+    Checkpoint is durably written before moving rollback or journal; a crash
+    after either rename can be resumed safely without guessing an archive ID.
+    """
+    paths = _paths(instance_state_root)
+    checkpoint = paths["control"] / "minecraft-serverpack-archive-checkpoint.json"
+    if checkpoint.is_symlink():
+        raise MinecraftServerPackMigrationSwapError("unsafe archival checkpoint")
+    saved = None
+    if checkpoint.exists():
+        try:
+            saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise MinecraftServerPackMigrationSwapError("invalid archival checkpoint") from exc
+        if (not isinstance(saved, dict) or saved.get("schema_version") != 1
+                or not isinstance(saved.get("sha256"), str)
+                or len(saved["sha256"]) != 64
+                or any(x not in "0123456789abcdef" for x in saved["sha256"])):
+            raise MinecraftServerPackMigrationSwapError("invalid archival checkpoint")
+    if paths["journal"].is_file() and not paths["journal"].is_symlink():
+        if _read(paths).get("phase") != "committed":
+            raise MinecraftServerPackMigrationSwapError("only committed migration can be archived")
+    if paths["temp"].exists() or paths["failed"].exists() or paths["stage"].exists():
+        raise MinecraftServerPackMigrationSwapError("unsafe migration artifacts block archival")
+    if not paths["active"].is_dir() or paths["active"].is_symlink():
+        raise MinecraftServerPackMigrationSwapError("active runtime is unsafe")
+    history = paths["control"] / "migration-history"
+    if history.is_symlink() or (history.exists() and not history.is_dir()):
+        raise MinecraftServerPackMigrationSwapError("migration history is unsafe")
+    journal_present = paths["journal"].is_file() and not paths["journal"].is_symlink()
+    if not journal_present and not saved:
+        raise MinecraftServerPackMigrationSwapError("no committed journal or archival checkpoint")
+    if journal_present:
+        data = _read(paths)
+        if data.get("phase") != "committed":
+            raise MinecraftServerPackMigrationSwapError("only committed migration can be archived")
+        digest = hashlib.sha256(paths["journal"].read_bytes()).hexdigest()
+        if saved and saved["sha256"] != digest:
+            prior = history / saved["sha256"][:24] / "minecraft-serverpack-migration.json"
+            if prior.is_symlink() or not prior.is_file() or hashlib.sha256(prior.read_bytes()).hexdigest() != saved["sha256"]:
+                raise MinecraftServerPackMigrationSwapError("previous archival is unfinished")
+    else:
+        digest = saved["sha256"]
+        historical = history / digest[:24] / "minecraft-serverpack-migration.json"
+        if historical.is_symlink() or not historical.is_file():
+            raise MinecraftServerPackMigrationSwapError("archived journal absent after rename")
+        if hashlib.sha256(historical.read_bytes()).hexdigest() != digest:
+            raise MinecraftServerPackMigrationSwapError("archived journal differs from checkpoint")
+        data = json.loads(historical.read_text(encoding="utf-8"))
+        if data.get("phase") != "committed":
+            raise MinecraftServerPackMigrationSwapError("archived journal is not committed")
+    old = data.get("original_tree_sha256")
+    if not isinstance(old, str) or len(old) != 64 or any(x not in "0123456789abcdef" for x in old):
+        raise MinecraftServerPackMigrationSwapError("committed journal lacks rollback checksum")
+    archive = history / digest[:24]
+    if archive.is_symlink() or (archive.exists() and not archive.is_dir()):
+        raise MinecraftServerPackMigrationSwapError("archive target is unsafe")
+    retained = archive / "runtime.migration-rollback"
+    historical_journal = archive / "minecraft-serverpack-migration.json"
+    if retained.is_symlink() or historical_journal.is_symlink() or paths["rollback"].is_symlink():
+        raise MinecraftServerPackMigrationSwapError("archive contains unsafe links")
+    if paths["rollback"].exists() and retained.exists():
+        raise MinecraftServerPackMigrationSwapError("both rollback locations occupied")
+    if paths["rollback"].is_dir():
+        if _tree_hash(paths["rollback"]) != old:
+            raise MinecraftServerPackMigrationSwapError("rollback evidence differs from checkpoint")
+    elif retained.is_dir():
+        if _tree_hash(retained) != old:
+            raise MinecraftServerPackMigrationSwapError("archived rollback differs from checkpoint")
+    else:
+        raise MinecraftServerPackMigrationSwapError("rollback evidence is missing")
+    if historical_journal.exists() and (not historical_journal.is_file()
+            or hashlib.sha256(historical_journal.read_bytes()).hexdigest() != digest):
+        raise MinecraftServerPackMigrationSwapError("historical journal differs from checkpoint")
+    if journal_present and historical_journal.exists():
+        raise MinecraftServerPackMigrationSwapError("both journal locations occupied")
+
+    history.mkdir(exist_ok=True)
+    archive.mkdir(exist_ok=True)
+    _sync_dir(paths["control"])
+    _sync_dir(history)
+    _archive_checkpoint(paths, digest)
+    if paths["rollback"].is_dir():
+        os.replace(paths["rollback"], retained)
+        _sync_dir(paths["root"])
+        _sync_dir(archive)
+    if journal_present:
+        os.replace(paths["journal"], historical_journal)
+        _sync_dir(paths["control"])
+        _sync_dir(archive)
+    return {"status": "archived" if journal_present else "already_archived",
+            "history": str(archive), "sha256": digest}
+
+
+__all__=["MinecraftServerPackMigrationSwapError","prepare","switch","commit","recover","archive_committed"]
