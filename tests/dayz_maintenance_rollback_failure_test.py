@@ -48,6 +48,7 @@ class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
                 patch.object(maintenance, "rollback", return_value=False),
                 patch.object(maintenance, "restore_files"),
                 patch.object(maintenance, "cleanup_staging"),
+                patch.object(maintenance, "_ensure_dayz_staging_root_access"),
             ]
             with __import__("contextlib").ExitStack() as stack:
                 mocks = [stack.enter_context(p) for p in patches]
@@ -56,6 +57,20 @@ class DayZMaintenanceRollbackFailureTest(unittest.TestCase):
                     maintenance._prepare_locked(selection, target, lambda _: None)
                 mocks[12].assert_called_once_with(target, previous)
                 mocks[14].assert_not_called()
+                mocks[15].assert_called_once_with(stage, "dayz")
+
+            # Staging ACL errors must stop before an atomic activation.
+            patches[-1] = patch.object(
+                maintenance, "_ensure_dayz_staging_root_access",
+                side_effect=RuntimeError("simulated ACL setup failure"),
+            )
+            with __import__("contextlib").ExitStack() as stack:
+                mocks = [stack.enter_context(p) for p in patches]
+                with self.assertRaisesRegex(RuntimeError, "simulated ACL setup failure"):
+                    maintenance._prepare_locked(selection, target, lambda _: None)
+                mocks[11].assert_not_called()  # activate()
+                mocks[12].assert_not_called()  # rollback(): no activation
+                mocks[14].assert_called_once_with(stage)  # staging cleanup
 
 
 if __name__ == "__main__":

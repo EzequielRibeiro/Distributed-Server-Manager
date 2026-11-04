@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 import instance_runtime
 from backup_client import _create as create_backup
-from server_update_agent import ServerUpdateError, _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config
+from server_update_agent import ServerUpdateError, _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config, _ensure_dayz_staging_root_access
 from server_update_provider import detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback
 try:
@@ -154,7 +154,7 @@ def _prepare_locked(selection:dict[str,Any],target:Path,installer:Callable[[Path
     if before.get("state")=="up_to_date":return {"changed":False,"transaction_id":None,"affected_instances":affected,"update_status_before":before,"update_status_after":before}
     staging=None;previous=None;activated=False;provider_snapshot={};backups=[];content_preflight=None
     try:
-        _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);content_preflight=inspect_update_content_preflight(staging,game);reject_unsafe_staged_dayz_content(content_preflight);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
+        _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);content_preflight=inspect_update_content_preflight(staging,game);reject_unsafe_staged_dayz_content(content_preflight);_ensure_dayz_staging_root_access(staging,game);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
         if staged.get("detector_supported") and staged.get("state")!="up_to_date":raise MaintenanceGameUpdateError("staged server version validation failed")
         if bool(meta.get("backup_before_update",True)):
             for current in affected:
