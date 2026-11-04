@@ -5,6 +5,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -127,6 +128,100 @@ class SwapTest(unittest.TestCase):
     module.prepare(root,migration_plan_sha256="b"*64,
      target_loader_version="26.1.2.109",backup=BACKUP)
    self.assertFalse((root/".dsm/minecraft-serverpack-migration.json").exists())
+
+
+ def test_consecutive_committed_migration_is_archivable_with_rollback_retained(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   module.prepare(root,migration_plan_sha256="b"*64,target_loader_version="26.1.2.109",backup=BACKUP)
+   module.switch(root)
+   module.commit(root,readiness_passed=True)
+   archived=module.archive_committed(root)
+   self.assertEqual(archived["status"],"archived")
+   history=Path(archived["history"])
+   self.assertTrue((history/"minecraft-serverpack-migration.json").exists())
+   self.assertEqual((history/"runtime.migration-rollback/world/level.dat").read_bytes(),b"OLD")
+   runtime(root/"runtime.migration-stage","26.1.2.124",b"NEWER")
+   next_tx=module.prepare(root,migration_plan_sha256="c"*64,target_loader_version="26.1.2.124",backup=BACKUP)
+   self.assertEqual(next_tx["phase"],"prepared")
+
+ def test_incomplete_migration_is_not_archived(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   module.prepare(root,migration_plan_sha256="b"*64,target_loader_version="26.1.2.109",backup=BACKUP)
+   with self.assertRaisesRegex(module.MinecraftServerPackMigrationSwapError,"only committed"):
+    module.archive_committed(root)
+
+
+ def _commit_first(self,root):
+  module.prepare(root,migration_plan_sha256="b"*64,target_loader_version="26.1.2.109",backup=BACKUP)
+  module.switch(root)
+  module.commit(root,readiness_passed=True)
+
+ def test_archive_is_idempotent_after_success(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name));self._commit_first(root)
+   first=module.archive_committed(root)
+   second=module.archive_committed(root)
+   self.assertEqual(second["status"],"already_archived")
+   self.assertEqual(first["sha256"],second["sha256"])
+
+ def test_resume_after_rollback_rename_crash(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name));self._commit_first(root)
+   original=module.os.replace
+   def interrupt(src,dst):
+    if str(src).endswith("minecraft-serverpack-migration.json"):
+     raise OSError("simulated crash after rollback move")
+    return original(src,dst)
+   with patch.object(module.os,"replace",side_effect=interrupt):
+    with self.assertRaisesRegex(OSError,"simulated crash"):
+     module.archive_committed(root)
+   self.assertFalse((root/"runtime.migration-rollback").exists())
+   self.assertTrue((root/".dsm/minecraft-serverpack-migration.json").exists())
+   self.assertEqual(module.archive_committed(root)["status"],"archived")
+   self.assertEqual(module.archive_committed(root)["status"],"already_archived")
+
+ def test_resume_after_journal_rename_crash(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name));self._commit_first(root)
+   original=module._sync_dir
+   def interrupt(path):
+    if path==root/".dsm" and not (path/"minecraft-serverpack-migration.json").exists():
+     raise OSError("simulated crash after journal move")
+    return original(path)
+   with patch.object(module,"_sync_dir",side_effect=interrupt):
+    with self.assertRaisesRegex(OSError,"simulated crash"):
+     module.archive_committed(root)
+   self.assertFalse((root/".dsm/minecraft-serverpack-migration.json").exists())
+   self.assertEqual(module.archive_committed(root)["status"],"already_archived")
+
+ def test_three_consecutive_updates_preserve_world_and_history(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name));self._commit_first(root)
+   self.assertEqual(module.archive_committed(root)["status"],"archived")
+   for index,version in enumerate(("26.1.2.124","26.1.2.130")):
+    marker=("world-"+str(index)).encode()
+    runtime(root/"runtime.migration-stage",version,marker)
+    module.prepare(root,migration_plan_sha256=("c" if index==0 else "d")*64,target_loader_version=version,backup=BACKUP)
+    module.switch(root)
+    module.commit(root,readiness_passed=True)
+    self.assertEqual((root/"runtime/world/level.dat").read_bytes(),marker)
+    self.assertEqual(module.archive_committed(root)["status"],"archived")
+   history=list((root/".dsm/migration-history").iterdir())
+   self.assertEqual(len(history),3)
+   self.assertTrue(all((p/"runtime.migration-rollback/world/level.dat").exists() for p in history))
+   self.assertFalse((root/"runtime.migration-rollback").exists())
+   self.assertFalse((root/".dsm/minecraft-serverpack-migration.json").exists())
+
+ def test_reject_tampered_archive_checkpoint(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name));self._commit_first(root)
+   module.archive_committed(root)
+   (root/".dsm/minecraft-serverpack-archive-checkpoint.json").write_text('{"schema_version":1,"sha256":"bad"}')
+   with self.assertRaisesRegex(module.MinecraftServerPackMigrationSwapError,"invalid archival checkpoint"):
+    module.archive_committed(root)
+
 
 
 if __name__=="__main__":unittest.main()
