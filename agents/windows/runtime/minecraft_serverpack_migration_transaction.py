@@ -168,6 +168,7 @@ def execute_minecraft_serverpack_migration(
                     # Only the separate finalization-recovery path can clear it.
                     if isinstance(operation_journal, dict):
                         operation_journal["status"] = "finalization_pending"
+                        operation_journal["migration_plan_sha256"] = evidence["migration_plan_sha256"]
                         operation_journal["finalization_error"] = str(exc)[:500]
                     return {
                         "kind": "MinecraftServerPackMigrationResult",
@@ -187,6 +188,7 @@ def execute_minecraft_serverpack_migration(
                         trace.append("finalization_pending")
                         if isinstance(operation_journal, dict):
                             operation_journal["status"]="finalization_pending"
+                            operation_journal["migration_plan_sha256"]=evidence["migration_plan_sha256"]
                         return {
                             "kind":"MinecraftServerPackMigrationResult",
                             "status":"finalization_pending",
@@ -200,6 +202,7 @@ def execute_minecraft_serverpack_migration(
                     trace.append("restart_pending")
                     if isinstance(operation_journal, dict):
                         operation_journal["status"]="finalization_pending"
+                        operation_journal["migration_plan_sha256"]=evidence["migration_plan_sha256"]
                         operation_journal["finalization_phase"]="restart_pending"
                         operation_journal["archive_status"]=str(finalization["archive_status"])
                     return {
