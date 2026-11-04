@@ -161,4 +161,60 @@ class TransactionTest(unittest.TestCase):
   self.assertLess(events.index("rollback"),events.index("unlock"))
 
 
+ def test_after_commit_finalization_failure_never_rolls_back(self):
+  for platform in ("linux","windows"):
+   module,events,_,hooks=self._run(platform)
+   def finalize(*args):
+    events.append("finalize")
+    raise RuntimeError("simulated archive interruption")
+   hooks["finalize"]=finalize
+   result=module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+   self.assertEqual(result["status"],"finalization_pending")
+   self.assertEqual(result["trace"][-2:],["committed","finalization_pending"])
+   self.assertNotIn("rollback",events)
+   self.assertLess(events.index("finalize"),events.index("unlock"))
+
+ def test_after_commit_finalization_success_marks_complete(self):
+  for platform in ("linux","windows"):
+   module,events,_,hooks=self._run(platform)
+   def finalize(*args):
+    events.append("finalize")
+    return {"status":"archived"}
+   hooks["finalize"]=finalize
+   result=module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+   self.assertEqual(result["status"],"completed")
+   self.assertEqual(result["finalization"]["status"],"archived")
+   self.assertEqual(result["trace"][-2:],["committed","finalized"])
+   self.assertNotIn("rollback",events)
+
+
+ def test_archived_restart_failure_never_rolls_back(self):
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform):
+    module,events,_,hooks=self._run(platform)
+    def finalize(*args):
+     events.append("finalize")
+     return {"status":"restart_pending","archive_status":"archived","history":"/sandbox/history/journal","restart_error":"startup timeout"}
+    hooks["finalize"]=finalize
+    result=module.execute_minecraft_serverpack_migration(
+     {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+    self.assertEqual(result["status"],"finalization_pending")
+    self.assertIn("restart_pending",result["trace"])
+    self.assertNotIn("rollback",events)
+    self.assertIn("finalization",result)
+    self.assertEqual(result["finalization"]["archive_status"],"archived")
+    self.assertLess(events.index("finalize"),events.index("unlock"))
+
+ def test_restart_pending_without_proof_never_marks_completed(self):
+  for platform in ("linux","windows"):
+   module,events,_,hooks=self._run(platform)
+   hooks["finalize"]=lambda *args: {"status":"restart_pending","archive_status":"missing","history":""}
+   result=module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+   self.assertEqual(result["status"],"finalization_pending")
+   self.assertNotIn("rollback",events)
+
+
 if __name__=="__main__":unittest.main()
