@@ -4,9 +4,9 @@ from __future__ import annotations
 from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import unittest
 from unittest.mock import patch
 
-import pytest
 
 from agents.linux.runtime import maintenance_game_update as maintenance
 
@@ -46,50 +46,58 @@ def scenario(root: Path, *, outcome=False, failure=None, stage_failure=False, ba
         for name, (value, kw) in patches.items():
             settings = kw if kw else {"return_value": value}
             mocks[name] = stack.enter_context(patch.object(maintenance, name, **settings))
-        with pytest.raises(Exception) as caught:
+        try:
             maintenance._prepare_locked(selection, target, lambda _: (_ for _ in ()).throw(
                 RuntimeError("staging validation failed")) if stage_failure else None)
-        return mocks, caught.value
+        except Exception as caught:
+            return mocks, caught
+        raise AssertionError("maintenance failed to reject invalid transaction")
 
 
-def test_rollback_false_preserves_evidence(tmp_path):
-    mocks, err = scenario(tmp_path, outcome=False)
-    assert isinstance(err, maintenance.MaintenanceGameUpdateError)
-    assert "rollback tree is unavailable" in str(err)
-    mocks["rollback"].assert_called_once()
-    mocks["restore_files"].assert_not_called()
-    mocks["cleanup_staging"].assert_not_called()
-    mocks["create_backup"].assert_called_once()
+
+class DayZMaintenanceRollbackFailureTests(unittest.TestCase):
+    def run_scenario(self, **kwargs):
+        with TemporaryDirectory() as temp:
+            return scenario(Path(temp), **kwargs)
+
+    def test_rollback_false_preserves_evidence(self):
+        mocks, err = self.run_scenario(outcome=False)
+        self.assertIsInstance(err, maintenance.MaintenanceGameUpdateError)
+        self.assertIn("rollback tree is unavailable", str(err))
+        mocks["rollback"].assert_called_once()
+        mocks["restore_files"].assert_not_called()
+        mocks["cleanup_staging"].assert_not_called()
+        mocks["create_backup"].assert_called_once()
+
+    def test_rollback_exception_preserves_evidence(self):
+        mocks, err = self.run_scenario(failure=OSError("rename denied"))
+        self.assertIsInstance(err, maintenance.MaintenanceGameUpdateError)
+        self.assertIn("rollback failed", str(err))
+        mocks["restore_files"].assert_not_called()
+        mocks["cleanup_staging"].assert_not_called()
+
+    def test_successful_rollback_restores_metadata_then_cleans(self):
+        mocks, err = self.run_scenario(outcome=True)
+        self.assertIsInstance(err, RuntimeError)
+        self.assertIn("post-activation", str(err))
+        mocks["rollback"].assert_called_once()
+        mocks["restore_files"].assert_called_once()
+        mocks["cleanup_staging"].assert_called_once()
+
+    def test_failed_staging_does_not_attempt_rollback(self):
+        mocks, err = self.run_scenario(stage_failure=True)
+        self.assertIn("staging validation failed", str(err))
+        mocks["rollback"].assert_not_called()
+        mocks["cleanup_staging"].assert_called_once()
+
+    def test_backup_opt_out_cannot_skip_dayz_backup(self):
+        mocks, err = self.run_scenario(backup_failure=True)
+        self.assertIn("backup failed", str(err))
+        mocks["create_backup"].assert_called_once()
+        mocks["activate"].assert_not_called()
+        mocks["rollback"].assert_not_called()
+        mocks["cleanup_staging"].assert_called_once()
 
 
-def test_rollback_exception_preserves_evidence(tmp_path):
-    mocks, err = scenario(tmp_path, failure=OSError("rename denied"))
-    assert isinstance(err, maintenance.MaintenanceGameUpdateError)
-    assert "rollback failed" in str(err)
-    mocks["restore_files"].assert_not_called()
-    mocks["cleanup_staging"].assert_not_called()
-
-
-def test_successful_rollback_restores_metadata_then_cleans(tmp_path):
-    mocks, err = scenario(tmp_path, outcome=True)
-    assert isinstance(err, RuntimeError)
-    assert "post-activation" in str(err)
-    mocks["rollback"].assert_called_once()
-    mocks["restore_files"].assert_called_once()
-    mocks["cleanup_staging"].assert_called_once()
-
-
-def test_failed_staging_does_not_attempt_rollback(tmp_path):
-    mocks, err = scenario(tmp_path, stage_failure=True)
-    assert "staging validation failed" in str(err)
-    mocks["rollback"].assert_not_called()
-    mocks["cleanup_staging"].assert_called_once()
-
-
-def test_backup_opt_out_cannot_skip_dayz_backup(tmp_path):
-    mocks, err = scenario(tmp_path, backup_failure=True)
-    assert "backup failed" in str(err)
-    mocks["create_backup"].assert_called_once()
-    mocks["activate"].assert_not_called()
-    mocks["rollback"].assert_not_called()
-    mocks["cleanup_staging"].assert_called_once()
+if __name__ == "__main__":
+    unittest.main()
