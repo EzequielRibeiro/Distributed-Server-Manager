@@ -177,6 +177,68 @@ def _ensure_dayz_staging_root_access(staging: Path, game: str) -> None:
         raise ServerUpdateError("cannot configure DayZ runtime staging permissions") from exc
 
 
+def _ensure_dayz_dlc_ownership(staging: Path, game: str) -> None:
+    """Align optional DLC contents with the runtime identity before activation.
+
+    Only DayZ's known Bohemia DLC directories are eligible, not mods,
+    instance storage, or arbitrary workshop content. Reject symlinks rather
+    than following them to outside the transactional staging tree.
+    """
+    if game != "dayz":
+        return
+    import grp
+    import pwd
+
+    if staging.is_symlink() or not staging.is_dir():
+        raise ServerUpdateError("DayZ DLC ownership requires a real staging directory")
+    try:
+        uid = pwd.getpwnam("capivara-instance").pw_uid
+        gid = grp.getgrnam("capivara-agent").gr_gid
+    except KeyError as exc:
+        raise ServerUpdateError("DayZ runtime identity is unavailable") from exc
+
+    # Official DayZ DLCs are installed as a top-level content directory with
+    # addons/*.pbo. Do not assume names: new DLCs should work without releases.
+    # Reject conventional Workshop directories and mod descriptors, and never
+    # touch the base-game or server-managed directories.
+    reserved = {"addons", "dta", "docs", "mpmissions", "battleye",
+                "keys", "steamapps", "server_manager", "profiles", "config"}
+    candidates: list[tuple[str, list[Path]]] = []
+    for dlc in staging.iterdir():
+        name = dlc.name
+        if name.lower() in reserved or name.startswith(("@", ".")):
+            continue
+        if dlc.is_symlink():
+            raise ServerUpdateError("DayZ content root must not be a symlink: " + name)
+        if not dlc.is_dir():
+            continue
+        if (dlc / "mod.cpp").exists() or (dlc / "meta.cpp").exists():
+            continue
+        addons = dlc / "addons"
+        if addons.is_symlink():
+            raise ServerUpdateError("DayZ content addons must not be a symlink: " + name)
+        if not addons.is_dir():
+            continue
+        if not any(child.is_file() and not child.is_symlink() and child.suffix.lower() == ".pbo"
+                   for child in addons.iterdir()):
+            continue
+        paths = [dlc]
+        for root, dirs, files in os.walk(dlc, followlinks=False):
+            for entry in dirs + files:
+                path = Path(root) / entry
+                if path.is_symlink():
+                    raise ServerUpdateError("DayZ DLC contains a symlink: " + name)
+                paths.append(path)
+        candidates.append((name, paths))
+    # Prevalidate all candidates before modifying any of them.
+    for name, paths in candidates:
+        try:
+            for path in paths:
+                os.chown(path, uid, gid, follow_symlinks=False)
+        except OSError as exc:
+            raise ServerUpdateError("cannot assign DayZ DLC files to runtime user: " + name) from exc
+
+
 def perform_update(
     selection: dict[str, Any],
     target: Path,
@@ -222,6 +284,7 @@ def perform_update(
         staging = prepare_staging(target)
         installer(staging)
         _ensure_dayz_staging_root_access(staging, game)
+        _ensure_dayz_dlc_ownership(staging, game)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
         if not staged_status.get("detector_supported") or staged_status.get("state") != "up_to_date":
