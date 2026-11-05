@@ -245,6 +245,35 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(
             repeated["result"]["controller_bundle_publication"]["bundle_revision"],2)
 
+    def test_completed_envelope_cannot_override_pending_finalization_evidence(self):
+        pending=self.pending()
+        repo,state=self.enqueue(pending)
+        result=self.completed(state,pending)
+        result["minecraft_serverpack_migration"].update({
+            "status":"finalization_pending",
+            "trace":["committed","finalization_pending"],
+        })
+        with self.assertRaisesRegex(ValueError,"still pending"):
+            repo.apply_result("pr839-isolated-agent",result)
+        snapshot=repo.snapshot(state["provisioning_id"])
+        self.assertEqual(snapshot["status"],"queued")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],1)
+
+    def test_restart_pending_envelope_never_commits_bundle(self):
+        pending=self.pending()
+        repo,state=self.enqueue(pending)
+        result=self.completed(state,pending)
+        result["minecraft_serverpack_migration"].update({
+            "status":"restart_pending",
+            "finalization":{"status":"restart_pending"},
+        })
+        with self.assertRaisesRegex(ValueError,"still pending"):
+            repo.apply_result("pr839-isolated-agent",result)
+        self.assertEqual(repo.snapshot(state["provisioning_id"])["status"],"queued")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],1)
+
     def test_duplicate_running_heartbeat_after_completion_cannot_regress_state(self):
         pending=self.pending()
         repo,state=self.enqueue(pending)
