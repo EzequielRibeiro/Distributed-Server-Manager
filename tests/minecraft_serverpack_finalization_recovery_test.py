@@ -44,7 +44,7 @@ class TestRestartRecovery(unittest.TestCase):
  def setup_case(self):
   op={**OP,"finalization_phase":"restart_pending"}
   detail={**DETAIL,"commit":{"initial_active_state":"active"},
-          "finalization":{"status":"restart_pending","archive_status":"archived","history":"/tmp/isolated/history"}}
+          "finalization":{"status":"restart_pending","archive_status":"archived","history":"/tmp/isolated/history","sha256":"a"*64}}
   prov={**PROV,"minecraft_serverpack_migration":detail}
   journal=dict(SWAP)
   return op,prov,journal
