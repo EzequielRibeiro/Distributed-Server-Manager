@@ -676,6 +676,42 @@ def _sync_private_minecraft_content(spec: dict[str, Any], config: dict[str, Any]
     return files
 
 
+def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
+    """Repair DLC ownership during privileged apply for new and existing DayZ.
+
+    Only the registered managed game-data DayZ installation is allowed.
+    Preserve file modes and instance/mod private state.
+    """
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        return 0
+    from dayz_dlc_ownership import discover_dayz_dlc_paths
+    working = Path(str(spec.get("working_directory") or ""))
+    trusted = (STATE_DIR / "game-data" / "dayz").resolve()
+    if not working.is_absolute() or working.is_symlink():
+        raise RuntimeError("DayZ DLC ownership requires a real installation root")
+    resolved = working.resolve(strict=True)
+    try:
+        relative = resolved.relative_to(trusted)
+    except ValueError:
+        # User-managed instances outside managed game-data are out of scope.
+        return 0
+    if len(relative.parts) != 1 or not resolved.is_dir():
+        raise RuntimeError("DayZ installation path is not an expected managed root")
+    account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    group = grp.getgrnam(_AGENT_GROUP)
+    try:
+        candidates = discover_dayz_dlc_paths(resolved)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("unsafe DayZ DLC layout") from exc
+    updated = 0
+    for path in candidates:
+        st = path.lstat()
+        if st.st_uid != account.pw_uid or st.st_gid != group.gr_gid:
+            os.chown(path, account.pw_uid, group.gr_gid, follow_symlinks=False)
+            updated += 1
+    return updated
+
+
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
@@ -962,156 +998,3 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
     files_root_raw = str(spec.get("files_root") or "").strip()
     if not files_root_raw:
         return
-    state_root = Path(str(spec["instance_state_root"])).resolve()
-    files_root = _within(state_root, files_root_raw, "customer files root")
-    if not files_root.is_dir() or files_root.is_symlink():
-        return
-    try:
-        agent_group = grp.getgrnam(_AGENT_GROUP)
-    except KeyError as exc:
-        raise RuntimeError("Agent control group is unavailable") from exc
-    for current in [files_root, *files_root.rglob("*")]:
-        if current.is_symlink():
-            raise RuntimeError(f"customer files tree contains a symlink: {current}")
-        metadata = current.stat()
-        if metadata.st_gid != agent_group.gr_gid:
-            os.chown(current, -1, agent_group.gr_gid)
-        if current.is_dir():
-            desired_mode = 0o770
-        elif current.is_file():
-            desired_mode = 0o770 if metadata.st_mode & 0o111 else 0o660
-        else:
-            continue
-        if (metadata.st_mode & 0o7777) != desired_mode:
-            os.chmod(current, desired_mode)
-
-
-def run(instance_id: str) -> dict[str, Any]:
-    if os.geteuid() != 0:
-        raise RuntimeError("privileged materializer helper must run as root")
-    instance_id = _token(instance_id)
-    request_path = REQUEST_ROOT / f"{instance_id}.request.json"
-    result_path = REQUEST_ROOT / f"{instance_id}.result.json"
-    request = json.loads(request_path.read_text(encoding="utf-8"))
-    if not isinstance(request, dict) or request.get("kind") != "CapivaraPrivilegedMaterializationRequest":
-        raise RuntimeError("invalid privileged materialization request")
-    if str(request.get("instance_id") or "") != instance_id:
-        raise RuntimeError("privileged materialization instance_id mismatch")
-    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    local_agent_id = str(config.get("agent_id") or "").strip()
-    if not local_agent_id:
-        raise RuntimeError("local Agent identity is unavailable")
-    if str(request.get("agent_id") or "") != local_agent_id:
-        raise PermissionError("privileged materialization request belongs to another Agent")
-    spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
-    if spec["instance_id"] != instance_id:
-        raise RuntimeError("runtime spec instance_id mismatch")
-    action = str(request.get("action") or "").strip().lower()
-    materializer = resolve_materializer(spec)
-    templates: list[Any] = []
-    working_file_copies: list[dict[str, Any]] = []
-    dayz_mod_aliases: list[dict[str, Any]] = []
-    removed_dayz_mod_aliases: list[str] = []
-    content_files: list[str] = []
-    if (action in {"minecraft-serverpack-prepare-inputs", "minecraft-serverpack-build-candidate"}
-            or (action == "minecraft-serverpack-swap-phase"
-                and request.get("phase") in {"prepare", "switch", "recover"})):
-        _serverpack_require_inactive(instance_id)
-    if action == "apply":
-        _ensure_runtime_identity(spec, config)
-        working_file_copies = _sync_working_file_copies(spec)
-        dayz_mod_aliases = _sync_dayz_mod_aliases(spec)
-        templates = materialize_templates(spec)
-        templates.extend(materialize_network_properties(spec))
-        game_id = str(spec.get("game_id") or "").lower()
-        environment_id = str(spec.get("environment_id") or "").lower()
-        if game_id == "palworld":
-            materialize_admin_password(spec)
-        elif game_id == "minecraft" and environment_id.startswith("minecraft.java."):
-            materialize_minecraft_rcon_password(spec)
-        server_settings = materialize_server_settings(spec)
-        server_settings.extend(materialize_dynamic_values(spec))
-        if str(spec.get("game_id") or "").lower() == "minecraft" and str(
-            spec.get("environment_id") or ""
-        ).lower().startswith("minecraft.java."):
-            content_files = _sync_private_minecraft_content(spec, config)
-        operation = materializer.apply(spec)
-    elif action == "sync-minecraft-content":
-        installed = materializer.inspect(spec)
-        if not installed.get("exists") or not installed.get("owned"):
-            raise RuntimeError("Minecraft content synchronization requires an owned runtime")
-        content_files = _sync_private_minecraft_content(spec, config)
-        operation = {"action": action, "changed": bool(content_files), "content_files": content_files}
-    elif action == "remove":
-        operation = materializer.remove(spec)
-        removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
-        private_state_cleanup = _remove_instance_private_state(spec, config)
-        operation = {**operation, "private_state_cleanup": private_state_cleanup}
-    elif action == "minecraft-serverpack-prepare-inputs":
-        operation = _serverpack_prepare_inputs(spec, config, migration_value=request.get("migration"), selection=request.get("selection"))
-    elif action == "minecraft-serverpack-build-candidate":
-        operation = _serverpack_build_candidate(
-            spec, config,
-            loader_seed_value=request.get("loader_seed"),
-            target_loader_version=request.get("target_loader_version"),
-        )
-    elif action == "minecraft-serverpack-swap-phase":
-        operation = _serverpack_swap_phase(
-            spec, config, phase=request.get("phase"),
-            migration_plan_sha256=request.get("migration_plan_sha256"),
-            target_loader_version=request.get("target_loader_version"),
-            backup=request.get("backup"),
-            readiness_evidence=request.get("readiness_evidence"),
-        )
-    elif action == "migrate-storage-copy":
-        operation = _migrate_storage_copy(
-            config,
-            spec,
-            target_storage_pool_id=request.get("target_storage_pool_id"),
-            migration_id=request.get("migration_id"),
-            target_root_value=request.get("target_root"),
-        )
-    else:
-        raise RuntimeError("unsupported privileged materialization action")
-    result = {"status": "completed", "action": action, "instance_id": instance_id,
-              "agent_id": local_agent_id, "operation": operation, "templates": templates,
-              "server_settings": server_settings if action == "apply" else [],
-              "working_file_copies": working_file_copies,
-              "dayz_mod_aliases": dayz_mod_aliases,
-              "removed_dayz_mod_aliases": removed_dayz_mod_aliases,
-              "content_files": content_files}
-    if action == "apply":
-        _grant_customer_files_access(spec)
-    _write_result(result_path, result)
-    return result
-
-
-def main() -> int:
-    if len(sys.argv) != 2:
-        print("usage: materialize_instance.py INSTANCE_ID", file=sys.stderr)
-        return 2
-    instance_id = sys.argv[1]
-    result_path = REQUEST_ROOT / f"{_token(instance_id)}.result.json"
-    try:
-        result = run(instance_id)
-        print(json.dumps(result, sort_keys=True), flush=True)
-        return 0
-    except Exception as exc:
-        try:
-            request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
-            request = json.loads(request_path.read_text(encoding="utf-8"))
-            if str(request.get("action") or "").strip().lower() == "apply":
-                config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-                local_agent_id = str(config.get("agent_id") or "").strip()
-                spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
-                if spec.get("instance_id") == _token(instance_id):
-                    _grant_customer_files_access(spec)
-        except Exception:
-            pass
-        _write_result(result_path, {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]})
-        print(f"privileged materialization failed: {exc}", file=sys.stderr, flush=True)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

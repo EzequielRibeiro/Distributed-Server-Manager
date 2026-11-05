@@ -1,7 +1,6 @@
-"""Regression coverage for DayZ DLC content ownership on transactional staging."""
-import os
+"""DayZ DLC ownership policy: staging preflight and privileged materialization."""
+import importlib.util
 import sys
-import tempfile
 import types
 from pathlib import Path
 from unittest import mock
@@ -10,71 +9,115 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
-from server_update_agent import _ensure_dayz_dlc_ownership, ServerUpdateError
+from dayz_dlc_ownership import discover_dayz_dlc_paths
+from server_update_agent import _validate_dayz_staged_dlc, ServerUpdateError
+
+PRIVILEGED = ROOT / "agents/linux/privileged/materialize_instance.py"
 
 
 @pytest.fixture
-def staging(tmp_path):
-    root = tmp_path / "staging"
-    root.mkdir()
-    for name in ("nasdara", "sakhal", "future_world"):
+def install(tmp_path):
+    root = tmp_path / "state" / "game-data" / "dayz" / "serverfiles"
+    root.mkdir(parents=True)
+    for name in ("nasdara", "sakhal", "future_dlc"):
         addons = root / name / "addons"
         addons.mkdir(parents=True)
-        (addons / ("ai_" + name + ".pbo")).write_bytes(b"pbo")
-    workshop = root / "@community" / "addons"
-    workshop.mkdir(parents=True)
-    (workshop / "custom.pbo").write_bytes(b"custom")
-    custom = root / "custom_mod" / "addons"
+        (addons / (name + ".pbo")).write_bytes(b"PBO")
+    mod = root / "@mod" / "addons"
+    mod.mkdir(parents=True)
+    (mod / "custom.pbo").write_bytes(b"PBO")
+    custom = root / "custom" / "addons"
     custom.mkdir(parents=True)
-    (custom / "custom.pbo").write_bytes(b"custom")
-    (root / "custom_mod" / "mod.cpp").write_text("name=mod")
-    (root / "addons").mkdir()
-    (root / "addons" / "base.pbo").write_bytes(b"base")
+    (root / "custom" / "mod.cpp").write_text("custom")
+    (custom / "custom.pbo").write_bytes(b"PBO")
+    base = root / "addons"
+    base.mkdir()
+    (base / "game.pbo").write_bytes(b"PBO")
     return root
 
 
-def run_mocked(staging, game="dayz"):
-    calls = []
-    def chown(path, uid, gid, *, follow_symlinks):
-        calls.append((Path(path), uid, gid, follow_symlinks))
-    with mock.patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=1234)), mock.patch("grp.getgrnam", return_value=types.SimpleNamespace(gr_gid=5678)), mock.patch("server_update_agent.os.chown", side_effect=chown):
-        _ensure_dayz_dlc_ownership(staging, game)
-    return calls
+def load_materializer():
+    spec = importlib.util.spec_from_file_location("dayz_dlc_materializer_test", PRIVILEGED)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def test_detects_future_dlc_without_named_allowlist(staging):
-    calls = run_mocked(staging)
-    paths = {item[0] for item in calls}
-    for name in ("nasdara", "sakhal", "future_world"):
-        assert staging / name in paths
-        assert staging / name / "addons" / ("ai_" + name + ".pbo") in paths
-    assert all(uid == 1234 and gid == 5678 and follow is False for _, uid, gid, follow in calls)
+def test_generic_future_dlc_detected(install):
+    paths = set(discover_dayz_dlc_paths(install))
+    for name in ("nasdara", "sakhal", "future_dlc"):
+        assert install / name / "addons" / (name + ".pbo") in paths
+    assert not any("@mod" in path.parts or "custom" in path.parts for path in paths)
+    assert install / "addons" not in paths
 
 
-def test_mods_and_base_game_are_untouched(staging):
-    paths = {item[0] for item in run_mocked(staging)}
-    assert staging / "@community" not in paths
-    assert staging / "custom_mod" not in paths
-    assert staging / "addons" not in paths
-
-
-def test_other_games_unaffected(staging):
-    assert run_mocked(staging, "palworld") == []
-
-
-def test_no_dlc_is_noop(tmp_path):
-    assert run_mocked(tmp_path) == []
-
-
-def test_symlink_in_candidate_fails_before_chown(staging, tmp_path):
-    (staging / "future_world" / "addons" / "escape").symlink_to(tmp_path)
-    with mock.patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=1234)), mock.patch("grp.getgrnam", return_value=types.SimpleNamespace(gr_gid=5678)), mock.patch("server_update_agent.os.chown") as chown:
-        with pytest.raises(ServerUpdateError, match="symlink"):
-            _ensure_dayz_dlc_ownership(staging, "dayz")
+def test_preflight_never_calls_chown(install):
+    with mock.patch("os.chown") as chown:
+        _validate_dayz_staged_dlc(install, "dayz")
+        _validate_dayz_staged_dlc(install, "minecraft")
         chown.assert_not_called()
 
 
-def test_chown_failure_fails_closed(staging):
-    with mock.patch("pwd.getpwnam", return_value=types.SimpleNamespace(pw_uid=1234)), mock.patch("grp.getgrnam", return_value=types.SimpleNamespace(gr_gid=5678)), mock.patch("server_update_agent.os.chown", side_effect=PermissionError("denied")):
-        with pytest.raises(ServerUpdateError, match="cannot assign DayZ DLC"):
-            _ensure_dayz_dlc_ownership(staging, "dayz")
+def test_symlink_rejected_prior_to_changes(install, tmp_path):
+    (install / "future_dlc" / "addons" / "escape").symlink_to(tmp_path)
+    with pytest.raises(ServerUpdateError, match="unsafe"):
+        _validate_dayz_staged_dlc(install, "dayz")
+
+
+def test_privileged_normalizer_corrects_existing_and_new(install):
+    materializer = load_materializer()
+    materializer.STATE_DIR = install.parents[2]
+    spec = {"game_id": "dayz", "working_directory": str(install), "user": "capivara-instance"}
+    owner = types.SimpleNamespace(pw_uid=995)
+    group = types.SimpleNamespace(gr_gid=987)
+    calls = []
+    with mock.patch.object(materializer, "_validate_runtime_user", return_value=owner), \
+         mock.patch.object(materializer.grp, "getgrnam", return_value=group), \
+         mock.patch.object(materializer.os, "chown", side_effect=lambda path, uid, gid, **kw: calls.append((Path(path), uid, gid, kw))):
+        changed = materializer._normalize_dayz_dlc_ownership(spec)
+    assert changed >= 3
+    assert len(calls) == changed
+    assert all((uid, gid, kw["follow_symlinks"]) == (995, 987, False) for _,uid,gid,kw in calls)
+    assert not any("@mod" in path.parts or "custom" in path.parts for path,_,_,_ in calls)
+
+
+def test_privileged_normalizer_ignores_non_dayz(install):
+    materializer = load_materializer()
+    assert materializer._normalize_dayz_dlc_ownership({"game_id": "minecraft", "working_directory": str(install)}) == 0
+
+
+def test_privileged_normalizer_skips_unmanaged_paths(install, tmp_path):
+    materializer = load_materializer()
+    materializer.STATE_DIR = tmp_path / "different-state"
+    spec = {"game_id": "dayz", "working_directory": str(install)}
+    with mock.patch.object(materializer.os, "chown") as chown:
+        assert materializer._normalize_dayz_dlc_ownership(spec) == 0
+        chown.assert_not_called()
+
+
+def test_dayz_start_invokes_privileged_repair_before_adapter_start():
+    from contextlib import nullcontext
+    import instance_runtime
+    events = []
+    record = {"instance_id": "dayz-001", "agent_id": "test-agent", "game_id": "dayz"}
+    adapter = types.SimpleNamespace(
+        name="mock-dayz",
+        start=lambda spec: (events.append("adapter-start") or {"state": {"running": True}}),
+    )
+    with mock.patch("runtime_operations.runtime_operation", return_value=nullcontext()), \
+         mock.patch("runtime_limits.runtime_limits", return_value=types.SimpleNamespace(lock_timeout_seconds=1)), \
+         mock.patch.object(instance_runtime, "_owned", return_value=record), \
+         mock.patch.object(instance_runtime, "resolve_adapter", return_value=adapter), \
+         mock.patch.object(instance_runtime, "register_instance"), \
+         mock.patch("runtime_metrics.increment"), \
+         mock.patch("privileged_materialization.repair_dayz_dlc_ownership", side_effect=lambda config, spec: events.append("owner-repair")):
+        instance_runtime.lifecycle({"agent_id": "test-agent"}, "dayz-001", "start")
+    assert events == ["owner-repair", "adapter-start"]
+
+
+def test_privileged_materializer_exposes_dayz_repair_action():
+    materializer = PRIVILEGED.read_text()
+    assert 'elif action == "repair-dayz-dlc-ownership":' in materializer
+    assert 'updated = _normalize_dayz_dlc_ownership(spec)' in materializer
+    bridge = (ROOT / "agents/linux/runtime/privileged_materialization.py").read_text()
+    assert '_invoke("repair-dayz-dlc-ownership", normalized)' in bridge
