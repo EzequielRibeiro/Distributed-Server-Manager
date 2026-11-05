@@ -67,6 +67,7 @@ jobs:
           python3 -m unittest \
             tests.minecraft_serverpack_migration_swap_test \
             tests.minecraft_serverpack_migration_transaction_test \
+            tests.minecraft_serverpack_windows_journal_native_test \
             tests.minecraft_serverpack_finalization_gate_test \
             tests.minecraft_serverpack_finalization_recovery_test \
             tests.minecraft_serverpack_finalization_coordinator_test \
@@ -102,3 +103,21 @@ jobs:
         env:
           PYTHONPATH: .
         run: python3 -m unittest tests.agent_instance_provisioning_test -v
+
+
+  native-windows-transaction:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Windows migration transaction and journal modules
+        shell: pwsh
+        run: |
+          python -m py_compile agents/windows/runtime/minecraft_serverpack_migration_transaction.py agents/windows/runtime/runtime_operations.py agents/windows/runtime/runtime_lock.py
+      - name: Verify migration parity and Windows native journal persistence
+        shell: pwsh
+        run: |
+          python -m unittest tests.minecraft_serverpack_migration_transaction_test tests.minecraft_serverpack_windows_journal_native_test -v
