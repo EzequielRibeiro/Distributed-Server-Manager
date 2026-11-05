@@ -77,10 +77,14 @@ def scan_pending_finalizations(
         pending = (payload.get("status") == "running"
                    and payload.get("finalization_state") == "pending"
                    and payload.get("current_step") == "minecraft_serverpack_finalization")
+        detail_preview = payload.get("minecraft_serverpack_migration")
+        trace_preview = detail_preview.get("trace") if isinstance(detail_preview, dict) else None
         reconciliable = (payload.get("status") == "completed"
-                         and isinstance(payload.get("minecraft_serverpack_migration"), dict)
-                         and payload["minecraft_serverpack_migration"].get("status") == "completed"
-                         and "finalized" in payload["minecraft_serverpack_migration"].get("trace", []))
+                         and isinstance(detail_preview, dict)
+                         and detail_preview.get("status") == "completed"
+                         and isinstance(trace_preview, list)
+                         and all(isinstance(item, str) for item in trace_preview)
+                         and "finalized" in trace_preview)
         if not (pending or reconciliable):
             continue
         # Reread under lock to reject races between the scanner and executor.
@@ -105,15 +109,18 @@ def scan_pending_finalizations(
                 results.append({"status": "rejected", "reason": "operation_mismatch"})
                 continue
             detail = fresh.get("minecraft_serverpack_migration")
+            trace = detail.get("trace") if isinstance(detail, dict) else None
+            trace_valid = isinstance(trace, list) and all(isinstance(item, str) for item in trace)
             plan = str(outer.get("migration_plan_sha256") or "")
             if (not isinstance(detail, dict)
                     or len(plan) != 64
                     or any(c not in "0123456789abcdef" for c in plan)
                     or detail.get("migration_plan_sha256") != plan
+                    or (not pending and not trace_valid)
                     or (detail.get("status") != "finalization_pending" if pending
                         else (detail.get("status") != "completed"
-                              or "committed" not in detail.get("trace", [])
-                              or "finalized" not in detail.get("trace", [])
+                              or "committed" not in trace
+                              or "finalized" not in trace
                               or not isinstance(detail.get("finalization"), dict)
                               or detail["finalization"].get("status") not in {"archived", "already_archived"}))):
                 results.append({"status": "rejected", "reason": "plan_mismatch"})
