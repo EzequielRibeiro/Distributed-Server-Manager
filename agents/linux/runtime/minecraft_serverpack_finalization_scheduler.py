@@ -108,8 +108,9 @@ def scan_pending_finalizations(
                 results.append({"status": "rejected", "reason": "plan_mismatch"})
                 continue
             if enabled and callable(dispatch):
-                dispatch(outer, fresh)
-                results.append({"status": "dispatched", "instance_id": instance_id})
+                performed=dispatch(outer, fresh)
+                results.append({"status": "pending" if performed is False else "dispatched",
+                                "instance_id": instance_id})
             else:
                 results.append({"status": "pending" if pending else "pending_journal_reconciliation",
                                 "instance_id": instance_id})
