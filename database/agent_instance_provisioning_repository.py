@@ -15,6 +15,32 @@ from minecraft_serverpack_pending_publication import publish_pending_serverpack_
 from storage_pool_placement import select_storage_pool
 from universal_event_repository import UniversalEventRepository
 
+def reject_pending_minecraft_finalization(result: dict[str, Any]) -> None:
+    """Never allow an outer completed envelope to override pending migration evidence.
+
+    Reused by the canonical repository and the dashboard sanitizing adapter.
+    Older completed migrations without these pending markers retain legacy
+    compatibility; this does not replace Agent-side SHA/readiness attestation.
+    """
+    migration_evidence = result.get("minecraft_serverpack_migration")
+    if not isinstance(migration_evidence, dict):
+        return
+    phase = str(migration_evidence.get("status") or "").lower()
+    trace = migration_evidence.get("trace")
+    finalization = migration_evidence.get("finalization")
+    finalization_status = (
+        str(finalization.get("status") or "").lower()
+        if isinstance(finalization, dict) else ""
+    )
+    if (phase in {"finalization_pending", "restart_pending"}
+            or (isinstance(trace, list)
+                and any(item in {"finalization_pending", "restart_pending"}
+                        for item in trace if isinstance(item, str))
+                and "finalized" not in trace)
+            or finalization_status in {"finalization_pending", "restart_pending"}):
+        raise ValueError("Minecraft Server Pack finalization is still pending")
+
+
 ACTIVE_STATES = {"queued", "delivered", "running"}
 FINAL_STATES = {"completed", "failed"}
 VALID_STATES = {*ACTIVE_STATES, *FINAL_STATES}
@@ -317,6 +343,8 @@ class AgentInstanceProvisioningRepository:
         status = str(result.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
+        if status == "completed":
+            reject_pending_minecraft_finalization(result)
         try:
             progress = int(result.get("progress", current.get("progress", 0)))
         except (TypeError, ValueError):
