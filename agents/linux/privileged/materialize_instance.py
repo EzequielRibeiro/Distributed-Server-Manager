@@ -684,7 +684,7 @@ def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
     """
     if str(spec.get("game_id") or "").lower() != "dayz":
         return 0
-    from dayz_dlc_ownership import discover_dayz_dlc_paths
+    from dayz_dlc_ownership import verified_dayz_dlc_paths
     working = Path(str(spec.get("working_directory") or ""))
     trusted = (STATE_DIR / "game-data" / "dayz").resolve()
     if not working.is_absolute() or working.is_symlink():
@@ -699,16 +699,32 @@ def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
         raise RuntimeError("DayZ installation path is not an expected managed root")
     account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
     group = grp.getgrnam(_AGENT_GROUP)
+    control_user = pwd.getpwnam(
+        str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent")
+    )
+    depotcache = Path(control_user.pw_dir) / ".local/share/Steam/depotcache"
     try:
-        candidates = discover_dayz_dlc_paths(resolved)
+        candidates = verified_dayz_dlc_paths(resolved, depotcache)
     except (OSError, ValueError) as exc:
-        raise RuntimeError("unsafe DayZ DLC layout") from exc
+        raise RuntimeError("unsafe or inconsistent DayZ Steam depot provenance") from exc
     updated = 0
     for path in candidates:
         st = path.lstat()
         if st.st_uid != account.pw_uid or st.st_gid != group.gr_gid:
             os.chown(path, account.pw_uid, group.gr_gid, follow_symlinks=False)
             updated += 1
+    # SteamCMD runs under the Agent's control account, not the DayZ runtime
+    # user. Preserve its write access for the *next* app_update after chown.
+    # rwX grants directory traversal and write, without marking PBOs executable.
+    for offset in range(0, len(candidates), 100):
+        batch = candidates[offset:offset + 100]
+        completed = subprocess.run(
+            ["setfacl", "-m", f"u:{control_user.pw_name}:rwX",
+             *(str(path) for path in batch)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if completed.returncode:
+            raise RuntimeError("cannot preserve DayZ SteamCMD update access")
     return updated
 
 
@@ -982,19 +998,3 @@ def _migrate_storage_copy(
         raise
 
     return {
-        "changed": True,
-        "source_storage_pool_id": source_pool_id,
-        "target_storage_pool_id": target_pool_id,
-        "source": str(source),
-        "target": str(final),
-        "verified_files": count,
-        "verified_bytes": total,
-        "source_preserved": True,
-        "atomic_commit": True,
-    }
-
-
-def _grant_customer_files_access(spec: dict[str, Any]) -> None:
-    files_root_raw = str(spec.get("files_root") or "").strip()
-    if not files_root_raw:
-        return
