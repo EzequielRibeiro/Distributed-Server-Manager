@@ -44,6 +44,7 @@ jobs:
             agents/linux/privileged/materialize_instance.py \
             agents/linux/runtime/agent.py \
             agents/linux/runtime/minecraft_serverpack_finalization_bridge.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_dispatcher.py \
             agents/linux/runtime/minecraft_serverpack_finalization_coordinator.py \
             agents/linux/runtime/minecraft_serverpack_finalization_recovery.py \
             agents/linux/runtime/minecraft_serverpack_finalization_scheduler.py \
@@ -66,7 +67,8 @@ jobs:
             tests.minecraft_serverpack_finalization_scheduler_test \
             tests.minecraft_serverpack_finalization_agent_gate_test \
             tests.minecraft_serverpack_finalization_order_test \
-            tests.minecraft_serverpack_finalization_bridge_test -v
+            tests.minecraft_serverpack_finalization_bridge_test \
+            tests.minecraft_serverpack_finalization_dispatcher_test -v
       - name: Provisioning compatibility regressions
         env:
           PYTHONPATH: .
