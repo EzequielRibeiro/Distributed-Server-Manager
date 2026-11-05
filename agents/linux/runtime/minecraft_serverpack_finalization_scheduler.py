@@ -63,9 +63,14 @@ def scan_pending_finalizations(
                 or path.name != pid + ".result.json"):
             results.append({"status": "rejected", "reason": "invalid_identity"})
             continue
-        if (payload.get("status") != "running"
-                or payload.get("finalization_state") != "pending"
-                or payload.get("current_step") != "minecraft_serverpack_finalization"):
+        pending = (payload.get("status") == "running"
+                   and payload.get("finalization_state") == "pending"
+                   and payload.get("current_step") == "minecraft_serverpack_finalization")
+        reconciliable = (payload.get("status") == "completed"
+                         and isinstance(payload.get("minecraft_serverpack_migration"), dict)
+                         and payload["minecraft_serverpack_migration"].get("status") == "completed"
+                         and "finalized" in payload["minecraft_serverpack_migration"].get("trace", []))
+        if not (pending or reconciliable):
             continue
         # Reread under lock to reject races between the scanner and executor.
         with lock_instance(instance_id):
@@ -94,12 +99,18 @@ def scan_pending_finalizations(
                     or len(plan) != 64
                     or any(c not in "0123456789abcdef" for c in plan)
                     or detail.get("migration_plan_sha256") != plan
-                    or detail.get("status") != "finalization_pending"):
+                    or (detail.get("status") != "finalization_pending" if pending
+                        else (detail.get("status") != "completed"
+                              or "committed" not in detail.get("trace", [])
+                              or "finalized" not in detail.get("trace", [])
+                              or not isinstance(detail.get("finalization"), dict)
+                              or detail["finalization"].get("status") not in {"archived", "already_archived"}))):
                 results.append({"status": "rejected", "reason": "plan_mismatch"})
                 continue
             if enabled and callable(dispatch):
                 dispatch(outer, fresh)
                 results.append({"status": "dispatched", "instance_id": instance_id})
             else:
-                results.append({"status": "pending", "instance_id": instance_id})
+                results.append({"status": "pending" if pending else "pending_journal_reconciliation",
+                                "instance_id": instance_id})
     return results
