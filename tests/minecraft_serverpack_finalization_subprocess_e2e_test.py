@@ -147,6 +147,80 @@ class FinalizationWorkerProcessE2E(unittest.TestCase):
   replay=self.child()
   self.assertEqual(replay.returncode,0,replay.stderr+replay.stdout)
   self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
+ def test_fresh_agent_process_reads_pending_during_locked_recovery(self):
+  """Repeated real Agent result reads do not block on a worker-held flock."""
+  result=dict(self.result)
+  result.update(status="running",current_step="minecraft_serverpack_finalization",
+                finalization_state="pending",progress=99)
+  result["minecraft_serverpack_migration"]={
+    **self.detail,"status":"finalization_pending",
+    "trace":["committed","finalization_pending"],
+  }
+  self.provision.write_text(json.dumps(result))
+  lock_path=self.state/"instance-locks"/(IID+".lock")
+  lock_path.parent.mkdir(exist_ok=True)
+  ready=self.root/"lock-ready-heartbeat"
+  holder=subprocess.Popen(
+   [sys.executable,"-c",
+    "import fcntl,pathlib,sys,time;f=open(sys.argv[1],'a+');"
+    "fcntl.flock(f,fcntl.LOCK_EX);pathlib.Path(sys.argv[2]).write_text('ready');"
+    "time.sleep(20)",
+    str(lock_path),str(ready)],
+   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+  )
+  heartbeat_script=(
+    "import json,sys;"
+    "from provisioning_client import read_provisioning_result;"
+    "r=read_provisioning_result();"
+    "print(json.dumps({'status':r['status'],'progress':r['progress']}))"
+  )
+  env={**self.env,"PYTHONPATH":str(RUNTIME)}
+  try:
+   deadline=time.monotonic()+5
+   while not ready.exists() and time.monotonic()<deadline:time.sleep(.02)
+   self.assertTrue(ready.exists())
+   for iteration in range(6):
+    beat=subprocess.run(
+     [sys.executable,"-c",heartbeat_script],env=env,
+     capture_output=True,text=True,timeout=3)
+    self.assertEqual(beat.returncode,0,beat.stderr)
+    self.assertEqual(json.loads(beat.stdout),{"status":"running","progress":99})
+   blocked=self.child()
+   self.assertEqual(blocked.returncode,1)
+   self.assertEqual(json.loads(self.operation.read_text())["status"],"finalization_pending")
+  finally:
+   holder.kill()
+   holder.wait(timeout=5)
+  # A simulated Agent restart reloads the same disk-backed result in a new
+  # interpreter, without mutating migration files or losing progress.
+  fresh=subprocess.run([sys.executable,"-c",heartbeat_script],
+                       env=env,capture_output=True,text=True,timeout=3)
+  self.assertEqual(fresh.returncode,0,fresh.stderr)
+  self.assertEqual(json.loads(fresh.stdout),{"status":"running","progress":99})
+
+ def test_agent_restart_replays_published_result_through_official_worker(self):
+  """Fresh Agent processes see the same result before and after worker ACK."""
+  code=(
+    "import json;"
+    "from provisioning_client import read_provisioning_result;"
+    "r=read_provisioning_result();"
+    "print(json.dumps({'status':r['status'],'id':r['provisioning_id']}))"
+  )
+  env={**self.env,"PYTHONPATH":str(RUNTIME)}
+  prior=subprocess.run([sys.executable,"-c",code],env=env,
+                       capture_output=True,text=True,timeout=3)
+  self.assertEqual(prior.returncode,0,prior.stderr)
+  self.assertEqual(json.loads(prior.stdout),{"status":"completed","id":PID})
+  self.assertEqual(json.loads(self.operation.read_text())["status"],"finalization_pending")
+  recovered=self.child()
+  self.assertEqual(recovered.returncode,0,recovered.stderr+recovered.stdout)
+  restarted=subprocess.run([sys.executable,"-c",code],env=env,
+                           capture_output=True,text=True,timeout=3)
+  self.assertEqual(restarted.returncode,0,restarted.stderr)
+  self.assertEqual(json.loads(restarted.stdout),{"status":"completed","id":PID})
+  self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
+  self.assertEqual(len(list(self.hist.glob("*/minecraft-serverpack-migration.json"))),1)
+
  def test_wrong_instance_never_mutates(self):
   outcome=self.child("not-authorized")
   self.assertNotEqual(outcome.returncode,0)
