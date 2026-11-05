@@ -86,6 +86,13 @@ jobs:
             tests.minecraft_serverpack_finalization_real_adapter_e2e_test \
             tests.minecraft_serverpack_finalization_real_swap_e2e_test \
             tests.minecraft_serverpack_privileged_real_systemd_e2e_test -v
+      - name: Controller terminal replay and atomic pending bundle publication
+        env:
+          PYTHONPATH: .:database:dashboard:core
+        run: |
+          python3 -m unittest \
+            tests.minecraft_serverpack_pending_publication_atomic_test \
+            tests.minecraft_serverpack_controller_flow_test -v
       - name: Agent package compatibility
         run: bash tests/agent_package_test.sh
       - name: Provisioning compatibility regressions
