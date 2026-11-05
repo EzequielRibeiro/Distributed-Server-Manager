@@ -86,7 +86,8 @@ jobs:
             tests.minecraft_serverpack_finalization_real_adapter_e2e_test \
             tests.minecraft_serverpack_finalization_real_swap_e2e_test \
             tests.minecraft_serverpack_privileged_real_systemd_e2e_test \
-            tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test -v
+            tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test \
+            tests.minecraft_serverpack_finalization_full_neoforge_e2e_test -v
       - name: Controller terminal replay and atomic pending bundle publication
         env:
           PYTHONPATH: .:database:dashboard:core
