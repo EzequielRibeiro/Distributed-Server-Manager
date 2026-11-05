@@ -91,6 +91,26 @@ class SchedulerTest(unittest.TestCase):
    (self.root/"instance-provisioning"/f"a{i}.result.json").write_text(
     json.dumps({**RESULT,"provisioning_id":f"a{i}","status":"completed"}))
   self.assertEqual(self.run_scan(max_candidates=1)[0]["status"],"pending")
+ def test_target_instance_skips_foreign_pending(self):
+  other={**RESULT,"instance_id":"foreign","provisioning_id":"aaa"}
+  (self.root/"instance-provisioning/aaa.result.json").write_text(json.dumps(other))
+  scanned=s.scan_pending_finalizations(
+   state_root=self.root,agent_id="agent-test",lock_instance=self.lock,
+   read_operation=lambda _:self.op,max_candidates=1,target_instance_id="instance-test")
+  self.assertEqual(scanned[0]["instance_id"],"instance-test")
+  self.assertEqual(self.events,["lock:instance-test","unlock:instance-test"])
+ def test_target_only_after_many_foreign_records(self):
+  for i in range(275):
+   (self.root/"instance-provisioning"/f"a{i:04}.result.json").write_text(
+    json.dumps({**RESULT,"instance_id":"foreign","provisioning_id":f"a{i:04}"}))
+  scanned=s.scan_pending_finalizations(
+   state_root=self.root,agent_id="agent-test",lock_instance=self.lock,
+   read_operation=lambda _:self.op,max_candidates=1,target_instance_id="instance-test")
+  self.assertEqual(scanned[0]["status"],"pending")
+ def test_target_token_validation(self):
+  with self.assertRaises(s.FinalizationSchedulerError):
+   s.scan_pending_finalizations(state_root=self.root,agent_id="agent-test",lock_instance=self.lock,
+    read_operation=lambda _:self.op,target_instance_id="../../foreign")
  def test_bounded_scan(self):
   with self.assertRaises(s.FinalizationSchedulerError):
    self.run_scan(max_candidates=0)
