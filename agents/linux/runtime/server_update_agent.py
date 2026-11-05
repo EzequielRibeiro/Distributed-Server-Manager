@@ -15,6 +15,7 @@ import instance_runtime
 from backup_client import _create as create_backup
 from server_update_provider import _manifest_candidates, detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback, snapshot_files
+from prepared_game_data_guard import reject_prepared_dayz_transaction
 
 
 class ServerUpdateError(RuntimeError):
@@ -188,7 +189,7 @@ def _validate_dayz_staged_dlc(staging: Path, game: str) -> None:
         raise ServerUpdateError("unsafe DayZ DLC staging structure") from exc
 
 
-def perform_update(
+def _perform_update_locked(
     selection: dict[str, Any],
     target: Path,
     installer: Callable[[Path], None],
@@ -212,6 +213,8 @@ def perform_update(
     activated = False
     provider_snapshot: dict[str, tuple[bool, bytes | None, int | None]] = {}
 
+    if game == "dayz":
+        reject_prepared_dayz_transaction(target)
     before = detect_update(selection, target, steamcmd)
     if not before.get("detector_supported") or before.get("state") not in {"up_to_date", "update_available"}:
         raise VersionValidationError("server version detection is unsupported or incomplete")
@@ -353,6 +356,23 @@ def perform_update(
         if rollback_error is not None:
             raise RollbackError(f"server update failed ({exc}); rollback failed ({rollback_error})") from exc
         raise ServerUpdateError(f"server update failed and rollback completed: {exc}") from exc
+
+
+def perform_update(selection: dict[str, Any], target: Path,
+                   installer: Callable[[Path], None],
+                   steamcmd: str | None = None) -> dict[str, Any]:
+    """Serialize DayZ game-data writes without changing other games."""
+    _, record = _context(selection)
+    config = _local_agent_config(record)
+    game = str(record.get("game_id") or "")
+    meta = selection.get("_server_update") or {}
+    target = Path(target).resolve(strict=True)
+    _affected(config, game, target, str(meta.get("instance_id") or ""))
+    if game != "dayz":
+        return _perform_update_locked(selection, target, installer, steamcmd)
+    from game_data_update_lock import game_data_update_lock
+    with game_data_update_lock(target, timeout=3):
+        return _perform_update_locked(selection, target, installer, steamcmd)
 
 
 __all__ = [
