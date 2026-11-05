@@ -83,6 +83,70 @@ class FinalizationWorkerProcessE2E(unittest.TestCase):
   self.assertEqual(second.returncode,0,second.stderr+second.stdout)
   self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
   self.assertFalse(list(self.root.rglob("*.tmp")))
+ def test_killed_official_worker_replays_verified_archive(self):
+  """Hard-stop the actual worker before it can publish; replay its disk state."""
+  import signal
+  worker=subprocess.Popen(
+   [sys.executable,str(WORKER),str(self.config),IID],
+   env=self.env,stdin=subprocess.DEVNULL,
+   stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,
+   start_new_session=True,
+  )
+  try:
+   os.kill(worker.pid,signal.SIGSTOP)
+   os.kill(worker.pid,signal.SIGKILL)
+   out,err=worker.communicate(timeout=5)
+   self.assertNotEqual(worker.returncode,0,(out,err))
+   self.assertEqual(json.loads(self.operation.read_text())["status"],"finalization_pending")
+   self.assertEqual(json.loads(self.provision.read_text())["status"],"completed")
+   first=self.child()
+   self.assertEqual(first.returncode,0,first.stderr+first.stdout)
+   self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
+   self.assertEqual(json.loads(self.provision.read_text())["status"],"completed")
+   replay=self.child()
+   self.assertEqual(replay.returncode,0,replay.stderr+replay.stdout)
+   self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
+   self.assertEqual(len(list(self.hist.glob("*/minecraft-serverpack-migration.json"))),1)
+  finally:
+   if worker.poll() is None:
+    worker.kill()
+    worker.wait(timeout=5)
+ def test_real_committed_archive_with_official_worker(self):
+  """Real swap/archive checkpoint, then the actual one-shot worker replays ACK."""
+  import shutil
+  sys.path.insert(0,str(ROOT/"agents/common"))
+  from minecraft_serverpack_migration_swap import prepare,switch,commit,archive_committed
+  shutil.rmtree(self.hist)
+  active=self.storage/"runtime"
+  (active/"world").mkdir()
+  (active/"world/level.dat").write_bytes(b"ORIGINAL_TEST_WORLD")
+  staged=self.storage/"runtime.migration-stage"
+  canonical=staged/"libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt"
+  canonical.parent.mkdir(parents=True)
+  canonical.write_text("--neoforge-build 26.1.2.109\n")
+  (staged/"capivara-launch.args").write_bytes(canonical.read_bytes())
+  (staged/"world").mkdir()
+  (staged/"world/level.dat").write_bytes(b"NEW_TEST_WORLD")
+  backup={"backup_id":"retained-test","sha256":"d"*64,"size_bytes":123,
+          "integrity_verified":True}
+  prepare(self.storage,migration_plan_sha256=PLAN,
+          target_loader_version="26.1.2.109",backup=backup)
+  switch(self.storage)
+  commit(self.storage,readiness_passed=True)
+  archived=archive_committed(self.storage)
+  self.detail["finalization"]={"status":archived["status"],"sha256":archived["sha256"]}
+  self.provision.write_text(json.dumps(self.result))
+  outcome=self.child()
+  self.assertEqual(outcome.returncode,0,outcome.stderr+outcome.stdout)
+  self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
+  self.assertEqual((self.storage/"runtime/world/level.dat").read_bytes(),b"NEW_TEST_WORLD")
+  self.assertEqual(
+   next(self.hist.glob("*/runtime.migration-rollback/world/level.dat")).read_bytes(),
+   b"ORIGINAL_TEST_WORLD")
+  self.assertEqual(len(list(self.hist.glob("*/minecraft-serverpack-migration.json"))),1)
+  replay=self.child()
+  self.assertEqual(replay.returncode,0,replay.stderr+replay.stdout)
+  self.assertEqual(json.loads(self.operation.read_text())["status"],"completed")
  def test_wrong_instance_never_mutates(self):
   outcome=self.child("not-authorized")
   self.assertNotEqual(outcome.returncode,0)
