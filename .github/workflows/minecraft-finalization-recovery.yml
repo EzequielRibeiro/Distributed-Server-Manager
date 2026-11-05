@@ -81,7 +81,8 @@ jobs:
             tests.minecraft_serverpack_finalization_operational_test \
             tests.minecraft_serverpack_finalization_worker_test \
             tests.minecraft_serverpack_finalization_supervisor_test \
-            tests.minecraft_serverpack_finalization_subprocess_e2e_test -v
+            tests.minecraft_serverpack_finalization_subprocess_e2e_test \
+            tests.minecraft_serverpack_finalization_systemd_e2e_test -v
       - name: Agent package compatibility
         run: bash tests/agent_package_test.sh
       - name: Provisioning compatibility regressions
