@@ -67,7 +67,7 @@ def execute_one(config_path: Path, instance_id: str) -> list[dict[str, str]]:
         lock_instance=lambda iid: instance_lock(
             iid, "minecraft_serverpack_finalization_worker", timeout_seconds=0.25),
         read_operation=read_operation, dispatch=apply, enabled=True,
-        max_candidates=4,
+        max_candidates=4, target_instance_id=instance_id,
     )
     return [x for x in results if x.get("instance_id") == instance_id]
 
