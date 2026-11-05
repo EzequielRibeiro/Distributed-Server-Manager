@@ -12,17 +12,18 @@ class AgentGateTest(unittest.TestCase):
   src=R.read_text()
   self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE',src)
   self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE',src)
-  self.assertIn('dispatch=dispatch_completed if (reconcile or recover) else None',src)
+  self.assertIn('dispatch=queue_finalization if (reconcile or recover) else None',src)
   self.assertIn('enabled=reconcile or recover',src)
- def test_recover_requires_independent_ack_and_existing_feature_policy(self):
+ def test_supervised_worker_opt_in(self):
   src=R.read_text()
   self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK',src)
-  self.assertIn('recovery_feature_allowed(',src)
-  self.assertIn('recover_pending_operational(',src)
- def test_agent_never_dispatches_restart_or_archive(self):
+  self.assertIn('FinalizationWorkerSupervisor()',src)
+  self.assertIn('finalization_supervisor.launch(',src)
+  self.assertNotIn('recover_pending_operational(',src)
+ def test_heartbeat_does_not_import_operational_recovery(self):
   src=R.read_text()
-  self.assertNotIn('retry_archived_restart(',src)
-  self.assertNotIn('retry_committed_finalization(',src)
+  self.assertNotIn('from minecraft_serverpack_finalization_operational import',src)
+  self.assertNotIn('from minecraft_serverpack_finalization_dispatcher import',src)
  def test_scan_does_not_depend_on_services(self):
   src=(R.parent/"minecraft_serverpack_finalization_scheduler.py").read_text()
   self.assertNotIn("subprocess",src)
