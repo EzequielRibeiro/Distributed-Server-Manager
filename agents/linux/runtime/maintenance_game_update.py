@@ -19,6 +19,8 @@ from backup_client import _create as create_backup
 from server_update_agent import ServerUpdateError, _affected, _ensure_staging_space, _provider_metadata_snapshot, _local_agent_config
 from server_update_provider import detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback
+from game_data_update_lock import game_data_update_lock
+from prepared_game_data_guard import reject_prepared_dayz_transaction
 
 STATE_ROOT = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 TRANSACTION_ROOT = STATE_ROOT / "server-update-maintenance"
@@ -137,40 +139,82 @@ def _load(selection: dict[str, Any], transaction_id: str) -> tuple[dict[str, Any
     return payload,path
 
 
-def prepare(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],steamcmd:str|None=None)->dict[str,Any]:
-    instance_id,record,meta=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);before=detect_update(selection,target,steamcmd)
+def _prepare_locked(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],steamcmd:str|None=None)->dict[str,Any]:
+    instance_id,record,meta=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "");target=Path(target).resolve();affected=_affected(config,game,target,instance_id);_all_stopped(config,affected);reject_prepared_dayz_transaction(target,transaction_root=TRANSACTION_ROOT) if game=="dayz" else None;before=detect_update(selection,target,steamcmd)
     if before.get("state")=="up_to_date":return {"changed":False,"transaction_id":None,"affected_instances":affected,"update_status_before":before,"update_status_after":before}
     staging=None;previous=None;activated=False;provider_snapshot={};backups=[]
     try:
         _ensure_staging_space(target);provider_snapshot=_provider_metadata_snapshot(selection,target);staging=prepare_staging(target);installer(staging);staged=detect_update(selection,staging,steamcmd,force_refresh=True)
         if staged.get("detector_supported") and staged.get("state")!="up_to_date":raise MaintenanceGameUpdateError("staged server version validation failed")
-        if bool(meta.get("backup_before_update",True)):
+        if game=="dayz" or bool(meta.get("backup_before_update",True)):
             for current in affected:
                 detail=create_backup(config,{"instance_id":current,"policy":{"mode":"full","compression":"gzip","retention_count":7,"consistency":"live"}});backups.append({"instance_id":current,"backup_id":detail.get("backup_id"),"sha256":detail.get("sha256"),"size_bytes":detail.get("size_bytes")})
         previous=activate(target,staging);staging=None;activated=True;after=detect_update(selection,target,steamcmd,force_refresh=True)
         if after.get("detector_supported") and after.get("state")!="up_to_date":raise MaintenanceGameUpdateError("activated server version validation failed")
         transaction_id="game-update-"+uuid.uuid4().hex;checkpoint={"schema_version":1,"kind":"CapivaraMaintenanceGameUpdateTransaction","transaction_id":transaction_id,"state":"prepared","instance_id":instance_id,"agent_id":str(record.get("agent_id") or ""),"game_id":game,"target":str(target),"previous":str(previous) if previous is not None else None,"provider_snapshot":_encode_snapshot(provider_snapshot),"affected_instances":affected};_write(_path(transaction_id),checkpoint)
         return {"changed":True,"transaction_id":transaction_id,"affected_instances":affected,"backups":backups,"update_status_before":before,"update_status_after":after,"rollback_supported":True}
-    except Exception:
+    except Exception as original:
+        # Fail closed: never report an original update error if rollback did
+        # not restore the previous tree. Retain trees for manual recovery.
+        if activated:
+            try:
+                restored = rollback(target,previous)
+            except Exception as rollback_exc:
+                raise MaintenanceGameUpdateError(
+                    "maintenance rollback failed; game-data trees retained"
+                ) from rollback_exc
+            if not restored:
+                raise MaintenanceGameUpdateError(
+                    "maintenance rollback tree is unavailable; game-data trees retained"
+                ) from original
+        # Only clean staging after successful recovery of both content and
+        # provider metadata. Do not suppress an unsuccessful metadata restore.
         try:
-            if activated:rollback(target,previous)
             restore_files(provider_snapshot)
-        finally:cleanup_staging(staging)
+        except Exception as metadata_exc:
+            raise MaintenanceGameUpdateError(
+                "maintenance provider metadata restore failed; staging retained"
+            ) from metadata_exc
+        cleanup_staging(staging)
         raise
 
 
-def finalize(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
+def _finalize_locked(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
     checkpoint,path=_load(selection,transaction_id)
     if str(checkpoint.get("state") or "")!="prepared":raise MaintenanceGameUpdateError("maintenance transaction is not prepared")
     previous=Path(str(checkpoint["previous"])).resolve() if checkpoint.get("previous") else None;commit(previous);checkpoint["state"]="committed";_write(path,checkpoint);path.unlink(missing_ok=True);return {"transaction_id":transaction_id,"state":"committed","changed":True}
 
 
-def rollback_transaction(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
+def _rollback_transaction_locked(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
     checkpoint,path=_load(selection,transaction_id)
     if str(checkpoint.get("state") or "")!="prepared":raise MaintenanceGameUpdateError("maintenance transaction is not prepared")
     instance_id,record,_=_context(selection);config=_local_agent_config(record);affected=[str(value) for value in checkpoint.get("affected_instances") or []];_all_stopped(config,affected);target=Path(str(checkpoint.get("target") or "")).resolve();previous=Path(str(checkpoint["previous"])).resolve() if checkpoint.get("previous") else None
     if not rollback(target,previous):raise MaintenanceGameUpdateError("maintenance rollback tree is unavailable")
     restore_files(_decode_snapshot(checkpoint.get("provider_snapshot")));checkpoint["state"]="rolled_back";_write(path,checkpoint);path.unlink(missing_ok=True);return {"transaction_id":transaction_id,"state":"rolled_back","changed":True,"instance_id":instance_id}
+
+
+def prepare(selection:dict[str,Any],target:Path,installer:Callable[[Path],None],steamcmd:str|None=None)->dict[str,Any]:
+ instance_id,record,_=_context(selection);config=_local_agent_config(record);game=str(record.get("game_id") or "")
+ target=Path(target).resolve(strict=True);_affected(config,game,target,instance_id)
+ if game!="dayz":return _prepare_locked(selection,target,installer,steamcmd)
+ with game_data_update_lock(target,timeout=3):
+  return _prepare_locked(selection,target,installer,steamcmd)
+
+
+def finalize(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
+ checkpoint,_=_load(selection,transaction_id)
+ if checkpoint.get("state")!="prepared":raise MaintenanceGameUpdateError("maintenance transaction is not prepared")
+ if checkpoint.get("game_id")!="dayz":return _finalize_locked(selection, transaction_id)
+ with game_data_update_lock(Path(checkpoint["target"]), timeout=3):
+  return _finalize_locked(selection, transaction_id)
+
+
+def rollback_transaction(selection:dict[str,Any],transaction_id:str)->dict[str,Any]:
+ checkpoint,_=_load(selection,transaction_id)
+ if checkpoint.get("state")!="prepared":raise MaintenanceGameUpdateError("maintenance transaction is not prepared")
+ if checkpoint.get("game_id")!="dayz":return _rollback_transaction_locked(selection, transaction_id)
+ with game_data_update_lock(Path(checkpoint["target"]), timeout=3):
+  return _rollback_transaction_locked(selection, transaction_id)
 
 
 __all__=["MaintenanceGameUpdateError","finalize","prepare","rollback_transaction"]

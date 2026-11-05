@@ -15,7 +15,8 @@ from typing import Any
 from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absolute, require_port, require_text, require_within
 
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
-_PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=")
+_PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=", "-bepath=")
+_BEPATH_SUBDIRECTORY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){0,2}$")
 _LEGACY_GAME_AUX_OFFSET = 2
 _BATTLEYE_OFFSET = 4
 _STEAM_QUERY_OFFSET = 3
@@ -23,7 +24,7 @@ _STEAM_QUERY_OFFSET = 3
 
 class DayZRuntimeProfile(GameRuntimeProfile):
     game_ids = ("dayz", "dayz.stable")
-    profile_version = 12
+    profile_version = 13
 
     def migration_context(self, record: dict[str, Any]) -> dict[str, Any]:
         """Reconstruct a modern context from a pre-private-state DayZ RuntimeSpec."""
@@ -55,6 +56,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "arguments": arguments,
             "user": str(record.get("user") or "capivara-instance"),
             "instance_state_root": str(record.get("instance_state_root") or f"/var/lib/capivara-instances/{record['instance_id']}"),
+            "battleye_directory": str(record.get("battleye_directory") or "battleye"),
             "catalog_runtime_policy": {
                 "runtime_id": record.get("runtime_id"),
                 "arguments": [],
@@ -132,6 +134,14 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         config_path = require_within(instance_state_root, context.get("config_path") or default_config, "config_path")
         configuration_root = str(Path(config_path).parent)
         profile_path = str(Path(instance_state_root) / "profiles")
+        # Only an instance-private relative subdirectory is configurable. Never
+        # allow absolute paths, traversal or a shared Steam game-data target.
+        battleye_relative = context.get("battleye_directory", "battleye")
+        if not isinstance(battleye_relative, str) or not _BEPATH_SUBDIRECTORY.fullmatch(battleye_relative):
+            raise ProfileError("invalid DayZ BattlEye directory")
+        battleye_path = require_within(
+            instance_state_root, str(Path(instance_state_root) / battleye_relative), "battleye_directory"
+        )
 
         mission = str(context.get("mission") or context.get("dayz_mission") or "dayzOffline.chernarusplus").strip()
         if not _MISSION.fullmatch(mission):
@@ -149,10 +159,11 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         extra_arguments = context.get("arguments", [])
         if not isinstance(extra_arguments, list):
             raise ProfileError("invalid DayZ arguments")
-        arguments = [f"-config={config_path}", f"-port={game_port}", f"-profiles={profile_path}"]
+        arguments = [f"-config={config_path}", f"-port={game_port}", f"-profiles={profile_path}", f"-BEpath={battleye_path}"]
         for value in extra_arguments:
             text = str(value)
-            if not text.startswith("-") or "\x00" in text or "\n" in text or "\r" in text:
+            if not text.startswith("-") or "\x00" in text or "\n" in text or "\r" in text or re.match(r"(?i)^-bepath(?:$|[=\s])", text) is not None:
+                # BattlEye path is owned by the profile, not arbitrary user flags.
                 raise ProfileError("invalid DayZ runtime argument")
             arguments.append(text)
 
@@ -192,6 +203,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 "steam_query": {"port": steam_query_port, "protocol": "udp"},
             },
             "instance_state_root": instance_state_root,
+            "battleye_directory": battleye_relative,
             "files_root": instance_state_root,
             "configuration_root": configuration_root,
             "config_path": config_path,
@@ -203,7 +215,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
                 "source": mission_source,
                 "target": mission_private,
             }],
-            "writable_directories": [profile_path],
+            "writable_directories": [profile_path, battleye_path],
             "bind_paths": [{
                 "source": mission_private,
                 "target": mission_source,

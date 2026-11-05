@@ -170,6 +170,15 @@ def migrate_storage_pool_copy(
     )
 
 
+def repair_dayz_dlc_ownership(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """Delegate managed DayZ DLC ownership to the validated root materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if str(normalized.get("game_id") or "").lower() != "dayz":
+        raise ValueError("DayZ DLC repair requires a DayZ instance")
+    return _invoke("repair-dayz-dlc-ownership", normalized)
+
+
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     agent_id = str(config.get("agent_id") or "").strip()
     normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
