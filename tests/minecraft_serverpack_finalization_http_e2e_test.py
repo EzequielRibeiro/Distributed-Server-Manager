@@ -108,6 +108,48 @@ class HttpFinalizationE2E(ControllerProvisioningQueueTest):
         self.assertEqual(status,200)
         self.assertEqual(stale["provisioning_state"]["status"],"completed")
 
+    def test_heartbeat_remains_available_during_pending_then_recovers(self):
+        """Controller heartbeat stays available across repeated pending ACKs."""
+        created=self.create_job()
+        pid=created["provisioning_id"]
+        status,delivered=self.heartbeat()
+        self.assertEqual(status,200)
+        self.assertEqual(delivered["provisioning_command"]["provisioning_id"],pid)
+        pending={
+            "provisioning_id":pid,"instance_id":"instance-b10",
+            "status":"running","progress":99,
+            "current_step":"minecraft_serverpack_finalization",
+            "finalization_state":"pending",
+            "minecraft_serverpack_migration":{
+                "status":"finalization_pending",
+                "trace":["committed","finalization_pending"],
+                "migration_plan_sha256":"a"*64,
+            },
+        }
+        for _ in range(8):
+            code,response=self.heartbeat(pending)
+            self.assertEqual(code,200)
+            self.assertEqual(response["provisioning_state"]["status"],"running")
+            self.assertEqual(response["provisioning_state"]["progress"],99)
+            self.assertEqual(self.jobs.snapshot(pid)["status"],"running")
+        completed={
+            **pending,"status":"completed","progress":100,
+            "current_step":"completed","finalization_state":"completed",
+            "minecraft_serverpack_migration":{
+                **pending["minecraft_serverpack_migration"],
+                "status":"completed","trace":["committed","finalized"],
+                "finalization":{"status":"archived","sha256":"b"*64},
+            },
+        }
+        code,response=self.heartbeat(completed)
+        self.assertEqual(code,200)
+        self.assertEqual(response["provisioning_state"]["status"],"completed")
+        for _ in range(3):
+            code,response=self.heartbeat(pending)
+            self.assertEqual(code,200)
+            self.assertEqual(response["provisioning_state"]["status"],"completed")
+            self.assertEqual(self.jobs.snapshot(pid)["progress"],100)
+
     def test_wrong_agent_credentials_refused_over_http(self):
         from urllib.error import HTTPError
         created=self.create_job()
