@@ -201,7 +201,7 @@ def _maintenance_transaction(action:str,selection:dict[str,Any],target:Path,prov
  if action=="maintenance-commit":return finalize(selection,transaction_id)
  if action=="maintenance-rollback":return rollback_transaction(selection,transaction_id)
  raise ValueError("unsupported maintenance game update action")
-def _execute(command:dict[str,Any])->dict[str,Any]:
+def _execute_without_direct_game_data_lock(command:dict[str,Any])->dict[str,Any]:
  action=str(command.get("action") or "install").lower();selection=command.get("selection")
  if action=="install-steamcmd":return _install_steamcmd()
  if not isinstance(selection,dict):raise ValueError("runtime selection is missing")
@@ -231,6 +231,30 @@ def _execute(command:dict[str,Any])->dict[str,Any]:
  integrity=inspect_game_data(target,selection)
  if action in {"ensure","verify"} and integrity.get("health")!="ok":raise RuntimeError(f"game-data integrity check failed: {integrity.get('health')}")
  return {"provider":provider,"game":selection.get("game"),"version":selection.get("version"),"target_path":str(target),"integrity":integrity,"reused":reused}
+def _execute(command:dict[str,Any])->dict[str,Any]:
+ """Serialize unmanaged DayZ writes; delegated transactions acquire own lock."""
+ action=str(command.get("action") or "install").strip().lower()
+ selection=command.get("selection")
+ if not isinstance(selection,dict) or str(selection.get("game") or "").lower()!="dayz":
+  return _execute_without_direct_game_data_lock(command)
+ if action not in {"install","update","repair","ensure"}:
+  return _execute_without_direct_game_data_lock(command)
+ scoped=isinstance(selection.get("_server_update"),dict)
+ maintenance=isinstance(selection.get("_maintenance_game_update"),dict)
+ if scoped or maintenance:
+  if action!="update" or not scoped or maintenance:
+   raise RuntimeError("instance-scoped DayZ writes require transactional update")
+  return _execute_without_direct_game_data_lock(command)
+ target=_target_for(selection)
+ target.relative_to(GAME_DATA_ROOT.resolve())
+ target.parent.mkdir(parents=True,exist_ok=True)
+ from game_data_update_lock import game_data_update_lock
+ from prepared_game_data_guard import reject_prepared_dayz_transaction
+ with game_data_update_lock(target,timeout=3):
+  if target.exists():
+   reject_prepared_dayz_transaction(target)
+  return _execute_without_direct_game_data_lock(command)
+
 def main()->int:
  if len(sys.argv)!=3:print("usage: game_data_executor.py REQUEST RESULT",file=sys.stderr);return 2
  request_path=Path(sys.argv[1]);result_path=Path(sys.argv[2]);command=json.loads(request_path.read_text(encoding="utf-8"));job_id=str(command.get("job_id") or "").strip();action=str(command.get("action") or "install").strip().lower();selection=command.get("selection") if isinstance(command.get("selection"),dict) else {};write_json(result_path,{"job_id":job_id,"status":"running","progress":5})
