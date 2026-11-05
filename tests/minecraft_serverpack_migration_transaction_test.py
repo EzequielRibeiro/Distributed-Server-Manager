@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 from contextlib import contextmanager
+from types import ModuleType
+from unittest.mock import patch
 from pathlib import Path
 import sys
 import unittest
@@ -31,7 +33,17 @@ def load(platform):
  runtime_dir=str(path.parent)
  if runtime_dir not in sys.path:sys.path.insert(0,runtime_dir)
  spec=importlib.util.spec_from_file_location(f"migration_transaction_{platform}",path)
- module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+ module=importlib.util.module_from_spec(spec)
+ # Transaction tests replace runtime_operation with a deterministic fake.
+ # Do not import the Linux fcntl-based runtime lock on native Windows; the
+ # separate native Windows journal test exercises the actual msvcrt lock.
+ if sys.platform=="win32":
+  placeholder=ModuleType("runtime_operations")
+  placeholder.runtime_operation=None
+  with patch.dict(sys.modules,{"runtime_operations":placeholder}):
+   spec.loader.exec_module(module)
+ else:
+  spec.loader.exec_module(module)
  return module
 
 
