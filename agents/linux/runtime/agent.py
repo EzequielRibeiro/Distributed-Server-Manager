@@ -55,6 +55,7 @@ from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
 from runtime_operations import recover_interrupted_operations, read_operation, read_recovered_migration
 from minecraft_serverpack_finalization_scheduler import scan_pending_finalizations
 from minecraft_serverpack_finalization_dispatcher import dispatch_published_completion
+from minecraft_serverpack_finalization_operational import recover_pending_operational, recovery_feature_allowed
 from runtime_lock import instance_lock
 from minecraft_recovery_heartbeat_collector import collect_recovery_observations
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
@@ -341,23 +342,33 @@ def run_forever():
             permitted_instance=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE","")
             reconcile=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE")=="1"
                        and bool(permitted_instance))
-            if audit or reconcile:
+            recover=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER")=="1"
+                     and os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK")=="AUTHORIZED"
+                     and bool(permitted_instance)
+                     and recovery_feature_allowed(
+                         permitted_instance, str(config["agent_id"])))
+            if audit or reconcile or recover:
                 try:
                     def dispatch_completed(outer, result):
-                        if not reconcile or result.get("status")!="completed":
-                            return False
-                        dispatch_published_completion(
-                            outer, result, agent_id=str(config["agent_id"]),
-                            allowed_instance_id=permitted_instance)
-                        return True
+                        if result.get("status")=="completed" and (reconcile or recover):
+                            dispatch_published_completion(
+                                outer, result, agent_id=str(config["agent_id"]),
+                                allowed_instance_id=permitted_instance)
+                            return True
+                        if result.get("status")=="running" and recover:
+                            recover_pending_operational(
+                                config=config,operation=outer,provisioning=result,
+                                allowed_instance_id=permitted_instance)
+                            return True
+                        return False
                     observations=scan_pending_finalizations(
                         state_root=STATE_DIR,
                         agent_id=str(config["agent_id"]),
                         lock_instance=lambda iid:instance_lock(
                             iid,"minecraft_serverpack_finalization_reconciliation",timeout_seconds=0.25),
                         read_operation=read_operation,
-                        dispatch=dispatch_completed if reconcile else None,
-                        enabled=reconcile,
+                        dispatch=dispatch_completed if (reconcile or recover) else None,
+                        enabled=reconcile or recover,
                         max_candidates=4,
                     )
                     for observation in observations:
