@@ -5,10 +5,13 @@ from contextlib import ExitStack
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+import sys
 from unittest.mock import patch
 
 
-from agents.linux.runtime import maintenance_game_update as maintenance
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
+import maintenance_game_update as maintenance
 
 
 def scenario(root: Path, *, outcome=False, failure=None, stage_failure=False, backup_failure=False):
