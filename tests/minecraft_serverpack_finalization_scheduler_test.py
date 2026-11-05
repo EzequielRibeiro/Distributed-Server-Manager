@@ -69,6 +69,18 @@ class SchedulerTest(unittest.TestCase):
                                       "minecraft_serverpack_migration":detail}))
   self.assertEqual(self.run_scan(enabled=True,dispatch=lambda *_:self.events.append("dispatch"))[0]["status"],"dispatched")
   self.assertEqual(self.events,["lock:instance-test","dispatch","unlock:instance-test"])
+ def test_malformed_completed_trace_cannot_be_treated_as_success(self):
+  detail={**RESULT["minecraft_serverpack_migration"],"status":"completed",
+          "trace":"committed finalized","finalization":{"status":"archived"}}
+  self.result.write_text(json.dumps({**RESULT,"status":"completed",
+                                      "minecraft_serverpack_migration":detail}))
+  self.assertEqual(self.run_scan(),[])
+ def test_trace_with_nonstring_entries_rejected(self):
+  detail={**RESULT["minecraft_serverpack_migration"],"status":"completed",
+          "trace":["committed",42,"finalized"],"finalization":{"status":"archived"}}
+  self.result.write_text(json.dumps({**RESULT,"status":"completed",
+                                      "minecraft_serverpack_migration":detail}))
+  self.assertEqual(self.run_scan(),[])
  def test_completed_with_invalid_archive_denied(self):
   detail={**RESULT["minecraft_serverpack_migration"],"status":"completed",
           "trace":["committed","finalized"],"finalization":{"status":"missing"}}
