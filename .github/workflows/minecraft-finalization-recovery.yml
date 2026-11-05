@@ -92,7 +92,8 @@ jobs:
         run: |
           python3 -m unittest \
             tests.minecraft_serverpack_pending_publication_atomic_test \
-            tests.minecraft_serverpack_controller_flow_test -v
+            tests.minecraft_serverpack_controller_flow_test \
+            tests.minecraft_serverpack_finalization_http_e2e_test -v
       - name: Agent package compatibility
         run: bash tests/agent_package_test.sh
       - name: Provisioning compatibility regressions
