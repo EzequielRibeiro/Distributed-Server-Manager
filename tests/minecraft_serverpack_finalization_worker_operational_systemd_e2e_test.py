@@ -129,6 +129,59 @@ class ActualOperationalWorkerSystemdE2E(unittest.TestCase):
         subprocess.run(["systemctl","daemon-reload"],capture_output=True,timeout=15)
         subprocess.run(["systemctl","reset-failed",self.unit],capture_output=True,timeout=15)
 
+    def test_root_helper_archive_then_official_worker_restores(self):
+        """Connect real root helper run() and actual worker on one isolated unit."""
+        from unittest.mock import patch
+        from tests import minecraft_serverpack_privileged_root_test as root_fixtures
+        if not hasattr(root_fixtures.ServerPackMigrationRootTest,"helper"):
+            root_fixtures.ServerPackMigrationRootTest.setUpClass()
+        helper=root_fixtures.ServerPackMigrationRootTest.helper
+        f=self.f
+        archive_dir=next(f.hist.iterdir())
+        # Rebuild the exact committed intermediate state before archiving:
+        # journal and rollback have already been verified by setup.
+        (archive_dir/"runtime.migration-rollback").rename(
+            f.storage/"runtime.migration-rollback")
+        (archive_dir/"minecraft-serverpack-migration.json").rename(
+            f.storage/".dsm/minecraft-serverpack-migration.json")
+        (f.storage/".dsm/minecraft-serverpack-archive-checkpoint.json").unlink()
+        archive_dir.rmdir()
+        f.hist.rmdir()
+        request_root=f.root/"privileged-requests"
+        request_root.mkdir()
+        config_path=f.root/"privileged-agent.json"
+        config_path.write_text(json.dumps({"agent_id":AID}))
+        spec={**f.record}
+        payload={
+            "kind":"CapivaraPrivilegedMaterializationRequest",
+            "schema_version":1,
+            "action":"minecraft-serverpack-swap-phase",
+            "phase":"archive-committed",
+            "agent_id":AID,
+            "instance_id":IID,
+            "spec":spec,
+        }
+        (request_root/(IID+".request.json")).write_text(json.dumps(payload))
+        with patch.object(helper,"REQUEST_ROOT",request_root), \
+             patch.object(helper,"CONFIG_PATH",config_path), \
+             patch.object(helper,"validate_runtime_spec",return_value=spec), \
+             patch.object(helper,"resolve_materializer",return_value=object()), \
+             patch.object(helper,"_instance_storage_root",return_value=f.storage.parent):
+            result=helper.run(IID)
+        self.assertEqual(result["operation"]["status"],"archived")
+        self.assertEqual(json.loads(f.operation.read_text())["status"],"finalization_pending")
+        actual=f.child(env=self.env)
+        self.assertEqual(actual.returncode,0,actual.stderr+actual.stdout)
+        self.assertEqual(json.loads(f.operation.read_text())["status"],"completed")
+        self.assertEqual(json.loads(f.provision.read_text())["status"],"completed")
+        self.assertEqual((f.storage/"runtime/world/level.dat").read_bytes(),b"PR981_NEW_WORLD")
+        self.assertEqual(next(f.hist.glob("*/runtime.migration-rollback/world/level.dat")).read_bytes(),
+                         b"PR981_OLD_WORLD")
+        self.assertEqual(subprocess.run(["systemctl","is-active",self.unit],
+                                       capture_output=True,text=True).stdout.strip(),"active")
+        self.assertEqual(f.child(env=self.env).returncode,0)
+        self.assertEqual(len(list(f.hist.iterdir())),1)
+
     def test_authorized_real_worker_restores_service_after_archive(self):
         f=self.f
         self.assertEqual(json.loads(f.operation.read_text())["status"],"finalization_pending")
