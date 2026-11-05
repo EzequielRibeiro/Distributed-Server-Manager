@@ -183,8 +183,11 @@ def execute_minecraft_serverpack_migration(
                         "trace": trace,
                     }
                 if isinstance(finalization, Mapping) and finalization.get("status") == "restart_pending":
+                    archive_digest=str(finalization.get("sha256") or "")
                     if (finalization.get("archive_status") not in {"archived","already_archived"}
-                            or not str(finalization.get("history") or "").strip()):
+                            or not str(finalization.get("history") or "").strip()
+                            or len(archive_digest)!=64
+                            or any(c not in "0123456789abcdef" for c in archive_digest)):
                         trace.append("finalization_pending")
                         if isinstance(operation_journal, dict):
                             operation_journal["status"]="finalization_pending"
