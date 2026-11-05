@@ -196,7 +196,7 @@ class TransactionTest(unittest.TestCase):
     module,events,_,hooks=self._run(platform)
     def finalize(*args):
      events.append("finalize")
-     return {"status":"restart_pending","archive_status":"archived","history":"/sandbox/history/journal","restart_error":"startup timeout"}
+     return {"status":"restart_pending","archive_status":"archived","history":"/sandbox/history/journal","sha256":"a"*64,"restart_error":"startup timeout"}
     hooks["finalize"]=finalize
     result=module.execute_minecraft_serverpack_migration(
      {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
