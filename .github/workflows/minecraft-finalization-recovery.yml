@@ -1,0 +1,73 @@
+name: Minecraft Server Pack Finalization Recovery
+
+on:
+  pull_request:
+    paths:
+      - 'agents/common/minecraft_serverpack_migration_swap.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'agents/linux/runtime/minecraft_serverpack_*.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/provisioning_executor.py'
+      - 'agents/linux/runtime/runtime_operations.py'
+      - 'agents/windows/runtime/minecraft_serverpack_migration_transaction.py'
+      - 'agents/windows/runtime/runtime_operations.py'
+      - 'tests/minecraft_serverpack_*.py'
+      - 'tests/agent_instance_provisioning_test.py'
+      - '.github/workflows/minecraft-finalization-recovery.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/common/minecraft_serverpack_migration_swap.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'agents/linux/runtime/minecraft_serverpack_*.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/provisioning_executor.py'
+      - 'agents/linux/runtime/runtime_operations.py'
+      - 'agents/windows/runtime/minecraft_serverpack_migration_transaction.py'
+      - 'agents/windows/runtime/runtime_operations.py'
+      - 'tests/minecraft_serverpack_*.py'
+      - 'tests/agent_instance_provisioning_test.py'
+      - '.github/workflows/minecraft-finalization-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  crash-replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile finalization modules and privileged materializer
+        run: |
+          python3 -m py_compile \
+            agents/linux/privileged/materialize_instance.py \
+            agents/linux/runtime/agent.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_bridge.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_coordinator.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_recovery.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_scheduler.py \
+            agents/linux/runtime/minecraft_serverpack_migration_provisioning.py \
+            agents/linux/runtime/minecraft_serverpack_migration_transaction.py \
+            agents/linux/runtime/provisioning_executor.py \
+            agents/linux/runtime/runtime_operations.py \
+            agents/windows/runtime/minecraft_serverpack_migration_transaction.py \
+            agents/windows/runtime/runtime_operations.py
+      - name: Simulate crashes, committed journals, and idempotent recovery
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest \
+            tests.minecraft_serverpack_migration_swap_test \
+            tests.minecraft_serverpack_migration_transaction_test \
+            tests.minecraft_serverpack_finalization_gate_test \
+            tests.minecraft_serverpack_finalization_recovery_test \
+            tests.minecraft_serverpack_finalization_coordinator_test \
+            tests.minecraft_serverpack_finalization_scheduler_test \
+            tests.minecraft_serverpack_finalization_agent_gate_test \
+            tests.minecraft_serverpack_finalization_order_test \
+            tests.minecraft_serverpack_finalization_bridge_test -v
+      - name: Provisioning compatibility regressions
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests.agent_instance_provisioning_test -v
