@@ -45,7 +45,7 @@ class DayZBattlEyePathTest(unittest.TestCase):
                     self.profile.build_runtime_spec(self.instance, self.context)
 
     def test_raw_bepath_override_is_rejected(self):
-        for argument in ("-BEpath=/etc", "-bepath=../unsafe"):
+        for argument in ("-BEpath=/etc", "-bepath=../unsafe", "-BEpath /etc", "-bepath"):
             with self.subTest(argument=argument):
                 self.context["arguments"] = [argument]
                 with self.assertRaises(ProfileError):

@@ -156,12 +156,17 @@ def test_lifecycle_reconciles_firewall_before_start():
                 calls.append("firewall") or {"backend": "ufw", "changed": True, "rules": []}
             )
             instance_runtime.register_instance(legacy_dayz_spec())
-            result = instance_runtime.lifecycle(
-                {"agent_id": "agent-horizon-server"},
-                "cli-000001-dayz-001",
-                "start",
-            )
-            assert calls == ["firewall", "start"]
+            from unittest.mock import patch
+            with patch(
+                "privileged_materialization.repair_dayz_dlc_ownership",
+                side_effect=lambda config, record: calls.append("dlc-owner"),
+            ):
+                result = instance_runtime.lifecycle(
+                    {"agent_id": "agent-horizon-server"},
+                    "cli-000001-dayz-001",
+                    "start",
+                )
+            assert calls == ["firewall", "dlc-owner", "start"]
             assert result["observed_state"] == "running"
             assert result["firewall"]["backend"] == "ufw"
         finally:

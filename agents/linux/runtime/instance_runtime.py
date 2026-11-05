@@ -159,6 +159,9 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
         if action in {"start","restart"} and isinstance(record.get("catalog_runtime_policy"),dict):
             from privileged_firewall import reconcile as reconcile_firewall
             firewall=reconcile_firewall(record)
+        if action in {"start", "restart"} and str(record.get("game_id") or "").lower() == "dayz":
+            from privileged_materialization import repair_dayz_dlc_ownership
+            repair_dayz_dlc_ownership(config, record)
         adapter=resolve_adapter(record);result=getattr(adapter,action)(record);state=result.get("state") if isinstance(result,dict) else None;observed_state=_observed_state(state if isinstance(state,dict) else None,record.get("observed_state"));updated=dict(record);updated["desired_state"]="stopped" if action=="stop" else "running";updated["observed_state"]=observed_state;register_instance(updated)
         if action=="stop" and isinstance(record.get("catalog_runtime_policy"),dict):
             from privileged_firewall import remove as remove_firewall

@@ -676,6 +676,58 @@ def _sync_private_minecraft_content(spec: dict[str, Any], config: dict[str, Any]
     return files
 
 
+def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
+    """Repair DLC ownership during privileged apply for new and existing DayZ.
+
+    Only the registered managed game-data DayZ installation is allowed.
+    Preserve file modes and instance/mod private state.
+    """
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        return 0
+    from dayz_dlc_ownership import verified_dayz_dlc_paths
+    working = Path(str(spec.get("working_directory") or ""))
+    trusted = (STATE_DIR / "game-data" / "dayz").resolve()
+    if not working.is_absolute() or working.is_symlink():
+        raise RuntimeError("DayZ DLC ownership requires a real installation root")
+    resolved = working.resolve(strict=True)
+    try:
+        relative = resolved.relative_to(trusted)
+    except ValueError:
+        # User-managed instances outside managed game-data are out of scope.
+        return 0
+    if len(relative.parts) != 1 or not resolved.is_dir():
+        raise RuntimeError("DayZ installation path is not an expected managed root")
+    account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    group = grp.getgrnam(_AGENT_GROUP)
+    control_user = pwd.getpwnam(
+        str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent")
+    )
+    depotcache = Path(control_user.pw_dir) / ".local/share/Steam/depotcache"
+    try:
+        candidates = verified_dayz_dlc_paths(resolved, depotcache)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("unsafe or inconsistent DayZ Steam depot provenance") from exc
+    updated = 0
+    for path in candidates:
+        st = path.lstat()
+        if st.st_uid != account.pw_uid or st.st_gid != group.gr_gid:
+            os.chown(path, account.pw_uid, group.gr_gid, follow_symlinks=False)
+            updated += 1
+    # SteamCMD runs under the Agent's control account, not the DayZ runtime
+    # user. Preserve its write access for the *next* app_update after chown.
+    # rwX grants directory traversal and write, without marking PBOs executable.
+    for offset in range(0, len(candidates), 100):
+        batch = candidates[offset:offset + 100]
+        completed = subprocess.run(
+            ["setfacl", "-m", f"u:{control_user.pw_name}:rwX",
+             *(str(path) for path in batch)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if completed.returncode:
+            raise RuntimeError("cannot preserve DayZ SteamCMD update access")
+    return updated
+
+
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
@@ -1019,6 +1071,7 @@ def run(instance_id: str) -> dict[str, Any]:
         _serverpack_require_inactive(instance_id)
     if action == "apply":
         _ensure_runtime_identity(spec, config)
+        _normalize_dayz_dlc_ownership(spec)
         working_file_copies = _sync_working_file_copies(spec)
         dayz_mod_aliases = _sync_dayz_mod_aliases(spec)
         templates = materialize_templates(spec)
@@ -1036,6 +1089,11 @@ def run(instance_id: str) -> dict[str, Any]:
         ).lower().startswith("minecraft.java."):
             content_files = _sync_private_minecraft_content(spec, config)
         operation = materializer.apply(spec)
+    elif action == "repair-dayz-dlc-ownership":
+        if str(spec.get("game_id") or "").lower() != "dayz":
+            raise RuntimeError("DayZ DLC repair requires a DayZ instance")
+        updated = _normalize_dayz_dlc_ownership(spec)
+        operation = {"action": action, "changed": updated > 0, "updated_paths": updated}
     elif action == "sync-minecraft-content":
         installed = materializer.inspect(spec)
         if not installed.get("exists") or not installed.get("owned"):

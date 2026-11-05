@@ -162,7 +162,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
         arguments = [f"-config={config_path}", f"-port={game_port}", f"-profiles={profile_path}", f"-BEpath={battleye_path}"]
         for value in extra_arguments:
             text = str(value)
-            if not text.startswith("-") or "\x00" in text or "\n" in text or "\r" in text or text.lower().startswith("-bepath="):
+            if not text.startswith("-") or "\x00" in text or "\n" in text or "\r" in text or re.match(r"(?i)^-bepath(?:$|[=\s])", text) is not None:
                 # BattlEye path is owned by the profile, not arbitrary user flags.
                 raise ProfileError("invalid DayZ runtime argument")
             arguments.append(text)

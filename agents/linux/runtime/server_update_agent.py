@@ -177,6 +177,17 @@ def _ensure_dayz_staging_root_access(staging: Path, game: str) -> None:
         raise ServerUpdateError("cannot configure DayZ runtime staging permissions") from exc
 
 
+def _validate_dayz_staged_dlc(staging: Path, game: str) -> None:
+    """Validate DLC candidates before activation; privileged materializer owns them."""
+    if game != "dayz":
+        return
+    from dayz_dlc_ownership import discover_dayz_dlc_paths
+    try:
+        discover_dayz_dlc_paths(staging)
+    except (OSError, ValueError) as exc:
+        raise ServerUpdateError("unsafe DayZ DLC staging structure") from exc
+
+
 def perform_update(
     selection: dict[str, Any],
     target: Path,
@@ -222,6 +233,7 @@ def perform_update(
         staging = prepare_staging(target)
         installer(staging)
         _ensure_dayz_staging_root_access(staging, game)
+        _validate_dayz_staged_dlc(staging, game)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
         if not staged_status.get("detector_supported") or staged_status.get("state") != "up_to_date":
