@@ -25,14 +25,21 @@ def scan_pending_finalizations(
     dispatch: Callable[[Mapping[str, Any], Mapping[str, Any]], Any] | None = None,
     enabled: bool = False,
     max_candidates: int = 4,
+    target_instance_id: str | None = None,
 ) -> list[dict[str, str]]:
     """Read only by default. Optional dispatch runs while instance lock is held.
 
     Caller must provide lock_instance as a context-manager factory backed by
     runtime_lock.instance_lock. No direct effects on disk are performed here.
     """
+    valid = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
     if not agent_id or len(agent_id) > 191 or max_candidates not in range(1, 17):
         raise FinalizationSchedulerError("invalid scheduler configuration")
+    if target_instance_id is not None and (
+        not target_instance_id or len(target_instance_id) > 191
+        or any(char not in valid for char in target_instance_id)
+    ):
+        raise FinalizationSchedulerError("invalid target instance")
     root = Path(state_root) / "instance-provisioning"
     if not root.exists():
         return []
@@ -41,7 +48,9 @@ def scan_pending_finalizations(
     results: list[dict[str, str]] = []
     # Bound total I/O yet do not let the first few unrelated completed jobs
     # permanently starve an older pending operation.
-    candidates = sorted(root.glob("*.result.json"))[:256]
+    candidates = sorted(root.glob("*.result.json"))
+    if len(candidates) > 4096:
+        raise FinalizationSchedulerError("too many provisioning records for bounded scan")
     for path in candidates:
         if len(results) >= max_candidates:
             break
@@ -56,6 +65,8 @@ def scan_pending_finalizations(
         if not isinstance(payload, dict):
             continue
         instance_id = str(payload.get("instance_id") or "")
+        if target_instance_id is not None and instance_id != target_instance_id:
+            continue
         pid = str(payload.get("provisioning_id") or "")
         if (not instance_id or len(instance_id) > 191
                 or not pid or len(pid) > 191
