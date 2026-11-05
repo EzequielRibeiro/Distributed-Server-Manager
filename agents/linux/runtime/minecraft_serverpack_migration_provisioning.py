@@ -523,6 +523,7 @@ def execute_homologated_migration(
             return {"status":"restart_pending",
                     "archive_status":str(archived["status"]),
                     "history":str(archived.get("history") or ""),
+                    "sha256":str(archived.get("sha256") or ""),
                     "restart_error":str(exc)[:500]}
         state["final_observed_state"]=restored
         return {**archived,"observed_state":restored}
