@@ -54,6 +54,7 @@ from runtime_health import health_inventory
 from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
 from runtime_operations import recover_interrupted_operations, read_operation, read_recovered_migration
 from minecraft_serverpack_finalization_scheduler import scan_pending_finalizations
+from minecraft_serverpack_finalization_dispatcher import dispatch_published_completion
 from runtime_lock import instance_lock
 from minecraft_recovery_heartbeat_collector import collect_recovery_observations
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
@@ -336,21 +337,34 @@ def run_forever():
             except Exception as exc:_log(f"reconcile loop failed: {exc}",True)
             # Explicitly opt-in to *read-only* discovery. Mutating recovery
             # requires a separate supervised gate; never dispatch from heartbeat.
-            if os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1":
+            audit=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1"
+            permitted_instance=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE","")
+            reconcile=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE")=="1"
+                       and bool(permitted_instance))
+            if audit or reconcile:
                 try:
+                    def dispatch_completed(outer, result):
+                        if not reconcile or result.get("status")!="completed":
+                            return False
+                        dispatch_published_completion(
+                            outer, result, agent_id=str(config["agent_id"]),
+                            allowed_instance_id=permitted_instance)
+                        return True
                     observations=scan_pending_finalizations(
                         state_root=STATE_DIR,
                         agent_id=str(config["agent_id"]),
                         lock_instance=lambda iid:instance_lock(
-                            iid,"minecraft_serverpack_finalization_audit",timeout_seconds=0.25),
+                            iid,"minecraft_serverpack_finalization_reconciliation",timeout_seconds=0.25),
                         read_operation=read_operation,
+                        dispatch=dispatch_completed if reconcile else None,
+                        enabled=reconcile,
                         max_candidates=4,
                     )
                     for observation in observations:
-                        if observation.get("status") in {"pending","rejected"}:
-                            _log("serverpack finalization audit: "+json.dumps(observation,sort_keys=True))
+                        if observation.get("status") in {"pending","pending_journal_reconciliation","rejected","dispatched"}:
+                            _log("serverpack finalization observation: "+json.dumps(observation,sort_keys=True))
                 except Exception as exc:
-                    _log(f"serverpack finalization audit failed: {exc}",True)
+                    _log(f"serverpack finalization reconciliation failed: {exc}",True)
             next_reconcile=now+reconcile_interval
         if now>=next_heartbeat:
             try:
