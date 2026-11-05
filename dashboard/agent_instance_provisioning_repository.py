@@ -206,6 +206,8 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
         status = str(sanitized.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
+        if status == "completed":
+            _BASE.reject_pending_minecraft_finalization(sanitized)
         try:
             requested_progress = int(sanitized.get("progress", current.get("progress", 0)))
         except (TypeError, ValueError):
