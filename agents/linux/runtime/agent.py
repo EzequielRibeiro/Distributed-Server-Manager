@@ -365,6 +365,7 @@ def run_forever():
                         dispatch=queue_finalization if (reconcile or recover) else None,
                         enabled=reconcile or recover,
                         max_candidates=4,
+                        target_instance_id=permitted_instance if (reconcile or recover) else None,
                     )
                     for observation in observations:
                         if observation.get("status") in {"pending","pending_journal_reconciliation","rejected","dispatched"}:
