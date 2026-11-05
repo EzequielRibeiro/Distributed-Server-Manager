@@ -129,7 +129,7 @@ class ActualOperationalWorkerSystemdE2E(unittest.TestCase):
         subprocess.run(["systemctl","daemon-reload"],capture_output=True,timeout=15)
         subprocess.run(["systemctl","reset-failed",self.unit],capture_output=True,timeout=15)
 
-    def test_root_helper_archive_then_official_worker_restores(self):
+    def _root_helper_archive_then_official_worker(self, *, interrupt_after=None):
         """Connect real root helper run() and actual worker on one isolated unit."""
         from unittest.mock import patch
         from tests import minecraft_serverpack_privileged_root_test as root_fixtures
@@ -167,8 +167,35 @@ class ActualOperationalWorkerSystemdE2E(unittest.TestCase):
              patch.object(helper,"validate_runtime_spec",return_value=spec), \
              patch.object(helper,"resolve_materializer",return_value=object()), \
              patch.object(helper,"_instance_storage_root",return_value=f.storage.parent):
+            if interrupt_after:
+                import signal
+                from minecraft_serverpack_migration_swap import os as swap_os
+                child=os.fork()
+                if child == 0:
+                    original_replace=swap_os.replace
+                    src = (f.storage/"runtime.migration-rollback"
+                           if interrupt_after == "rollback"
+                           else f.storage/".dsm/minecraft-serverpack-migration.json")
+                    def kill_after_atomic_rename(from_path,to_path):
+                        original_replace(from_path,to_path)
+                        if Path(from_path)==src:
+                            os.kill(os.getpid(),signal.SIGKILL)
+                    try:
+                        with patch.object(swap_os,"replace",side_effect=kill_after_atomic_rename):
+                            helper.run(IID)
+                    finally:
+                        os._exit(99)
+                finished, code=os.waitpid(child,0)
+                self.assertEqual(finished,child)
+                self.assertTrue(os.WIFSIGNALED(code))
+                self.assertEqual(os.WTERMSIG(code),signal.SIGKILL)
+                self.assertEqual(json.loads(f.operation.read_text())["status"],
+                                 "finalization_pending")
+                self.assertEqual(json.loads(f.provision.read_text())["status"],
+                                 "running")
+                self.assertTrue((f.storage/".dsm/minecraft-serverpack-archive-checkpoint.json").exists())
             result=helper.run(IID)
-        self.assertEqual(result["operation"]["status"],"archived")
+        self.assertIn(result["operation"]["status"],{"archived","already_archived"})
         self.assertEqual(json.loads(f.operation.read_text())["status"],"finalization_pending")
         actual=f.child(env=self.env)
         self.assertEqual(actual.returncode,0,actual.stderr+actual.stdout)
@@ -181,6 +208,15 @@ class ActualOperationalWorkerSystemdE2E(unittest.TestCase):
                                        capture_output=True,text=True).stdout.strip(),"active")
         self.assertEqual(f.child(env=self.env).returncode,0)
         self.assertEqual(len(list(f.hist.iterdir())),1)
+
+    def test_root_helper_archive_then_official_worker_restores(self):
+        self._root_helper_archive_then_official_worker()
+
+    def test_killed_root_helper_after_rollback_rename_then_worker_restores(self):
+        self._root_helper_archive_then_official_worker(interrupt_after="rollback")
+
+    def test_killed_root_helper_after_journal_rename_then_worker_restores(self):
+        self._root_helper_archive_then_official_worker(interrupt_after="journal")
 
     def test_authorized_real_worker_restores_service_after_archive(self):
         f=self.f
