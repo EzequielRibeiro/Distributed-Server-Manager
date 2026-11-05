@@ -12,8 +12,13 @@ class AgentGateTest(unittest.TestCase):
   src=R.read_text()
   self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE',src)
   self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE',src)
-  self.assertIn('dispatch=dispatch_completed if reconcile else None',src)
-  self.assertIn('enabled=reconcile',src)
+  self.assertIn('dispatch=dispatch_completed if (reconcile or recover) else None',src)
+  self.assertIn('enabled=reconcile or recover',src)
+ def test_recover_requires_independent_ack_and_existing_feature_policy(self):
+  src=R.read_text()
+  self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK',src)
+  self.assertIn('recovery_feature_allowed(',src)
+  self.assertIn('recover_pending_operational(',src)
  def test_agent_never_dispatches_restart_or_archive(self):
   src=R.read_text()
   self.assertNotIn('retry_archived_restart(',src)
