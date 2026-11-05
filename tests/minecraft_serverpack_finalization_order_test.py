@@ -31,6 +31,8 @@ class FinalizationOrderTests(unittest.TestCase):
  def test_public_completion_uses_final_observed_state(self):
   src=E.read_text()
   self.assertIn('(detail.get("finalization") or {}).get("observed_state")',src)
- def test_archive_not_enabled_on_production_module(self):
-  self.assertNotIn('def finalize(evidence:',Path('/opt/dsm/agents/linux/runtime/minecraft_serverpack_migration_provisioning.py').read_text())
+ def test_rollback_does_not_archive_a_committed_migration(self):
+  source=function_body("rollback")
+  self.assertNotIn("archive-committed",source)
+  self.assertIn("recover",source)
 if __name__=="__main__":unittest.main()
