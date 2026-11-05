@@ -49,6 +49,8 @@ jobs:
             agents/linux/runtime/minecraft_serverpack_finalization_resume.py \
             agents/linux/runtime/minecraft_serverpack_finalization_completion.py \
             agents/linux/runtime/minecraft_serverpack_finalization_operational.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_worker.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_supervisor.py \
             agents/linux/runtime/minecraft_serverpack_finalization_coordinator.py \
             agents/linux/runtime/minecraft_serverpack_finalization_recovery.py \
             agents/linux/runtime/minecraft_serverpack_finalization_scheduler.py \
@@ -76,7 +78,11 @@ jobs:
             tests.minecraft_serverpack_finalization_checkpoint_test \
             tests.minecraft_serverpack_finalization_resume_test \
             tests.minecraft_serverpack_finalization_completion_test \
-            tests.minecraft_serverpack_finalization_operational_test -v
+            tests.minecraft_serverpack_finalization_operational_test \
+            tests.minecraft_serverpack_finalization_worker_test \
+            tests.minecraft_serverpack_finalization_supervisor_test -v
+      - name: Agent package compatibility
+        run: bash tests/agent_package_test.sh
       - name: Provisioning compatibility regressions
         env:
           PYTHONPATH: .
