@@ -8,12 +8,16 @@ class AgentGateTest(unittest.TestCase):
  def test_audit_is_opt_in(self):
   src=R.read_text()
   self.assertIn('os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1"',src)
- def test_loop_never_dispatched_mutating_recovery(self):
+ def test_mutating_recovery_is_not_unconditionally_enabled(self):
   src=R.read_text()
-  start=src.index('observations=scan_pending_finalizations(')
-  end=src.index('for observation in observations:',start)
-  self.assertNotIn('dispatch=',src[start:end])
-  self.assertNotIn('enabled=True',src[start:end])
+  self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE',src)
+  self.assertIn('CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE',src)
+  self.assertIn('dispatch=dispatch_completed if reconcile else None',src)
+  self.assertIn('enabled=reconcile',src)
+ def test_agent_never_dispatches_restart_or_archive(self):
+  src=R.read_text()
+  self.assertNotIn('retry_archived_restart(',src)
+  self.assertNotIn('retry_committed_finalization(',src)
  def test_scan_does_not_depend_on_services(self):
   src=(R.parent/"minecraft_serverpack_finalization_scheduler.py").read_text()
   self.assertNotIn("subprocess",src)
