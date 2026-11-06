@@ -141,3 +141,19 @@ if [[ -n "${legacy_snapshot}" ]]; then
         || fail "concurrent handoff touched the legacy directory"
 fi
 printf 'PASS: parallel handoffs isolated; failed extraction cleaned; legacy path preserved.\n'
+
+# A target that exits successfully without installing the desired release must
+# still fail the handoff and must not leave a temporary extraction workspace.
+cat >"${PACKAGE_SRC}/update.sh" <<EOF
+#!/usr/bin/env bash
+exit 0
+EOF
+tar -czf "${PACKAGE_TAR}" -C "${TMP_ROOT}/release" capivara-dsm-1.4.6
+printf '1.4.5\n' >"${DSM_ROOT}/version"
+if dsm_update_execute_target "${PACKAGE_TAR}" "1.4.6" >/dev/null 2>&1; then
+    fail "target updater false success was accepted"
+fi
+[[ "$(cat "${DSM_ROOT}/version")" == "1.4.5" ]] || fail "false-success test unexpectedly changed version"
+[[ -z "$(find "${TMP_ROOT}" -maxdepth 1 -type d -name 'dsm-update.*' -print -quit)" ]] \
+    || fail "false-success handoff left directories behind"
+printf 'PASS: target updater false-success rejected and workspace cleaned.\n'
