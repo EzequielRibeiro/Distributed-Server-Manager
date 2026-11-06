@@ -107,3 +107,37 @@ fi
     || fail "target updater did not install the expected version"
 
 printf 'Target updater handoff regression passed.\n'
+
+# A failed archive must not leave its own extraction directory behind.
+printf 'bad archive\n' >"${TMP_ROOT}/broken.tar.gz"
+if dsm_update_execute_target "${TMP_ROOT}/broken.tar.gz" "1.4.6" >/dev/null 2>&1; then
+    fail "invalid archive was accepted"
+fi
+[[ -z "$(find "${TMP_ROOT}" -maxdepth 1 -type d -name 'dsm-update.*' -print -quit)" ]] \
+    || fail "failed handoff left a directory behind"
+
+# Two overlapping invocations must never share a private extraction directory.
+PATHS="${TMP_ROOT}/handoff-paths"
+cat >"${PACKAGE_SRC}/update.sh" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$1" >>"${PATHS}"
+sleep 1
+printf '1.4.6\n' >"${DSM_ROOT}/version"
+EOF
+tar -czf "${PACKAGE_TAR}" -C "${TMP_ROOT}/release" capivara-dsm-1.4.6
+
+dsm_update_execute_target "${PACKAGE_TAR}" "1.4.6" >/dev/null &
+one=$!
+dsm_update_execute_target "${PACKAGE_TAR}" "1.4.6" >/dev/null &
+two=$!
+wait "${one}" || fail "first concurrent handoff failed"
+wait "${two}" || fail "second concurrent handoff failed"
+[[ "$(wc -l <"${PATHS}")" -eq 2 ]] || fail "expected two target updater invocations"
+[[ "$(sort -u "${PATHS}" | wc -l)" -eq 2 ]] || fail "concurrent handoffs shared a directory"
+[[ -z "$(find "${TMP_ROOT}" -maxdepth 1 -type d -name 'dsm-update.*' -print -quit)" ]] \
+    || fail "concurrent handoff left directories behind"
+if [[ -n "${legacy_snapshot}" ]]; then
+    [[ "$(stat -c '%d:%i:%Y' "${LEGACY_DIR}")" == "${legacy_snapshot}" ]] \
+        || fail "concurrent handoff touched the legacy directory"
+fi
+printf 'PASS: parallel handoffs isolated; failed extraction cleaned; legacy path preserved.\n'
