@@ -119,7 +119,7 @@ UPDATE_MANAGER="${ROOT}/update-manager/update-manager.sh"
 grep -Fq 'installed_version=$(cat "$INSTALL_DIR/version" 2>/dev/null || true)' \
     "${UPDATE_MANAGER}" \
     || fail "update manager does not verify installed version after target updater"
-grep -Fq 'if [ "$installed_version" != "$latest_version" ]' \
+grep -Fq 'if [[ "$installed_version" != "$expected_version" ]]; then' \
     "${UPDATE_MANAGER}" \
     || fail "update manager can record success without the target version installed"
 grep -Fq 'DSM_UPDATE_FAILED' "${UPDATE_MANAGER}" \
