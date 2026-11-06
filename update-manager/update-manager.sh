@@ -185,6 +185,52 @@ dsm_update_check()
     esac
 }
 
+# Extract each verified release into a private, unique workspace. A legacy
+# fixed path /tmp/dsm-update was shared across executions and could delete
+# another updater's files. The subshell owns its EXIT cleanup exclusively and
+# cannot override traps installed by the calling Controller/CLI.
+dsm_update_execute_target()
+(
+    set -Eeuo pipefail
+    local package="$1"
+    local expected_version="$2"
+    local workspace package_root target_updater installed_version
+
+    workspace="$(mktemp -d "${TMPDIR:-/tmp}/dsm-update.XXXXXXXX")" || {
+        log_error "Não foi possível criar diretório de atualização isolado"
+        return 1
+    }
+    chmod 0700 "$workspace"
+    trap 'rm -rf -- "$workspace"' EXIT
+
+    if ! tar -xzf "$package" -C "$workspace"; then
+        log_error "Falha ao extrair pacote DSM"
+        return 1
+    fi
+
+    package_root="$(find "$workspace" -mindepth 2 -maxdepth 3 -type f -name version -printf '%h\n' | head -1)"
+    if [[ -z "$package_root" || ! -f "$package_root/update.sh" ]]; then
+        log_error "Estrutura DSM inválida ou updater ausente"
+        return 1
+    fi
+
+    target_updater="$package_root/update.sh"
+    echo
+    echo "Pacote localizado: $package_root"
+    echo "Executando atualização DSM com o updater da versão alvo..."
+
+    if ! /bin/bash "$target_updater" "$package_root"; then
+        log_error "Módulo 10 da versão alvo falhou"
+        return 1
+    fi
+
+    installed_version="$(cat "$INSTALL_DIR/version" 2>/dev/null || true)"
+    if [[ "$installed_version" != "$expected_version" ]]; then
+        log_error "Updater alvo terminou sem instalar a versão esperada: esperado=$expected_version instalado=${installed_version:-unknown}"
+        return 1
+    fi
+)
+
 # =============================================================
 # Executa atualização
 # =============================================================
@@ -318,96 +364,12 @@ dsm_update_run()
         return 1
     fi
 
-    # =========================================================
-    # Extração temporária
-    # =========================================================
-
-    TEMP_DIR="/tmp/dsm-update"
-
-    rm -rf "$TEMP_DIR"
-    mkdir -p "$TEMP_DIR"
-
-    tar -xzf \
-    "$package" \
-    -C "$TEMP_DIR"
-
-    PACKAGE_ROOT=$(find "$TEMP_DIR" \
-    -name version \
-    -printf "%h\n" \
-    | head -1)
-
-    if [ -z "$PACKAGE_ROOT" ]
-    then
-        log_error "Estrutura DSM inválida"
-        return 1
-    fi
-
-    echo
-    echo "Pacote localizado:"
-    echo "$PACKAGE_ROOT"
-
-    # =========================================================
-    # Executa Módulo 10 da versão alvo
-    # =========================================================
-
-    # O Update Manager instalado é responsável por descoberta, download e
-    # validação criptográfica/estrutural da release. A partir deste ponto a
-    # versão alvo deve controlar a transação mutável (backup, staging,
-    # migrations, permissões, systemd, pós-instalação e rollback). Executar o
-    # update.sh antigo faria novas regras de instalação valerem apenas na
-    # atualização seguinte.
-    target_updater="${PACKAGE_ROOT}/update.sh"
-
-    if [ ! -f "$target_updater" ]
-    then
-        log_error "Updater da versão alvo ausente: $target_updater"
-        return 1
-    fi
-
-    echo
-    echo "Executando atualização DSM com o updater da versão alvo..."
-
-    if ! /bin/bash "$target_updater" \
-    "$PACKAGE_ROOT"
-    then
-        log_error "Módulo 10 da versão alvo falhou"
-
-    dsm_update_notify \
-        "DSM Update" \
-        "Atualização falhou"
-
-    events_emit \
-        "DSM_UPDATE_FAILED" \
-        "$latest_version" \
-        2>/dev/null || true
-
-       return 1
-    fi
-
-    # =========================================================
-    # Confirma instalação efetiva antes de registrar sucesso.
-    #
-    # O updater alvo pode retornar 0 sem aplicar a atualização
-    # (por exemplo, quando o usuário cancela uma confirmação
-    # interativa). O histórico/evento de sucesso só é válido se
-    # a instalação realmente estiver na versão esperada.
-    # =========================================================
-
-    installed_version=$(cat "$INSTALL_DIR/version" 2>/dev/null || true)
-
-    if [ "$installed_version" != "$latest_version" ]
-    then
-        log_error "Updater alvo terminou sem instalar a versão esperada: esperado=$latest_version instalado=${installed_version:-unknown}"
-
-        dsm_update_notify \
-        "DSM Update" \
-        "Atualização não concluída"
-
-        events_emit \
-        "DSM_UPDATE_FAILED" \
-        "$latest_version" \
-        2>/dev/null || true
-
+    # The target runs inside a private handoff directory which is removed
+    # on every ordinary exit (success, validation failure or updater error).
+    # Existing /tmp/dsm-update is never touched.
+    if ! dsm_update_execute_target "$package" "$latest_version"; then
+        dsm_update_notify "DSM Update" "Atualização não concluída"
+        events_emit "DSM_UPDATE_FAILED" "$latest_version" 2>/dev/null || true
         return 1
     fi
 
