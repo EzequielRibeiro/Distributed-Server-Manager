@@ -145,6 +145,30 @@ class SwapTest(unittest.TestCase):
    next_tx=module.prepare(root,migration_plan_sha256="c"*64,target_loader_version="26.1.2.124",backup=BACKUP)
    self.assertEqual(next_tx["phase"],"prepared")
 
+ def test_archive_refuses_managed_drift_after_commit_without_moving_evidence(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   module.prepare(root,migration_plan_sha256="b"*64,target_loader_version="26.1.2.109",backup=BACKUP)
+   module.switch(root)
+   module.commit(root,readiness_passed=True)
+   (root/"runtime/capivara-launch.args").write_text("CORRUPTED LAUNCHER")
+   with self.assertRaisesRegex(module.MinecraftServerPackMigrationSwapError,"managed runtime differs"):
+    module.archive_committed(root)
+   self.assertTrue((root/"runtime.migration-rollback").is_dir())
+   self.assertTrue((root/".dsm/minecraft-serverpack-migration.json").is_file())
+   self.assertFalse((root/".dsm/minecraft-serverpack-archive-checkpoint.json").exists())
+
+ def test_archive_allows_world_drift_after_verified_commit(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   module.prepare(root,migration_plan_sha256="b"*64,target_loader_version="26.1.2.109",backup=BACKUP)
+   module.switch(root)
+   module.commit(root,readiness_passed=True)
+   (root/"runtime/world/level.dat").write_bytes(b"WORLD MUTATED BY NORMAL RUNTIME")
+   result=module.archive_committed(root)
+   self.assertEqual(result["status"],"archived")
+   self.assertEqual((root/"runtime/world/level.dat").read_bytes(),b"WORLD MUTATED BY NORMAL RUNTIME")
+
  def test_incomplete_migration_is_not_archived(self):
   with tempfile.TemporaryDirectory() as name:
    root=self.make(Path(name))
