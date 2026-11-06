@@ -7,17 +7,13 @@ MODULE="${ROOT}/update-manager/update-manager.sh"
 fail(){ echo "FAIL: $*" >&2; exit 1; }
 
 TMP_ROOT="$(mktemp -d)"
-HANDOFF_DIR="/tmp/dsm-update"
-
-if [[ -e "${HANDOFF_DIR}" ]]
-then
-    rm -rf -- "${TMP_ROOT}"
-    fail "refusing to disturb an existing ${HANDOFF_DIR}"
-fi
-
+# The pre-existing legacy path is never touched by the new updater.
+LEGACY_DIR="/tmp/dsm-update"
+TMPDIR="${TMP_ROOT}"
+export TMPDIR
 cleanup()
 {
-    rm -rf -- "${TMP_ROOT}" "${HANDOFF_DIR}"
+    rm -rf -- "${TMP_ROOT}"
 }
 trap cleanup EXIT
 
@@ -65,7 +61,7 @@ chmod +x "${DSM_ROOT}/update.sh"
 printf '1.4.6\n' >"${PACKAGE_SRC}/version"
 cat >"${PACKAGE_SRC}/update.sh" <<EOF
 #!/usr/bin/env bash
-[[ "\$1" == "${HANDOFF_DIR}/capivara-dsm-1.4.6" ]] || exit 41
+[[ "\$1" == ${TMP_ROOT}/dsm-update.*/capivara-dsm-1.4.6 ]] || exit 41
 printf 'target\n' >"${MARKER}"
 printf '1.4.6\n' >"${DSM_ROOT}/version"
 EOF
@@ -88,7 +84,21 @@ verify_release(){ return 0; }
 dsm_update_notify(){ :; }
 events_emit(){ :; }
 
+legacy_snapshot=""
+if [[ -d "${LEGACY_DIR}" ]]; then
+    legacy_snapshot="$(stat -c '%d:%i:%Y' "${LEGACY_DIR}")"
+fi
+
 dsm_update_run >/dev/null
+
+# Every temporary workspace is automatically deleted. The preexisting fixed
+# path is untouched even when it belongs to another or older transaction.
+[[ -z "$(find "${TMP_ROOT}" -mindepth 1 -maxdepth 1 -type d -name 'dsm-update.*' -print -quit)" ]] \
+    || fail "unique update handoff left behind"
+if [[ -n "${legacy_snapshot}" ]]; then
+    [[ "$(stat -c '%d:%i:%Y' "${LEGACY_DIR}")" == "${legacy_snapshot}" ]] \
+        || fail "legacy /tmp/dsm-update was modified"
+fi
 
 [[ -f "${MARKER}" ]] || fail "no updater was executed"
 [[ "$(cat "${MARKER}")" == "target" ]] \
