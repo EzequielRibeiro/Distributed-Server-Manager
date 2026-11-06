@@ -17,6 +17,7 @@ from baseline_upgrade_engine import (
     apply_pending_upgrades,
     seed_current_upgrades,
     upgrade_status,
+    latest_upgrade_version,
 )
 
 
@@ -29,11 +30,11 @@ class BaselineUpgradeEngineTest(unittest.TestCase):
         self.backend = SQLiteBackend()
         self.connection = sqlite3.connect(":memory:")
         self.connection.row_factory = sqlite3.Row
+        # The baseline engine now has 22 registered upgrades. Use the
+        # consolidated schema instead of an obsolete two-table v2 fixture;
+        # later upgrades require alert_events and other core tables.
         self.connection.executescript(
-            """
-            CREATE TABLE customers(id INTEGER PRIMARY KEY);
-            CREATE TABLE agent_pairing_tokens(id TEXT PRIMARY KEY);
-            """
+            (ROOT / "database" / "schemas" / "sqlite.sql").read_text(encoding="utf-8")
         )
 
     def tearDown(self) -> None:
@@ -49,9 +50,9 @@ class BaselineUpgradeEngineTest(unittest.TestCase):
 
     def test_fresh_current_baseline_seeds_all_upgrade_versions(self) -> None:
         seed_current_upgrades(self.backend, self.connection)
-        self.assertEqual(self.versions(), [1, 2])
+        self.assertEqual(self.versions(), list(range(1, latest_upgrade_version() + 1)))
         status = upgrade_status(self.backend, self.connection)
-        self.assertEqual(status["current_version"], 2)
+        self.assertEqual(status["current_version"], latest_upgrade_version())
         self.assertEqual(status["pending"], [])
 
     def test_pre_ledger_legacy_baseline_is_upgraded_once(self) -> None:
@@ -61,8 +62,8 @@ class BaselineUpgradeEngineTest(unittest.TestCase):
             self.connection,
             installed_checksum=checksum,
         )
-        self.assertEqual(completed, [1, 2])
-        self.assertEqual(self.versions(), [1, 2])
+        self.assertEqual(completed, list(range(1, latest_upgrade_version() + 1)))
+        self.assertEqual(self.versions(), list(range(1, latest_upgrade_version() + 1)))
         tables = {
             row[0]
             for row in self.connection.execute(
@@ -74,15 +75,17 @@ class BaselineUpgradeEngineTest(unittest.TestCase):
 
     def test_existing_ledger_allows_future_progress_without_checksum_map(self) -> None:
         seed_current_upgrades(self.backend, self.connection)
-        self.connection.execute("DELETE FROM baseline_upgrades WHERE version=2")
+        # Keep the historical ledger contiguous; do not leave versions 3..22
+        # behind while testing an upgrade starting at version 2.
+        self.connection.execute("DELETE FROM baseline_upgrades WHERE version >= 2")
         self.connection.execute("DROP TABLE IF EXISTS agent_public_network_preconfiguration")
         completed = apply_pending_upgrades(
             self.backend,
             self.connection,
             installed_checksum="future-release-checksum-not-in-legacy-map",
         )
-        self.assertEqual(completed, [2])
-        self.assertEqual(self.versions(), [1, 2])
+        self.assertEqual(completed, list(range(2, latest_upgrade_version() + 1)))
+        self.assertEqual(self.versions(), list(range(1, latest_upgrade_version() + 1)))
 
     def test_unknown_pre_ledger_checksum_is_rejected(self) -> None:
         with self.assertRaises(DatabaseMigrationError):
