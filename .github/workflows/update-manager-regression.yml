@@ -60,6 +60,9 @@ jobs:
       - name: Test preserved instance data and preflight failure
         run: bash tests/update_preserved_data_test.sh
 
+      - name: Test isolated RC-to-stable update and rollback
+        run: bash tests/update_rc_stable_clone_test.sh
+
       - name: Test Update Manager
         run: bash tests/update_manager_test.sh
 
