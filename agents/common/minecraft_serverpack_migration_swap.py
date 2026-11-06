@@ -301,6 +301,15 @@ def archive_committed(instance_state_root: Path) -> dict[str, Any]:
         data = _read(paths)
         if data.get("phase") != "committed":
             raise MinecraftServerPackMigrationSwapError("only committed migration can be archived")
+        # A durable commit is not proof that managed files still match the
+        # checkpoint. Do not archive the recovery evidence for a drifted runtime.
+        expected_managed = data.get("staged_managed_sha256")
+        if (not isinstance(expected_managed, str) or len(expected_managed) != 64
+                or any(c not in "0123456789abcdef" for c in expected_managed)
+                or _managed_hash(paths["active"]) != expected_managed):
+            raise MinecraftServerPackMigrationSwapError(
+                "committed active managed runtime differs from checkpoint"
+            )
         digest = hashlib.sha256(paths["journal"].read_bytes()).hexdigest()
         if saved and saved["sha256"] != digest:
             prior = history / saved["sha256"][:24] / "minecraft-serverpack-migration.json"
