@@ -199,7 +199,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
             lambda config, req: calls.append(req["instance_id"]) or {
                 "status": "completed",
                 "homologation_only": True,
-                "trace": ["contract_validated", "committed"],
+                "trace": ["contract_validated", "committed", "finalized"],
+                "finalization": {"status": "archived", "observed_state": "stopped"},
             }
         )
         provisioning_executor.execute_game_data = lambda command: (_ for _ in ()).throw(
@@ -247,7 +248,8 @@ class ProvisioningExecutorTest(unittest.TestCase):
             "execution_mode": "production",
             "homologation_only": False,
             "production_authorized": True,
-            "trace": ["contract_validated", "committed"],
+            "trace": ["contract_validated", "committed", "finalized"],
+                "finalization": {"status": "archived", "observed_state": "stopped"},
         }
         with patch.object(
             provisioning_executor,

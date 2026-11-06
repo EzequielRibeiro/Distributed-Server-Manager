@@ -489,16 +489,44 @@ def execute_homologated_migration(
             _ensure_stopped_after_candidate_failure(active_record,adapter)
 
     def commit(evidence:dict[str,Any],backup_evidence:dict[str,Any])->dict[str,Any]:
-        # Restore the customer's original availability before the irreversible
-        # journal commit. A failed restart must still be able to roll back.
+        # Keep the previous availability check before the irreversible commit.
+        # A failed restart here can still roll back to the original runtime.
         restored_state=_restore_initial_running_state(
             record,adapter,str(state.get("initial_active_state") or ""),working=active
         )
+        # Archival is privileged and must never run with an active game process.
+        _ensure_stopped_after_candidate_failure(record,adapter)
         committed=minecraft_serverpack_swap_phase(
             config, record, "commit",
             readiness_evidence=state.get("readiness_evidence"),
         )
-        return {**committed,"observed_state":restored_state}
+        state["validated_post_restart_state"]=restored_state
+        return {**committed,"observed_state":"stopped",
+                "initial_active_state":str(state.get("initial_active_state") or "")}
+
+    def finalize(evidence:dict[str,Any],backup_evidence:dict[str,Any])->dict[str,Any]:
+        # Archival is crash-resumable and never removes backup or rollback data.
+        # Keep the instance inactive during the privileged atomic rename.
+        _ensure_stopped_after_candidate_failure(record,adapter)
+        archived=minecraft_serverpack_swap_phase(config,record,"archive-committed")
+        if str(archived.get("status") or "") not in {"archived","already_archived"}:
+            raise MinecraftServerPackProvisioningHomologationError(
+                "committed migration archival could not be verified"
+            )
+        try:
+            restored=_restore_initial_running_state(
+                record,adapter,str(state.get("initial_active_state") or ""),working=active
+            )
+        except Exception as exc:
+            # The archive has already been committed. Never route this failure
+            # through the old rollback path.
+            return {"status":"restart_pending",
+                    "archive_status":str(archived["status"]),
+                    "history":str(archived.get("history") or ""),
+                    "sha256":str(archived.get("sha256") or ""),
+                    "restart_error":str(exc)[:500]}
+        state["final_observed_state"]=restored
+        return {**archived,"observed_state":restored}
 
     def rollback(evidence:dict[str,Any],backup_evidence:dict[str,Any],trace:tuple[str,...])->dict[str,Any]:
         # Never restore or restart while the candidate service may still be running.
@@ -531,6 +559,7 @@ def execute_homologated_migration(
             "swap":swap,
             "readiness":readiness,
             "commit":commit,
+            "finalize":finalize,
             "rollback":rollback,
         },
     )

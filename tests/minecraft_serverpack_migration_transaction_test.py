@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib.util
 from contextlib import contextmanager
+from types import ModuleType
+from unittest.mock import patch
 from pathlib import Path
 import sys
 import unittest
@@ -31,7 +33,17 @@ def load(platform):
  runtime_dir=str(path.parent)
  if runtime_dir not in sys.path:sys.path.insert(0,runtime_dir)
  spec=importlib.util.spec_from_file_location(f"migration_transaction_{platform}",path)
- module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+ module=importlib.util.module_from_spec(spec)
+ # Transaction tests replace runtime_operation with a deterministic fake.
+ # Do not import the Linux fcntl-based runtime lock on native Windows; the
+ # separate native Windows journal test exercises the actual msvcrt lock.
+ if sys.platform=="win32":
+  placeholder=ModuleType("runtime_operations")
+  placeholder.runtime_operation=None
+  with patch.dict(sys.modules,{"runtime_operations":placeholder}):
+   spec.loader.exec_module(module)
+ else:
+  spec.loader.exec_module(module)
  return module
 
 
@@ -159,6 +171,62 @@ class TransactionTest(unittest.TestCase):
     {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
   self.assertIn("rollback_failed",ctx.exception.trace)
   self.assertLess(events.index("rollback"),events.index("unlock"))
+
+
+ def test_after_commit_finalization_failure_never_rolls_back(self):
+  for platform in ("linux","windows"):
+   module,events,_,hooks=self._run(platform)
+   def finalize(*args):
+    events.append("finalize")
+    raise RuntimeError("simulated archive interruption")
+   hooks["finalize"]=finalize
+   result=module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+   self.assertEqual(result["status"],"finalization_pending")
+   self.assertEqual(result["trace"][-2:],["committed","finalization_pending"])
+   self.assertNotIn("rollback",events)
+   self.assertLess(events.index("finalize"),events.index("unlock"))
+
+ def test_after_commit_finalization_success_marks_complete(self):
+  for platform in ("linux","windows"):
+   module,events,_,hooks=self._run(platform)
+   def finalize(*args):
+    events.append("finalize")
+    return {"status":"archived"}
+   hooks["finalize"]=finalize
+   result=module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+   self.assertEqual(result["status"],"completed")
+   self.assertEqual(result["finalization"]["status"],"archived")
+   self.assertEqual(result["trace"][-2:],["committed","finalized"])
+   self.assertNotIn("rollback",events)
+
+
+ def test_archived_restart_failure_never_rolls_back(self):
+  for platform in ("linux","windows"):
+   with self.subTest(platform=platform):
+    module,events,_,hooks=self._run(platform)
+    def finalize(*args):
+     events.append("finalize")
+     return {"status":"restart_pending","archive_status":"archived","history":"/sandbox/history/journal","sha256":"a"*64,"restart_error":"startup timeout"}
+    hooks["finalize"]=finalize
+    result=module.execute_minecraft_serverpack_migration(
+     {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+    self.assertEqual(result["status"],"finalization_pending")
+    self.assertIn("restart_pending",result["trace"])
+    self.assertNotIn("rollback",events)
+    self.assertIn("finalization",result)
+    self.assertEqual(result["finalization"]["archive_status"],"archived")
+    self.assertLess(events.index("finalize"),events.index("unlock"))
+
+ def test_restart_pending_without_proof_never_marks_completed(self):
+  for platform in ("linux","windows"):
+   module,events,_,hooks=self._run(platform)
+   hooks["finalize"]=lambda *args: {"status":"restart_pending","archive_status":"missing","history":""}
+   result=module.execute_minecraft_serverpack_migration(
+    {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+   self.assertEqual(result["status"],"finalization_pending")
+   self.assertNotIn("rollback",events)
 
 
 if __name__=="__main__":unittest.main()

@@ -107,7 +107,7 @@ def execute_minecraft_serverpack_migration(
         instance_id,
         "minecraft_serverpack_migration",
         lock_timeout_seconds=lock_timeout_seconds,
-    ):
+    ) as operation_journal:
         current = callbacks["revalidate"](dict(evidence))
         if not isinstance(current, Mapping):
             raise MinecraftServerPackMigrationExecutionError(
@@ -156,6 +156,72 @@ def execute_minecraft_serverpack_migration(
             trace.append("ready")
             commit = callbacks["commit"](dict(evidence), dict(backup))
             trace.append("committed")
+            # The swap has committed. Never invoke rollback if cleanup,
+            # archival or journal finalization fails after this boundary.
+            finalization = {}
+            if callable(hooks.get("finalize")):
+                try:
+                    finalization = hooks["finalize"](dict(evidence), dict(backup))
+                except Exception as exc:
+                    trace.append("finalization_pending")
+                    # runtime_operation persists this barrier on context exit.
+                    # Only the separate finalization-recovery path can clear it.
+                    if isinstance(operation_journal, dict):
+                        operation_journal["status"] = "finalization_pending"
+                        operation_journal["migration_plan_sha256"] = evidence["migration_plan_sha256"]
+                        operation_journal["finalization_error"] = str(exc)[:500]
+                    return {
+                        "kind": "MinecraftServerPackMigrationResult",
+                        "status": "finalization_pending",
+                        "instance_id": evidence["instance_id"],
+                        "transfer_id": evidence["transfer_id"],
+                        "migration_plan_sha256": evidence["migration_plan_sha256"],
+                        "target_loader_version": evidence["target_loader_version"],
+                        "backup": dict(backup),
+                        "commit": dict(commit) if isinstance(commit, Mapping) else {},
+                        "finalization_error": str(exc)[:500],
+                        "trace": trace,
+                    }
+                if isinstance(finalization, Mapping) and finalization.get("status") == "restart_pending":
+                    archive_digest=str(finalization.get("sha256") or "")
+                    if (finalization.get("archive_status") not in {"archived","already_archived"}
+                            or not str(finalization.get("history") or "").strip()
+                            or len(archive_digest)!=64
+                            or any(c not in "0123456789abcdef" for c in archive_digest)):
+                        trace.append("finalization_pending")
+                        if isinstance(operation_journal, dict):
+                            operation_journal["status"]="finalization_pending"
+                            operation_journal["migration_plan_sha256"]=evidence["migration_plan_sha256"]
+                        return {
+                            "kind":"MinecraftServerPackMigrationResult",
+                            "status":"finalization_pending",
+                            "instance_id":evidence["instance_id"],
+                            "transfer_id":evidence["transfer_id"],
+                            "migration_plan_sha256":evidence["migration_plan_sha256"],
+                            "target_loader_version":evidence["target_loader_version"],
+                            "finalization_error":"restart pending lacks verified archive evidence",
+                            "trace":trace,
+                        }
+                    trace.append("restart_pending")
+                    if isinstance(operation_journal, dict):
+                        operation_journal["status"]="finalization_pending"
+                        operation_journal["migration_plan_sha256"]=evidence["migration_plan_sha256"]
+                        operation_journal["finalization_phase"]="restart_pending"
+                        operation_journal["archive_status"]=str(finalization["archive_status"])
+                    return {
+                        "kind":"MinecraftServerPackMigrationResult",
+                        "status":"finalization_pending",
+                        "instance_id":evidence["instance_id"],
+                        "content_id":evidence["content_id"],
+                        "transfer_id":evidence["transfer_id"],
+                        "migration_plan_sha256":evidence["migration_plan_sha256"],
+                        "target_loader_version":evidence["target_loader_version"],
+                        "backup":dict(backup),
+                        "commit":dict(commit) if isinstance(commit,Mapping) else {},
+                        "finalization":dict(finalization),
+                        "trace":trace,
+                    }
+                trace.append("finalized")
             return {
                 "kind": "MinecraftServerPackMigrationResult",
                 "status": "completed",
@@ -168,6 +234,7 @@ def execute_minecraft_serverpack_migration(
                 "backup": dict(backup),
                 "commit": dict(commit) if isinstance(commit, Mapping) else {},
                 "trace": trace,
+                "finalization": dict(finalization) if isinstance(finalization, Mapping) else {},
             }
         except Exception as exc:
             trace.append("failed")

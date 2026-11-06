@@ -140,7 +140,7 @@ def minecraft_serverpack_swap_phase(
     if (str(normalized.get("game_id") or "").lower() != "minecraft"
             or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
         raise ValueError("Server Pack swap requires Minecraft Java NeoForge")
-    if phase not in {"prepare", "switch", "commit", "recover"}:
+    if phase not in {"prepare", "switch", "commit", "recover", "archive-committed"}:
         raise ValueError("unsupported Server Pack migration phase")
     return _invoke("minecraft-serverpack-swap-phase", normalized, phase=phase, **evidence)
 

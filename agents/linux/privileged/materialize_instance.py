@@ -311,9 +311,11 @@ def _serverpack_swap_phase(
     import minecraft_serverpack_migration_swap as swap
 
     operation = str(phase or "").strip()
-    if operation not in {"prepare", "switch", "commit", "recover"}:
+    if operation not in {"prepare", "switch", "commit", "recover", "archive-committed"}:
         raise RuntimeError("unsupported Server Pack migration phase")
     paths = _serverpack_migration_paths(spec, config, allow_missing_active=(operation == "recover"))
+    if operation == "archive-committed":
+        return swap.archive_committed(paths["root"])
     if operation == "prepare":
         if not isinstance(backup, dict) or backup.get("integrity_verified") is not True:
             raise RuntimeError("verified migration backup is required")
@@ -1067,7 +1069,7 @@ def run(instance_id: str) -> dict[str, Any]:
     content_files: list[str] = []
     if (action in {"minecraft-serverpack-prepare-inputs", "minecraft-serverpack-build-candidate"}
             or (action == "minecraft-serverpack-swap-phase"
-                and request.get("phase") in {"prepare", "switch", "recover"})):
+                and request.get("phase") in {"prepare", "switch", "recover", "archive-committed"})):
         _serverpack_require_inactive(instance_id)
     if action == "apply":
         _ensure_runtime_identity(spec, config)

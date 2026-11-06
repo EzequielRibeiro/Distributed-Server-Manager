@@ -53,6 +53,9 @@ from runtime_events import acknowledge_runtime_events, read_runtime_events
 from runtime_health import health_inventory
 from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
 from runtime_operations import recover_interrupted_operations, read_operation, read_recovered_migration
+from minecraft_serverpack_finalization_scheduler import scan_pending_finalizations
+from minecraft_serverpack_finalization_supervisor import FinalizationWorkerSupervisor
+from runtime_lock import instance_lock
 from minecraft_recovery_heartbeat_collector import collect_recovery_observations
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
 from runtime_reconciler import reconcile_all, reconciliation_inventory
@@ -327,11 +330,48 @@ def run_forever():
     start_console_stream(config)
     start_content_update_inventory(config,logger=lambda message:_log(message,True))
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
+    finalization_supervisor=FinalizationWorkerSupervisor()
     while True:
         now=time.monotonic()
         if now>=next_reconcile:
             try:reconcile_all(config)
             except Exception as exc:_log(f"reconcile loop failed: {exc}",True)
+            # Explicitly opt-in to *read-only* discovery. Mutating recovery
+            # requires a separate supervised gate; never dispatch from heartbeat.
+            audit=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1"
+            permitted_instance=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE","")
+            reconcile=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE")=="1"
+                       and bool(permitted_instance))
+            recover=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER")=="1"
+                     and os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK")=="AUTHORIZED"
+                     and bool(permitted_instance))
+            if audit or reconcile or recover:
+                try:
+                    def queue_finalization(outer, result):
+                        if not (reconcile or recover) or outer.get("instance_id")!=permitted_instance:
+                            return False
+                        if result.get("status")=="running" and not recover:
+                            return False
+                        launched=finalization_supervisor.launch(
+                            instance_id=permitted_instance,
+                            config_path=CONFIG_PATH, state_dir=STATE_DIR)
+                        return launched=="started"
+                    observations=scan_pending_finalizations(
+                        state_root=STATE_DIR,
+                        agent_id=str(config["agent_id"]),
+                        lock_instance=lambda iid:instance_lock(
+                            iid,"minecraft_serverpack_finalization_discovery",timeout_seconds=0.25),
+                        read_operation=read_operation,
+                        dispatch=queue_finalization if (reconcile or recover) else None,
+                        enabled=reconcile or recover,
+                        max_candidates=4,
+                        target_instance_id=permitted_instance if (reconcile or recover) else None,
+                    )
+                    for observation in observations:
+                        if observation.get("status") in {"pending","pending_journal_reconciliation","rejected","dispatched"}:
+                            _log("serverpack finalization observation: "+json.dumps(observation,sort_keys=True))
+                except Exception as exc:
+                    _log(f"serverpack finalization discovery failed: {type(exc).__name__}",True)
             next_reconcile=now+reconcile_interval
         if now>=next_heartbeat:
             try:
