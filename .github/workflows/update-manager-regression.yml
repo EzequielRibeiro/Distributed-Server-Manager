@@ -63,6 +63,9 @@ jobs:
       - name: Test isolated RC-to-stable update and rollback
         run: bash tests/update_rc_stable_clone_test.sh
 
+      - name: Test safe rc4 to stable bootstrap guards
+        run: bash tests/safe_rc_bootstrap_test.sh
+
       - name: Test Update Manager
         run: bash tests/update_manager_test.sh
 
