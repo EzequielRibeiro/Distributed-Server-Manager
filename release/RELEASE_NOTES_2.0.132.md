@@ -19,6 +19,12 @@
 - Build preliminar da `main` e verificação de SHA-256 aprovados. O pacote definitivo da candidata deverá ser produzido a partir do **commit final de publicação**.
 - Validada recuperação após reinício de processo; **não** houve reboot físico controlado do host.
 
+## Risco de bootstrap do atualizador existente
+
+**Bloqueio operacional confirmado no horizon-server (2.0.132-rc.4):** o `cap update run` instalado carrega `/opt/dsm/update-manager/update-manager.sh`, que ainda executa `rm -rf "/tmp/dsm-update"` antes do handoff. A correção de diretório privado, incluída nesta candidata, só entra em vigor depois que os arquivos do release forem instalados.
+
+**Não executar `cap update run` a partir da instalação rc.4** enquanto o diretório compartilhado `/tmp/dsm-update` existir ou até que um bootstrap seguro tenha sido validado. Para a primeira instalação estável será necessário um fluxo supervisionado que baixe e verifique checksum/manifesto, execute preflight somente leitura e então invoque diretamente o `update.sh` da versão alvo — sem acionar o módulo de handoff legado. Esse procedimento ainda depende de homologação e autorização explícita; não foi implantado.
+
 ## Gates antes da publicação
 
 1. Aprovar a CI do commit de versão 2.0.132 e a prontidão de release, inclusive comparação de schemas SQLite/PostgreSQL/MySQL/MariaDB.
