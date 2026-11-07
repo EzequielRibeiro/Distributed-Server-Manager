@@ -39,6 +39,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
                         "game": {"port": 24010, "protocol": "udp"},
                         "game_aux": {"port": 24012, "protocol": "udp"},
                         "steam_query": {"port": 24013, "protocol": "udp"},
+                        "battleye": {"port": 24014, "protocol": "udp"},
                     },
                 },
             )
@@ -49,7 +50,10 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             install.mkdir()
             spec = self._build_dayz_spec(install)
 
-        self.assertEqual(spec["profile_version"], 11)
+        self.assertEqual(spec["profile_version"], 13)
+        self.assertEqual(spec["inaccessible_content_paths"], [str(install / "nasdara")])
+        self.assertTrue(any(arg.startswith("-BEpath=") for arg in spec["arguments"]))
+        self.assertEqual(spec["arguments"].count("-adminlog"), 1)
         self.assertEqual(spec["success_exit_statuses"], [255])
         unit = render_unit(spec)
         self.assertIn("\nSuccessExitStatus=255\n", unit)
@@ -78,7 +82,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
                 )
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 11)
+        self.assertEqual(migrated["profile_version"], 13)
         self.assertEqual(migrated["profile_migrated_from_version"], 6)
         self.assertEqual(migrated["success_exit_statuses"], [255])
         self.assertEqual(migrated["stop_signal"], "SIGINT")
@@ -107,3 +111,5 @@ class DayZSystemdShutdownTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+[executed on device: horizon-server (6a5de904-6702-4c4d-8ea8-2c686f883437)]
