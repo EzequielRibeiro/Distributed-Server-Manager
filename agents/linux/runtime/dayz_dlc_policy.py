@@ -14,5 +14,3 @@ def inaccessible_dlc_paths(install_root: str, mission: str) -> list[str]:
         raise ValueError("invalid DayZ install root")
     suffix = str(mission).lower().rsplit(".", 1)[-1]
     return [str(root / directory) for directory, missions in sorted(DLC_MISSIONS.items()) if suffix not in missions]
-
-[executed on device: horizon-server (6a5de904-6702-4c4d-8ea8-2c686f883437)]
