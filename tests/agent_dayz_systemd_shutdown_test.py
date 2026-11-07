@@ -127,6 +127,39 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             self.assertNotIn("InaccessiblePaths=", render_unit(migrated))
             self.assertEqual(migrated["arguments"].count("-adminlog"), 1)
 
+    def test_v14_content_activation_survives_profile_v15_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "serverfiles"
+            install.mkdir()
+            spec = self._build_dayz_spec(install)
+            legacy = dict(spec, profile_version=14)
+            legacy["inaccessible_content_paths"] = [str(install / "nasdara")]
+            base_args = list(legacy["arguments"])
+            base_binds = [dict(item) for item in legacy["bind_paths"]]
+            mod = "-mod=@dsm-namalsk-data;@dsm-namalsk-survival"
+            keyring = {"source": str(install.parent / "dayz-keys"), "target": str(install / "keys")}
+            legacy.update({
+                "arguments": [*base_args, mod],
+                "bind_paths": [*base_binds, keyring],
+                "content_base_arguments": base_args,
+                "content_base_bind_paths": base_binds,
+                "content_dayz_mod_aliases": ["namalsk-data", "namalsk-survival"],
+                "content_dayz_keyring": keyring["source"],
+                "content_dayz_key_sources": [{"id": "workshop"}],
+                "dayz_content_enabled": True,
+            })
+            with patch.object(game_runtime.instance_runtime, "STATE_DIR", install.parent / "agent-state-migrate"):
+                migrated, changed = game_runtime.migrate_runtime_spec({"agent_id": "agent-one"}, legacy)
+            self.assertTrue(changed)
+            self.assertEqual(migrated["profile_version"], 15)
+            self.assertEqual(migrated["profile_migrated_from_version"], 14)
+            self.assertEqual(migrated["inaccessible_content_paths"], [])
+            self.assertEqual(migrated["arguments"].count(mod), 1)
+            self.assertEqual(migrated["bind_paths"][-1], keyring)
+            self.assertEqual(migrated["content_dayz_mod_aliases"], legacy["content_dayz_mod_aliases"])
+            self.assertEqual(migrated["content_dayz_key_sources"], legacy["content_dayz_key_sources"])
+            self.assertNotIn("InaccessiblePaths=", render_unit(migrated))
+
     def test_v13_content_activation_survives_profile_v14_migration(self):
         with tempfile.TemporaryDirectory() as temp:
             install = Path(temp) / "serverfiles"
