@@ -1,16 +1,17 @@
-"""Explicit, fail-safe registry of independently licensed DayZ content roots.
+"""DayZ data files are not equivalent to enabled maps or client DLC requirements.
 
-Unknown Steam directories are never classified as DLC automatically.
+DayZ may enumerate licensed-content PBOs during signature checks even when a
+different map is active. Hiding the directory at the Linux mount namespace
+causes false kick 115 (missing PBO) for players without that DLC.
+
+Keep the historical function name for compatibility with existing runtimes,
+but do not conceal installed data files. Mission selection stays independent.
 """
 from pathlib import Path
-
-# A future DLC needs a reviewed registry entry and a mission-to-content mapping.
-DLC_MISSIONS = {"nasdara": frozenset({"nasdara"})}
 
 
 def inaccessible_dlc_paths(install_root: str, mission: str) -> list[str]:
     root = Path(install_root)
     if not root.is_absolute() or ".." in root.parts:
         raise ValueError("invalid DayZ install root")
-    suffix = str(mission).lower().rsplit(".", 1)[-1]
-    return [str(root / directory) for directory, missions in sorted(DLC_MISSIONS.items()) if suffix not in missions]
+    return []
