@@ -122,7 +122,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     current=game_runtime.build_runtime_spec(config,instance,context);self.assertEqual(15,current['profile_version'])
     old=dict(current);old['profile_version']=8;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
-   self.assertTrue(changed);self.assertEqual(15,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players','join_password','admin_password'},set(migrated['catalog_server_settings']['fields']))
+   self.assertTrue(changed);self.assertEqual(15,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players','join_password','admin_password','perspective_mode'},set(migrated['catalog_server_settings']['fields']))
    cfg=Path(migrated['configuration_root'])/'serverDZ.cfg';cfg.parent.mkdir(parents=True,exist_ok=True);cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 20;\n',encoding='utf-8');materialize_server_settings(migrated);text=cfg.read_text();self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='));self.assertIn('hostname = "Migrated DayZ";',text);self.assertIn('maxPlayers = 32;',text)
 
  def test_dayz_profile_migration_preserves_settings_when_profile_context_predates_settings(self):
@@ -138,6 +138,30 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     legacy_context=dict(old.get('profile_context') or {});legacy_policy=dict(legacy_context.get('catalog_runtime_policy') or {});legacy_policy.pop('server_settings',None);legacy_context['catalog_runtime_policy']=legacy_policy;old['profile_context']=legacy_context
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
    self.assertTrue(changed);self.assertEqual(15,migrated['profile_version']);self.assertEqual(declaration('dayz.stable'),migrated['catalog_server_settings']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values'])
+
+ def test_dayz_perspective_mode_migrates_to_single_authoritative_flag(self):
+  dayz=declaration('dayz.stable')
+  self.assertEqual([0,1,2],dayz['fields']['perspective_mode']['allowed'])
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);cfg=root/'serverDZ.cfg'
+   for mode in (0,1,2):
+    cfg.write_text('hostname = "Demo";\n'+'disable3rdPerson = 1; // old setting\n'+'disable3rdPerson = 0;\n',encoding='utf-8')
+    spec={'game_id':'dayz','environment_id':'dayz.stable','configuration_root':str(root),'catalog_server_settings':dayz,'server_settings_values':{'perspective_mode':mode}}
+    from server_settings_surface import _field_id,materialize_dynamic_values
+    legacy_id=_field_id('serverDZ.cfg','semicolon','disable3rdPerson#0')
+    with self.assertRaises(PermissionError):
+     normalize_dynamic_values(spec,{legacy_id:True})
+    self.assertEqual(['serverDZ.cfg'],materialize_server_settings(spec))
+    result=cfg.read_text(encoding='utf-8')
+    self.assertIn(f'thirdPersonView = {mode};',result)
+    self.assertNotIn('disable3rdPerson',result)
+    self.assertEqual(1,result.count('thirdPersonView'))
+    self.assertIn('hostname = "Demo";',result)
+    materialize_server_settings(spec)
+    self.assertEqual(result,cfg.read_text(encoding='utf-8'))
+    obsolete=dict(spec);obsolete['server_settings_dynamic_values']={legacy_id:mode!=0}
+    self.assertEqual([],materialize_dynamic_values(obsolete))
+    self.assertEqual(result,cfg.read_text(encoding='utf-8'))
 
  def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
   with tempfile.TemporaryDirectory() as td:
