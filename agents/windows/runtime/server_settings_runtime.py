@@ -156,6 +156,15 @@ def _set_property(text:str,key:str,value:str,syntax:str)->str:
         return result
     return text.rstrip("\n")+("\n" if text else "")+line+"\n"
 
+def _remove_dayz_legacy_perspective(target:Path)->None:
+    if not target.exists():return
+    original=target.read_text(encoding="utf-8",errors="replace")
+    pattern=re.compile(r"^\\s*disable3rdPerson\\s*=",re.IGNORECASE)
+    lines=original.splitlines(keepends=True)
+    updated="".join(line for line in lines if not pattern.match(line))
+    if updated!=original:_atomic_text(target,updated)
+
+
 def _apply_property(target:Path,binding:dict[str,Any],value:Any)->None:
     text=target.read_text(encoding="utf-8",errors="replace") if target.exists() else ""
     rendered=_binding_value(binding,value);updated=_set_property(text,str(binding["key"]),rendered,str(binding.get("syntax") or "equals"))
@@ -295,6 +304,11 @@ def materialize_server_settings(spec:dict[str,Any])->list[str]:
         binding=field.get("binding") if isinstance(field.get("binding"),dict) else {};kind=str(binding.get("kind") or "")
         if kind in _ARG_KINDS:continue
         target=_target(root,str(binding.get("path") or ""))
+        if key=="perspective_mode" and str(spec.get("game_id") or "").lower() in {"dayz", ""} and str(binding.get("key") or "")=="thirdPersonView":
+            # DayZ 1.30: thirdPersonView replaces the legacy toggle; avoid ambiguous precedence.
+            mode=_coerce(key,field,value)
+            if mode not in (0,1,2):raise ValueError("invalid DayZ perspective mode")
+            _remove_dayz_legacy_perspective(target)
         if kind=="property":_apply_property(target,binding,value)
         elif kind=="json":_apply_json(target,binding,value)
         elif kind=="xml_property":_apply_xml(target,binding,value)
