@@ -73,6 +73,23 @@ class UniversalContentUpdateRollbackTest(unittest.TestCase):
   self.assertEqual(self.repo.get('inst','c')['desired_state'],'installed')
   self.assertEqual(self.repo.agent_state_for_instance('inst')['b']['status'],'rolled_back')
 
+ def test_deleting_superseded_serverpack_child_is_rejected_without_runtime_restart(self):
+  for marker in ('serverpack_v1','serverpack_child_v1'):
+   with self.subTest(marker=marker):
+    command={'instance_id':'inst','content_id':'mb-old','target':'mods/mb-old',
+             'desired_state':'absent','artifact':{marker:True}}
+    with patch.object(content_client,'_owned',side_effect=AssertionError('must not inspect runtime')),patch.object(content_client,'_activate_target',side_effect=AssertionError('must not stop or delete')):
+     with self.assertRaisesRegex(content_client.ContentActivationError,'verified runtime migration'):
+      content_client._remove({'agent_id':'agent'},command)
+ def test_generic_content_removal_preserves_normal_reversible_activation(self):
+  command={'instance_id':'inst','content_id':'ordinary','target':'mods/ordinary',
+           'desired_state':'absent','artifact':{'provider':'modrinth'}}
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'content/mods/ordinary'
+   with patch.object(content_client,'_owned',return_value=({},root)),patch.object(content_client,'_activate_target') as activate:
+    self.assertEqual(content_client._remove({'agent_id':'agent'},command),str(target))
+    activate.assert_called_once_with({'agent_id':'agent'},'inst',target,None)
+
  def test_rollback_revision_can_reuse_restored_target_but_rescans_it(self):
   with tempfile.TemporaryDirectory() as td:
    managed=Path(td)/'managed';managed.mkdir();(managed/'old.jar').write_bytes(b'old');previous={'status':'rolled_back','installed_version':'1','managed_path':str(managed),'provider':'modrinth','package_id':'project:old','target':'mods/mod-one','game_id':'minecraft'};command={'desired_state':'installed','version':'1','provider':'modrinth','target':'mods/mod-one','game_id':'minecraft','artifact':{'package_id':'project:old'}}
