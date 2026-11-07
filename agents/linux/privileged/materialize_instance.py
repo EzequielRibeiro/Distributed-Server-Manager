@@ -21,6 +21,7 @@ if str(RUNTIME_DIR) not in sys.path:
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
 from content_activation_runtime import materialize_content_activation
+from minecraft_committed_content_guard import refuse_content_sync_during_serverpack_transaction
 from minecraft_rcon_secret import materialize_password as materialize_minecraft_rcon_password
 from palworld_admin_secret import materialize_admin_password
 from server_settings_runtime import materialize_server_settings
@@ -665,6 +666,9 @@ def _sync_private_minecraft_content(spec: dict[str, Any], config: dict[str, Any]
     if (control_stat.st_uid != control_user.pw_uid
             or stat.S_IMODE(control_stat.st_mode) != 0o700):
         raise RuntimeError("Minecraft control directory must be private to the Agent")
+    # Keep the previously committed Server Pack immutable until its journal
+    # has been durably finalized/archived. This check runs before content writes.
+    refuse_content_sync_during_serverpack_transaction(state_raw)
     files = materialize_content_activation(spec)
     for filename in ("content-activation-files.json", "content-activation-overrides.json"):
         manifest = control / filename
