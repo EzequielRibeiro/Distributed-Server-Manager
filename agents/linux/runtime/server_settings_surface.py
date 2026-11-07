@@ -538,6 +538,8 @@ def materialize_dynamic_values(spec:dict[str,Any])->list[str]:
  if not values:return []
  surface=observed_surface(spec);by_id={f['id']:f for f in surface['fields'] if not f.get('logical_id') and f.get('path')!='@launcher'};root=_root(spec);written=[]
  for fid,value in values.items():
+  # Stored legacy flag is removed during DayZ 1.30 migration; skip its old field ID.
+  if "perspective_mode" in (spec.get("server_settings_values") or {}) and str(fid)==_field_id("serverDZ.cfg","semicolon","disable3rdPerson#0"):continue
   field=by_id.get(str(fid))
   if field is None:raise PermissionError("dynamic server setting no longer exists")
   if str(field.get("key") or "").lower()=="disable3rdperson" and "perspective_mode" in (spec.get("server_settings_values") or {}):continue # Legacy saved value is superseded by the structured setting.
