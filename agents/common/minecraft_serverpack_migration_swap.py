@@ -109,6 +109,13 @@ def _atomic(paths:dict[str,Path],payload:dict[str,Any])->None:
     if temp.exists():
         raise MinecraftServerPackMigrationSwapError("orphan migration journal temporary file requires recovery")
     temp.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+    # The privileged materializer runs as root, but the provisioning executor
+    # reads the journal as the unprivileged owner of the instance control area.
+    # Keep 0600 confidentiality while assigning the same ownership as .dsm.
+    # Never grant broad world/group read permissions to migration metadata.
+    control_stat=paths["control"].stat()
+    if os.geteuid()==0:
+        os.chown(temp,control_stat.st_uid,control_stat.st_gid)
     os.chmod(temp,0o600)
     fd=os.open(str(temp),os.O_RDONLY)
     try:os.fsync(fd)
