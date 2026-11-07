@@ -109,6 +109,44 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             self.assertIn("\nInaccessiblePaths=-" + str(install / "nasdara") + "\n", unit)
             self.assertIn("-BEpath=", unit)
 
+    def test_v13_content_activation_survives_profile_v14_migration(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "serverfiles"
+            install.mkdir()
+            spec = self._build_dayz_spec(install)
+            legacy = dict(spec, profile_version=13)
+            legacy.pop("inaccessible_content_paths", None)
+            legacy.pop("content_base_arguments", None)
+            legacy.pop("content_base_bind_paths", None)
+            base_args = list(legacy["arguments"])
+            base_binds = [dict(item) for item in legacy["bind_paths"]]
+            content_mod = "-mod=@dsm-test-map;@dsm-test-workshop"
+            content_key = {"source": str(install.parent / "keys"), "target": str(install / "keys")}
+            legacy.update({
+                "arguments": [*base_args, content_mod],
+                "bind_paths": [*base_binds, content_key],
+                "content_base_arguments": base_args,
+                "content_base_bind_paths": base_binds,
+                "content_dayz_mod_aliases": ["test-map", "test-workshop"],
+                "content_dayz_keyring": content_key["source"],
+                "content_dayz_key_sources": [{"id": "workshop"}],
+                "content_dayz_community_missions": [{"id": "hardcore.namalsk"}],
+                "dayz_content_enabled": True,
+            })
+            with patch.object(game_runtime.instance_runtime, "STATE_DIR", install.parent / "agent-state-migrate"):
+                migrated, changed = game_runtime.migrate_runtime_spec({"agent_id": "agent-one"}, legacy)
+            self.assertTrue(changed)
+            self.assertEqual(migrated["profile_version"], 14)
+            self.assertEqual(migrated["arguments"].count(content_mod), 1)
+            self.assertEqual(migrated["arguments"].count("-adminlog"), 1)
+            self.assertTrue(any(value.startswith("-BEpath=") for value in migrated["arguments"]))
+            self.assertEqual(migrated["bind_paths"][-1], content_key)
+            self.assertEqual(migrated["content_dayz_mod_aliases"], legacy["content_dayz_mod_aliases"])
+            self.assertEqual(migrated["content_dayz_community_missions"], legacy["content_dayz_community_missions"])
+            self.assertEqual(migrated["content_dayz_key_sources"], legacy["content_dayz_key_sources"])
+            self.assertEqual(migrated["content_base_arguments"][-1], "-adminlog")
+            self.assertEqual(len(migrated["inaccessible_content_paths"]), 1)
+
     def test_generic_runtime_without_declared_status_does_not_accept_255(self):
         spec = {
             "instance_id": "instance-one",
