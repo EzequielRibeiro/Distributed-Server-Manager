@@ -458,6 +458,21 @@ class CustomerContentWorkspaceService:
    if str(marker.get("parent_content_id") or "").strip() and ctype!="modpack":continue
    content_id=str(item.get("content_id") or "").strip()
    if content_id:candidates.append(content_id)
+  # All-or-nothing safety preflight: do not remove standalone content first
+  # if this operation would eventually encounter an unsupported Server Pack.
+  protected=[]
+  for item in rows:
+   if str(item.get("content_id") or "") not in candidates:continue
+   artifact=item.get("artifact") if isinstance(item.get("artifact"),Mapping) else {}
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
+   activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
+   if artifact.get("serverpack_v1") is True or (str(item.get("content_type") or "")=="modpack" and str(activation.get("mode") or "")=="bundle-parent-preserve-config"):
+    protected.append(str(item["content_id"]))
+  if protected:
+   return {"kind":"MinecraftCleanContentPreparation","instance_id":str(instance_id),"removed":[],
+           "failed":[{"content_id":cid,"error":"Server Pack removal requires committed transactional evidence"} for cid in protected],
+           "completed":False,
+           "preserved":["instance","world","ports","resource_profile","backups","permissions"]}
   removed=[];failed=[]
   for content_id in candidates:
    try:self.mutate(user,instance_id,content_id,"remove",{});removed.append(content_id)
@@ -482,7 +497,12 @@ class CustomerContentWorkspaceService:
   if parent_content_id and ctype!="modpack":raise PermissionError("bundle child content must be changed through its parent modpack")
   if ctype=="modpack":
    (self._enforce_type_policy if action=="remove" else self._enforce_policy)(current,policy)
-   if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
+   if action=="remove":
+    artifact=current.get("artifact") if isinstance(current.get("artifact"),Mapping) else {}
+    activation=(current.get("metadata") or {}).get("activation") if isinstance(current.get("metadata"),Mapping) else {}
+    if artifact.get("serverpack_v1") is True or (isinstance(activation,Mapping) and str(activation.get("mode") or "")=="bundle-parent-preserve-config"):
+     raise PermissionError("Server Pack removal requires committed transactional evidence")
+    return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
    if action=="disable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="disabled",requested_by=actor)
    if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=actor)
    if action=="rollback":

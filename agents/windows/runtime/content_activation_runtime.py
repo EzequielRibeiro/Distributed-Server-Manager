@@ -35,7 +35,7 @@ except ModuleNotFoundError as exc:
  materialize_palworld_settings=_palworld_module.materialize_palworld_settings
  project_palworld_activation=_palworld_module.project_palworld_activation
 try:
- from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
+ from content_activation_minecraft import MinecraftContentActivationError,assert_no_unverified_bundle_removal,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
  if exc.name != "content_activation_minecraft":raise
  import importlib.util
@@ -44,6 +44,7 @@ except ModuleNotFoundError as exc:
  if _minecraft_spec is None or _minecraft_spec.loader is None:raise
  _minecraft_module=importlib.util.module_from_spec(_minecraft_spec);_minecraft_spec.loader.exec_module(_minecraft_module)
  MinecraftContentActivationError=_minecraft_module.MinecraftContentActivationError
+ assert_no_unverified_bundle_removal=_minecraft_module.assert_no_unverified_bundle_removal
  materialize_minecraft_files=_minecraft_module.materialize_minecraft_files
  materialize_minecraft_overrides=_minecraft_module.materialize_minecraft_overrides
  project_minecraft_bundle_overrides=_minecraft_module.project_minecraft_bundle_overrides
@@ -126,6 +127,8 @@ def _configuration_root(spec:dict[str,Any])->Path:
  return Path(str(raw)).resolve()
 
 def materialize_content_activation(spec:dict[str,Any])->list[str]:
+ try:assert_no_unverified_bundle_removal(spec)
+ except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  props=spec.get("content_configuration_properties") if isinstance(spec.get("content_configuration_properties"),list) else []
  root=_configuration_root(spec);written=[]
  for item in props:
