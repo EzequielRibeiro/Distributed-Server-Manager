@@ -50,8 +50,8 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             install.mkdir()
             spec = self._build_dayz_spec(install)
 
-        self.assertEqual(spec["profile_version"], 14)
-        self.assertEqual(spec["inaccessible_content_paths"], [str(install / "nasdara")])
+        self.assertEqual(spec["profile_version"], 15)
+        self.assertEqual(spec["inaccessible_content_paths"], [])
         self.assertTrue(any(arg.startswith("-BEpath=") for arg in spec["arguments"]))
         self.assertEqual(spec["arguments"].count("-adminlog"), 1)
         self.assertEqual(spec["success_exit_statuses"], [255])
@@ -82,14 +82,14 @@ class DayZSystemdShutdownTest(unittest.TestCase):
                 )
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 14)
+        self.assertEqual(migrated["profile_version"], 15)
         self.assertEqual(migrated["profile_migrated_from_version"], 6)
         self.assertEqual(migrated["success_exit_statuses"], [255])
         self.assertEqual(migrated["stop_signal"], "SIGINT")
         self.assertIn("\nSuccessExitStatus=255\n", render_unit(migrated))
         self.assertIn("\nKillSignal=SIGINT\n", render_unit(migrated))
 
-    def test_existing_dayz_v13_migrates_to_v14_and_masks_unused_dlc(self):
+    def test_existing_dayz_v13_migrates_to_v15_and_keeps_installed_dlc_visible(self):
         with tempfile.TemporaryDirectory() as temp:
             install = Path(temp) / "serverfiles"
             install.mkdir()
@@ -101,13 +101,31 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             with patch.object(game_runtime.instance_runtime, "STATE_DIR", install.parent / "agent-state-migrate"):
                 migrated, changed = game_runtime.migrate_runtime_spec({"agent_id": "agent-one"}, legacy)
             self.assertTrue(changed)
-            self.assertEqual(migrated["profile_version"], 14)
+            self.assertEqual(migrated["profile_version"], 15)
             self.assertEqual(migrated["profile_migrated_from_version"], 13)
-            self.assertEqual(migrated["inaccessible_content_paths"], [str(install / "nasdara")])
+            self.assertEqual(migrated["inaccessible_content_paths"], [])
             self.assertEqual(migrated["arguments"].count("-adminlog"), 1)
             unit = render_unit(migrated)
-            self.assertIn("\nInaccessiblePaths=-" + str(install / "nasdara") + "\n", unit)
+            self.assertNotIn("\nInaccessiblePaths=", unit)
             self.assertIn("-BEpath=", unit)
+
+    def test_existing_v14_migrates_to_v15_and_removes_stale_dlc_masks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "serverfiles"
+            install.mkdir()
+            current = self._build_dayz_spec(install)
+            legacy = dict(current)
+            legacy["profile_version"] = 14
+            legacy["inaccessible_content_paths"] = [str(install / "nasdara")]
+            legacy["profile_context"] = dict(legacy.get("profile_context") or {}, mission="hardcore.namalsk")
+            with patch.object(game_runtime.instance_runtime, "STATE_DIR", install.parent / "agent-state-migrate"):
+                migrated, changed = game_runtime.migrate_runtime_spec({"agent_id": "agent-one"}, legacy)
+            self.assertTrue(changed)
+            self.assertEqual(migrated["profile_version"], 15)
+            self.assertEqual(migrated["profile_migrated_from_version"], 14)
+            self.assertEqual(migrated["inaccessible_content_paths"], [])
+            self.assertNotIn("InaccessiblePaths=", render_unit(migrated))
+            self.assertEqual(migrated["arguments"].count("-adminlog"), 1)
 
     def test_v13_content_activation_survives_profile_v14_migration(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -136,7 +154,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             with patch.object(game_runtime.instance_runtime, "STATE_DIR", install.parent / "agent-state-migrate"):
                 migrated, changed = game_runtime.migrate_runtime_spec({"agent_id": "agent-one"}, legacy)
             self.assertTrue(changed)
-            self.assertEqual(migrated["profile_version"], 14)
+            self.assertEqual(migrated["profile_version"], 15)
             self.assertEqual(migrated["arguments"].count(content_mod), 1)
             self.assertEqual(migrated["arguments"].count("-adminlog"), 1)
             self.assertTrue(any(value.startswith("-BEpath=") for value in migrated["arguments"]))
@@ -145,7 +163,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             self.assertEqual(migrated["content_dayz_community_missions"], legacy["content_dayz_community_missions"])
             self.assertEqual(migrated["content_dayz_key_sources"], legacy["content_dayz_key_sources"])
             self.assertEqual(migrated["content_base_arguments"][-1], "-adminlog")
-            self.assertEqual(len(migrated["inaccessible_content_paths"]), 1)
+            self.assertEqual(migrated["inaccessible_content_paths"], [])
 
     def test_generic_runtime_without_declared_status_does_not_accept_255(self):
         spec = {
