@@ -94,8 +94,11 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
    self.assertIn(f'id="{chart_id}"',html)
   telemetry_js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
   self.assertIn('overview.runtime?.state||inst.status||"unknown"',telemetry_js)
-  self.assertIn('$("start").disabled=!can("instance.start")||!!pr||!startable||busy',telemetry_js)
-  self.assertIn('$("stop").disabled=!can("instance.stop")||!!pr||!running||busy',telemetry_js)
+  self.assertIn('$("start").disabled=!can("instance.start")||provisionBlocksControls||!startable||busy',telemetry_js)
+  self.assertIn('$("stop").disabled=!can("instance.stop")||provisionBlocksControls||!running||busy',telemetry_js)
+  self.assertIn('historicalFailedWhileRunning=running&&String(inst.game_id||"").toLowerCase()==="minecraft"&&provisionStatus==="failed"',telemetry_js)
+  self.assertIn('&&!historicalFailedWhileRunning)retryActions.classList.remove("hidden")',telemetry_js)
+  self.assertIn('última tentativa de atualização falhou e permanece no histórico',telemetry_js)
   for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window',"Sem amostras de latência","Sem dados",'return"< 1 ms"','t.latency_ms!=null?fmtMs(t.latency_ms)'):
    self.assertIn(marker,telemetry_js)
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
