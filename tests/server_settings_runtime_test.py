@@ -122,7 +122,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     current=game_runtime.build_runtime_spec(config,instance,context);self.assertEqual(14,current['profile_version'])
     old=dict(current);old['profile_version']=8;old['server_settings_values']={'server_name':'Migrated DayZ','max_players':32}
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
-   self.assertTrue(changed);self.assertEqual(14,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players','join_password','admin_password'},set(migrated['catalog_server_settings']['fields']))
+   self.assertTrue(changed);self.assertEqual(14,migrated['profile_version']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values']);self.assertEqual({'server_name','max_players','join_password','admin_password','perspective_mode'},set(migrated['catalog_server_settings']['fields']))
    cfg=Path(migrated['configuration_root'])/'serverDZ.cfg';cfg.parent.mkdir(parents=True,exist_ok=True);cfg.write_text('hostname = "Old"; // comment\nhostname = "Duplicate";\nmaxPlayers = 60; // comment\nmaxPlayers = 20;\n',encoding='utf-8');materialize_server_settings(migrated);text=cfg.read_text();self.assertEqual(1,text.count('hostname ='));self.assertEqual(1,text.count('maxPlayers ='));self.assertIn('hostname = "Migrated DayZ";',text);self.assertIn('maxPlayers = 32;',text)
 
  def test_dayz_profile_migration_preserves_settings_when_profile_context_predates_settings(self):
