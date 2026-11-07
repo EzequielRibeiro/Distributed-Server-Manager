@@ -50,7 +50,7 @@ class DayZSystemdShutdownTest(unittest.TestCase):
             install.mkdir()
             spec = self._build_dayz_spec(install)
 
-        self.assertEqual(spec["profile_version"], 13)
+        self.assertEqual(spec["profile_version"], 14)
         self.assertEqual(spec["inaccessible_content_paths"], [str(install / "nasdara")])
         self.assertTrue(any(arg.startswith("-BEpath=") for arg in spec["arguments"]))
         self.assertEqual(spec["arguments"].count("-adminlog"), 1)
@@ -82,12 +82,32 @@ class DayZSystemdShutdownTest(unittest.TestCase):
                 )
 
         self.assertTrue(changed)
-        self.assertEqual(migrated["profile_version"], 13)
+        self.assertEqual(migrated["profile_version"], 14)
         self.assertEqual(migrated["profile_migrated_from_version"], 6)
         self.assertEqual(migrated["success_exit_statuses"], [255])
         self.assertEqual(migrated["stop_signal"], "SIGINT")
         self.assertIn("\nSuccessExitStatus=255\n", render_unit(migrated))
         self.assertIn("\nKillSignal=SIGINT\n", render_unit(migrated))
+
+    def test_existing_dayz_v13_migrates_to_v14_and_masks_unused_dlc(self):
+        with tempfile.TemporaryDirectory() as temp:
+            install = Path(temp) / "serverfiles"
+            install.mkdir()
+            current = self._build_dayz_spec(install)
+            legacy = dict(current)
+            legacy["profile_version"] = 13
+            legacy.pop("inaccessible_content_paths", None)
+            legacy["profile_context"] = dict(legacy.get("profile_context") or {}, mission="hardcore.namalsk")
+            with patch.object(game_runtime.instance_runtime, "STATE_DIR", install.parent / "agent-state-migrate"):
+                migrated, changed = game_runtime.migrate_runtime_spec({"agent_id": "agent-one"}, legacy)
+            self.assertTrue(changed)
+            self.assertEqual(migrated["profile_version"], 14)
+            self.assertEqual(migrated["profile_migrated_from_version"], 13)
+            self.assertEqual(migrated["inaccessible_content_paths"], [str(install / "nasdara")])
+            self.assertEqual(migrated["arguments"].count("-adminlog"), 1)
+            unit = render_unit(migrated)
+            self.assertIn("\nInaccessiblePaths=-" + str(install / "nasdara") + "\n", unit)
+            self.assertIn("-BEpath=", unit)
 
     def test_generic_runtime_without_declared_status_does_not_accept_255(self):
         spec = {
