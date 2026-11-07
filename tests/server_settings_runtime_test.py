@@ -155,6 +155,14 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     self.assertEqual(1,result.count('disable3rdPerson'))
     materialize_server_settings(spec)
     self.assertEqual(result,cfg.read_text(encoding='utf-8'))
+    from server_settings_surface import _field_id
+    legacy_id=_field_id('serverDZ.cfg','semicolon','disable3rdPerson#0')
+    with self.assertRaises(PermissionError):
+     normalize_dynamic_values(spec,{legacy_id:mode==0})
+    obsolete=dict(spec);obsolete['server_settings_dynamic_values']={legacy_id:mode!=0}
+    from server_settings_surface import materialize_dynamic_values
+    self.assertEqual([],materialize_dynamic_values(obsolete))
+    self.assertEqual(result,cfg.read_text(encoding='utf-8'))
 
  def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
   with tempfile.TemporaryDirectory() as td:
