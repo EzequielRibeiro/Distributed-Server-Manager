@@ -36,6 +36,29 @@ class SwapTest(unittest.TestCase):
   runtime(base/"runtime.migration-stage","26.1.2.109",b"NEW")
   return base
 
+ def test_privileged_swap_journal_inherits_private_control_owner(self):
+  import os
+  import stat
+  with tempfile.TemporaryDirectory() as name:
+   root=self.make(Path(name))
+   expected=(root/".dsm")
+   expected.mkdir()
+   control=expected.stat()
+   original_chown=os.chown
+   called=[]
+   def observed_chown(path,uid,gid):
+    called.append((Path(path),uid,gid))
+    return original_chown(path,uid,gid)
+   with patch.object(module.os,"geteuid",return_value=0), patch.object(module.os,"chown",side_effect=observed_chown):
+    module.prepare(root,migration_plan_sha256="b"*64,target_loader_version="26.1.2.109",backup=BACKUP)
+    module.switch(root)
+   journal=expected/"minecraft-serverpack-migration.json"
+   self.assertEqual(journal.stat().st_uid,control.st_uid)
+   self.assertEqual(journal.stat().st_gid,control.st_gid)
+   self.assertEqual(stat.S_IMODE(journal.stat().st_mode),0o600)
+   self.assertEqual(len(called),3)
+   self.assertTrue(all(uid==control.st_uid and gid==control.st_gid for _,uid,gid in called))
+
  def test_success_swap_requires_readiness_and_retains_rollback(self):
   with tempfile.TemporaryDirectory() as name:
    root=self.make(Path(name))
