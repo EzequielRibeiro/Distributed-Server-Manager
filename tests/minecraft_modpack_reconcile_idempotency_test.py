@@ -241,7 +241,7 @@ class MinecraftModpackReconcileIdempotencyTest(unittest.TestCase):
                     empty = dict(spec, content_bundle_overrides=[])
                     with self.assertRaisesRegex(
                         module.MinecraftContentActivationError,
-                        "requires verified explicit authorization",
+                        "requires committed transactional evidence",
                     ):
                         module.materialize_minecraft_overrides(empty)
                     self.assertEqual(target.read_text(), "locally-modified=true\n")
@@ -269,14 +269,17 @@ class MinecraftModpackReconcileIdempotencyTest(unittest.TestCase):
                     disabled["content_activation_checksum"] = checksum("projection-off")
                     disabled["content_bundle_overrides"] = []
                     disabled["content_bundle_removal_verified"] = True
-
-                    self.assertEqual(
-                        module.materialize_minecraft_overrides(disabled), []
-                    )
-                    self.assertFalse(
+                    # A boolean alone cannot authorize deletion of a
+                    # committed Server Pack or its local modifications.
+                    with self.assertRaisesRegex(
+                        module.MinecraftContentActivationError,
+                        "requires committed transactional evidence",
+                    ):
+                        module.materialize_minecraft_overrides(disabled)
+                    self.assertTrue(
                         (runtime / "config" / "mutable.toml").exists()
                     )
-                    self.assertFalse(
+                    self.assertTrue(
                         (runtime / "config" / "removed.toml").exists()
                     )
                 finally:

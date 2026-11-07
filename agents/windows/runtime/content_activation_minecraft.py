@@ -648,6 +648,26 @@ def _bundle_source(runtime_root: Path, item: dict[str, Any]) -> Path:
     return source
 
 
+def assert_no_unverified_bundle_removal(spec: dict[str, Any]) -> None:
+    """Fail before *any* native JAR or config writes on an empty bundle snapshot.
+
+    A RuntimeSpec boolean is not evidence of an authorized Server Pack removal.
+    The removal transaction does not yet issue trusted proof, so the safe
+    behavior is to retain all native content until such a transaction exists.
+    """
+    if not _minecraft_managed_contract(spec):
+        return
+    if spec.get("content_bundle_overrides") not in (None, []):
+        return
+    if not spec.get("instance_state_root"):
+        return
+    manifest = _override_manifest_path(spec)
+    if _read_override_manifest(manifest):
+        raise MinecraftContentActivationError(
+            "Minecraft Server Pack removal requires committed transactional evidence"
+        )
+
+
 def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
     if not _minecraft_managed_contract(spec):
         return []
@@ -703,13 +723,12 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
                 desired_hashes[relative] = _file_sha256(candidate)
     manifest = _override_manifest_path(spec)
     previous = _read_override_manifest(manifest)
-    if not items and previous and spec.get("content_bundle_removal_verified") is not True:
-        # A missing bundle in a reconciled snapshot is not evidence of an
-        # authorized removal. An already committed Server Pack may remain
-        # installed while Controller publication or projection is incomplete.
-        # Fail closed before deleting runtime config or changing ownership.
+    if not items and previous:
+        # Never infer removal authorization from an empty projection, including
+        # an unverified boolean supplied in a RuntimeSpec. Only a separately
+        # attested, transactional removal may clear a committed Server Pack.
         raise MinecraftContentActivationError(
-            "Minecraft Server Pack removal requires verified explicit authorization"
+            "Minecraft Server Pack removal requires committed transactional evidence"
         )
     seed_checksum = _bundle_seed_checksum(items[0], desired_hashes) if items else ""
     previous_seed_checksum = _read_override_seed_checksum(manifest)

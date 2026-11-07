@@ -279,11 +279,73 @@ class MinecraftActivationTest(unittest.TestCase):
             target=runtime/"config"/"pack.toml";self.assertEqual(target.read_text(),"layer=server\n")
             (managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server-v2\n",encoding="utf-8")
             updated=module.project_runtime_spec(projected,{"checksum":"bundle-v2","entries":[entry]});module.materialize_content_activation(updated);self.assertEqual(target.read_text(),"layer=server-v2\n")
-            disabled=module.project_runtime_spec(updated,{"checksum":"bundle-off","entries":[]});disabled["content_bundle_removal_verified"]=True;self.assertEqual(module.materialize_content_activation(disabled),[]);self.assertFalse(target.exists())
+            disabled=module.project_runtime_spec(updated,{"checksum":"bundle-off","entries":[]});disabled["content_bundle_removal_verified"]=True
+            with self.assertRaisesRegex(module.ContentRuntimeActivationError,"requires committed transactional evidence"):module.materialize_content_activation(disabled)
+            self.assertTrue(target.exists())
             restored=module.project_runtime_spec(disabled,{"checksum":"bundle-on","entries":[entry]});module.materialize_content_activation(restored);self.assertEqual(target.read_text(),"layer=server-v2\n")
             target.write_text("customer-edit\n",encoding="utf-8");(managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server-v3\n",encoding="utf-8")
             with self.assertRaises(module.ContentRuntimeActivationError):module.materialize_content_activation(module.project_runtime_spec(restored,{"checksum":"bundle-v3","entries":[entry]}))
             self.assertEqual(target.read_text(),"customer-edit\n")
+
+    def test_empty_serverpack_projection_fails_before_removing_native_jars(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                module = self._runtime_module(platform)
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    runtime = root / "runtime"
+                    state = root / "state"
+                    source = runtime / "content" / "modpacks" / "pack"
+                    child = runtime / "content" / "mods" / "child"
+                    (source / "server-overrides" / "config").mkdir(parents=True)
+                    child.mkdir(parents=True)
+                    state.mkdir()
+                    (source / "server-overrides" / "config" / "pack.toml").write_text("managed=true\\n")
+                    (child / "real-mod.jar").write_bytes(b"verified-test-mod")
+                    spec = {
+                        "instance_id": "serverpack-guard",
+                        "game_id": "minecraft",
+                        "environment_id": "minecraft.java.neoforge",
+                        "working_directory": str(runtime),
+                        "instance_state_root": str(state),
+                        "arguments": [],
+                        "content_projection": _policy("mod"),
+                    }
+                    parent = {
+                        "content_id": "pack",
+                        "game_id": "minecraft",
+                        "content_type": "modpack",
+                        "managed_path": str(source),
+                        "activation": {"adapter": "minecraft-java", "mode": "bundle-parent",
+                                       "identifier": "server-overrides"},
+                    }
+                    mod = {
+                        "content_id": "child",
+                        "game_id": "minecraft",
+                        "content_type": "mod",
+                        "provider": "local",
+                        "artifact_filename": "real-mod.jar",
+                        "managed_path": str(child),
+                        "activation": {"adapter": "minecraft-java"},
+                    }
+                    enabled = module.project_runtime_spec(
+                        spec, {"checksum": "enable", "entries": [parent, mod]}
+                    )
+                    module.materialize_content_activation(enabled)
+                    native = runtime / "mods" / "real-mod.jar"
+                    original = native.read_bytes()
+                    disabled = module.project_runtime_spec(
+                        enabled, {"checksum": "disable", "entries": []}
+                    )
+                    disabled["content_bundle_removal_verified"] = True
+                    with self.assertRaisesRegex(
+                        module.ContentRuntimeActivationError,
+                        "requires committed transactional evidence",
+                    ):
+                        module.materialize_content_activation(disabled)
+                    self.assertEqual(native.read_bytes(), original)
+                    self.assertEqual((runtime / "config" / "pack.toml").read_text(),
+                                     "managed=true\\n")
 
     def test_modpack_overrides_linux(self):
         self._modpack_override_round_trip("linux")
