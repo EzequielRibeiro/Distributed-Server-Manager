@@ -209,6 +209,37 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     instance = dict(hydrated_record)
     instance["desired_state"] = str(record.get("desired_state") or "stopped")
     rebuilt = build_runtime_spec(config, instance, context)
+    # Profile upgrades must preserve already-activated DayZ Workshop content.
+    # The profile rebuilds base flags and mounts, but activated mods and their
+    # keyring are an independent projection owned by content activation.
+    if str(record.get("game_id") or "").lower() == "dayz" and stored_version < 14:
+        old_base_args = record.get("content_base_arguments")
+        if isinstance(old_base_args, list):
+            old_args = record.get("arguments") or []
+            if not isinstance(old_args, list) or old_args[:len(old_base_args)] != old_base_args:
+                raise RuntimeError("DayZ activated arguments cannot be safely migrated")
+            projected_args = old_args[len(old_base_args):]
+            rebuilt["content_base_arguments"] = list(rebuilt.get("arguments") or [])
+            rebuilt["arguments"] = [*rebuilt["content_base_arguments"], *projected_args]
+        old_base_binds = record.get("content_base_bind_paths")
+        if isinstance(old_base_binds, list):
+            old_binds = record.get("bind_paths") or []
+            if not isinstance(old_binds, list) or old_binds[:len(old_base_binds)] != old_base_binds:
+                raise RuntimeError("DayZ activated mounts cannot be safely migrated")
+            projected_binds = old_binds[len(old_base_binds):]
+            rebuilt["content_base_bind_paths"] = [dict(item) for item in (rebuilt.get("bind_paths") or [])]
+            existing_targets = {item.get("target") for item in rebuilt["content_base_bind_paths"]}
+            for binding in projected_binds:
+                if binding.get("target") in existing_targets:
+                    raise RuntimeError("DayZ activated mount conflicts with rebuilt runtime")
+                existing_targets.add(binding.get("target"))
+            rebuilt["bind_paths"] = [*rebuilt["content_base_bind_paths"], *[dict(item) for item in projected_binds]]
+        for key, value in record.items():
+            if key.startswith("content_") and key not in ("content_base_arguments", "content_base_bind_paths"):
+                rebuilt[key] = value
+        for key in ("dayz_content_enabled", "dayz_required_content_ids"):
+            if key in record:
+                rebuilt[key] = record[key]
     persisted_server_settings = record.get("catalog_server_settings")
     if (
         isinstance(persisted_server_settings, dict)
