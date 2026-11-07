@@ -52,6 +52,24 @@ class AuthenticatedServerPackOfferTests(unittest.TestCase):
   self.lookup.assert_called_once()
   self.assertEqual(self.lookup.call_args.kwargs["authenticated_agent_id"],"trusted-agent")
 
+ def test_report_delivery_uses_authenticated_identity(self):
+  payload={"serverpack_report_delivery":{"instance_id":"mc005","reports":[]}}
+  with patch("agent_remote_http.dispatch_serverpack_report_delivery",
+             return_value={"status":"disabled"}) as deliver:
+   status,result=self.post({"agent_id":"fake-agent",**payload})
+  self.assertEqual(status,200)
+  self.assertEqual(result["serverpack_report_delivery"]["status"],"disabled")
+  deliver.assert_called_once()
+  self.assertEqual(deliver.call_args.kwargs["authenticated_agent_id"],"trusted-agent")
+
+ def test_report_delivery_failure_isolated_from_heartbeat(self):
+  with patch("agent_remote_http.dispatch_serverpack_report_delivery",
+             side_effect=RuntimeError("database unavailable")):
+   status,result=self.post({"serverpack_report_delivery":{"instance_id":"mc005"}})
+  self.assertEqual(status,200)
+  self.assertEqual(result["health_status"],"online")
+  self.assertEqual(result["serverpack_report_delivery"]["status"],"unavailable")
+
  def test_receipt_query_failure_does_not_break_heartbeat(self):
   self.lookup.side_effect=RuntimeError("database unavailable")
   status,result=self.post({"serverpack_recovery_probe":{"instance_id":"mc005"}})
