@@ -279,7 +279,7 @@ class MinecraftActivationTest(unittest.TestCase):
             target=runtime/"config"/"pack.toml";self.assertEqual(target.read_text(),"layer=server\n")
             (managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server-v2\n",encoding="utf-8")
             updated=module.project_runtime_spec(projected,{"checksum":"bundle-v2","entries":[entry]});module.materialize_content_activation(updated);self.assertEqual(target.read_text(),"layer=server-v2\n")
-            disabled=module.project_runtime_spec(updated,{"checksum":"bundle-off","entries":[]});self.assertEqual(module.materialize_content_activation(disabled),[]);self.assertFalse(target.exists())
+            disabled=module.project_runtime_spec(updated,{"checksum":"bundle-off","entries":[]});disabled["content_bundle_removal_verified"]=True;self.assertEqual(module.materialize_content_activation(disabled),[]);self.assertFalse(target.exists())
             restored=module.project_runtime_spec(disabled,{"checksum":"bundle-on","entries":[entry]});module.materialize_content_activation(restored);self.assertEqual(target.read_text(),"layer=server-v2\n")
             target.write_text("customer-edit\n",encoding="utf-8");(managed / "server-overrides" / "config" / "pack.toml").write_text("layer=server-v3\n",encoding="utf-8")
             with self.assertRaises(module.ContentRuntimeActivationError):module.materialize_content_activation(module.project_runtime_spec(restored,{"checksum":"bundle-v3","entries":[entry]}))
