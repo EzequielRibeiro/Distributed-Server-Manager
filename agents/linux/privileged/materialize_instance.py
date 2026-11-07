@@ -21,7 +21,6 @@ if str(RUNTIME_DIR) not in sys.path:
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
 from content_activation_runtime import materialize_content_activation
-from minecraft_committed_content_guard import refuse_content_sync_during_serverpack_transaction
 from minecraft_rcon_secret import materialize_password as materialize_minecraft_rcon_password
 from palworld_admin_secret import materialize_admin_password
 from server_settings_runtime import materialize_server_settings
@@ -35,6 +34,8 @@ if not COMMON_DIR.is_dir():
     COMMON_DIR = Path(__file__).resolve().parents[2] / "common"
 if str(COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_DIR))
+
+from minecraft_committed_content_guard import refuse_content_sync_during_serverpack_transaction
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
