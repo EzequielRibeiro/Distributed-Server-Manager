@@ -76,6 +76,40 @@ with tempfile.TemporaryDirectory() as td:
         )
         self.assert_ok(result)
 
+    def test_dayz_keyring_preserves_directory_inode_across_reconciliation(self) -> None:
+        result = _run(
+            "linux",
+            r'''
+import tempfile
+from pathlib import Path
+from content_activation_dayz import materialize_dayz_keyring
+with tempfile.TemporaryDirectory() as td:
+    root=Path(td); state=root/'instance';game=root/'game';source=root/'source.bikey'
+    state.mkdir();game.mkdir();(game/'keys').mkdir();source.write_bytes(b'first-key')
+    spec={'instance_state_root':str(state),'working_directory':str(game),
+          'content_dayz_key_sources':[{'source':str(source),'name':'source.bikey'}]}
+    materialize_dayz_keyring(spec)
+    keyring=state/'.dsm/dayz-keys'
+    directory_ino=keyring.stat().st_ino
+    key_ino=(keyring/'source.bikey').stat().st_ino
+    # A periodic re-materialization must not replace the live bind source.
+    materialize_dayz_keyring(spec)
+    assert keyring.stat().st_ino==directory_ino
+    assert (keyring/'source.bikey').stat().st_ino==key_ino
+    source.write_bytes(b'updated-key')
+    materialize_dayz_keyring(spec)
+    assert keyring.stat().st_ino==directory_ino
+    assert (keyring/'source.bikey').read_bytes()==b'updated-key'
+    source.unlink()
+    second=root/'another.bikey';second.write_bytes(b'other')
+    spec['content_dayz_key_sources']=[{'source':str(second),'name':'another.bikey'}]
+    materialize_dayz_keyring(spec)
+    assert keyring.stat().st_ino==directory_ino
+    assert sorted(x.name for x in keyring.iterdir())==['another.bikey']
+''',
+        )
+        self.assert_ok(result)
+
     def test_linux_fails_closed_on_conflicts_tampering_and_shared_paths(self) -> None:
         result = _run(
             "linux",

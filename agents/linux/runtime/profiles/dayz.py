@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 
 from .base import GameRuntimeProfile, ProfileError, port_bindings, require_absolute, require_port, require_text, require_within
-from dayz_dlc_policy import inaccessible_dlc_paths
+try:
+    from dayz_dlc_policy import inaccessible_dlc_paths
+except ModuleNotFoundError as exc:
+    if exc.name != "dayz_dlc_policy":
+        raise
+    from ..dayz_dlc_policy import inaccessible_dlc_paths
 
 _MISSION = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 _PROFILE_OWNED_ARGUMENTS = ("-config=", "-port=", "-profiles=", "-bepath=")
