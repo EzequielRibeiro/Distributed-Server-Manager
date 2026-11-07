@@ -238,6 +238,18 @@ def execute_minecraft_serverpack_migration(
             }
         except Exception as exc:
             trace.append("failed")
+            # A stale committed journal belongs to an earlier transaction.
+            # Never invoke the rollback hook for this new attempt: the hook
+            # would recover the *old* journal and falsely report rollback
+            # failure. The privileged materializer retains its fail-closed
+            # gate even if this collision races with an early preflight.
+            if (not mutated and isinstance(exc, RuntimeError)
+                    and str(exc) == "Server Pack migration journal already exists"):
+                trace.append("previous_journal_conflict")
+                raise MinecraftServerPackMigrationExecutionError(
+                    "migration transaction stopped: prior Server Pack journal requires finalization",
+                    tuple(trace),
+                ) from exc
             if mutated or stopped:
                 try:
                     callbacks["rollback"](
