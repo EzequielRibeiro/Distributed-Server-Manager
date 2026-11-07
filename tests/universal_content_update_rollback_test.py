@@ -53,6 +53,23 @@ class UniversalContentUpdateRollbackTest(unittest.TestCase):
   v2=_bundle('v2',[_member('b',digest='c'),_member('c')]);self.repo.put_bundle(self.parent('2','c'),v2,[self.child('b','2','c'),self.child('c')],requested_by='test');new_b=self.repo.get('inst','b')
   self.repo.record_agent_state('agent',[{'instance_id':'inst','content_id':'b','desired_revision':new_b['revision'],'applied_revision':old_b['revision'],'desired_checksum':new_b['checksum'],'applied_checksum':old_b['checksum'],'status':'rolled_back','readiness':'rolled_back','installed_version':'1','security_state':'clean','last_error':'bundle readiness failed'}])
   self.assertEqual(self.repo.get('inst','pack')['version'],'1');self.assertEqual(int(self.repo._bundle_row('inst','pack')['revision']),3);self.assertEqual(self.repo.get('inst','a')['desired_state'],'installed');self.assertEqual(self.repo.get('inst','c')['desired_state'],'absent')
+ def test_deleting_superseded_serverpack_child_is_rejected_without_runtime_restart(self):
+  for marker in ('serverpack_v1','serverpack_child_v1'):
+   with self.subTest(marker=marker):
+    command={'instance_id':'inst','content_id':'mb-old','target':'mods/mb-old',
+             'desired_state':'absent','artifact':{marker:True}}
+    with patch.object(content_client,'_owned',side_effect=AssertionError('must not inspect runtime')),patch.object(content_client,'_activate_target',side_effect=AssertionError('must not stop or delete')):
+     with self.assertRaisesRegex(content_client.ContentActivationError,'verified runtime migration'):
+      content_client._remove({'agent_id':'agent'},command)
+ def test_generic_content_removal_preserves_normal_reversible_activation(self):
+  command={'instance_id':'inst','content_id':'ordinary','target':'mods/ordinary',
+           'desired_state':'absent','artifact':{'provider':'modrinth'}}
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);target=root/'content/mods/ordinary'
+   with patch.object(content_client,'_owned',return_value=({},root)),patch.object(content_client,'_activate_target') as activate:
+    self.assertEqual(content_client._remove({'agent_id':'agent'},command),str(target))
+    activate.assert_called_once_with({'agent_id':'agent'},'inst',target,None)
+
  def test_rollback_revision_can_reuse_restored_target_but_rescans_it(self):
   with tempfile.TemporaryDirectory() as td:
    managed=Path(td)/'managed';managed.mkdir();(managed/'old.jar').write_bytes(b'old');previous={'status':'rolled_back','installed_version':'1','managed_path':str(managed),'provider':'modrinth','package_id':'project:old','target':'mods/mod-one','game_id':'minecraft'};command={'desired_state':'installed','version':'1','provider':'modrinth','target':'mods/mod-one','game_id':'minecraft','artifact':{'package_id':'project:old'}}
