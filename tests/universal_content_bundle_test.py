@@ -53,6 +53,16 @@ class ContentBundleRepositoryTest(unittest.TestCase):
   disabled=self.repo.set_bundle_state("inst","pack",desired_state="installed",activation_state="disabled",requested_by="test");self.assertEqual(disabled["assignment"]["activation_state"],"disabled");self.assertTrue(all(row["activation_state"]=="disabled" for row in disabled["children"]))
   enabled=self.repo.set_bundle_state("inst","pack",desired_state="installed",activation_state="enabled",requested_by="test");self.assertTrue(all(row["activation_state"]=="enabled" for row in enabled["children"]))
   removed=self.repo.set_bundle_state("inst","pack",desired_state="absent",activation_state="disabled",requested_by="test");self.assertEqual(removed["assignment"]["desired_state"],"absent");self.assertTrue(all(row["desired_state"]=="absent" for row in removed["children"]))
+ def test_committed_serverpack_cannot_be_marked_absent_without_transaction(self):
+  self.repo.put_bundle(self.parent(),bundle(),[self.child("child-a")],requested_by="test")
+  with self.backend.transaction() as c:
+   c.execute("UPDATE content_bundles SET manifest_kind=? WHERE instance_id=? AND parent_content_id=?",
+             ("serverpack-local-v1","inst","pack"))
+  with self.assertRaisesRegex(Exception,"committed transactional evidence"):
+   self.repo.set_bundle_state("inst","pack",desired_state="absent",activation_state="disabled",requested_by="test")
+  self.assertEqual(self.repo.get("inst","pack")["desired_state"],"installed")
+  self.assertEqual(self.repo.get("inst","child-a")["desired_state"],"installed")
+
  def test_upgrade_10_creates_bundle_tables_for_existing_ledger(self):
   with self.backend.transaction() as c:
    c.execute("DROP TABLE content_bundle_revisions");c.execute("DROP TABLE content_bundles");c.execute("DELETE FROM baseline_upgrades WHERE version>=10")

@@ -149,6 +149,30 @@ class CustomerContentWorkspaceTest(unittest.TestCase):
   service.mutate({"username":"u"},"i1","pack","disable",{});self.assertEqual(service.content.bundle_states[-1][2]["activation_state"],"disabled")
   service.mutate({"username":"u"},"i1","pack","remove",{});self.assertEqual(service.content.bundle_states[-1][2]["desired_state"],"absent")
   with self.assertRaises(PermissionError):service.mutate({"username":"u"},"i1","pack","update",{"version":"2"})
+ def test_committed_serverpack_removal_is_blocked_before_mutation(self):
+  current={**_current(),"content_id":"pack","content_type":"modpack","provider":"local",
+           "artifact":{"provider":"local","serverpack_v1":True},
+           "metadata":{"activation":{"mode":"bundle-parent-preserve-config"}}}
+  service=_service(_policy(),current)
+  with self.assertRaisesRegex(PermissionError,"committed transactional evidence"):
+   service.mutate({"username":"u"},"i1","pack","remove",{})
+  self.assertEqual(service.content.bundle_states,[])
+
+ def test_clean_preparation_does_not_partially_remove_bundles(self):
+  context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.neoforge"}
+  service=_service(_policy(),context=context)
+  service.content.list=lambda **kwargs:[
+   {"content_id":"standalone","content_type":"mod","desired_state":"installed","metadata":{}},
+   {"content_id":"pack","content_type":"modpack","desired_state":"installed",
+    "artifact":{"serverpack_v1":True},"metadata":{}},
+  ]
+  mutations=[]
+  service.mutate=lambda *args:mutations.append(args)
+  result=service.prepare_clean_for_version_change({"username":"u"},"i1")
+  self.assertFalse(result["completed"])
+  self.assertEqual(result["removed"],[])
+  self.assertFalse(mutations)
+
  def test_prepare_clean_preserves_instance_and_skips_bundle_children(self):
   context={"id":"i1","game_id":"minecraft","agent_id":"agent-1","runtime_id":"minecraft.java.youer","game_version":"1.21.1"};service=_service(_policy(),context=context);removed=[]
   service.content.list=lambda **kwargs:[

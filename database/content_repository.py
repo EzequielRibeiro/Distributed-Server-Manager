@@ -312,7 +312,13 @@ class ContentRepository:
    try:
     bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent_content_id)).fetchone()
     if bundle_row is None:raise ContentValidationError("content bundle does not exist")
-    bundle=dict(bundle_row);revision=s.execute(f"SELECT manifest_json FROM content_bundle_revisions WHERE bundle_id={self.ph} AND revision={self.ph}",(bundle["bundle_id"],bundle["revision"])).fetchone()
+    bundle=dict(bundle_row)
+    if desired_state=="absent" and str(bundle.get("manifest_kind") or "")=="serverpack-local-v1":
+     # The customer/API request is intent, not proof of a committed Agent
+     # removal. Until a verified transaction is published, retain every
+     # Server Pack child assignment and its native/config projection.
+     raise ContentValidationError("Server Pack removal requires committed transactional evidence")
+    revision=s.execute(f"SELECT manifest_json FROM content_bundle_revisions WHERE bundle_id={self.ph} AND revision={self.ph}",(bundle["bundle_id"],bundle["revision"])).fetchone()
     if revision is None:raise ContentValidationError("content bundle revision is unavailable")
     try:manifest=json.loads(revision["manifest_json"] or "{}")
     except (TypeError,json.JSONDecodeError) as exc:raise ContentValidationError("stored bundle manifest is invalid") from exc
