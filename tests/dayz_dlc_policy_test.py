@@ -44,5 +44,3 @@ def test_invalid_install_roots_fail_closed():
     for root in ("relative/dayz", "/srv/dayz/../other"):
         with pytest.raises(ValueError):
             inaccessible_dlc_paths(root, "hardcore.namalsk")
-
-[executed on device: horizon-server (6a5de904-6702-4c4d-8ea8-2c686f883437)]
