@@ -709,6 +709,14 @@ def materialize_minecraft_overrides(spec: dict[str, Any]) -> list[str]:
                 desired_hashes[relative] = _file_sha256(candidate)
     manifest = _override_manifest_path(spec)
     previous = _read_override_manifest(manifest)
+    if not items and previous and spec.get("content_bundle_removal_verified") is not True:
+        # A missing bundle in a reconciled snapshot is not evidence of an
+        # authorized removal. An already committed Server Pack may remain
+        # installed while Controller publication or projection is incomplete.
+        # Fail closed before deleting runtime config or changing ownership.
+        raise MinecraftContentActivationError(
+            "Minecraft Server Pack removal requires verified explicit authorization"
+        )
     seed_checksum = _bundle_seed_checksum(items[0], desired_hashes) if items else ""
     previous_seed_checksum = _read_override_seed_checksum(manifest)
     if items and seed_checksum and previous_seed_checksum == seed_checksum:
