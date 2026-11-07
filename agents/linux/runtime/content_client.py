@@ -264,6 +264,14 @@ def _install(config,cmd):
  finally:shutil.rmtree(stage,ignore_errors=True)
  return str(target),expanded_scan or source_scan
 def _remove(config,cmd):
+ artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
+ if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
+  # The native runtime and its mod set are owned by the transactional
+  # Server Pack migration.  A granular Universal Content deletion has no
+  # attestation that the corresponding server runtime was also rolled back.
+  # In particular, old child deletions from a superseded bundle must never
+  # restart the instance or remove a jar installed by a committed migration.
+  raise ContentActivationError("Server Pack removal requires a verified runtime migration")
  _,instance=_owned(config,cmd);iid=str(cmd.get("instance_id") or "");target=_safe_target(instance,str(cmd.get("target") or "assets"));_activate_target(config,iid,target,None);return str(target)
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip();filename=str(artifact.get("filename") or "").strip()
