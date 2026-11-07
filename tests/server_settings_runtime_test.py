@@ -145,7 +145,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);cfg=root/'serverDZ.cfg'
    for mode,legacy in ((0,1),(1,0),(2,0)):
-    cfg.write_text('disable3rdPerson = 1;\\n',encoding='utf-8')
+    cfg.write_text('disable3rdPerson = 1;\n',encoding='utf-8')
     spec={'game_id':'dayz','configuration_root':str(root),'catalog_server_settings':dayz,'server_settings_values':{'perspective_mode':mode}}
     self.assertEqual(['serverDZ.cfg'],materialize_server_settings(spec))
     result=cfg.read_text(encoding='utf-8')
