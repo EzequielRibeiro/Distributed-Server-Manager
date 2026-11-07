@@ -111,5 +111,3 @@ class DayZSystemdShutdownTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-[executed on device: horizon-server (6a5de904-6702-4c4d-8ea8-2c686f883437)]
