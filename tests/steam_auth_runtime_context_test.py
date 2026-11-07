@@ -87,6 +87,7 @@ def test_services_pin_persistent_steam_session_home():
     worker = (ROOT / "dashboard" / "workers" / "worker.sh").read_text(encoding="utf-8")
     assert "Environment=HOME=/opt/dsm" in hybrid
     assert "Environment=CAPIVARA_STEAM_HOME=/opt/dsm" in hybrid
+    assert "Environment=DSM_WORKSHOP_UPDATE_DETECTION_ENABLED=1" in hybrid
     assert "Environment=HOME=/var/lib/capivara-agent" in agent
     assert "Environment=CAPIVARA_STEAM_HOME=/var/lib/capivara-agent" in agent
     assert '"CAPIVARA_STEAM_HOME=${DSM_ROOT}"' in worker
