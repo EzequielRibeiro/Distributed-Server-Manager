@@ -295,6 +295,11 @@ def materialize_server_settings(spec:dict[str,Any])->list[str]:
         binding=field.get("binding") if isinstance(field.get("binding"),dict) else {};kind=str(binding.get("kind") or "")
         if kind in _ARG_KINDS:continue
         target=_target(root,str(binding.get("path") or ""))
+        if key=="perspective_mode" and str(spec.get("game_id") or "").lower() in {"dayz", ""} and str(binding.get("key") or "")=="thirdPersonView":
+            # DayZ 1.30: keep the legacy camera flag synchronized for existing instances.
+            mode=_coerce(key,field,value)
+            if mode not in (0,1,2):raise ValueError("invalid DayZ perspective mode")
+            _apply_property(target,{"key":"disable3rdPerson","syntax":"semicolon"},1 if mode==0 else 0)
         if kind=="property":_apply_property(target,binding,value)
         elif kind=="json":_apply_json(target,binding,value)
         elif kind=="xml_property":_apply_xml(target,binding,value)
