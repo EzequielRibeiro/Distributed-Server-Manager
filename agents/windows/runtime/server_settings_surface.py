@@ -406,6 +406,7 @@ def normalize_dynamic_values(spec:dict[str,Any],values:dict[str,Any],*,player_li
  for fid,raw in values.items():
   field=by_id.get(str(fid))
   if field is None:raise PermissionError("unknown or catalog-owned server setting")
+  if str(field.get("key") or "").lower()=="disable3rdperson" and "perspective_mode" in (spec.get("server_settings_values") or {}):raise PermissionError("DayZ perspective is managed by perspective_mode")
   if not field.get('editable'):raise PermissionError("server setting is managed by Capivara")
   value=_coerce(raw,str(field.get('type') or 'string'))
   if field.get("min") is not None and isinstance(value,(int,float)) and value<float(field["min"]):raise ValueError("server setting below minimum")
@@ -539,6 +540,7 @@ def materialize_dynamic_values(spec:dict[str,Any])->list[str]:
  for fid,value in values.items():
   field=by_id.get(str(fid))
   if field is None:raise PermissionError("dynamic server setting no longer exists")
+  if str(field.get("key") or "").lower()=="disable3rdperson" and "perspective_mode" in (spec.get("server_settings_values") or {}):continue # Legacy saved value is superseded by the structured setting.
   if not field.get('editable'):raise PermissionError("dynamic server setting is managed by Capivara")
   _apply_field(root,field,_coerce(value,str(field.get('type') or 'string')));written.append(str(field['path']))
  return sorted(set(written))

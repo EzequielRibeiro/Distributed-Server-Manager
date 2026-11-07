@@ -202,6 +202,23 @@
         },
         "max_length": 128,
         "description": "Senha administrativa do servidor DayZ. O valor atual nunca é exibido."
+      },
+      "perspective_mode": {
+        "label": "Perspectiva da câmera",
+        "type": "select",
+        "allowed": [
+          0,
+          1,
+          2
+        ],
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "serverDZ.cfg",
+          "key": "thirdPersonView",
+          "syntax": "semicolon"
+        },
+        "description": "DayZ 1.30+: 0 = apenas primeira pessoa, 1 = primeira e terceira pessoa, 2 = terceira pessoa somente em veículos."
       }
     }
   }
