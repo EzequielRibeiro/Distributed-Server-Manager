@@ -262,9 +262,7 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
         raise DayZContentActivationError("DayZ signature keyring has too many entries")
     keyring.parent.mkdir(parents=True, exist_ok=True)
     staging = keyring.with_name(f".{keyring.name}.{os.getpid()}.tmp")
-    backup = keyring.with_name(f".{keyring.name}.{os.getpid()}.old")
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.rmtree(backup, ignore_errors=True)
     staging.mkdir(mode=0o755)
     try:
         written: list[str] = []
@@ -278,14 +276,26 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
         if keyring.exists():
             if _is_link(keyring) or not keyring.is_dir():
                 raise DayZContentActivationError("existing DayZ keyring is unsafe")
-            os.replace(keyring, backup)
-        os.replace(staging, keyring)
-        shutil.rmtree(backup, ignore_errors=True)
+            existing = {path.name: path for path in keyring.iterdir()}
+            if any(_is_link(path) or not path.is_file() for path in existing.values()):
+                raise DayZContentActivationError("existing DayZ keyring contains unsafe entries")
+            # The directory is a live systemd BindPaths source. Replacing its
+            # inode strands running instances on a stale/deleted mount, often
+            # with no usable signature keys. Keep the directory inode stable.
+            wanted = {item["name"]: item["sha256"] for item in combined.values()}
+            for name, digest in wanted.items():
+                target = existing.get(name)
+                if target is None or _sha256(target) != digest:
+                    os.replace(staging / name, keyring / name)
+            for name, target in existing.items():
+                if name not in wanted:
+                    target.unlink()
+            shutil.rmtree(staging)
+        else:
+            os.replace(staging, keyring)
         return written
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
-        if backup.exists() and not keyring.exists():
-            os.replace(backup, keyring)
         raise
 
 
