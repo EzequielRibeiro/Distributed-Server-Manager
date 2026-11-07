@@ -31,6 +31,38 @@ class StaleOnlineTest(unittest.TestCase):
                             "reported_at": datetime.now(timezone.utc).isoformat()},
             agent_health="online", fallback_state="running", fallback_health="healthy")
         self.assertEqual(r["state"], "unknown")
+    def test_fresh_degraded_content_preserves_live_runtime_with_warning(self):
+        r=project_runtime_state(
+            record={"agent_id":"agent-horizon"},
+            runtime_health={"observed_state":"running","health":"degraded",
+                            "reconcile_status":"degraded",
+                            "last_error":"stale Minecraft modpack file was modified locally",
+                            "operation_status":"completed",
+                            "reported_at":datetime.now(timezone.utc).isoformat()},
+            agent_health="online",fallback_state="running",fallback_health="unknown")
+        self.assertEqual(r["state"],"online")
+        self.assertEqual(r["health"],"degraded")
+        self.assertEqual(r["reconcile_status"],"degraded")
+        self.assertEqual(r["source"],"agent-degraded")
+
+    def test_stale_degraded_observation_still_fails_closed(self):
+        r=project_runtime_state(
+            record={"agent_id":"agent-horizon"},
+            runtime_health={"observed_state":"running","health":"degraded",
+                            "reconcile_status":"degraded",
+                            "reported_at":(datetime.now(timezone.utc)-timedelta(minutes=10)).isoformat()},
+            agent_health="online",fallback_state="running",fallback_health="unknown")
+        self.assertEqual(r["state"],"unknown")
+
+    def test_offline_agent_cannot_claim_degraded_running(self):
+        r=project_runtime_state(
+            record={"agent_id":"agent-horizon"},
+            runtime_health={"observed_state":"running","health":"degraded",
+                            "reconcile_status":"degraded",
+                            "reported_at":datetime.now(timezone.utc).isoformat()},
+            agent_health="offline",fallback_state="running",fallback_health="unknown")
+        self.assertEqual(r["state"],"unknown")
+
     def test_future_timestamp_not_online(self):
         r=self.project((datetime.now(timezone.utc)+timedelta(minutes=10)).isoformat())
         self.assertEqual(r["state"],"unknown")
