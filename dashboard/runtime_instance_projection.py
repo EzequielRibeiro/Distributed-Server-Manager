@@ -128,13 +128,17 @@ def project_runtime_state(
     observed_state = canonical_runtime_state(observation.get("observed_state"))
 
     reconcile = _safe_text(observation.get("reconcile_status")).lower()
-    healthy_reconcile = reconcile not in {"retry_wait", "degraded", "failed", "error"}
-    if agent_health in _LIVE_AGENT_HEALTH and observation and healthy_reconcile and _recent_agent_observation(observation):
+    # Degraded reconciliation describes management/content health, not a loss
+    # of the Agent's separately reported live process state. A *fresh* Agent
+    # observation may remain authoritative while health stays degraded.
+    # Retry/failure/error still fail closed, as do stale or offline Agents.
+    usable_reconcile = reconcile not in {"retry_wait", "failed", "error"}
+    if agent_health in _LIVE_AGENT_HEALTH and observation and usable_reconcile and _recent_agent_observation(observation):
         projected_health = _safe_text(observation.get("health")).lower() or "unknown"
         result = {
             "state": observed_state,
             "health": projected_health,
-            "source": "agent",
+            "source": "agent-degraded" if reconcile == "degraded" else "agent",
             "agent_health": agent_health,
             "observed_state": _safe_text(observation.get("observed_state")).lower() or None,
             "desired_state": _safe_text(observation.get("desired_state")).lower() or None,
