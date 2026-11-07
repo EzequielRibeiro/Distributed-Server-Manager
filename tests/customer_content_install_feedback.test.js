@@ -118,6 +118,10 @@ assert(pending({bundle_summary:{child_count:2,reconciliation_statuses:{applied:1
   'a parent applied before children must retain the installation lock');
 assert(!pending({bundle_summary:{child_count:2,reconciliation_statuses:{applied:2}}}));
 assert(failed({bundle_summary:{child_count:2,reconciliation_statuses:{applied:1,failed:1}}}));
+assert(pending({bundle_summary:{child_count:291,removed_child_count:201,pending_removed_count:1,convergence_status:"pending",reconciliation_statuses:{applied:291}}}),"pending removed children must not be hidden by active count");
+assert(!pending({bundle_summary:{child_count:291,removed_child_count:201,pending_removed_count:0,convergence_status:"ready",reconciliation_statuses:{applied:291}}}),"converged bundle must not keep the installation lock");
+assert(failed({bundle_summary:{child_count:291,convergence_status:"failed",reconciliation_statuses:{applied:291}}}),"failed aggregate convergence must be visible");
+
 
 
  

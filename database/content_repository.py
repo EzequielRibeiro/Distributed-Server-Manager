@@ -364,12 +364,49 @@ class ContentRepository:
   severity={"clean":0,"unscanned":1,"scan_failed":2,"suspicious":3,"blocked":4}
   for item in visible:
    if str(item.get("content_type") or "")!="modpack":continue
-   members=children.get(str(item.get("content_id") or ""),[]);security_counts={};status_counts={}
-   for child in members:
-    sec=str(child.get("effective_security_state") or "unscanned");security_counts[sec]=security_counts.get(sec,0)+1;status=str((child.get("reconciliation") or {}).get("status") or "pending");status_counts[status]=status_counts.get(status,0)+1
-   if members:
-    worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
-   item["bundle_summary"]={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
+   members=children.get(str(item.get("content_id") or ""),[])
+   active=[child for child in members if str(child.get("desired_state") or "installed")=="installed"]
+   removed=[child for child in members if str(child.get("desired_state") or "installed")=="absent"]
+   security_counts={};status_counts={}
+   pending_removed=sum(1 for child in removed if not (
+    child["reconciliation"]["aligned"]
+    and child["reconciliation"]["status"]=="applied"
+    and child["reconciliation"]["installed_version"] in (None,"")
+   ))
+   for child in active:
+    sec=str(child.get("effective_security_state") or "unscanned")
+    security_counts[sec]=security_counts.get(sec,0)+1
+    status=str((child.get("reconciliation") or {}).get("status") or "pending")
+    status_counts[status]=status_counts.get(status,0)+1
+   if active:
+    worst=max([str(item.get("effective_security_state") or "unscanned"),
+               *[str(child.get("effective_security_state") or "unscanned") for child in active]],
+              key=lambda value:severity.get(value,2))
+    item["effective_security_state"]=worst
+    item["reconciliation"]["security_state"]=worst
+   declared=(item.get("artifact") or {}).get("serverpack_mod_count")
+   try:expected=int(declared) if declared is not None else len(active)
+   except (TypeError,ValueError):expected=-1
+   failed_states={"failed","error","security_blocked","security_scan_failed"}
+   statuses=[str((child.get("reconciliation") or {}).get("status") or "pending") for child in active]
+   parent_status=str((item.get("reconciliation") or {}).get("status") or "pending")
+   convergence="failed" if any(status in failed_states for status in [parent_status,*statuses]) else "pending"
+   if (convergence!="failed" and parent_status=="applied"
+       and item["reconciliation"]["aligned"]
+       and item["effective_security_state"]=="clean"
+       and expected==len(active) and pending_removed==0
+       and all(child["reconciliation"]["aligned"]
+               and child["reconciliation"]["status"]=="applied"
+               and child["effective_security_state"]=="clean"
+               and child["reconciliation"]["installed_version"]==child["version"]
+               for child in active)):
+    convergence="ready"
+   item["bundle_summary"]={
+    "child_count":len(active),"removed_child_count":len(removed),
+    "pending_removed_count":pending_removed,"expected_child_count":expected,
+    "security_states":security_counts,"reconciliation_statuses":status_counts,
+    "convergence_status":convergence,
+   }
   return visible
  def _revision_for(self,instance_id,content_id,revision):
   current=self.get(instance_id,content_id)
