@@ -69,6 +69,21 @@ _ALLOWED_DB_KEYS = {
 _SAFE_INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 
 
+def _held_content_instance_ids() -> frozenset[str]:
+    """Reversible operator hold for one instance during unsafe content drift.
+
+    Suppress both pending commands and stale Agent reports: old reports can
+    trigger rollback of a separately committed Server Pack revision.
+    """
+    raw = os.environ.get("DSM_CONTENT_HOLD_INSTANCE_IDS", "").strip()
+    if not raw:
+        return frozenset()
+    names = [item.strip() for item in raw.split(",")]
+    if any(not _SAFE_INSTANCE_ID.fullmatch(name) for name in names):
+        raise RuntimeError("invalid content-hold instance identifier")
+    return frozenset(names)
+
+
 def _hybrid_agent_log_path(root: Path) -> Path:
     return root / "runtime" / "hybrid-agent-state" / "agent-runtime.log"
 
@@ -358,7 +373,9 @@ def process_hybrid_instance_reconcile_cycle(root: Path, agent_id: str) -> dict[s
         }
 
     reconciler = _runtime_reconciler_module(root)
-    results = reconciler.reconcile_all(config)
+    held = _held_content_instance_ids()
+    results = (reconciler.reconcile_all(config, skip_instance_ids=held)
+               if held else reconciler.reconcile_all(config))
     if not isinstance(results, list):
         raise RuntimeError("Hybrid runtime reconciler returned an invalid payload")
 
@@ -699,13 +716,16 @@ def process_hybrid_content_cycle(
     previous = client.content_state()
     if not isinstance(previous, list):
         raise RuntimeError("Hybrid content client returned an invalid state payload")
-    previous = [item for item in previous if isinstance(item, dict)]
+    held = _held_content_instance_ids()
+    previous = [item for item in previous if isinstance(item, dict)
+                and str(item.get("instance_id") or "") not in held]
     reported = repository.record_agent_state(agent_id, previous)
 
     commands = repository.desired_for_agent(agent_id)
     if not isinstance(commands, list):
         raise RuntimeError("Hybrid content repository returned an invalid command payload")
-    commands = [item for item in commands if isinstance(item, dict)]
+    commands = [item for item in commands if isinstance(item, dict)
+                and str(item.get("instance_id") or "") not in held]
 
     reports = client.apply_content_commands(config, commands)
     if not isinstance(reports, list):
