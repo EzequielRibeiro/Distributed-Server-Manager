@@ -35,6 +35,7 @@ from privileged_materialization import prepare_minecraft_serverpack_inputs
 from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
 from privileged_materialization import build_minecraft_serverpack_candidate, minecraft_serverpack_swap_phase
 from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
+from minecraft_serverpack_migration_preflight import require_empty_serverpack_slot
 from minecraft_staged_migration_safety import assess_staged_migration
 from minecraft_serverpack_migration_feature import migration_feature_decision
 
@@ -349,6 +350,11 @@ def execute_homologated_migration(
         raise MinecraftServerPackProvisioningHomologationError(
             "homologation instance does not use a private runtime root"
         )
+    # Guard the previous transaction BEFORE stop/backup. The privileged
+    # materializer repeats the artifact check; this early guard avoids
+    # misclassifying a collision with an earlier committed journal as a
+    # rollback failure in the new attempt.
+    require_empty_serverpack_slot(instance_root)
     adapter=resolve_adapter(record)
     current=verify_installed_neoforge(active,migration["from_loader_version"])
     if current.get("loader_version")!=migration["from_loader_version"]:
