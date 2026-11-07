@@ -35,6 +35,8 @@ if not COMMON_DIR.is_dir():
 if str(COMMON_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_DIR))
 
+from minecraft_committed_content_guard import refuse_content_sync_during_serverpack_transaction
+
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
 REQUEST_ROOT = STATE_DIR / "privileged-materialization"
@@ -665,6 +667,9 @@ def _sync_private_minecraft_content(spec: dict[str, Any], config: dict[str, Any]
     if (control_stat.st_uid != control_user.pw_uid
             or stat.S_IMODE(control_stat.st_mode) != 0o700):
         raise RuntimeError("Minecraft control directory must be private to the Agent")
+    # Keep the previously committed Server Pack immutable until its journal
+    # has been durably finalized/archived. This check runs before content writes.
+    refuse_content_sync_during_serverpack_transaction(state_raw)
     files = materialize_content_activation(spec)
     for filename in ("content-activation-files.json", "content-activation-overrides.json"):
         manifest = control / filename
