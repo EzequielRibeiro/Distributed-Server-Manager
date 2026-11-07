@@ -1,4 +1,5 @@
 from __future__ import annotations
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -30,6 +31,33 @@ class GuardTest(unittest.TestCase):
    p=self.r/'.dsm'/name;p.touch()
    with self.assertRaises(MinecraftCommittedContentGuardError):refuse_content_sync_during_serverpack_transaction(self.r)
    p.unlink()
+ def test_completed_archive_checkpoint_allows_sync(self):
+  history=self.r/'.dsm/migration-history'
+  data=b'{"phase":"committed","kind":"CapivaraMinecraftServerPackMigrationSwap"}\\n'
+  digest=hashlib.sha256(data).hexdigest()
+  archived=history/digest[:24];archived.mkdir(parents=True)
+  (archived/'minecraft-serverpack-migration.json').write_bytes(data)
+  (archived/'runtime.migration-rollback').mkdir()
+  checkpoint=self.r/'.dsm/minecraft-serverpack-archive-checkpoint.json'
+  checkpoint.write_text(json.dumps({'schema_version':1,'sha256':digest}))
+  refuse_content_sync_during_serverpack_transaction(self.r)
+  (self.r/'.dsm/minecraft-serverpack-migration.json').write_bytes(data)
+  with self.assertRaises(MinecraftCommittedContentGuardError):
+   refuse_content_sync_during_serverpack_transaction(self.r)
+  (self.r/'.dsm/minecraft-serverpack-migration.json').unlink()
+  (archived/'runtime.migration-rollback').rmdir()
+  with self.assertRaises(MinecraftCommittedContentGuardError):
+   refuse_content_sync_during_serverpack_transaction(self.r)
+ def test_archive_checkpoint_corruption_blocks_sync(self):
+  p=self.r/'.dsm/minecraft-serverpack-archive-checkpoint.json'
+  for content in ('{}','not json',json.dumps({'schema_version':1,'sha256':'z'*64})):
+   p.write_text(content)
+   with self.assertRaises(MinecraftCommittedContentGuardError):
+    refuse_content_sync_during_serverpack_transaction(self.r)
+ def test_archive_checkpoint_temp_blocks_sync(self):
+  p=self.r/'.dsm/.minecraft-serverpack-archive-checkpoint.tmp';p.write_text('pending')
+  with self.assertRaises(MinecraftCommittedContentGuardError):
+   refuse_content_sync_during_serverpack_transaction(self.r)
  def test_symlinks_and_missing_root_block(self):
   p=self.r/'.dsm/minecraft-serverpack-migration.json';p.symlink_to('/nonexistent-journal')
   with self.assertRaises(MinecraftCommittedContentGuardError):refuse_content_sync_during_serverpack_transaction(self.r)
