@@ -227,11 +227,14 @@ def reconcile_instance(config: dict[str, Any], instance_id: str, *, force: bool 
     return result
 
 
-def reconcile_all(config: dict[str, Any], *, force: bool = False) -> list[dict[str, Any]]:
+def reconcile_all(config: dict[str, Any], *, force: bool = False, skip_instance_ids: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for item in instance_runtime.list_instances(config):
         instance_id = str(item.get("instance_id") or "")
         if not instance_id:
+            continue
+        if instance_id in skip_instance_ids:
+            results.append({"instance_id": instance_id, "status": "held", "reason": "operator_content_activation_quiescence"})
             continue
         try:
             results.append(reconcile_instance(config, instance_id, force=force))
