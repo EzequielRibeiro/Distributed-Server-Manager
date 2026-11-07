@@ -159,7 +159,7 @@ def _set_property(text:str,key:str,value:str,syntax:str)->str:
 def _remove_dayz_legacy_perspective(target:Path)->None:
     if not target.exists():return
     original=target.read_text(encoding="utf-8",errors="replace")
-    pattern=re.compile(r"^\\s*disable3rdPerson\\s*=",re.IGNORECASE)
+    pattern=re.compile(r"^\s*disable3rdPerson\s*=",re.IGNORECASE)
     lines=original.splitlines(keepends=True)
     updated="".join(line for line in lines if not pattern.match(line))
     if updated!=original:_atomic_text(target,updated)
