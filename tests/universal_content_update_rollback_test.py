@@ -53,6 +53,26 @@ class UniversalContentUpdateRollbackTest(unittest.TestCase):
   v2=_bundle('v2',[_member('b',digest='c'),_member('c')]);self.repo.put_bundle(self.parent('2','c'),v2,[self.child('b','2','c'),self.child('c')],requested_by='test');new_b=self.repo.get('inst','b')
   self.repo.record_agent_state('agent',[{'instance_id':'inst','content_id':'b','desired_revision':new_b['revision'],'applied_revision':old_b['revision'],'desired_checksum':new_b['checksum'],'applied_checksum':old_b['checksum'],'status':'rolled_back','readiness':'rolled_back','installed_version':'1','security_state':'clean','last_error':'bundle readiness failed'}])
   self.assertEqual(self.repo.get('inst','pack')['version'],'1');self.assertEqual(int(self.repo._bundle_row('inst','pack')['revision']),3);self.assertEqual(self.repo.get('inst','a')['desired_state'],'installed');self.assertEqual(self.repo.get('inst','c')['desired_state'],'absent')
+ def test_serverpack_child_report_never_auto_rolls_back_committed_bundle(self):
+  v1=_bundle('v1',[_member('a'),_member('b')])
+  self.repo.put_bundle(self.parent('1'),v1,[self.child('a'),self.child('b')],requested_by='test')
+  old_b=self.repo.get('inst','b')
+  v2=_bundle('v2',[_member('b',digest='c'),_member('c')])
+  self.repo.put_bundle(self.parent('2','c'),v2,[self.child('b','2','c'),self.child('c')],requested_by='test')
+  new_b=self.repo.get('inst','b')
+  stale={'instance_id':'inst','content_id':'b','desired_revision':new_b['revision'],
+         'applied_revision':old_b['revision'],'desired_checksum':new_b['checksum'],
+         'applied_checksum':old_b['checksum'],'status':'rolled_back',
+         'readiness':'rolled_back','installed_version':'1','security_state':'clean',
+         'last_error':'loader mismatch during independent Server Pack migration'}
+  with patch.object(self.repo,'_bundle_row',return_value={'manifest_kind':'serverpack-local-v1','revision':2}):
+   accepted=self.repo.record_agent_state('agent',[stale])
+  self.assertEqual(accepted,1)
+  self.assertEqual(self.repo.get('inst','pack')['version'],'2')
+  self.assertEqual(self.repo._bundle_row('inst','pack')['revision'],2)
+  self.assertEqual(self.repo.get('inst','c')['desired_state'],'installed')
+  self.assertEqual(self.repo.agent_state_for_instance('inst')['b']['status'],'rolled_back')
+
  def test_rollback_revision_can_reuse_restored_target_but_rescans_it(self):
   with tempfile.TemporaryDirectory() as td:
    managed=Path(td)/'managed';managed.mkdir();(managed/'old.jar').write_bytes(b'old');previous={'status':'rolled_back','installed_version':'1','managed_path':str(managed),'provider':'modrinth','package_id':'project:old','target':'mods/mod-one','game_id':'minecraft'};command={'desired_state':'installed','version':'1','provider':'modrinth','target':'mods/mod-one','game_id':'minecraft','artifact':{'package_id':'project:old'}}

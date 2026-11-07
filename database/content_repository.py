@@ -529,6 +529,14 @@ class ContentRepository:
     if parent:
      key=(item["instance_id"],parent)
      if key in rolled_bundles:continue
+     bundle=self._bundle_row(item["instance_id"],parent)
+     if bundle and str(bundle.get("manifest_kind") or "")=="serverpack-local-v1":
+      # A Server Pack is installed through a separately committed Minecraft
+      # migration. Content reports cannot attest a rollback of that runtime.
+      # Reversing its Controller bundle in response to a child failure
+      # would publish stale mods while the newer game runtime remains live.
+      # Only an explicit, verified Server Pack migration may roll it back.
+      continue
      self.rollback_bundle(item["instance_id"],parent,requested_by="agent:auto-rollback",reason=item["reason"]);rolled_bundles.add(key)
     elif item["applied_revision"]<item["desired_revision"]:self.rollback(item["instance_id"],item["content_id"],item["applied_revision"],requested_by="agent:auto-rollback",reason=item["reason"])
    except (ContentValidationError,ValueError,TypeError):continue
