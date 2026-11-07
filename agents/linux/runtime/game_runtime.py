@@ -212,7 +212,7 @@ def migrate_runtime_spec(config: dict[str, Any], record: dict[str, Any]) -> tupl
     # Profile upgrades must preserve already-activated DayZ Workshop content.
     # The profile rebuilds base flags and mounts, but activated mods and their
     # keyring are an independent projection owned by content activation.
-    if str(record.get("game_id") or "").lower() == "dayz" and stored_version < 14:
+    if str(record.get("game_id") or "").lower() == "dayz" and stored_version < 15:
         old_base_args = record.get("content_base_arguments")
         if isinstance(old_base_args, list):
             old_args = record.get("arguments") or []
