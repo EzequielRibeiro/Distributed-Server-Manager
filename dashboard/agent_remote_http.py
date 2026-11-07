@@ -36,6 +36,7 @@ from instance_provisioning_projection import project_agent_provisioning
 from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
 from minecraft_recovery_event_persistence import persist_recovery_claims
 from minecraft_serverpack_heartbeat_recovery_offer import serverpack_recovery_offer
+from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpack_report_delivery
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -419,6 +420,17 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
                 result["serverpack_recovery_offer"] = {
                     "status": "unavailable",
                     "reason": "receipt_query_unavailable",
+                }
+        if "serverpack_report_delivery" in body:
+            try:
+                result["serverpack_report_delivery"] = dispatch_serverpack_report_delivery(
+                    backend, body["serverpack_report_delivery"],
+                    authenticated_agent_id=agent_id,
+                )
+            except Exception:
+                # Publishing is opt-in and cannot take down ordinary telemetry.
+                result["serverpack_report_delivery"] = {
+                    "status":"unavailable","reason":"publication_unavailable",
                 }
         # Validate bounded recovery claims only after Agent credential authentication.
         # No provisioning mutation or UI suppression until durable proof is implemented.
