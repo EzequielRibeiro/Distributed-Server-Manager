@@ -99,6 +99,23 @@ class TransactionTest(unittest.TestCase):
     ["lock","revalidate","capacity","stop","backup","stage","swap","readiness","commit","unlock"])
    self.assertEqual(locks[0][1],"minecraft_serverpack_migration")
 
+ def test_prior_committed_journal_collision_never_rolls_back_previous_transaction(self):
+  for platform in ("linux", "windows"):
+   with self.subTest(platform=platform):
+    module,events,_,hooks=self._run(platform)
+    def collision(*args):
+     events.append("stage")
+     raise RuntimeError("Server Pack migration journal already exists")
+    hooks["stage"]=collision
+    with self.assertRaisesRegex(module.MinecraftServerPackMigrationExecutionError,
+                                "prior Server Pack journal requires finalization") as ctx:
+     module.execute_minecraft_serverpack_migration(
+      {"agent_id":"agent-test"},VALID["instance_id"],VALID,hooks)
+    self.assertIn("previous_journal_conflict",ctx.exception.trace)
+    self.assertNotIn("rollback",events)
+    self.assertNotIn("swap",events)
+    self.assertLess(events.index("stage"),events.index("unlock"))
+
  def test_failed_post_swap_restart_rolls_back_before_unlock(self):
   module,events,_,hooks=self._run()
   def restart_and_commit(*args):
