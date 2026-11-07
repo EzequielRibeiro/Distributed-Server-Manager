@@ -154,5 +154,3 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   except OSError as exc:raise MaterializerError(str(exc)) from exc
   self._reload();return {"action":"remove","changed":True,"idempotent":False,"state":self.inspect(spec)}
 __all__=["SystemdMaterializer","render_unit","unit_path_for_spec"]
-
-[executed on device: horizon-server (6a5de904-6702-4c4d-8ea8-2c686f883437)]
