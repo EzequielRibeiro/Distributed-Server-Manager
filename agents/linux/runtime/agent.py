@@ -58,6 +58,9 @@ from minecraft_serverpack_finalization_supervisor import FinalizationWorkerSuper
 from runtime_lock import instance_lock
 from minecraft_recovery_heartbeat_collector import collect_recovery_observations
 from minecraft_serverpack_recovery_probe_collector import latest_serverpack_recovery_probe
+from minecraft_serverpack_report_outbox import (
+    read_serverpack_report_delivery, acknowledge_serverpack_report_delivery,
+)
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
@@ -176,6 +179,15 @@ def _inventory(config):
                 payload["serverpack_recovery_probe"] = probe
         except Exception:
             pass
+    if os.environ.get("DSM_SERVERPACK_REPORT_DELIVERY_ENABLED") == "1":
+        # Never generate a report from pending/staged files. The outbox
+        # rechecks committed local activation before each delivery attempt.
+        try:
+            outbound = read_serverpack_report_delivery(STATE_DIR)
+            if outbound is not None:
+                payload["serverpack_report_delivery"] = outbound[0]
+        except Exception:
+            pass
     payload["agent_logs"]=_recent_logs()
     result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("native_restart_result",read_native_restart_result),("dayz_operation_result",read_dayz_operation_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
     for key,reader in result_readers:
@@ -235,7 +247,17 @@ def _flush_command_results(config):
 
 def heartbeat(config):
     base=str(config["controller_url"]).rstrip("/")
-    result=_post(base+"/api/agent/heartbeat",_inventory(config),headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    payload=_inventory(config)
+    result=_post(base+"/api/agent/heartbeat",payload,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    if "serverpack_report_delivery" in payload:
+        try:
+            sent=payload["serverpack_report_delivery"]
+            acknowledge_serverpack_report_delivery(
+                STATE_DIR,str(sent["provisioning_id"])+".json",
+                sent,result.get("serverpack_report_delivery") or {},
+            )
+        except Exception:
+            pass
     ids=result.get("accepted_event_ids")
     if isinstance(ids,list):acknowledge_runtime_events(STATE_DIR,ids)
     commands=result.get("configuration_commands")
