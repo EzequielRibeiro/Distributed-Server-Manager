@@ -139,28 +139,27 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
    self.assertTrue(changed);self.assertEqual(14,migrated['profile_version']);self.assertEqual(declaration('dayz.stable'),migrated['catalog_server_settings']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values'])
 
- def test_dayz_perspective_mode_materializes_both_flags_idempotently(self):
+ def test_dayz_perspective_mode_migrates_to_single_authoritative_flag(self):
   dayz=declaration('dayz.stable')
   self.assertEqual([0,1,2],dayz['fields']['perspective_mode']['allowed'])
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);cfg=root/'serverDZ.cfg'
-   for mode,legacy in ((0,1),(1,0),(2,0)):
-    cfg.write_text('disable3rdPerson = 1;\n',encoding='utf-8')
-    spec={'game_id':'dayz','configuration_root':str(root),'catalog_server_settings':dayz,'server_settings_values':{'perspective_mode':mode}}
+   for mode in (0,1,2):
+    cfg.write_text('hostname = "Demo";\n'+'disable3rdPerson = 1; // old setting\n'+'disable3rdPerson = 0;\n',encoding='utf-8')
+    spec={'game_id':'dayz','environment_id':'dayz.stable','configuration_root':str(root),'catalog_server_settings':dayz,'server_settings_values':{'perspective_mode':mode}}
+    from server_settings_surface import _field_id,materialize_dynamic_values
+    legacy_id=_field_id('serverDZ.cfg','semicolon','disable3rdPerson#0')
+    with self.assertRaises(PermissionError):
+     normalize_dynamic_values(spec,{legacy_id:True})
     self.assertEqual(['serverDZ.cfg'],materialize_server_settings(spec))
     result=cfg.read_text(encoding='utf-8')
     self.assertIn(f'thirdPersonView = {mode};',result)
-    self.assertIn(f'disable3rdPerson = {legacy};',result)
+    self.assertNotIn('disable3rdPerson',result)
     self.assertEqual(1,result.count('thirdPersonView'))
-    self.assertEqual(1,result.count('disable3rdPerson'))
+    self.assertIn('hostname = "Demo";',result)
     materialize_server_settings(spec)
     self.assertEqual(result,cfg.read_text(encoding='utf-8'))
-    from server_settings_surface import _field_id
-    legacy_id=_field_id('serverDZ.cfg','semicolon','disable3rdPerson#0')
-    with self.assertRaises(PermissionError):
-     normalize_dynamic_values(spec,{legacy_id:mode==0})
     obsolete=dict(spec);obsolete['server_settings_dynamic_values']={legacy_id:mode!=0}
-    from server_settings_surface import materialize_dynamic_values
     self.assertEqual([],materialize_dynamic_values(obsolete))
     self.assertEqual(result,cfg.read_text(encoding='utf-8'))
 
