@@ -362,6 +362,11 @@ class MinecraftActivationTest(unittest.TestCase):
                 },
             }
             instance = {"instance_id": "mc1", "agent_id": "agent-1", "environment_id": "minecraft.java.paper", "desired_state": "stopped"}
+            # Linux profile registry loads DayZ helpers that live in the runtime root.
+            # Keep them available under CI with PYTHONPATH=. only.
+            runtime_path = str(ROOT / "agents" / "linux" / "runtime")
+            if runtime_path not in sys.path:
+                sys.path.insert(0, runtime_path)
             from agents.linux.runtime.profiles.minecraft_java import MinecraftJavaRuntimeProfile as LinuxProfile
             from agents.windows.runtime.profiles.minecraft_java import MinecraftJavaRuntimeProfile as WindowsProfile
             self.assertEqual(LinuxProfile().build_runtime_spec(instance, context)["content_projection"], managed)
