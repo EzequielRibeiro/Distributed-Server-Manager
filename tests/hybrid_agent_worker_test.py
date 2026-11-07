@@ -56,6 +56,7 @@ class HybridContentHoldTest(unittest.TestCase):
         repository = Mock()
         repository.desired_for_agent.return_value = desired
         repository.record_agent_state.return_value = 1
+        repository.serverpack_content_fence.return_value = (set(),set())
         with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \
              patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \
              patch.object(worker, "_content_client_module", return_value=client), \

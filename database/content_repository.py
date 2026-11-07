@@ -530,6 +530,57 @@ class ContentRepository:
    s=AlertSession(self.backend,c)
    try:return {(str(r["instance_id"]),str(r["content_id"])):(int(r["desired_revision"] or 0),str(r["desired_checksum"] or ""),str(r["status"] or ""),str(r["security_state"] or "unscanned")) for r in s.execute(f"SELECT * FROM agent_content_state WHERE agent_id={self.ph}",(agent_id,)).fetchall()}
    finally:s.close()
+ def serverpack_content_fence(self,agent_id):
+  """Fence Server Pack ownership from the generic content reconciler.
+
+  Returns (protected assignment keys, instance IDs with active Server Pack
+  provisioning). All SQL is read-only. Malformed legacy bundle metadata
+  fails closed for the whole instance instead of dispatching unsafe commands.
+  """
+  assignments=set();in_flight=set()
+  with self.backend.connect() as c:
+   q=AlertSession(self.backend,c)
+   try:
+    rows=q.execute(f"SELECT b.instance_id,b.parent_content_id,a.content_id,a.metadata_json "
+      f"FROM content_bundles b JOIN content_assignments a ON a.instance_id=b.instance_id "
+      f"WHERE b.manifest_kind='serverpack-local-v1' AND a.agent_id={self.ph}",(agent_id,)).fetchall()
+    grouped={}
+    for row in rows:
+     iid=str(row["instance_id"]);cid=str(row["content_id"]);parent=str(row["parent_content_id"])
+     grouped.setdefault(iid,[]).append((cid,parent,row["metadata_json"]))
+    for iid,members in grouped.items():
+     invalid=False
+     for cid,parent,metadata in members:
+      if cid==parent:
+       assignments.add((iid,cid));continue
+      try:
+       data=json.loads(metadata or "{}")
+       marker=data.get("bundle") if isinstance(data,dict) else None
+       if not isinstance(marker,dict):
+        continue
+       if str(marker.get("parent_content_id") or "")==parent:
+        assignments.add((iid,cid))
+      except (TypeError,ValueError,AttributeError):
+       invalid=True;break
+     if invalid:
+      assignments.update((iid,cid) for cid,_,_ in members)
+    # Before initial publication, a migration may have no bundle row.
+    # Protect the entire instance while that Server Pack job is in flight.
+    jobs=q.execute(f"SELECT instance_id,request_json FROM agent_instance_provisioning "
+      f"WHERE agent_id={self.ph} AND status IN ('queued','delivered','running')",(agent_id,)).fetchall()
+    for job in jobs:
+     try:
+      body=json.loads(job["request_json"] or "{}")
+      cfg=body.get("configuration") if isinstance(body,dict) else None
+      if isinstance(cfg,dict) and isinstance(cfg.get("minecraft_serverpack_pending_bundle"),dict):
+       in_flight.add(str(job["instance_id"]))
+     except (TypeError,ValueError,AttributeError):
+      # A malformed active provisioning request must never permit
+      # content operations to race that same instance.
+      in_flight.add(str(job["instance_id"]))
+   finally:q.close()
+  return assignments,in_flight
+
  def desired_for_agent(self,agent_id):
   applied=self._applied(agent_id);out=[]
   for a in self.list(agent_id=agent_id,limit=2000):
