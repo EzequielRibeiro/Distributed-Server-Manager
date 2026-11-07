@@ -37,13 +37,13 @@ class ControllerInstanceNavigationTest(unittest.TestCase):
         for marker in (
             'href="/controller-instance-base.css"',
             'src="/controller-instance-connection.js"',
-            'src="/controller-instance-runtime-live.js"',
             'src="/controller-instance-backup-transfer.js"',
             'src="/controller-instance-activity.js"',
             'MODO ADMINISTRATIVO',
             'href="/servers.html"',
         ):
             self.assertIn(marker, page)
+        self.assertRegex(page, r'src="/controller-instance-runtime-live\.js(?:\?v=\d+)?"')
         self.assertNotIn('/customer-profile.js', page)
         self.assertNotIn('/customer-instance-delete.js', page)
         for view in ("overview", "console", "startup", "files", "content", "backups", "team", "activity"):
