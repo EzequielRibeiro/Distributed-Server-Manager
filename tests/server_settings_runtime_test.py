@@ -139,6 +139,23 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
    self.assertTrue(changed);self.assertEqual(14,migrated['profile_version']);self.assertEqual(declaration('dayz.stable'),migrated['catalog_server_settings']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values'])
 
+ def test_dayz_perspective_mode_materializes_both_flags_idempotently(self):
+  dayz=declaration('dayz.stable')
+  self.assertEqual([0,1,2],dayz['fields']['perspective_mode']['allowed'])
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);cfg=root/'serverDZ.cfg'
+   for mode,legacy in ((0,1),(1,0),(2,0)):
+    cfg.write_text('disable3rdPerson = 1;\\n',encoding='utf-8')
+    spec={'game_id':'dayz','configuration_root':str(root),'catalog_server_settings':dayz,'server_settings_values':{'perspective_mode':mode}}
+    self.assertEqual(['serverDZ.cfg'],materialize_server_settings(spec))
+    result=cfg.read_text(encoding='utf-8')
+    self.assertIn(f'thirdPersonView = {mode};',result)
+    self.assertIn(f'disable3rdPerson = {legacy};',result)
+    self.assertEqual(1,result.count('thirdPersonView'))
+    self.assertEqual(1,result.count('disable3rdPerson'))
+    materialize_server_settings(spec)
+    self.assertEqual(result,cfg.read_text(encoding='utf-8'))
+
  def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);cfg=root/'serverDZ.cfg'
