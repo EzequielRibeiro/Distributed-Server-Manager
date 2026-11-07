@@ -221,6 +221,35 @@ class MinecraftModpackReconcileIdempotencyTest(unittest.TestCase):
                 finally:
                     temp.cleanup()
 
+    def test_empty_projection_cannot_delete_committed_serverpack_config(self):
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                temp, module, runtime, state, item = self._fixture(platform)
+                try:
+                    spec = {
+                        "game_id": "minecraft",
+                        "environment_id": "minecraft.java.neoforge",
+                        "working_directory": str(runtime),
+                        "instance_state_root": str(state),
+                        "content_bundle_overrides": [item],
+                    }
+                    module.materialize_minecraft_overrides(spec)
+                    manifest_path = state / ".dsm" / "content-activation-overrides.json"
+                    original_manifest = manifest_path.read_bytes()
+                    target = runtime / "config" / "mutable.toml"
+                    target.write_text("locally-modified=true\n")
+                    empty = dict(spec, content_bundle_overrides=[])
+                    with self.assertRaisesRegex(
+                        module.MinecraftContentActivationError,
+                        "requires verified explicit authorization",
+                    ):
+                        module.materialize_minecraft_overrides(empty)
+                    self.assertEqual(target.read_text(), "locally-modified=true\n")
+                    self.assertTrue((runtime / "config" / "removed.toml").exists())
+                    self.assertEqual(manifest_path.read_bytes(), original_manifest)
+                finally:
+                    temp.cleanup()
+
     def test_disable_still_removes_unchanged_owned_targets(self):
         for platform in ("linux", "windows"):
             with self.subTest(platform=platform):
@@ -239,6 +268,7 @@ class MinecraftModpackReconcileIdempotencyTest(unittest.TestCase):
                     disabled = dict(first)
                     disabled["content_activation_checksum"] = checksum("projection-off")
                     disabled["content_bundle_overrides"] = []
+                    disabled["content_bundle_removal_verified"] = True
 
                     self.assertEqual(
                         module.materialize_minecraft_overrides(disabled), []
