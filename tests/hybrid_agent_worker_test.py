@@ -56,9 +56,9 @@ class HybridContentHoldTest(unittest.TestCase):
         repository = Mock()
         repository.desired_for_agent.return_value = desired
         repository.record_agent_state.return_value = 1
-        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \\
-             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \\
-             patch.object(worker, "_content_client_module", return_value=client), \\
+        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \
+             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \
+             patch.object(worker, "_content_client_module", return_value=client), \
              patch.object(worker, "ContentRepository", return_value=repository):
             outcome = worker.process_hybrid_content_cycle(None, Path("/tmp"), "test")
         self.assertEqual(outcome["commands"], 1)
@@ -71,9 +71,9 @@ class HybridContentHoldTest(unittest.TestCase):
         reconciler.reconcile_all.return_value = [
             {"instance_id": "mc005", "status": "held"},
             {"instance_id": "dayz01", "status": "healthy"}]
-        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \\
-             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \\
-             patch.object(worker, "_runtime_reconciler_module", return_value=reconciler), \\
+        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \
+             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \
+             patch.object(worker, "_runtime_reconciler_module", return_value=reconciler), \
              patch.object(worker, "_prepare_hybrid_customer_files_access", return_value=None):
             result = worker.process_hybrid_instance_reconcile_cycle(Path("/tmp"), "test")
         self.assertEqual(result["healthy"], 1)
