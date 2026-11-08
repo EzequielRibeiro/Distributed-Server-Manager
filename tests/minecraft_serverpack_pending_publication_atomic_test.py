@@ -801,6 +801,21 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(summary["health_gate"],"blocked")
         self.assertEqual(summary["health_reason"],"physical_runtime_attestation_not_persisted")
 
+    def test_migration_managed_serverpack_is_never_dispatched_to_legacy_content_installer(self):
+        """Agent content heartbeat must not trigger a second non-atomic JAR install."""
+        self.assertEqual(self.content.desired_for_agent("pr839-isolated-agent"),[])
+        parent_item=self.content.get("pr855-controller-atomic","atm11")
+        child_item=self.content.get("pr855-controller-atomic","mod-a")
+        self.content.record_agent_state("pr839-isolated-agent",[
+            {"instance_id":"pr855-controller-atomic","content_id":item["content_id"],
+             "desired_revision":item["revision"],"desired_checksum":item["checksum"],
+             "applied_revision":None,"applied_checksum":None,
+             "status":"pending","security_state":"unscanned"}
+            for item in (parent_item,child_item)])
+        self.assertEqual(self.content.desired_for_agent("pr839-isolated-agent"),[])
+        self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
+                         ["bundle_summary"]["metadata_convergence"],"pending")
+
     def test_serverpack_applied_revision_and_checksum_must_match_desired(self):
         parent_item=self.content.get("pr855-controller-atomic","atm11")
         child_item=self.content.get("pr855-controller-atomic","mod-a")
