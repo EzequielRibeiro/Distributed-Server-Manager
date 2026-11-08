@@ -741,6 +741,45 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
                          ["bundle_summary"]["physical_attestation"],"verified")
 
+    def test_persisted_physical_proof_invalid_when_current_agent_or_runtime_changes(self):
+        from core.content_bundle import normalize_bundle
+        pending=self.pending()
+        repo,state=self.enqueue(pending,production=True)
+        canonical=normalize_bundle({**pending["bundle"],
+            "instance_id":pending["instance_id"],
+            "parent_content_id":pending["content_id"]})
+        result=self.completed(state,pending)
+        result["minecraft_serverpack_migration"]["physical_manifest"]={
+            "status":"physical_mods_verified",
+            "manifest_sha256":canonical["manifest_sha256"],
+            "mod_count":len(canonical["manifest"]["members"])}
+        self.assertEqual(repo.apply_result("pr839-isolated-agent",result)["status"],"completed")
+        def evidence():
+            return self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]["physical_attestation"]
+        self.assertEqual(evidence(),"verified")
+        for field,changed in (("build_id","26.1.2.94"),
+                              ("game_version","1.21.1"),
+                              ("runtime_id","minecraft.java.fabric")):
+            with self.subTest(field=field):
+                with self.backend.transaction() as connection:
+                    connection.execute(f"UPDATE instances SET {field}=? WHERE id=?",
+                                       (changed,"pr855-controller-atomic"))
+                self.assertEqual(evidence(),"missing")
+                with self.backend.transaction() as connection:
+                    original={"build_id":"26.1.2.109","game_version":"26.1.2",
+                              "runtime_id":"minecraft.java.neoforge"}[field]
+                    connection.execute(f"UPDATE instances SET {field}=? WHERE id=?",
+                                       (original,"pr855-controller-atomic"))
+                self.assertEqual(evidence(),"verified")
+        with self.backend.transaction() as connection:
+            connection.execute("INSERT INTO nodes(id,name,role) VALUES (?,?,?)",
+                               ("replacement-node","Replacement Agent","agent"))
+            connection.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
+                               ("replacement-agent","ctrl","replacement-node","Replacement","active"))
+            connection.execute("UPDATE agent_instance_provisioning SET agent_id=? WHERE provisioning_id=?",
+                               ("replacement-agent",state["provisioning_id"]))
+        self.assertEqual(evidence(),"missing")
+
     def test_serverpack_never_claims_healthy_without_persisted_physical_evidence(self):
         parent_item=self.content.get("pr855-controller-atomic","atm11")
         child_item=self.content.get("pr855-controller-atomic","mod-a")
