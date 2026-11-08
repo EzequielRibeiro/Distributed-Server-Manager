@@ -329,6 +329,28 @@ def execute_homologated_migration(
         raise MinecraftServerPackProvisioningHomologationError(
             "Server Pack migration requires desired_state=running or stopped"
         )
+    # Reject missing or unrelated Controller candidates BEFORE inspecting,
+    # downloading, stopping or staging anything on the Agent. Production may
+    # never fall back to the count-only readiness compatibility path.
+    pending_raw=configuration.get("minecraft_serverpack_pending_bundle")
+    feature=_feature_for_request(request)
+    if feature["production"] and pending_raw is None:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "production Server Pack migration requires a pending bundle manifest")
+    try:
+        pending=validate_pending_bundle_commit(pending_raw) if pending_raw is not None else None
+    except (ValueError,TypeError,KeyError) as exc:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "invalid pending Server Pack manifest") from exc
+    if pending is not None and (
+        pending["instance_id"]!=instance_id
+        or pending["content_id"]!=migration["content_id"]
+        or pending["transfer_id"]!=migration["transfer_id"]
+        or pending["migration_plan_sha256"]!=migration["migration_plan_sha256"]
+        or int(pending["expected_previous_revision"])!=int(migration["previous_bundle_revision"])
+    ):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "pending Server Pack manifest is not bound to migration")
     record=instance_runtime.get_instance(instance_id)
     if not isinstance(record,dict):
         raise MinecraftServerPackProvisioningHomologationError(
@@ -396,19 +418,6 @@ def execute_homologated_migration(
             "homologation target loader installation is not attested"
         )
 
-    # Bind the immutable Controller candidate before any stop/swap. The Agent
-    # independently validates its fingerprint; the commit remains deferred.
-    pending_raw=configuration.get("minecraft_serverpack_pending_bundle")
-    pending=validate_pending_bundle_commit(pending_raw) if pending_raw is not None else None
-    if pending is not None and (
-        pending["instance_id"]!=instance_id
-        or pending["content_id"]!=migration["content_id"]
-        or pending["transfer_id"]!=migration["transfer_id"]
-        or pending["migration_plan_sha256"]!=migration["migration_plan_sha256"]
-        or int(pending["expected_previous_revision"])!=int(migration["previous_bundle_revision"])
-    ):
-        raise MinecraftServerPackProvisioningHomologationError(
-            "pending Server Pack manifest is not bound to migration")
     state:dict[str,Any]={}
     pack_stage=instance_root/".dsm/pr855-serverpack-stage"
     if configuration.get("minecraft_serverpack_homologation_stage") and Path(str(configuration["minecraft_serverpack_homologation_stage"]))!=pack_stage:
