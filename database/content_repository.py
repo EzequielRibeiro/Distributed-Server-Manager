@@ -233,7 +233,7 @@ class ContentRepository:
      s.execute(f"INSERT INTO content_bundle_revisions(bundle_id,revision,parent_assignment_id,provider,provider_project_id,provider_version_id,minecraft_version,loader_id,loader_version,manifest_kind,manifest_sha256,manifest_json,override_roots_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*16)})",(bundle_id,bundle_revision,parent_stored["assignment_id"],bundle["provider"],bundle["provider_project_id"],bundle["provider_version_id"],bundle["minecraft_version"],bundle["loader_id"],bundle["loader_version"],bundle["manifest_kind"],bundle["manifest_sha256"],manifest_json,roots_json,bundle["checksum"],requested_by,now));changed_any=True
    finally:s.close()
   return {"bundle_id":bundle_id,"bundle_revision":bundle_revision,"manifest_sha256":bundle["manifest_sha256"],"assignment":self.get(instance_id,parent["content_id"]),"children":[self.get(instance_id,cid) for cid in sorted(child_ids)],"changed":changed_any}
- def put_bundle_session(self,s,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None,customer_install_guard=False):
+ def put_bundle_session(self,s,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None,customer_install_guard=False,expected_previous_revision:int|None=None):
   """Publish a validated bundle inside the caller's existing DB transaction.
 
   This is used by provisioning completion so the Agent job cannot become
@@ -264,6 +264,8 @@ class ContentRepository:
   now=utc_now();changed_any=False
   if customer_install_guard:self._guard_parallel_modpack_session(s,instance_id,parent["content_id"],dict(inst).get("game_id"))
   existing_bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent["content_id"])).fetchone();existing_bundle=dict(existing_bundle_row) if existing_bundle_row else None
+  if expected_previous_revision is not None and (not existing_bundle or int(existing_bundle["revision"])!=int(expected_previous_revision)):
+   raise ContentValidationError("Server Pack bundle revision changed during publication")
   if (existing_bundle and parent_body["desired_state"]=="installed"
       and str(existing_bundle.get("manifest_kind") or "")=="serverpack-local-v1"):
    revised_metadata=dict(parent_body.get("metadata") or {});revised_activation=dict(revised_metadata.get("activation") or {});revised_activation["mode"]="bundle-parent-preserve-config";revised_metadata["activation"]=revised_activation;parent_body["metadata"]=revised_metadata;parent=self._prepare_assignment(parent_body,inst)
@@ -296,7 +298,10 @@ class ContentRepository:
   roots_json=json.dumps(bundle["override_roots"],separators=(",",":"));manifest_json=json.dumps(bundle["manifest"],sort_keys=True,separators=(",",":"),ensure_ascii=False)
   if bundle_changed:
    values=(instance_id,parent_stored["assignment_id"],parent["content_id"],bundle["provider"],bundle["provider_project_id"],bundle["provider_version_id"],bundle["minecraft_version"],bundle["loader_id"],bundle["loader_version"],bundle["manifest_kind"],bundle["manifest_sha256"],roots_json,bundle_revision,bundle["checksum"],requested_by,now)
-   if existing_bundle:s.execute(f"UPDATE content_bundles SET instance_id={self.ph},parent_assignment_id={self.ph},parent_content_id={self.ph},provider={self.ph},provider_project_id={self.ph},provider_version_id={self.ph},minecraft_version={self.ph},loader_id={self.ph},loader_version={self.ph},manifest_kind={self.ph},manifest_sha256={self.ph},override_roots_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE bundle_id={self.ph}",(*values,bundle_id))
+   if existing_bundle:
+    guard=f" AND revision={self.ph}" if expected_previous_revision is not None else ""
+    update=s.execute(f"UPDATE content_bundles SET instance_id={self.ph},parent_assignment_id={self.ph},parent_content_id={self.ph},provider={self.ph},provider_project_id={self.ph},provider_version_id={self.ph},minecraft_version={self.ph},loader_id={self.ph},loader_version={self.ph},manifest_kind={self.ph},manifest_sha256={self.ph},override_roots_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE bundle_id={self.ph}{guard}",(*values,bundle_id,*([int(expected_previous_revision)] if expected_previous_revision is not None else [])))
+    if expected_previous_revision is not None and int(getattr(update,"rowcount",0) or 0)!=1:raise ContentValidationError("Server Pack bundle revision changed during publication")
    else:s.execute(f"INSERT INTO content_bundles(bundle_id,instance_id,parent_assignment_id,parent_content_id,provider,provider_project_id,provider_version_id,minecraft_version,loader_id,loader_version,manifest_kind,manifest_sha256,override_roots_json,revision,checksum,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*18)})",(bundle_id,*values,now))
    s.execute(f"INSERT INTO content_bundle_revisions(bundle_id,revision,parent_assignment_id,provider,provider_project_id,provider_version_id,minecraft_version,loader_id,loader_version,manifest_kind,manifest_sha256,manifest_json,override_roots_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*16)})",(bundle_id,bundle_revision,parent_stored["assignment_id"],bundle["provider"],bundle["provider_project_id"],bundle["provider_version_id"],bundle["minecraft_version"],bundle["loader_id"],bundle["loader_version"],bundle["manifest_kind"],bundle["manifest_sha256"],manifest_json,roots_json,bundle["checksum"],requested_by,now));changed_any=True
   return {"bundle_id":bundle_id,"bundle_revision":bundle_revision,"manifest_sha256":bundle["manifest_sha256"],"assignment":self._existing_session(s,instance_id,parent["content_id"]),"children":[self._existing_session(s,instance_id,cid) for cid in sorted(child_ids)],"changed":changed_any}
