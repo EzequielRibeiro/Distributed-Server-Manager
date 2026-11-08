@@ -76,6 +76,21 @@ def child(version_id:str,loader_version:str,sha_char:str):
     }
 
 
+def isolated_linux_provisioning_modules():
+    """Load Linux state/client together regardless of prior Windows test imports."""
+    import importlib.util
+    from unittest.mock import patch
+    runtime=ROOT/"agents/linux/runtime"
+    state_spec=importlib.util.spec_from_file_location("pr855_isolated_linux_provisioning_state",runtime/"provisioning_state.py")
+    state=importlib.util.module_from_spec(state_spec)
+    state_spec.loader.exec_module(state)
+    with patch.dict(sys.modules,{"provisioning_state":state}):
+        client_spec=importlib.util.spec_from_file_location("pr855_isolated_linux_provisioning_client",runtime/"provisioning_client.py")
+        client=importlib.util.module_from_spec(client_spec)
+        client_spec.loader.exec_module(client)
+    return state,client
+
+
 class AtomicPendingPublicationTest(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(prefix="pr855-controller-atomic-")
@@ -299,11 +314,7 @@ class AtomicPendingPublicationTest(unittest.TestCase):
     def test_agent_file_to_controller_terminal_ack_and_replay(self):
         """Verify persisted Agent result, SQLite publication and ACK archival."""
         from unittest.mock import patch
-        runtime=ROOT/"agents/linux/runtime"
-        if str(runtime) not in sys.path:
-            sys.path.insert(0,str(runtime))
-        import provisioning_state as agent_state
-        import provisioning_client as client
+        agent_state,client=isolated_linux_provisioning_modules()
         pending=self.pending()
         repo,state=self.enqueue(pending)
         pid=state["provisioning_id"]
@@ -406,11 +417,7 @@ class AtomicPendingPublicationTest(unittest.TestCase):
 
     def test_agent_ack_archive_failure_retains_replayable_terminal_result(self):
         from unittest.mock import patch
-        runtime=ROOT/"agents/linux/runtime"
-        if str(runtime) not in sys.path:
-            sys.path.insert(0,str(runtime))
-        import provisioning_state as agent_state
-        import provisioning_client as client
+        agent_state,client=isolated_linux_provisioning_modules()
         pending=self.pending()
         repo,state=self.enqueue(pending)
         pid=state["provisioning_id"]
