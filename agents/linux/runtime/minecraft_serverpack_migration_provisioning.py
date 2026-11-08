@@ -650,6 +650,11 @@ def execute_homologated_migration(
             "size_bytes":state["baseline_backup"]["size_bytes"],
         },
         "candidate_runtime":state.get("candidate_runtime"),
+        # This attestation is sourced from the Agent's read-only inspection of
+        # the switched runtime; it must accompany Controller publication.
+        **({"physical_manifest":dict(state["physical_manifest_evidence"])}
+           if result.get("status")=="completed" and pending is not None
+           and "physical_manifest_evidence" in state else {}),
     }
 
 
