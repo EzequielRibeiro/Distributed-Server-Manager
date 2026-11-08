@@ -420,7 +420,30 @@ class ContentRepository:
     worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
    summary={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
    if str(item.get("provider") or "")=="local" and bool((item.get("artifact") or {}).get("ephemeral_upload")):
-    summary["manifest_alignment"]=self._serverpack_manifest_alignment(instance_id,item,members)
+    alignment=self._serverpack_manifest_alignment(instance_id,item,members)
+    summary["manifest_alignment"]=alignment
+    # Read-only projection of desired vs Agent reported revisions. An Agent
+    # "applied" verdict alone never proves physical JAR hashes or JVM boot.
+    active=[child for child in members if str(child.get("desired_state") or "installed")=="installed"]
+    removed=[child for child in members if str(child.get("desired_state") or "installed")=="absent"]
+    statuses=[item.get("reconciliation") or {},
+              *((child.get("reconciliation") or {}) for child in members)]
+    failure={"failed","error","rollback_failed","security_blocked","security_scan_failed"}
+    failed=any(str(state.get("status") or "") in failure for state in statuses)
+    failed=failed or any(str(row.get("effective_security_state") or "") in {"blocked","suspicious","scan_failed"} for row in [item,*members])
+    complete=all(state.get("aligned") is True and state.get("status")=="applied" for state in statuses)
+    complete=complete and all(child.get("reconciliation",{}).get("installed_version")==child.get("version") for child in active)
+    complete=complete and all(child.get("reconciliation",{}).get("installed_version") in (None,"") for child in removed)
+    complete=complete and all(row.get("effective_security_state")=="clean" for row in [item,*active])
+    summary["metadata_convergence"]="failed" if alignment=="drift" or failed else ("aligned" if complete else "pending")
+    # No persisted, independently verifiable physical evidence is available in
+    # this read model yet. Never claim the Server Pack is healthy/ready.
+    summary["convergence_status"]="failed" if alignment=="drift" or failed else "pending"
+    summary["health_gate"]="blocked"
+    summary["health_reason"]=("manifest_metadata_drift" if alignment=="drift"
+       else "agent_reconciliation_failed" if failed
+       else "physical_runtime_attestation_not_persisted" if complete
+       else "agent_reconciliation_pending")
    item["bundle_summary"]=summary
   return visible
  def _revision_for(self,instance_id,content_id,revision):
