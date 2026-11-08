@@ -191,6 +191,63 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             },
         }
 
+    def test_real_jar_bytes_bind_agent_attestation_to_controller_publication(self):
+        """Use real temporary bytes, the Agent verifier and the SQLite CAS path."""
+        import hashlib
+        from minecraft_serverpack_physical_manifest import (
+            MinecraftServerPackPhysicalManifestError, attest_serverpack_mods,
+        )
+        from core.content_bundle import normalize_bundle
+
+        runtime=Path(self.temp.name)/"candidate-runtime"
+        mods=runtime/"mods"
+        mods.mkdir(parents=True)
+        jar=mods/"mod-a.jar"
+        payload=b"DSM PR1013 disposable NeoForge mod fixture"
+        sha=hashlib.sha256(payload).hexdigest()
+        jar.write_bytes(b"x"*len(payload))
+
+        target=bundle("new","26.1.2.109","b")
+        artifact={**target["members"][0]["artifact"],
+                  "sha256":sha,"size_bytes":len(payload)}
+        target["members"][0]["artifact"]=artifact
+        member=child("new","26.1.2.109","b")
+        member["artifact"]=dict(artifact)
+        pending=build_pending_bundle_commit(
+            instance_id="pr855-controller-atomic",content_id="atm11",
+            transfer_id="transfer-atomic",migration_plan_sha256="c"*64,
+            expected_previous_revision=1,parent=parent("new"),
+            bundle=target,children=[member],requested_by="customer")
+        repo,state=self.enqueue(pending,production=True)
+        with self.assertRaisesRegex(MinecraftServerPackPhysicalManifestError,
+                                    "SHA-256"):
+            attest_serverpack_mods(runtime,instance_id=pending["instance_id"],
+                                   content_id=pending["content_id"],
+                                   bundle=pending["bundle"])
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],1)
+        jar.write_bytes(payload)
+        proof=attest_serverpack_mods(runtime,instance_id=pending["instance_id"],
+                                    content_id=pending["content_id"],
+                                    bundle=pending["bundle"])
+        canonical=normalize_bundle({**pending["bundle"],
+            "instance_id":pending["instance_id"],
+            "parent_content_id":pending["content_id"]})
+        self.assertEqual(proof["manifest_sha256"],canonical["manifest_sha256"])
+        self.assertEqual(proof["mod_count"],1)
+        result=self.completed(state,pending)
+        result["minecraft_serverpack_migration"]["physical_manifest"]=proof
+        applied=repo.apply_result("pr839-isolated-agent",result)
+        self.assertEqual(applied["status"],"completed")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],2)
+        self.assertEqual(applied["result"]["controller_bundle_publication"]["manifest_sha256"],
+                         proof["manifest_sha256"])
+        replay=repo.apply_result("pr839-isolated-agent",result)
+        self.assertEqual(replay["status"],"completed")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],2)
+
     def test_production_publication_needs_matching_physical_jars_attestation(self):
         from core.content_bundle import normalize_bundle
         pending=self.pending()
