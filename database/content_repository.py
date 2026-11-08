@@ -397,6 +397,55 @@ class ContentRepository:
    if (value.get("parent_content_id")!=content_id or value.get("manifest_sha256")!=sha
        or item.get("artifact")!=declared[cid]):return "drift"
   return "metadata_aligned"
+ def _serverpack_published_physical_proof(self,instance_id,content_id,bundle_revision,manifest_sha256):
+  """Read the proof stored atomically with a terminal Controller publication.
+
+  The terminal Agent result is the existing durable receipt. Do not create a
+  second, separately updated source of truth or expose raw hashes to customers.
+  """
+  with self.backend.connect() as c:
+   session=AlertSession(self.backend,c)
+   try:
+    rows=session.execute(
+     f"SELECT request_json,result_json FROM agent_instance_provisioning "
+     f"WHERE instance_id={self.ph} AND status='completed' "
+     "ORDER BY completed_at DESC,created_at DESC LIMIT 20",
+     (instance_id,),
+    ).fetchall()
+   finally:session.close()
+  for row in rows:
+   try:
+    request=json.loads(row["request_json"] or "{}")
+    result=json.loads(row["result_json"] or "{}")
+    if not isinstance(request,dict) or not isinstance(result,dict):continue
+    configuration=request.get("configuration")
+    if not isinstance(configuration,dict) or configuration.get("minecraft_serverpack_execution_mode")!="production":continue
+    pending=configuration.get("minecraft_serverpack_pending_bundle")
+    publication=result.get("controller_bundle_publication")
+    migration=result.get("minecraft_serverpack_migration")
+    if not all(isinstance(value,dict) for value in (pending,publication,migration)):continue
+    physical=migration.get("physical_manifest")
+    if not isinstance(physical,dict):continue
+    if (publication.get("status")!="published"
+      or publication.get("content_id")!=content_id
+      or int(publication.get("bundle_revision") or 0)!=int(bundle_revision)
+      or publication.get("manifest_sha256")!=manifest_sha256
+      or publication.get("candidate_sha256")!=pending.get("candidate_sha256")
+      or publication.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
+      or pending.get("instance_id")!=instance_id
+      or pending.get("content_id")!=content_id
+      or migration.get("instance_id")!=instance_id
+      or migration.get("content_id")!=content_id
+      or migration.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
+      or physical.get("status")!="physical_mods_verified"
+      or physical.get("manifest_sha256")!=manifest_sha256
+      or type(physical.get("mod_count")) is not int
+      or physical.get("mod_count")!=len(pending.get("bundle",{}).get("members",[]))):
+     continue
+    return "verified"
+   except (TypeError,ValueError,KeyError,AttributeError):
+    continue
+  return "missing"
  def customer_view(self,instance_id,limit=2000):
   items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
   def decorate(item):
@@ -440,13 +489,19 @@ class ContentRepository:
     complete=complete and all(child.get("reconciliation",{}).get("installed_version") in (None,"") for child in removed)
     complete=complete and all(row.get("effective_security_state")=="clean" for row in [item,*active])
     summary["metadata_convergence"]="failed" if alignment=="drift" or failed else ("aligned" if complete else "pending")
-    # No persisted, independently verifiable physical evidence is available in
-    # this read model yet. Never claim the Server Pack is healthy/ready.
+    bundle=self._bundle_row(instance_id,str(item.get("content_id") or "")) if alignment=="metadata_aligned" else None
+    physical=(self._serverpack_published_physical_proof(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"])) if bundle else "missing")
+    summary["physical_attestation"]=physical
+    # Publication attestation proves JAR bytes at migration time, not current
+    # runtime health or a later NeoForge boot. Remain fail-closed.
     summary["convergence_status"]="failed" if alignment=="drift" or failed else "pending"
     summary["health_gate"]="blocked"
     summary["health_reason"]=("manifest_metadata_drift" if alignment=="drift"
        else "agent_reconciliation_failed" if failed
-       else "physical_runtime_attestation_not_persisted" if complete
+       else "physical_runtime_attestation_not_persisted" if complete and physical!="verified"
+       else "runtime_boot_not_attested" if complete and physical=="verified"
        else "agent_reconciliation_pending")
    item["bundle_summary"]=summary
   return visible
