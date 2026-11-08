@@ -704,6 +704,32 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(summary["health_gate"],"blocked")
         self.assertEqual(summary["health_reason"],"physical_runtime_attestation_not_persisted")
 
+    def test_serverpack_applied_revision_and_checksum_must_match_desired(self):
+        parent_item=self.content.get("pr855-controller-atomic","atm11")
+        child_item=self.content.get("pr855-controller-atomic","mod-a")
+        reports=[
+            {"instance_id":"pr855-controller-atomic","content_id":item["content_id"],
+             "desired_revision":item["revision"],"desired_checksum":item["checksum"],
+             "applied_revision":item["revision"],"applied_checksum":item["checksum"],
+             "installed_version":item["version"],"status":"applied", "security_state":"clean"}
+            for item in (parent_item,child_item)
+        ]
+        self.content.record_agent_state("pr839-isolated-agent",reports)
+        self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
+                         ["bundle_summary"]["metadata_convergence"],"aligned")
+        for mismatch in ({"applied_checksum":"f"*64},{"applied_revision":0}):
+            with self.subTest(mismatch=mismatch):
+                self.content.record_agent_state("pr839-isolated-agent",[{
+                    **reports[1],**mismatch}])
+                view=self.content.customer_view("pr855-controller-atomic")[0]
+                self.assertEqual(view["bundle_summary"]["manifest_alignment"],"metadata_aligned")
+                self.assertEqual(view["bundle_summary"]["metadata_convergence"],"pending")
+                self.assertEqual(view["bundle_summary"]["health_gate"],"blocked")
+                self.assertEqual(view["bundle_summary"]["health_reason"],"agent_reconciliation_pending")
+                self.content.record_agent_state("pr839-isolated-agent",[reports[1]])
+                self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
+                                 ["bundle_summary"]["metadata_convergence"],"aligned")
+
     def test_serverpack_manifest_drift_blocks_health_independent_of_agent_reports(self):
         with self.backend.transaction() as connection:
             row=connection.execute(
