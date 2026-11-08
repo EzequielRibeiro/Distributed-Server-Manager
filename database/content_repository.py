@@ -402,8 +402,11 @@ class ContentRepository:
   def decorate(item):
    value=dict(item);state=states.get(str(value.get("content_id") or ""));aligned=bool(state and int(state.get("desired_revision") or 0)==int(value.get("revision") or 0) and str(state.get("desired_checksum") or "")==str(value.get("checksum") or ""))
    effective_security=str(state.get("security_state") or "unscanned") if aligned else str(value.get("security_state") or "unscanned")
+   applied_matches_desired=bool(state and aligned
+    and int(state.get("applied_revision") or 0)==int(value.get("revision") or 0)
+    and str(state.get("applied_checksum") or "")==str(value.get("checksum") or ""))
    value["effective_security_state"]=effective_security
-   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
+   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"applied_matches_desired":applied_matches_desired,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
    return value
   visible=[]
   for item in items:
@@ -431,7 +434,8 @@ class ContentRepository:
     failure={"failed","error","rollback_failed","security_blocked","security_scan_failed"}
     failed=any(str(state.get("status") or "") in failure for state in statuses)
     failed=failed or any(str(row.get("effective_security_state") or "") in {"blocked","suspicious","scan_failed"} for row in [item,*members])
-    complete=all(state.get("aligned") is True and state.get("status")=="applied" for state in statuses)
+    complete=all(state.get("aligned") is True and state.get("applied_matches_desired") is True
+                 and state.get("status")=="applied" for state in statuses)
     complete=complete and all(child.get("reconciliation",{}).get("installed_version")==child.get("version") for child in active)
     complete=complete and all(child.get("reconciliation",{}).get("installed_version") in (None,"") for child in removed)
     complete=complete and all(row.get("effective_security_state")=="clean" for row in [item,*active])
