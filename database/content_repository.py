@@ -353,6 +353,42 @@ class ContentRepository:
     rows=s.execute(f"SELECT * FROM agent_content_state WHERE instance_id={self.ph}",(instance_id,)).fetchall()
     return {str(row["content_id"]):dict(row) for row in rows}
    finally:s.close()
+ def _serverpack_manifest_alignment(self,instance_id,parent,children):
+  """Read-only Controller metadata gate; physical runtime proof is separate."""
+  content_id=str(parent.get("content_id") or "")
+  bundle=self._bundle_row(instance_id,content_id)
+  if not bundle or str(bundle.get("manifest_kind") or "")!="serverpack-local-v1":return "drift"
+  history=self._bundle_revision(instance_id,content_id,int(bundle["revision"]))
+  if str(history.get("manifest_sha256") or "")!=str(bundle.get("manifest_sha256") or ""):
+   return "drift"
+  try:manifest=json.loads(history.get("manifest_json") or "{}")
+  except (TypeError,ValueError):return "drift"
+  members=manifest.get("members") if isinstance(manifest,dict) else None
+  if not isinstance(members,list):return "drift"
+  declared={}
+  for entry in members:
+   if not isinstance(entry,dict):return "drift"
+   cid=str(entry.get("content_id") or "")
+   if not cid or cid in declared:return "drift"
+   declared[cid]=entry.get("artifact")
+  def marker(item):
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),dict) else {}
+   return metadata.get("bundle") if isinstance(metadata.get("bundle"),dict) else {}
+  sha=str(bundle.get("manifest_sha256") or "")
+  if not sha or marker(parent).get("manifest_sha256")!=sha or marker(parent).get("parent_content_id")!=content_id:
+   return "drift"
+  active={}
+  for child in children:
+   if str(child.get("desired_state") or "installed")!="installed":continue
+   cid=str(child.get("content_id") or "")
+   if cid in active:return "drift"
+   active[cid]=child
+  if set(active)!=set(declared):return "drift"
+  for cid,item in active.items():
+   value=marker(item)
+   if (value.get("parent_content_id")!=content_id or value.get("manifest_sha256")!=sha
+       or item.get("artifact")!=declared[cid]):return "drift"
+  return "metadata_aligned"
  def customer_view(self,instance_id,limit=2000):
   items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
   def decorate(item):
@@ -374,7 +410,10 @@ class ContentRepository:
     sec=str(child.get("effective_security_state") or "unscanned");security_counts[sec]=security_counts.get(sec,0)+1;status=str((child.get("reconciliation") or {}).get("status") or "pending");status_counts[status]=status_counts.get(status,0)+1
    if members:
     worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
-   item["bundle_summary"]={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
+   summary={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
+   if str(item.get("provider") or "")=="local" and bool((item.get("artifact") or {}).get("ephemeral_upload")):
+    summary["manifest_alignment"]=self._serverpack_manifest_alignment(instance_id,item,members)
+   item["bundle_summary"]=summary
   return visible
  def _revision_for(self,instance_id,content_id,revision):
   current=self.get(instance_id,content_id)
