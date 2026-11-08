@@ -1,0 +1,67 @@
+name: NeoForge Disposable Real Boot Smoke
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/neoforge-disposable-real-boot.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  real-neoforge-boot:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Verify ephemeral runner and disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTIONS:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test ! -e /opt/dsm/runtime/hybrid-instance-storage
+          df -h .
+          test "$(df -Pk . | awk 'NR==2 {print $4}')" -gt 3145728
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Download and physically hash official NeoForge installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/neoforge-disposable"
+          cd "$RUNNER_TEMP/neoforge-disposable"
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 180 \
+            -o neoforge-installer.jar \
+            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.1.2.109/neoforge-26.1.2.109-installer.jar
+          sha256sum neoforge-installer.jar | tee installer.sha256
+          jar tf neoforge-installer.jar | grep -q 'META-INF/'
+      - name: Install NeoForge in disposable directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/neoforge-disposable"
+          timeout 360 java -jar neoforge-installer.jar --installServer
+          test -f libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt
+          sha256sum libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt
+          printf 'eula=true\n' > eula.txt
+          printf 'server-ip=127.0.0.1\nserver-port=25595\nonline-mode=false\nmax-players=1\nview-distance=2\nsimulation-distance=2\n' > server.properties
+      - name: Boot actual NeoForge, validate Done and physical world, then stop
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/neoforge-disposable"
+          mkfifo console.pipe
+          (sleep 150; echo stop) > console.pipe &
+          writer=$!
+          timeout --signal=INT --kill-after=10 190 \
+            java -Xms512M -Xmx2048M @libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt nogui \
+            < console.pipe > boot.log 2>&1 || rc=$?
+          kill "$writer" 2>/dev/null || true
+          tail -80 boot.log
+          if [ "${rc:-0}" -ne 0 ]; then echo "NeoForge exited nonzero: ${rc}" >&2; exit 1; fi
+          grep -Eiq 'Done \([0-9.]+s\)!' boot.log
+          test -s world/level.dat
+          sha256sum world/level.dat
