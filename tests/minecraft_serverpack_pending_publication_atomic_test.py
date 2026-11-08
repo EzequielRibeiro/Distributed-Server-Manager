@@ -351,6 +351,49 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             self.assertEqual(agent_state.read_json(
                 history/result_file.name)["status"],"completed")
 
+    def test_agent_ack_archive_failure_retains_replayable_terminal_result(self):
+        from unittest.mock import patch
+        runtime=ROOT/"agents/linux/runtime"
+        if str(runtime) not in sys.path:
+            sys.path.insert(0,str(runtime))
+        import provisioning_state as agent_state
+        import provisioning_client as client
+        pending=self.pending()
+        repo,state=self.enqueue(pending)
+        pid=state["provisioning_id"]
+        store=Path(self.temp.name)/"ack-failure"/"instance-provisioning"
+        store.mkdir(parents=True)
+        history=store/"history"
+        with patch.object(agent_state,"PROVISION_ROOT",store), \
+             patch.object(agent_state,"HISTORY_ROOT",history), \
+             patch.object(client,"PROVISION_ROOT",store):
+            _,result_file,_=agent_state.paths(pid)
+            completed=self.completed(state,pending)
+            completed["minecraft_serverpack_migration"].update(
+                trace=["committed","finalized"],
+                finalization={"status":"archived","sha256":"e"*64},
+            )
+            agent_state.write_json(result_file,completed)
+            accepted=repo.apply_result("pr839-isolated-agent",client.read_provisioning_result())
+            self.assertEqual(accepted["status"],"completed")
+            original_replace=agent_state.os.replace
+            def deny_result_archive(source,destination):
+                if Path(source)==result_file:
+                    raise OSError("simulated history disk error")
+                return original_replace(source,destination)
+            with patch.object(agent_state.os,"replace",side_effect=deny_result_archive):
+                with self.assertRaisesRegex(OSError,"simulated history disk error"):
+                    client.clear_provisioning_result(pid)
+            self.assertTrue(result_file.is_file())
+            self.assertEqual(client.read_provisioning_result()["status"],"completed")
+            self.assertEqual(self.content.bundle_history(
+                "pr855-controller-atomic","atm11")[0]["revision"],2)
+            client.clear_provisioning_result(pid)
+            self.assertFalse(result_file.exists())
+            self.assertEqual(agent_state.read_json(history/result_file.name)["status"],"completed")
+            self.assertEqual(self.content.bundle_history(
+                "pr855-controller-atomic","atm11")[0]["revision"],2)
+
     def test_mismatched_agent_fingerprint_rolls_back_job_completion_and_bundle_publication(self):
         pending=self.pending()
         repo,state=self.enqueue(pending)
