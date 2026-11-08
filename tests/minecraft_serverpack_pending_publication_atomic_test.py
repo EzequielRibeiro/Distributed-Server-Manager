@@ -552,6 +552,31 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(self.content.get("pr855-controller-atomic","atm11")["version"],"old")
         self.assertEqual(self.content.get("pr855-controller-atomic","mod-a")["version"],"old")
 
+    def test_serverpack_projection_uses_committed_manifest_not_only_count(self):
+        view=self.content.customer_view("pr855-controller-atomic")
+        self.assertEqual(len(view),1)
+        self.assertEqual(view[0]["bundle_summary"]["manifest_alignment"],"metadata_aligned")
+        child_item=self.content.get("pr855-controller-atomic","mod-a")
+        keys=("instance_id","content_id","content_type","desired_state","activation_state",
+              "activation_order","version","provider","target","artifact","provenance",
+              "metadata","dependencies","conflicts")
+        modified={key:child_item.get(key) for key in keys}
+        metadata=dict(modified["metadata"])
+        metadata["bundle"]={**metadata["bundle"],"manifest_sha256":"f"*64}
+        modified["metadata"]=metadata
+        self.content.put(modified,requested_by="test")
+        view=self.content.customer_view("pr855-controller-atomic")
+        self.assertEqual(view[0]["bundle_summary"]["manifest_alignment"],"drift")
+
+    def test_serverpack_projection_detects_missing_member(self):
+        self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]["manifest_alignment"],"metadata_aligned")
+        original=self.content.list
+        self.content.list=lambda **kw:[row for row in original(**kw) if row["content_id"]!="mod-a"]
+        try:
+            view=self.content.customer_view("pr855-controller-atomic")
+            self.assertEqual(view[0]["bundle_summary"]["manifest_alignment"],"drift")
+        finally:self.content.list=original
+
     def test_stale_bundle_revision_rolls_back_job_completion(self):
         pending=self.pending()
         repo,state=self.enqueue(pending)
