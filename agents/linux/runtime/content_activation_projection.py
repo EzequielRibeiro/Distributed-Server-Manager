@@ -196,6 +196,63 @@ def _ordered_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return ordered
 
 
+def build_activation_snapshot_from_states(
+    instance_id: str, states: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a snapshot from a complete isolated Agent state revision.
+
+    Unlike the filesystem-backed reader, this function fails closed on
+    partial, foreign, duplicated or malformed state instead of silently
+    dropping invalid members. It has no filesystem or service side effects.
+    """
+    iid = _safe_component(instance_id)
+    if not isinstance(states, list) or not states:
+        raise ValueError("an explicit nonempty Agent state batch is required")
+    ids: set[str] = set()
+    entries: list[dict[str, Any]] = []
+    expected_active: set[str] = set()
+    for state in states:
+        if not isinstance(state, dict):
+            raise ValueError("invalid Agent state record")
+        cid = _safe_component(state.get("content_id"))
+        if cid in ids:
+            raise ValueError("duplicate Agent state in isolated snapshot")
+        ids.add(cid)
+        if str(state.get("instance_id") or "") != iid:
+            raise ValueError("foreign Agent state in isolated snapshot")
+        if state.get("status") != "applied":
+            raise ValueError("uncommitted Agent state in isolated snapshot")
+        wanted = str(state.get("desired_state") or "")
+        if wanted not in {"installed", "absent"}:
+            raise ValueError("invalid desired state in isolated snapshot")
+        if wanted == "installed":
+            if (str(state.get("security_state") or "") != "clean"
+                    or str(state.get("applied_security_state") or "") != "clean"):
+                raise ValueError("unverified content in isolated snapshot")
+            if (int(state.get("applied_revision") or 0) <= 0
+                    or state.get("desired_revision") != state.get("applied_revision")
+                    or state.get("desired_checksum") != state.get("applied_checksum")
+                    or not state.get("installed_version") or not state.get("managed_path")):
+                raise ValueError("incomplete installed content in isolated snapshot")
+            if str(state.get("activation_state") or "enabled") == "enabled":
+                expected_active.add(cid)
+        else:
+            if state.get("installed_version") or state.get("managed_path"):
+                raise ValueError("removed content still owns managed source")
+        value = _entry(state)
+        if value is not None:
+            entries.append(value)
+    entries = _ordered_entries(entries)
+    if {str(entry["content_id"]) for entry in entries} != expected_active:
+        raise ValueError("an enabled content member was excluded from the snapshot")
+    identity = {"schema_version": 1, "kind": "CapivaraContentActivationSnapshot",
+                "instance_id": iid, "entries": entries}
+    checksum = hashlib.sha256(json.dumps(
+        identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    return {**identity, "checksum": checksum}
+
+
 def build_activation_snapshot(instance_id: str) -> dict[str, Any]:
     iid = _safe_component(instance_id)
     entries = [entry for state in _load_instance_states(iid) if (entry := _entry(state)) is not None]
