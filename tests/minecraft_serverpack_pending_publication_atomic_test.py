@@ -394,6 +394,38 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             self.assertEqual(self.content.bundle_history(
                 "pr855-controller-atomic","atm11")[0]["revision"],2)
 
+    def test_transient_controller_publication_failure_replays_once(self):
+        """Agent completion survives a simulated Controller publication outage."""
+        from unittest.mock import patch
+        import agent_instance_provisioning_repository as controller
+        pending=self.pending()
+        repo,state=self.enqueue(pending)
+        completed=self.completed(state,pending)
+        completed["minecraft_serverpack_migration"].update(
+            trace=["committed","finalized"],
+            finalization={"status":"archived","sha256":"e"*64},
+        )
+        # Simulate a network/backend error after Agent commitment, but before
+        # the Controller's transactional publication can be acknowledged.
+        with patch.object(controller,"publish_pending_serverpack_bundle",
+                          side_effect=ConnectionError("simulated Controller outage")):
+            with self.assertRaisesRegex(ConnectionError,"simulated Controller outage"):
+                repo.apply_result("pr839-isolated-agent",completed)
+        self.assertEqual(repo.snapshot(state["provisioning_id"])["status"],"queued")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],1)
+        self.assertEqual(self.content.get("pr855-controller-atomic","atm11")["version"],"old")
+        # The identical persisted Agent result can be sent again after the
+        # Controller becomes available; neither commit nor ACK is duplicated.
+        published=repo.apply_result("pr839-isolated-agent",completed)
+        self.assertEqual(published["status"],"completed")
+        self.assertEqual(published["result"]["controller_bundle_publication"]["bundle_revision"],2)
+        replay=repo.apply_result("pr839-isolated-agent",completed)
+        self.assertEqual(replay["status"],"completed")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],2)
+        self.assertEqual(self.content.get("pr855-controller-atomic","atm11")["version"],"new")
+
     def test_mismatched_agent_fingerprint_rolls_back_job_completion_and_bundle_publication(self):
         pending=self.pending()
         repo,state=self.enqueue(pending)
