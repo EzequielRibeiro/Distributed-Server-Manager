@@ -389,6 +389,41 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["build_id"],"26.1.2.95")
 
+    def test_bundle_session_rejects_stale_expected_revision_without_writes(self):
+        from alert_repository import AlertSession
+        with self.assertRaisesRegex(Exception, "revision changed"):
+            with self.backend.transaction() as connection:
+                session=AlertSession(self.backend,connection)
+                self.content.put_bundle_session(
+                    session,parent("new"),bundle("new","26.1.2.109","b"),
+                    [child("new","26.1.2.109","b")],requested_by="customer",
+                    expected_previous_revision=999,
+                )
+        self.assertEqual(self.content.bundle_history("pr855-controller-atomic","atm11")[0]["revision"],1)
+        self.assertEqual(self.content.get("pr855-controller-atomic","atm11")["version"],"old")
+
+    def test_bundle_session_cas_failure_rolls_back_partial_assignments(self):
+        from alert_repository import AlertSession
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        original=AlertSession.execute
+        def emulate_revision_race(session,sql,parameters=()):
+            if sql.startswith("UPDATE content_bundles SET"):
+                return SimpleNamespace(rowcount=0)
+            return original(session,sql,parameters)
+        with patch.object(AlertSession,"execute",emulate_revision_race):
+            with self.assertRaisesRegex(Exception, "revision changed"):
+                with self.backend.transaction() as connection:
+                    session=AlertSession(self.backend,connection)
+                    self.content.put_bundle_session(
+                        session,parent("new"),bundle("new","26.1.2.109","b"),
+                        [child("new","26.1.2.109","b")],requested_by="customer",
+                        expected_previous_revision=1,
+                    )
+        self.assertEqual(self.content.bundle_history("pr855-controller-atomic","atm11")[0]["revision"],1)
+        self.assertEqual(self.content.get("pr855-controller-atomic","atm11")["version"],"old")
+        self.assertEqual(self.content.get("pr855-controller-atomic","mod-a")["version"],"old")
+
     def test_stale_bundle_revision_rolls_back_job_completion(self):
         pending=self.pending()
         repo,state=self.enqueue(pending)
