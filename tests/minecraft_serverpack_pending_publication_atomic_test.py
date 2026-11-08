@@ -683,6 +683,50 @@ class AtomicPendingPublicationTest(unittest.TestCase):
                 "target_loader_version":"26.1.2.109",
                 "minecraft_version":"26.1.2","serverpack_mod_count":1})
 
+    def test_serverpack_never_claims_healthy_without_persisted_physical_evidence(self):
+        parent_item=self.content.get("pr855-controller-atomic","atm11")
+        child_item=self.content.get("pr855-controller-atomic","mod-a")
+        # A normal Agent projection reporting every item applied does not
+        # prove JAR bytes, loader startup or the published runtime revision.
+        self.content.record_agent_state("pr839-isolated-agent",[
+            {"instance_id":"pr855-controller-atomic","content_id":item["content_id"],
+             "desired_revision":item["revision"],"desired_checksum":item["checksum"],
+             "applied_revision":item["revision"],"applied_checksum":item["checksum"],
+             "installed_version":item["version"],"status":"applied",
+             "security_state":"clean"}
+            for item in (parent_item,child_item)
+        ])
+        view=self.content.customer_view("pr855-controller-atomic")[0]
+        summary=view["bundle_summary"]
+        self.assertEqual(summary["manifest_alignment"],"metadata_aligned")
+        self.assertEqual(summary["metadata_convergence"],"aligned")
+        self.assertEqual(summary["convergence_status"],"pending")
+        self.assertEqual(summary["health_gate"],"blocked")
+        self.assertEqual(summary["health_reason"],"physical_runtime_attestation_not_persisted")
+
+    def test_serverpack_manifest_drift_blocks_health_independent_of_agent_reports(self):
+        with self.backend.transaction() as connection:
+            row=connection.execute(
+                "SELECT r.bundle_id,r.revision,r.manifest_json "
+                "FROM content_bundle_revisions r JOIN content_bundles b "
+                "ON r.bundle_id=b.bundle_id AND r.revision=b.revision "
+                "WHERE b.instance_id=? AND b.parent_content_id=?",
+                ("pr855-controller-atomic","atm11"),
+            ).fetchone()
+            import json
+            data=json.loads(row["manifest_json"])
+            data["provider_version_id"]="tampered"
+            connection.execute(
+                "UPDATE content_bundle_revisions SET manifest_json=? "
+                "WHERE bundle_id=? AND revision=?",
+                (json.dumps(data),row["bundle_id"],row["revision"]),
+            )
+        summary=self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]
+        self.assertEqual(summary["manifest_alignment"],"drift")
+        self.assertEqual(summary["convergence_status"],"failed")
+        self.assertEqual(summary["health_gate"],"blocked")
+        self.assertEqual(summary["health_reason"],"manifest_metadata_drift")
+
     def test_serverpack_projection_uses_committed_manifest_not_only_count(self):
         view=self.content.customer_view("pr855-controller-atomic")
         self.assertEqual(len(view),1)
