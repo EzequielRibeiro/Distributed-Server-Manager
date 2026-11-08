@@ -683,6 +683,64 @@ class AtomicPendingPublicationTest(unittest.TestCase):
                 "target_loader_version":"26.1.2.109",
                 "minecraft_version":"26.1.2","serverpack_mod_count":1})
 
+    def test_persisted_physical_agent_receipt_is_bound_to_current_publication(self):
+        import json
+        from core.content_bundle import normalize_bundle
+        pending=self.pending()
+        repo,state=self.enqueue(pending,production=True)
+        canonical=normalize_bundle({**pending["bundle"],
+            "instance_id":pending["instance_id"],
+            "parent_content_id":pending["content_id"]})
+        proof={"status":"physical_mods_verified",
+               "manifest_sha256":canonical["manifest_sha256"],
+               "mod_count":len(canonical["manifest"]["members"])}
+        result=self.completed(state,pending)
+        result["minecraft_serverpack_migration"]["physical_manifest"]=proof
+        completed=repo.apply_result("pr839-isolated-agent",result)
+        self.assertEqual(completed["status"],"completed")
+        parent_item=self.content.get("pr855-controller-atomic","atm11")
+        child_item=self.content.get("pr855-controller-atomic","mod-a")
+        self.content.record_agent_state("pr839-isolated-agent",[
+            {"instance_id":"pr855-controller-atomic","content_id":item["content_id"],
+             "desired_revision":item["revision"],"desired_checksum":item["checksum"],
+             "applied_revision":item["revision"],"applied_checksum":item["checksum"],
+             "installed_version":item["version"],"status":"applied","security_state":"clean"}
+            for item in (parent_item,child_item)
+        ])
+        summary=self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]
+        self.assertEqual(summary["manifest_alignment"],"metadata_aligned")
+        self.assertEqual(summary["metadata_convergence"],"aligned")
+        self.assertEqual(summary["physical_attestation"],"verified")
+        self.assertEqual(summary["health_gate"],"blocked")
+        self.assertEqual(summary["convergence_status"],"pending")
+        self.assertEqual(summary["health_reason"],"runtime_boot_not_attested")
+        with self.backend.connect() as connection:
+            stored=connection.execute(
+                "SELECT result_json FROM agent_instance_provisioning WHERE provisioning_id=?",
+                (state["provisioning_id"],)).fetchone()
+            original=json.loads(stored["result_json"])
+        for mutation in ("physical","publication"):
+            with self.subTest(mutation=mutation):
+                saved=json.loads(json.dumps(original))
+                if mutation=="physical":
+                    saved["minecraft_serverpack_migration"]["physical_manifest"]["manifest_sha256"]="f"*64
+                else:
+                    saved["controller_bundle_publication"]["bundle_revision"]+=1
+                with self.backend.transaction() as connection:
+                    connection.execute(
+                        "UPDATE agent_instance_provisioning SET result_json=? WHERE provisioning_id=?",
+                        (json.dumps(saved),state["provisioning_id"]),)
+                # Commit before reading through another DB connection.
+                view=self.content.customer_view("pr855-controller-atomic")[0]
+                self.assertEqual(view["bundle_summary"]["physical_attestation"],"missing")
+                self.assertEqual(view["bundle_summary"]["health_gate"],"blocked")
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agent_instance_provisioning SET result_json=? WHERE provisioning_id=?",
+                (json.dumps(original),state["provisioning_id"]),)
+        self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
+                         ["bundle_summary"]["physical_attestation"],"verified")
+
     def test_serverpack_never_claims_healthy_without_persisted_physical_evidence(self):
         parent_item=self.content.get("pr855-controller-atomic","atm11")
         child_item=self.content.get("pr855-controller-atomic","mod-a")
