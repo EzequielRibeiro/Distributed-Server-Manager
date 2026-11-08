@@ -144,7 +144,7 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             requested_by="customer",
         )
 
-    def enqueue(self,pending):
+    def enqueue(self,pending,*,production=False):
         repo=AgentInstanceProvisioningRepository(self.backend)
         state=repo.enqueue(
             agent_id="pr839-isolated-agent",
@@ -158,6 +158,7 @@ class AtomicPendingPublicationTest(unittest.TestCase):
                     "instance_id":"pr855-controller-atomic",
                 },
                 "minecraft_serverpack_pending_bundle":pending,
+                **({"minecraft_serverpack_execution_mode":"production"} if production else {}),
             },
             desired_state="stopped",
             requested_by="customer",
@@ -189,6 +190,36 @@ class AtomicPendingPublicationTest(unittest.TestCase):
                 },
             },
         }
+
+    def test_production_publication_needs_matching_physical_jars_attestation(self):
+        from core.content_bundle import normalize_bundle
+        pending=self.pending()
+        canonical=normalize_bundle({**pending["bundle"],
+            "instance_id":pending["instance_id"],
+            "parent_content_id":pending["content_id"]})
+        repo,state=self.enqueue(pending,production=True)
+        proof={"status":"physical_mods_verified",
+               "manifest_sha256":canonical["manifest_sha256"],
+               "mod_count":len(canonical["manifest"]["members"])}
+        for bad in (None,{},
+                    {**proof,"manifest_sha256":"f"*64},
+                    {**proof,"mod_count":0},
+                    {**proof,"status":"unverified"}):
+            with self.subTest(proof=bad):
+                result=self.completed(state,pending)
+                if bad is not None:
+                    result["minecraft_serverpack_migration"]["physical_manifest"]=bad
+                with self.assertRaisesRegex(Exception,"requires matching Agent physical JAR attestation"):
+                    repo.apply_result("pr839-isolated-agent",result)
+                self.assertEqual(repo.snapshot(state["provisioning_id"])["status"],"queued")
+                self.assertEqual(self.content.bundle_history(
+                    "pr855-controller-atomic","atm11")[0]["revision"],1)
+        result=self.completed(state,pending)
+        result["minecraft_serverpack_migration"]["physical_manifest"]=proof
+        completed=repo.apply_result("pr839-isolated-agent",result)
+        self.assertEqual(completed["status"],"completed")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],2)
 
     def test_completed_agent_result_publishes_bundle_in_same_completion_transaction(self):
         pending=self.pending()
