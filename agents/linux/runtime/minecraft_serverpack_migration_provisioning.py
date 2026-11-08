@@ -35,6 +35,8 @@ from privileged_materialization import prepare_minecraft_serverpack_inputs
 from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
 from privileged_materialization import build_minecraft_serverpack_candidate, minecraft_serverpack_swap_phase
 from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
+from minecraft_serverpack_physical_manifest import attest_serverpack_mods
+from minecraft_serverpack_pending_commit import validate_pending_bundle_commit
 from minecraft_serverpack_migration_preflight import require_empty_serverpack_slot
 from minecraft_staged_migration_safety import assess_staged_migration
 from minecraft_serverpack_migration_feature import migration_feature_decision
@@ -394,6 +396,19 @@ def execute_homologated_migration(
             "homologation target loader installation is not attested"
         )
 
+    # Bind the immutable Controller candidate before any stop/swap. The Agent
+    # independently validates its fingerprint; the commit remains deferred.
+    pending_raw=configuration.get("minecraft_serverpack_pending_bundle")
+    pending=validate_pending_bundle_commit(pending_raw) if pending_raw is not None else None
+    if pending is not None and (
+        pending["instance_id"]!=instance_id
+        or pending["content_id"]!=migration["content_id"]
+        or pending["transfer_id"]!=migration["transfer_id"]
+        or pending["migration_plan_sha256"]!=migration["migration_plan_sha256"]
+        or int(pending["expected_previous_revision"])!=int(migration["previous_bundle_revision"])
+    ):
+        raise MinecraftServerPackProvisioningHomologationError(
+            "pending Server Pack manifest is not bound to migration")
     state:dict[str,Any]={}
     pack_stage=instance_root/".dsm/pr855-serverpack-stage"
     if configuration.get("minecraft_serverpack_homologation_stage") and Path(str(configuration["minecraft_serverpack_homologation_stage"]))!=pack_stage:
@@ -480,13 +495,25 @@ def execute_homologated_migration(
             ready=_wait_for_done(active_record,adapter,baseline=baseline)
             if ready:
                 verify_installed_neoforge(active,evidence["target_loader_version"])
-                ready=len(list((active/"mods").glob("*.jar")))==evidence["serverpack_mod_count"]
+                if pending is not None:
+                    attested=attest_serverpack_mods(
+                        active,instance_id=instance_id,content_id=pending["content_id"],
+                        bundle=pending["bundle"],
+                    )
+                    ready=attested["mod_count"]==evidence["serverpack_mod_count"]
+                    state["physical_manifest_evidence"]=attested
+                else:
+                    # Legacy operations without a pending bundle retain the
+                    # historical count gate until their contract is migrated.
+                    ready=len(list((active/"mods").glob("*.jar")))==evidence["serverpack_mod_count"]
             if ready is True:
                 state["readiness_evidence"]={
                     "passed":True,
                     "migration_plan_sha256":evidence["migration_plan_sha256"],
                     "target_loader_version":evidence["target_loader_version"],
                     "serverpack_mod_count":evidence["serverpack_mod_count"],
+                    **({"physical_manifest":state["physical_manifest_evidence"]}
+                       if "physical_manifest_evidence" in state else {}),
                 }
             return bool(ready)
         finally:
