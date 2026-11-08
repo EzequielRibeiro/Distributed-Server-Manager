@@ -358,7 +358,8 @@ class ContentRepository:
   content_id=str(parent.get("content_id") or "")
   bundle=self._bundle_row(instance_id,content_id)
   if not bundle or str(bundle.get("manifest_kind") or "")!="serverpack-local-v1":return "drift"
-  history=self._bundle_revision(instance_id,content_id,int(bundle["revision"]))
+  try:history=self._bundle_revision(instance_id,content_id,int(bundle["revision"]))
+  except (ContentValidationError,TypeError,ValueError):return "drift"
   if str(history.get("manifest_sha256") or "")!=str(bundle.get("manifest_sha256") or ""):
    return "drift"
   try:manifest=json.loads(history.get("manifest_json") or "{}")
