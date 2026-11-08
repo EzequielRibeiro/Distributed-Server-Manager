@@ -1,0 +1,47 @@
+name: Minecraft Server Pack Disposable Systemd E2E
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/minecraft-serverpack-disposable-systemd-e2e.yml'
+      - 'tests/minecraft_serverpack_*'
+      - 'agents/common/minecraft_serverpack_*'
+      - 'agents/linux/runtime/minecraft_serverpack_*'
+      - 'agents/linux/privileged/materialize_instance.py'
+
+permissions:
+  contents: read
+
+jobs:
+  systemd-disposable:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify disposable hosted runner and systemd prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTIONS:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test "$(id -u)" != 0
+          test "$(systemctl is-system-running || true)" != offline
+          test -d /run/systemd/system
+          command -v systemd-run
+          command -v sudo
+          sudo -n true
+          test ! -e /opt/dsm/runtime/hybrid-instance-storage
+      - name: Run explicitly opted-in systemd integration on ephemeral runner
+        env:
+          PYTHONPATH: .
+          CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E: '1'
+        run: |
+          sudo --preserve-env=PYTHONPATH,CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E \
+            python3 -m unittest -v \
+              tests.minecraft_serverpack_finalization_systemd_e2e_test \
+              tests.minecraft_serverpack_finalization_real_adapter_e2e_test \
+              tests.minecraft_serverpack_privileged_real_systemd_e2e_test \
+              tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test
