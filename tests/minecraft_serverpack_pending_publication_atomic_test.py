@@ -351,6 +351,59 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             self.assertEqual(agent_state.read_json(
                 history/result_file.name)["status"],"completed")
 
+    def test_separate_agent_process_replays_controller_outage_and_archives_ack(self):
+        """Exercise disk-backed Agent retries across fresh OS processes."""
+        import json
+        import os
+        import subprocess
+        from unittest.mock import patch
+        import agent_instance_provisioning_repository as controller
+        runtime=ROOT/"agents/linux/runtime"
+        pending=self.pending()
+        repo,state=self.enqueue(pending)
+        pid=state["provisioning_id"]
+        agent_root=Path(self.temp.name)/"separate-agent"
+        results=agent_root/"instance-provisioning"
+        results.mkdir(parents=True)
+        result_file=results/f"{pid}.result.json"
+        payload=self.completed(state,pending)
+        payload["minecraft_serverpack_migration"].update(
+            trace=["committed","finalized"],
+            finalization={"status":"archived","sha256":"e"*64},
+        )
+        result_file.write_text(json.dumps(payload),encoding="utf-8")
+        env={**os.environ,"CAPIVARA_AGENT_STATE_DIR":str(agent_root),
+             "PYTHONPATH":str(runtime),"PYTHONDONTWRITEBYTECODE":"1"}
+        def agent_process(clear=False):
+            code=("import json,provisioning_client as pc; "
+                  "v=pc.read_provisioning_result(); "
+                  + (f"pc.clear_provisioning_result({pid!r}); " if clear else "")
+                  + "print(json.dumps(v))")
+            process=subprocess.run([sys.executable,"-c",code],env=env,
+                                   capture_output=True,text=True,timeout=12)
+            self.assertEqual(process.returncode,0,process.stderr)
+            return json.loads(process.stdout.strip())
+        with patch.object(controller,"publish_pending_serverpack_bundle",
+                          side_effect=ConnectionError("Controller unavailable")):
+            with self.assertRaisesRegex(ConnectionError,"Controller unavailable"):
+                repo.apply_result("pr839-isolated-agent",agent_process())
+        self.assertTrue(result_file.exists())
+        self.assertEqual(repo.snapshot(pid)["status"],"queued")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],1)
+        accepted=repo.apply_result("pr839-isolated-agent",agent_process())
+        self.assertEqual(accepted["status"],"completed")
+        repeated=repo.apply_result("pr839-isolated-agent",agent_process())
+        self.assertEqual(repeated["status"],"completed")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],2)
+        self.assertEqual(agent_process(clear=True)["status"],"completed")
+        self.assertFalse(result_file.exists())
+        archived=results/"history"/result_file.name
+        self.assertEqual(json.loads(archived.read_text())["status"],"completed")
+        self.assertEqual(self.content.bundle_history(
+            "pr855-controller-atomic","atm11")[0]["revision"],2)
+
     def test_agent_ack_archive_failure_retains_replayable_terminal_result(self):
         from unittest.mock import patch
         runtime=ROOT/"agents/linux/runtime"
