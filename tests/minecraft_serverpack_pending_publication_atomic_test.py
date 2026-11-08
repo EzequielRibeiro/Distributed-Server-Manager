@@ -568,6 +568,17 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         view=self.content.customer_view("pr855-controller-atomic")
         self.assertEqual(view[0]["bundle_summary"]["manifest_alignment"],"drift")
 
+    def test_serverpack_projection_handles_missing_revision_as_drift(self):
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "DELETE FROM content_bundle_revisions WHERE bundle_id IN "
+                "(SELECT bundle_id FROM content_bundles WHERE instance_id=? "
+                "AND parent_content_id=?)",
+                ("pr855-controller-atomic","atm11"),
+            )
+        view=self.content.customer_view("pr855-controller-atomic")
+        self.assertEqual(view[0]["bundle_summary"]["manifest_alignment"],"drift")
+
     def test_serverpack_projection_detects_missing_member(self):
         self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]["manifest_alignment"],"metadata_aligned")
         original=self.content.list
