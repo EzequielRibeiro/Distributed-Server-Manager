@@ -406,11 +406,16 @@ class ContentRepository:
   with self.backend.connect() as c:
    session=AlertSession(self.backend,c)
    try:
-    rows=session.execute(
-     f"SELECT request_json,result_json FROM agent_instance_provisioning "
-     f"WHERE instance_id={self.ph} AND status='completed' "
-     "ORDER BY completed_at DESC,created_at DESC LIMIT 20",
+    current=session.execute(
+     f"SELECT agent_id,runtime_id,game_version,build_id FROM instances WHERE id={self.ph}",
      (instance_id,),
+    ).fetchone()
+    if current is None or str(current["runtime_id"] or "")!="minecraft.java.neoforge":return "missing"
+    rows=session.execute(
+     f"SELECT agent_id,request_json,result_json FROM agent_instance_provisioning "
+     f"WHERE instance_id={self.ph} AND status='completed' AND agent_id={self.ph} "
+     "ORDER BY completed_at DESC,created_at DESC LIMIT 20",
+     (instance_id,str(current["agent_id"] or "")),
     ).fetchall()
    finally:session.close()
   for row in rows:
@@ -430,6 +435,9 @@ class ContentRepository:
       or publication.get("content_id")!=content_id
       or int(publication.get("bundle_revision") or 0)!=int(bundle_revision)
       or publication.get("manifest_sha256")!=manifest_sha256
+      or str(publication.get("target_loader_version") or "")!=str(current["build_id"] or "")
+      or str(publication.get("minecraft_version") or "")!=str(current["game_version"] or "")
+      or str(migration.get("target_loader_version") or "")!=str(current["build_id"] or "")
       or publication.get("candidate_sha256")!=pending.get("candidate_sha256")
       or publication.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
       or pending.get("instance_id")!=instance_id
