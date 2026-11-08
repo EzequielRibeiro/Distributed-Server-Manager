@@ -699,6 +699,31 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         view=self.content.customer_view("pr855-controller-atomic")
         self.assertEqual(view[0]["bundle_summary"]["manifest_alignment"],"drift")
 
+    def test_serverpack_projection_detects_tampered_persisted_manifest_json(self):
+        """Current and history hashes may agree while the JSON payload differs."""
+        import json
+        self.assertEqual(
+            self.content.customer_view("pr855-controller-atomic")[0]
+            ["bundle_summary"]["manifest_alignment"],"metadata_aligned")
+        with self.backend.transaction() as connection:
+            row=connection.execute(
+                "SELECT r.bundle_id,r.revision,r.manifest_json "
+                "FROM content_bundle_revisions r JOIN content_bundles b "
+                "ON r.bundle_id=b.bundle_id AND r.revision=b.revision "
+                "WHERE b.instance_id=? AND b.parent_content_id=?",
+                ("pr855-controller-atomic","atm11"),
+            ).fetchone()
+            manifest=json.loads(row["manifest_json"])
+            manifest["provider_version_id"]="tampered"
+            connection.execute(
+                "UPDATE content_bundle_revisions SET manifest_json=? "
+                "WHERE bundle_id=? AND revision=?",
+                (json.dumps(manifest),row["bundle_id"],row["revision"]),
+            )
+        self.assertEqual(
+            self.content.customer_view("pr855-controller-atomic")[0]
+            ["bundle_summary"]["manifest_alignment"],"drift")
+
     def test_serverpack_projection_handles_missing_revision_as_drift(self):
         with self.backend.transaction() as connection:
             connection.execute(
