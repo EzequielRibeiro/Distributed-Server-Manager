@@ -105,6 +105,7 @@ def publish_pending_serverpack_bundle(
         # concurrency gate; the normal customer modpack guard would otherwise
         # reject the in-flight parent that this very operation is completing.
         customer_install_guard=False,
+        expected_previous_revision=expected,
     )
     if not published.get("changed"):
         raise MinecraftServerPackPendingPublicationError(
