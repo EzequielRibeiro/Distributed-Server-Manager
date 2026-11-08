@@ -559,6 +559,42 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         self.assertEqual(self.content.get("pr855-controller-atomic","atm11")["version"],"old")
         self.assertEqual(self.content.get("pr855-controller-atomic","mod-a")["version"],"old")
 
+    def test_agent_preflight_validates_actual_pending_manifest_identity(self):
+        runtime=ROOT/"agents/linux/runtime"
+        if str(runtime) not in sys.path:
+            sys.path.insert(0,str(runtime))
+        from minecraft_serverpack_migration_provisioning import (
+            _verify_pending_manifest_matches_migration,
+            MinecraftServerPackProvisioningHomologationError,
+        )
+        pending=self.pending()
+        migration={"target_loader_version":"26.1.2.109",
+                   "minecraft_version":"26.1.2","serverpack_mod_count":1}
+        _verify_pending_manifest_matches_migration(pending,migration)
+        for override in ({"target_loader_version":"26.1.2.111"},
+                         {"minecraft_version":"26.1.3"},
+                         {"serverpack_mod_count":2}):
+            with self.subTest(override=override):
+                with self.assertRaisesRegex(MinecraftServerPackProvisioningHomologationError,
+                                            "differs from migration evidence"):
+                    _verify_pending_manifest_matches_migration(pending,{**migration,**override})
+
+    def test_agent_preflight_rejects_pending_child_artifact_drift(self):
+        runtime=ROOT/"agents/linux/runtime"
+        if str(runtime) not in sys.path:
+            sys.path.insert(0,str(runtime))
+        from minecraft_serverpack_migration_provisioning import (
+            _verify_pending_manifest_matches_migration,
+            MinecraftServerPackProvisioningHomologationError,
+        )
+        pending=self.pending()
+        pending["children"][0]["artifact"]={**pending["children"][0]["artifact"],"sha256":"f"*64}
+        with self.assertRaisesRegex(MinecraftServerPackProvisioningHomologationError,
+                                    "differs from migration evidence"):
+            _verify_pending_manifest_matches_migration(pending,{
+                "target_loader_version":"26.1.2.109",
+                "minecraft_version":"26.1.2","serverpack_mod_count":1})
+
     def test_serverpack_projection_uses_committed_manifest_not_only_count(self):
         view=self.content.customer_view("pr855-controller-atomic")
         self.assertEqual(len(view),1)
