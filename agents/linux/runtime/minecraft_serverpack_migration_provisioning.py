@@ -37,6 +37,7 @@ from privileged_materialization import build_minecraft_serverpack_candidate, min
 from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
 from minecraft_serverpack_physical_manifest import attest_serverpack_mods
 from minecraft_serverpack_pending_commit import validate_pending_bundle_commit
+from content_bundle import normalize_bundle
 from minecraft_serverpack_migration_preflight import require_empty_serverpack_slot
 from minecraft_staged_migration_safety import assess_staged_migration
 from minecraft_serverpack_migration_feature import migration_feature_decision
@@ -69,6 +70,35 @@ def enabled_for(request:dict[str,Any])->bool:
     if feature["mode"]=="production":
         return requested_mode=="production"
     return not requested_mode or requested_mode==feature["mode"]
+
+
+def _verify_pending_manifest_matches_migration(pending:dict[str,Any],migration:dict[str,Any])->None:
+    """Check the complete Controller candidate against the Agent plan before side effects."""
+    try:
+        canonical=normalize_bundle({
+            **pending["bundle"],"instance_id":pending["instance_id"],
+            "parent_content_id":pending["content_id"],
+        })
+        members=canonical["manifest"]["members"]
+        children={str(child["content_id"]):child for child in pending["children"]}
+        if (
+            canonical["manifest_kind"]!="serverpack-local-v1"
+            or canonical["loader_id"]!="neoforge"
+            or canonical["loader_version"]!=migration["target_loader_version"]
+            or canonical["minecraft_version"]!=migration["minecraft_version"]
+            or len(members)!=migration["serverpack_mod_count"]
+            or len(children)!=len(members)
+            or str(pending["parent"].get("version") or "")!=canonical["provider_version_id"]
+        ):
+            raise ValueError("manifest metadata differs from migration")
+        for item in members:
+            child=children.get(str(item["content_id"]))
+            if child is None or child.get("artifact")!=item["artifact"]:
+                raise ValueError("manifest member differs from pending child projection")
+    except (ValueError,TypeError,KeyError,AttributeError) as exc:
+        raise MinecraftServerPackProvisioningHomologationError(
+            "pending Server Pack manifest differs from migration evidence"
+        ) from exc
 
 
 def _ensure_stopped_after_candidate_failure(record:dict[str,Any],adapter:Any)->dict[str,Any]:
@@ -351,6 +381,8 @@ def execute_homologated_migration(
     ):
         raise MinecraftServerPackProvisioningHomologationError(
             "pending Server Pack manifest is not bound to migration")
+    if pending is not None:
+        _verify_pending_manifest_matches_migration(pending,migration)
     record=instance_runtime.get_instance(instance_id)
     if not isinstance(record,dict):
         raise MinecraftServerPackProvisioningHomologationError(
@@ -618,6 +650,11 @@ def execute_homologated_migration(
             "size_bytes":state["baseline_backup"]["size_bytes"],
         },
         "candidate_runtime":state.get("candidate_runtime"),
+        # This attestation is sourced from the Agent's read-only inspection of
+        # the switched runtime; it must accompany Controller publication.
+        **({"physical_manifest":dict(state["physical_manifest_evidence"])}
+           if result.get("status")=="completed" and pending is not None
+           and "physical_manifest_evidence" in state else {}),
     }
 
 

@@ -364,6 +364,13 @@ class ContentRepository:
    return "drift"
   try:manifest=json.loads(history.get("manifest_json") or "{}")
   except (TypeError,ValueError):return "drift"
+  # The revision row and current row can agree on a stale checksum even
+  # when the persisted manifest payload itself was corrupted. Rehash bytes
+  # using the same canonical encoding as core.content_bundle.normalize_bundle.
+  from hashlib import sha256
+  canonical=json.dumps(manifest,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+  if sha256(canonical.encode("utf-8")).hexdigest()!=str(bundle.get("manifest_sha256") or ""):
+   return "drift"
   members=manifest.get("members") if isinstance(manifest,dict) else None
   if not isinstance(members,list):return "drift"
   declared={}
@@ -390,13 +397,73 @@ class ContentRepository:
    if (value.get("parent_content_id")!=content_id or value.get("manifest_sha256")!=sha
        or item.get("artifact")!=declared[cid]):return "drift"
   return "metadata_aligned"
+ def _serverpack_published_physical_proof(self,instance_id,content_id,bundle_revision,manifest_sha256):
+  """Read the proof stored atomically with a terminal Controller publication.
+
+  The terminal Agent result is the existing durable receipt. Do not create a
+  second, separately updated source of truth or expose raw hashes to customers.
+  """
+  with self.backend.connect() as c:
+   session=AlertSession(self.backend,c)
+   try:
+    current=session.execute(
+     f"SELECT agent_id,runtime_id,game_version,build_id FROM instances WHERE id={self.ph}",
+     (instance_id,),
+    ).fetchone()
+    if current is None or str(current["runtime_id"] or "")!="minecraft.java.neoforge":return "missing"
+    rows=session.execute(
+     f"SELECT agent_id,request_json,result_json FROM agent_instance_provisioning "
+     f"WHERE instance_id={self.ph} AND status='completed' AND agent_id={self.ph} "
+     "ORDER BY completed_at DESC,created_at DESC LIMIT 20",
+     (instance_id,str(current["agent_id"] or "")),
+    ).fetchall()
+   finally:session.close()
+  for row in rows:
+   try:
+    request=json.loads(row["request_json"] or "{}")
+    result=json.loads(row["result_json"] or "{}")
+    if not isinstance(request,dict) or not isinstance(result,dict):continue
+    configuration=request.get("configuration")
+    if not isinstance(configuration,dict) or configuration.get("minecraft_serverpack_execution_mode")!="production":continue
+    pending=configuration.get("minecraft_serverpack_pending_bundle")
+    publication=result.get("controller_bundle_publication")
+    migration=result.get("minecraft_serverpack_migration")
+    if not all(isinstance(value,dict) for value in (pending,publication,migration)):continue
+    physical=migration.get("physical_manifest")
+    if not isinstance(physical,dict):continue
+    if (publication.get("status")!="published"
+      or publication.get("content_id")!=content_id
+      or int(publication.get("bundle_revision") or 0)!=int(bundle_revision)
+      or publication.get("manifest_sha256")!=manifest_sha256
+      or str(publication.get("target_loader_version") or "")!=str(current["build_id"] or "")
+      or str(publication.get("minecraft_version") or "")!=str(current["game_version"] or "")
+      or str(migration.get("target_loader_version") or "")!=str(current["build_id"] or "")
+      or publication.get("candidate_sha256")!=pending.get("candidate_sha256")
+      or publication.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
+      or pending.get("instance_id")!=instance_id
+      or pending.get("content_id")!=content_id
+      or migration.get("instance_id")!=instance_id
+      or migration.get("content_id")!=content_id
+      or migration.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
+      or physical.get("status")!="physical_mods_verified"
+      or physical.get("manifest_sha256")!=manifest_sha256
+      or type(physical.get("mod_count")) is not int
+      or physical.get("mod_count")!=len(pending.get("bundle",{}).get("members",[]))):
+     continue
+    return "verified"
+   except (TypeError,ValueError,KeyError,AttributeError):
+    continue
+  return "missing"
  def customer_view(self,instance_id,limit=2000):
   items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
   def decorate(item):
    value=dict(item);state=states.get(str(value.get("content_id") or ""));aligned=bool(state and int(state.get("desired_revision") or 0)==int(value.get("revision") or 0) and str(state.get("desired_checksum") or "")==str(value.get("checksum") or ""))
    effective_security=str(state.get("security_state") or "unscanned") if aligned else str(value.get("security_state") or "unscanned")
+   applied_matches_desired=bool(state and aligned
+    and int(state.get("applied_revision") or 0)==int(value.get("revision") or 0)
+    and str(state.get("applied_checksum") or "")==str(value.get("checksum") or ""))
    value["effective_security_state"]=effective_security
-   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
+   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"applied_matches_desired":applied_matches_desired,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
    return value
   visible=[]
   for item in items:
@@ -413,7 +480,37 @@ class ContentRepository:
     worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
    summary={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
    if str(item.get("provider") or "")=="local" and bool((item.get("artifact") or {}).get("ephemeral_upload")):
-    summary["manifest_alignment"]=self._serverpack_manifest_alignment(instance_id,item,members)
+    alignment=self._serverpack_manifest_alignment(instance_id,item,members)
+    summary["manifest_alignment"]=alignment
+    # Read-only projection of desired vs Agent reported revisions. An Agent
+    # "applied" verdict alone never proves physical JAR hashes or JVM boot.
+    active=[child for child in members if str(child.get("desired_state") or "installed")=="installed"]
+    removed=[child for child in members if str(child.get("desired_state") or "installed")=="absent"]
+    statuses=[item.get("reconciliation") or {},
+              *((child.get("reconciliation") or {}) for child in members)]
+    failure={"failed","error","rollback_failed","security_blocked","security_scan_failed"}
+    failed=any(str(state.get("status") or "") in failure for state in statuses)
+    failed=failed or any(str(row.get("effective_security_state") or "") in {"blocked","suspicious","scan_failed"} for row in [item,*members])
+    complete=all(state.get("aligned") is True and state.get("applied_matches_desired") is True
+                 and state.get("status")=="applied" for state in statuses)
+    complete=complete and all(child.get("reconciliation",{}).get("installed_version")==child.get("version") for child in active)
+    complete=complete and all(child.get("reconciliation",{}).get("installed_version") in (None,"") for child in removed)
+    complete=complete and all(row.get("effective_security_state")=="clean" for row in [item,*active])
+    summary["metadata_convergence"]="failed" if alignment=="drift" or failed else ("aligned" if complete else "pending")
+    bundle=self._bundle_row(instance_id,str(item.get("content_id") or "")) if alignment=="metadata_aligned" else None
+    physical=(self._serverpack_published_physical_proof(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"])) if bundle else "missing")
+    summary["physical_attestation"]=physical
+    # Publication attestation proves JAR bytes at migration time, not current
+    # runtime health or a later NeoForge boot. Remain fail-closed.
+    summary["convergence_status"]="failed" if alignment=="drift" or failed else "pending"
+    summary["health_gate"]="blocked"
+    summary["health_reason"]=("manifest_metadata_drift" if alignment=="drift"
+       else "agent_reconciliation_failed" if failed
+       else "physical_runtime_attestation_not_persisted" if complete and physical!="verified"
+       else "runtime_boot_not_attested" if complete and physical=="verified"
+       else "agent_reconciliation_pending")
    item["bundle_summary"]=summary
   return visible
  def _revision_for(self,instance_id,content_id,revision):
