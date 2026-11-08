@@ -364,6 +364,13 @@ class ContentRepository:
    return "drift"
   try:manifest=json.loads(history.get("manifest_json") or "{}")
   except (TypeError,ValueError):return "drift"
+  # The revision row and current row can agree on a stale checksum even
+  # when the persisted manifest payload itself was corrupted. Rehash bytes
+  # using the same canonical encoding as core.content_bundle.normalize_bundle.
+  from hashlib import sha256
+  canonical=json.dumps(manifest,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+  if sha256(canonical.encode("utf-8")).hexdigest()!=str(bundle.get("manifest_sha256") or ""):
+   return "drift"
   members=manifest.get("members") if isinstance(manifest,dict) else None
   if not isinstance(members,list):return "drift"
   declared={}
