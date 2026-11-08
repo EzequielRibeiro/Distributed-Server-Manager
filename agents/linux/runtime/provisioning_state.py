@@ -49,14 +49,13 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 def archive(provisioning_id: str) -> None:
     request_path, result_path, log_path = paths(provisioning_id)
     HISTORY_ROOT.mkdir(parents=True, exist_ok=True)
-    for source in (request_path, result_path, log_path):
+    # Keep the terminal result available for replay until other evidence is
+    # archived. Failed archival must not silently acknowledge and lose it.
+    for source in (request_path, log_path, result_path):
         if not source.exists():
             continue
         destination = HISTORY_ROOT / source.name
-        try:
-            os.replace(source, destination)
-        except OSError:
-            pass
+        os.replace(source, destination)
 
 
 __all__ = ["HISTORY_ROOT", "PROVISION_ROOT", "archive", "paths", "read_json", "write_json"]
