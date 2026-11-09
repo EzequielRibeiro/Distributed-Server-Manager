@@ -474,6 +474,35 @@ class ContentRepository:
     event,agent_id=agent_id,instance_id=instance_id,
     content_id=content_id,bundle_revision=bundle_revision)
   return "missing"
+ def _serverpack_runtime_process_observation(self,instance_id,max_age_seconds=180):
+  """Correlate the currently owned Agent heartbeat, not JVM startup proof.
+
+  A stale/foreign/unknown health row must never let a Server Pack appear ready.
+  """
+  from datetime import datetime,timezone
+  with self.backend.connect() as connection:
+   session=AlertSession(self.backend,connection)
+   try:
+    row=session.execute(
+     f"SELECT h.agent_id,h.desired_state,h.observed_state,h.reconcile_status,"
+     "h.health,h.operation_status,h.last_error,h.reported_at,h.updated_at "
+     "FROM agent_instance_runtime_health h JOIN instances i ON i.id=h.instance_id "
+     f"WHERE h.instance_id={self.ph} AND h.agent_id=i.agent_id",(instance_id,),
+    ).fetchone()
+   finally:session.close()
+  if not row:return "missing"
+  reported=str(row["reported_at"] or "")
+  try:
+   at=datetime.fromisoformat(reported.replace("Z","+00:00"))
+   if at.tzinfo is None:return "missing"
+   age=(datetime.now(timezone.utc)-at.astimezone(timezone.utc)).total_seconds()
+  except (ValueError,TypeError,OverflowError):return "missing"
+  if age<0 or age>max_age_seconds:return "stale"
+  if (row["desired_state"]=="running" and row["observed_state"]=="running"
+     and row["health"]=="healthy" and row["reconcile_status"] in ("healthy","unknown")
+     and row["operation_status"] in ("idle",None)
+     and not row["last_error"]):return "reported_running"
+  return "not_running"
  def customer_view(self,instance_id,limit=2000):
   items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
   def decorate(item):
@@ -526,6 +555,8 @@ class ContentRepository:
      self._serverpack_recent_physical_observation(
       instance_id,str(item.get("content_id") or ""),int(bundle["revision"]))
      if bundle else "missing")
+    summary["runtime_process_observation"]=(
+     self._serverpack_runtime_process_observation(instance_id) if bundle else "missing")
     # Publication attestation proves JAR bytes at migration time, not current
     # runtime health or a later NeoForge boot. Remain fail-closed.
     summary["convergence_status"]="failed" if alignment=="drift" or failed else "pending"
