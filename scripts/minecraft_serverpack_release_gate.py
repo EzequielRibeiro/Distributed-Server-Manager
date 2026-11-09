@@ -29,6 +29,11 @@ EXTENDED=(
     'tests/minecraft_serverpack_physical_swap_e2e_test.py',
     'tests/minecraft_serverpack_migration_swap_test.py',
     'tests/minecraft_serverpack_finalization_real_swap_e2e_test.py',
+    'tests/minecraft_serverpack_finalization_subprocess_e2e_test.py',
+    'tests/minecraft_serverpack_remote_heartbeat_sqlite_test.py',
+    'tests/minecraft_serverpack_remote_heartbeat_cycle_test.py',
+    'tests/minecraft_serverpack_remote_producer_test.py',
+    'tests/minecraft_serverpack_observation_events_test.py',
     'tests/minecraft_serverpack_migration_readiness_test.py',
     'tests/minecraft_serverpack_migration_transaction_test.py',
     'tests/m9_modpack_bundle_read_model_test.py',
@@ -45,7 +50,12 @@ def commands(mode:str)->list[list[str]]:
     if mode not in {'quick','full'}:
         raise ValueError('mode must be quick or full')
     paths=QUICK+(EXTENDED if mode=='full' else ())
-    return [list(command) for command in JS]+[
+    commands_to_run=[list(command) for command in JS]
+    if mode=='full':
+        # The packaged Agent must boot through legacy updaters too; source
+        # checkout imports alone cannot detect missing runtime dependencies.
+        commands_to_run.append(['bash','tests/agent_package_test.sh'])
+    return commands_to_run+[
         [sys.executable,'-m','pytest','-q','-p','no:cacheprovider',*paths],
     ]
 

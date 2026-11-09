@@ -34,11 +34,15 @@ class ObservationEventsTest(unittest.TestCase):
         self.assertIs(saved['data']['release_authorized'],False)
         event={'event_type':saved['event_type'],'agent_id':'a',
                'instance_id':'inst','occurred_at':saved['occurred_at'],
+               'source':saved['source'],'source_id':saved['source_id'],
                'data':saved['data']}
         self.assertEqual(classify_recent_serverpack_observation(event,agent_id='a',
             instance_id='inst',content_id='pack',bundle_revision=2,now=self.now),'verified')
         self.assertEqual(classify_recent_serverpack_observation(event,agent_id='a',
             instance_id='inst',content_id='pack',bundle_revision=3,now=self.now),'missing')
+        self.assertEqual(classify_recent_serverpack_observation(
+            {**event,'source':'agent.runtime'},agent_id='a',
+            instance_id='inst',content_id='pack',bundle_revision=2,now=self.now),'missing')
         self.assertEqual(classify_recent_serverpack_observation(event,agent_id='other',
             instance_id='inst',content_id='pack',bundle_revision=2,now=self.now),'missing')
         self.assertEqual(classify_recent_serverpack_observation(event,agent_id='a',

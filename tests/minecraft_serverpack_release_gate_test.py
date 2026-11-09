@@ -19,6 +19,10 @@ class ReleaseGateTest(unittest.TestCase):
         full=module.commands('full')
         self.assertEqual(quick[:3],full[:3])
         self.assertLess(len(quick[-1]),len(full[-1]))
+        self.assertIn(['bash','tests/agent_package_test.sh'],full)
+        self.assertNotIn(['bash','tests/agent_package_test.sh'],quick)
+        self.assertIn('tests/minecraft_serverpack_finalization_subprocess_e2e_test.py',full[-1])
+        self.assertIn('tests/minecraft_serverpack_remote_heartbeat_sqlite_test.py',full[-1])
         for command in full:
             self.assertNotIn('systemctl',command)
             self.assertNotIn('docker',command)
