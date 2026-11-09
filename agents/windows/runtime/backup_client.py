@@ -73,7 +73,15 @@ def _create(config,cmd):
   was_running=status(config,iid).get("observed_state")=="running"
   if was_running:lifecycle(config,iid,"stop")
  try:
-  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid);_create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"),manifest);size=path.stat().st_size;sha=_digest(path);manifest["files_checksum"]=sha
+  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid)
+  if path.exists():raise FileExistsError(f"backup destination already exists: {path}")
+  try:
+   _create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"),manifest)
+   size=path.stat().st_size;sha=_digest(path)
+  except Exception:
+   path.unlink(missing_ok=True)
+   raise
+  manifest["files_checksum"]=sha
   if not policy.get("keep_single_operational"):_retention(idir,int(policy.get("retention_count") or 7))
   return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha,"manifest":manifest}
  finally:
