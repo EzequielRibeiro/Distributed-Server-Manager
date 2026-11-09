@@ -156,6 +156,27 @@ class BackupClientInstanceRootTest(unittest.TestCase):
         self.assertIn("save.txt", names)
         self.assertNotIn("shared-only.txt", names)
 
+    def test_single_operational_defers_pruning_until_controller_ack(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        command["policy"]["retention_count"] = 1
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            first = backup_client._create(self.config, command)
+            second = backup_client._create(self.config, command)
+        self.assertTrue(Path(first["artifact_path"]).is_file())
+        self.assertTrue(Path(second["artifact_path"]).is_file())
+        self.assertNotEqual(first["backup_id"], second["backup_id"])
+
+    def test_failed_replacement_keeps_previous_archive(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            first = backup_client._create(self.config, command)
+            with patch.object(backup_client, "_create_archive", side_effect=PermissionError("read denied")):
+                with self.assertRaises(PermissionError):
+                    backup_client._create(self.config, command)
+        self.assertTrue(Path(first["artifact_path"]).is_file())
+
     def test_restore_replaces_private_state_without_touching_shared_content(self):
         with patch.object(
             backup_client,
