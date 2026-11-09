@@ -81,7 +81,7 @@ class SystemdStopNormalizationTest(unittest.TestCase):
     def test_dayz_restart_does_not_start_after_timeout(self):
         runner = FakeRunner(["active", {"ActiveState": "failed", "Result": "timeout"}])
         with self.assertRaisesRegex(AdapterError, "timed out in systemd"):
-            SystemdAdapter(runner=runner).restart({**INSTANCE, "game_id": "dayz"})
+            SystemdAdapter(runner=runner).restart({**INSTANCE, "stop_signal": "SIGINT"})
         actions = [cmd[1] for cmd in runner.commands]
         self.assertEqual(actions.count("stop"), 1)
         self.assertNotIn("start", actions)
@@ -91,7 +91,7 @@ class SystemdStopNormalizationTest(unittest.TestCase):
     def test_dayz_restart_stops_before_start(self):
         runner = FakeRunner(["active", "inactive", "inactive", "active"])
         with patch("adapters.systemd._SYSTEMD_START_SETTLE_SECONDS", 0.0):
-            result = SystemdAdapter(runner=runner).restart({**INSTANCE, "game_id": "dayz"})
+            result = SystemdAdapter(runner=runner).restart({**INSTANCE, "stop_signal": "SIGINT"})
         actions = [cmd[1] for cmd in runner.commands]
         self.assertEqual(actions.count("stop"), 1)
         self.assertEqual(actions.count("start"), 1)
@@ -103,7 +103,7 @@ class SystemdStopNormalizationTest(unittest.TestCase):
     def test_non_dayz_keeps_systemctl_restart(self):
         runner = FakeRunner(["active", "active"])
         with patch("adapters.systemd._SYSTEMD_START_SETTLE_SECONDS", 0.0):
-            result = SystemdAdapter(runner=runner).restart({**INSTANCE, "game_id": "minecraft"})
+            result = SystemdAdapter(runner=runner).restart({**INSTANCE, "stop_signal": "SIGTERM"})
         self.assertEqual(result["action"], "restart")
         self.assertIn(["systemctl", "restart", "capivara-instance-example-one.service", "--no-pager"], runner.commands)
 
