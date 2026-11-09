@@ -76,7 +76,9 @@ class HybridObservationTests(unittest.TestCase):
         self.addCleanup(setattr,hybrid_agent_worker,'_SERVERPACK_OBSERVATION_LAST_RUN',0.0)
         with patch('hybrid_agent_worker._instance_runtime_module',return_value=type('R',(),{'get_instance':lambda self,_:RECORD})()),\
              patch('minecraft_serverpack_hybrid_observer.collect_hybrid_serverpack_observations',
-                   return_value=[{'status':'physical_runtime_verified','reason':'boot_not_observed'}]) as probe:
+                   return_value=[{'status':'physical_runtime_verified','reason':'boot_not_observed'}]) as probe,\
+             patch('minecraft_serverpack_observation_events.persist_serverpack_runtime_observations',
+                   return_value={'accepted':1,'created':1}):
             first=hybrid_agent_worker.process_hybrid_serverpack_observation_cycle(object(),ROOT,'agent')
             second=hybrid_agent_worker.process_hybrid_serverpack_observation_cycle(object(),ROOT,'agent')
         self.assertEqual(first['status'],'observed')
