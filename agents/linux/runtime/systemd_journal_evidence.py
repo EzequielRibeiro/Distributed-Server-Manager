@@ -51,6 +51,9 @@ def select_systemd_transitions(instance_id: str, events: list[dict], *, since: s
             'de5b426a63be47a7b6ac3eaac82e2f': 'stopping',
             '9d1aaa27d60140bd96365438aad20286': 'stopped',
             '7ad2d189f7e94e70a38c781354912448': 'stopped',
+            # systemd emits a separate Stopped message even after SIGKILL.
+            # Keep the failure event so consumers cannot infer a clean stop.
+            'd9b373ed55a64feb8242e02dbe79a49c': 'failed',
         }.get(message_id)
         if kind is None:
             continue
@@ -60,5 +63,14 @@ def select_systemd_transitions(instance_id: str, events: list[dict], *, since: s
         except (KeyError, TypeError, ValueError, OverflowError, OSError):
             continue
         if start <= moment <= end:
-            matches.append({'unit': unit, 'event': kind, 'at': moment.isoformat().replace('+00:00', 'Z')})
+            observation = {'unit': unit, 'event': kind,
+                           'at': moment.isoformat().replace('+00:00', 'Z')}
+            if kind == 'failed':
+                # Advisory only. The MESSAGE_ID, PID and UNIT provide origin;
+                # a bare message string without the matching ID is ignored.
+                match = re.search(r"Failed with result '([a-z0-9-]{1,40})'",
+                                  str(item.get('MESSAGE') or ''))
+                if match:
+                    observation['failure_reason'] = match.group(1)
+            matches.append(observation)
     return sorted(matches, key=lambda item: item['at'])
