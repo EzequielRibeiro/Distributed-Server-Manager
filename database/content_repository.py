@@ -636,8 +636,21 @@ class ContentRepository:
    try:return {(str(r["instance_id"]),str(r["content_id"])):(int(r["desired_revision"] or 0),str(r["desired_checksum"] or ""),str(r["status"] or ""),str(r["security_state"] or "unscanned")) for r in s.execute(f"SELECT * FROM agent_content_state WHERE agent_id={self.ph}",(agent_id,)).fetchall()}
    finally:s.close()
  def desired_for_agent(self,agent_id):
-  applied=self._applied(agent_id);out=[]
+  applied=self._applied(agent_id);out=[];serverpack_cache={}
   for a in self.list(agent_id=agent_id,limit=2000):
+   # Production Server Packs are installed by the atomic provisioning swap.
+   # A stale/missing content report must NEVER enqueue the legacy installer:
+   # it could reapply a separate content tree after publication, outside the
+   # verified migration checkpoint and rollback journal. Keep reconciliation
+   # read-only until the Agent can independently attest its current runtime.
+   marker=(a.get("metadata") or {}).get("bundle") if isinstance(a.get("metadata"),dict) else None
+   parent=str(marker.get("parent_content_id") or "") if isinstance(marker,dict) else ""
+   if parent and str(a.get("provider") or "")!="":
+    key=(str(a.get("instance_id") or ""),parent)
+    if key not in serverpack_cache:
+     bundle=self._bundle_row(*key)
+     serverpack_cache[key]=bool(bundle and str(bundle.get("manifest_kind") or "")=="serverpack-local-v1")
+    if serverpack_cache[key]:continue
    state=applied.get((a["instance_id"],a["content_id"]))
    if state and state[0]==int(a["revision"]) and state[1]==str(a["checksum"]):
     if state[2]=="applied" and state[3] in {"clean","unscanned"}:continue
