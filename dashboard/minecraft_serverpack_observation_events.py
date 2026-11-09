@@ -27,10 +27,12 @@ def _timestamp(value:Any)->str|None:
 
 def persist_serverpack_runtime_observations(
         backend:Any,*,agent_id:str,observations:list[dict[str,Any]],
-        observed_at:str)->dict[str,int]:
+        observed_at:str,source:str='controller.local_hybrid_serverpack_observer')->dict[str,int]:
     """Only local owned Agent observations; never promote an event to healthy."""
     stamp=_timestamp(observed_at)
-    if not agent_id or not stamp:
+    if (not agent_id or not stamp or source not in {
+            'controller.local_hybrid_serverpack_observer',
+            'controller.authenticated_agent_serverpack_observer'}):
         return {'accepted':0,'created':0}
     events=UniversalEventRepository(backend)
     seen=set()
@@ -50,13 +52,13 @@ def persist_serverpack_runtime_observations(
             continue
         # A local probe may be stored only for an instance owned *now*.
         if not events._instance_owned_by(agent_id,iid):continue
-        key=(agent_id,iid,cid,str(revision),status,reason,stamp)
+        key=(source,agent_id,iid,cid,str(revision),status,reason,stamp)
         event_id='minecraft-serverpack-observed-'+hashlib.sha256('\0'.join(key).encode()).hexdigest()
         if event_id in seen:continue
         seen.add(event_id)
         saved=events.publish({
             'event_id':event_id,'event_type':'MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
-            'occurred_at':stamp,'source':'controller.local_hybrid_serverpack_observer',
+            'occurred_at':stamp,'source':source,
             'source_id':agent_id,'agent_id':agent_id,'instance_id':iid,
             'severity':'info' if status=='physical_runtime_verified' else 'warning',
             'data':{'content_id':cid,'bundle_revision':revision,
@@ -78,7 +80,8 @@ def classify_recent_serverpack_observation(
     if not isinstance(data,dict):return 'missing'
     if (item.get('event_type')!='MINECRAFT_SERVERPACK_RUNTIME_OBSERVED'
         or item.get('agent_id')!=agent_id or item.get('instance_id')!=instance_id
-        or item.get('source')!='controller.local_hybrid_serverpack_observer'
+        or item.get('source') not in {'controller.local_hybrid_serverpack_observer',
+                                      'controller.authenticated_agent_serverpack_observer'}
         or item.get('source_id')!=agent_id
         or data.get('content_id')!=content_id
         or type(data.get('bundle_revision')) is not int
@@ -96,3 +99,50 @@ def classify_recent_serverpack_observation(
     if age<0 or age>max_age_seconds:return 'stale'
     return ('verified' if data.get('observation_status')=='physical_runtime_verified'
             else 'unverified')
+
+def record_authenticated_serverpack_observations(
+        backend:Any,*,agent_id:str,payload:dict[str,Any]|None)->dict[str,int]:
+    """Heartbeat-only transport: bind remote physical claims to current DB truth.
+
+    The authenticated Agent identity is passed by the caller, not read from the
+    JSON. A claim is advisory physical evidence, never process health or ready.
+    """
+    if not isinstance(payload,dict):return {'accepted':0,'created':0}
+    timestamp=payload.get('observed_at')
+    records=payload.get('observations')
+    if not _timestamp(timestamp) or not isinstance(records,list):
+        return {'accepted':0,'created':0}
+    from content_repository import ContentRepository
+    from alert_repository import AlertSession
+    repository=ContentRepository(backend)
+    bounded=[]
+    for raw in records[:4]:
+        if not isinstance(raw,dict):continue
+        iid=raw.get('instance_id');cid=raw.get('content_id')
+        revision=raw.get('bundle_revision');digest=raw.get('manifest_sha256')
+        if (not isinstance(iid,str) or not iid or len(iid)>191
+                or not isinstance(cid,str) or not cid or len(cid)>191
+                or type(revision) is not int or revision<1
+                or not isinstance(digest,str) or len(digest)!=64):continue
+        # No user-provided Agent identity or manifest is authoritative.
+        with backend.connect() as connection:
+            session=AlertSession(backend,connection)
+            try:
+                current=session.execute(
+                    f"SELECT agent_id,runtime_id FROM instances WHERE id={repository.ph}",
+                    (iid,)).fetchone()
+            finally:
+                session.close()
+        if (current is None or str(current['agent_id'] or '')!=agent_id
+                or str(current['runtime_id'] or '')!='minecraft.java.neoforge'):
+            continue
+        row=repository._bundle_row(iid,cid)
+        if (not row or row.get('manifest_kind')!='serverpack-local-v1'
+                or int(row.get('revision') or 0)!=revision
+                or row.get('manifest_sha256')!=digest):continue
+        # Re-check immutable negative assertions in persist_serverpack_runtime_observations.
+        bounded.append(raw)
+    if not bounded:return {'accepted':0,'created':0}
+    return persist_serverpack_runtime_observations(
+        backend,agent_id=agent_id,observations=bounded,observed_at=timestamp,
+        source='controller.authenticated_agent_serverpack_observer')
