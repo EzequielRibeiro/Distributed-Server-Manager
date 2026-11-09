@@ -58,6 +58,7 @@ from minecraft_serverpack_finalization_supervisor import FinalizationWorkerSuper
 from runtime_lock import instance_lock
 from minecraft_recovery_heartbeat_collector import collect_recovery_observations
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
+from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
@@ -69,6 +70,8 @@ DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_RECONCILE_SECONDS = 15
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 HOST_IDENTITY_PATH = Path(os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY", str(STATE_DIR / "host-identity")))
+_SERVERPACK_OBSERVATION_PENDING: dict[str,object] | None = None
+_SERVERPACK_LAST_SCANNED = 0.0
 AGENT_LOG = STATE_DIR / "agent-runtime.log"
 
 
@@ -165,6 +168,8 @@ def _inventory(config):
             ids, agent_id=str(config["agent_id"]), read_instance=get_registered_instance)
     except (TypeError, ValueError, OSError, NameError):
         payload["minecraft_current_neoforge_attestations"] = []
+    if _SERVERPACK_OBSERVATION_PENDING is not None:
+        payload["minecraft_serverpack_observations"] = _SERVERPACK_OBSERVATION_PENDING
     payload["agent_logs"]=_recent_logs()
     result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("native_restart_result",read_native_restart_result),("dayz_operation_result",read_dayz_operation_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
     for key,reader in result_readers:
@@ -223,8 +228,25 @@ def _flush_command_results(config):
     return response
 
 def heartbeat(config):
+    global _SERVERPACK_OBSERVATION_PENDING, _SERVERPACK_LAST_SCANNED
     base=str(config["controller_url"]).rstrip("/")
     result=_post(base+"/api/agent/heartbeat",_inventory(config),headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    # A successful HTTP exchange delivers the pending report to the Controller.
+    # It is best-effort physical evidence only, not a durable provisioning ACK.
+    _SERVERPACK_OBSERVATION_PENDING=None
+    now=time.monotonic()
+    if not _SERVERPACK_LAST_SCANNED or now-_SERVERPACK_LAST_SCANNED>=3600:
+        requests=result.get('serverpack_observation_requests')
+        if isinstance(requests,list) and requests:
+            _SERVERPACK_LAST_SCANNED=now
+            try:
+                observed=observe_remote_requests(
+                    requests,agent_id=str(config['agent_id']),
+                    read_instance=get_registered_instance,limit=1)
+                if observed['observations']:
+                    _SERVERPACK_OBSERVATION_PENDING=observed
+            except (OSError,ValueError,TypeError,KeyError):
+                pass
     ids=result.get("accepted_event_ids")
     if isinstance(ids,list):acknowledge_runtime_events(STATE_DIR,ids)
     commands=result.get("configuration_commands")
