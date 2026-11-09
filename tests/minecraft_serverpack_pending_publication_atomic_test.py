@@ -818,6 +818,38 @@ class AtomicPendingPublicationTest(unittest.TestCase):
             limit=10,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
             instance_id="pr855-controller-atomic")[0]["data"]["bundle_revision"],bundle["revision"]+1)
 
+    def test_current_runtime_process_report_never_authorizes_serverpack_health(self):
+        from datetime import datetime,timezone,timedelta
+        from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
+        repo=AgentInstanceRuntimeHealthRepository(self.backend)
+        item={"instance_id":"pr855-controller-atomic",
+              "desired_state":"running","observed_state":"running",
+              "reconcile_status":"healthy","health":"healthy",
+              "operation_status":"idle","generated_at":datetime.now(timezone.utc).isoformat()}
+        def state():
+            return self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]
+        self.assertEqual(state()["runtime_process_observation"],"missing")
+        repo.apply_inventory("pr839-isolated-agent",[item])
+        self.assertEqual(state()["runtime_process_observation"],"reported_running")
+        self.assertEqual(state()["health_gate"],"blocked")
+        self.assertEqual(state()["convergence_status"],"pending")
+        repo.apply_inventory("pr839-isolated-agent",[{**item,"observed_state":"stopped"}])
+        self.assertEqual(state()["runtime_process_observation"],"not_running")
+        repo.apply_inventory("pr839-isolated-agent",[item])
+        with self.backend.transaction() as connection:
+            connection.execute("UPDATE agent_instance_runtime_health SET reported_at=? WHERE instance_id=?",
+                ((datetime.now(timezone.utc)-timedelta(minutes=6)).isoformat(),
+                 "pr855-controller-atomic"))
+        self.assertEqual(state()["runtime_process_observation"],"stale")
+        with self.backend.transaction() as connection:
+            connection.execute("INSERT INTO nodes(id,name,role) VALUES (?,?,?)",
+                ("other-node-for-health","Other","agent"))
+            connection.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
+                ("other-agent-for-health","ctrl","other-node-for-health","Other","active"))
+            connection.execute("UPDATE agent_instance_runtime_health SET agent_id=? WHERE instance_id=?",
+                ("other-agent-for-health","pr855-controller-atomic"))
+        self.assertEqual(state()["runtime_process_observation"],"missing")
+
     def test_serverpack_never_claims_healthy_without_persisted_physical_evidence(self):
         parent_item=self.content.get("pr855-controller-atomic","atm11")
         child_item=self.content.get("pr855-controller-atomic","mod-a")
