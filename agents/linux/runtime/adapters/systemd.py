@@ -16,10 +16,9 @@ from native_maintenance import NativeMaintenanceError, broadcast as native_broad
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 Runner = Callable[[list[str], int], tuple[int, str, str]]
 
-# Capivara materializes instance units with TimeoutStopSec=60.  The client-side
-# systemctl budget must be strictly longer than systemd's stop budget; otherwise
-# a legitimate stop can be reported as failed before systemd reaches its final
-# inactive/failed state and the explicit-stop normalization can run.
+# Capivara currently materializes instance units with TimeoutStopSec=60.
+# Client-side timeout must exceed that bound, so a stop has time to complete
+# before checking whether systemd timed out or signalled the process.
 _SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS = 75
 _SYSTEMD_START_SETTLE_SECONDS = 2.0
 _SYSTEMD_START_SETTLE_POLL_SECONDS = 0.25
@@ -70,6 +69,8 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 "--property=MainPID",
                 "--property=NRestarts",
                 "--property=Result",
+                "--property=ExecMainCode",
+                "--property=ExecMainStatus",
                 "--property=InvocationID",
                 "--property=ActiveEnterTimestamp",
                 "--property=InactiveExitTimestamp",
@@ -107,6 +108,8 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             "active_enter_timestamp": values.get("ActiveEnterTimestamp") or None,
             "inactive_exit_timestamp": values.get("InactiveExitTimestamp") or None,
             "result": values.get("Result", "unknown"),
+            "exec_main_code": values.get("ExecMainCode") or None,
+            "exec_main_status": values.get("ExecMainStatus") or None,
             "error": stderr[:2000] or None,
         }
 
@@ -129,6 +132,22 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             detail = (stderr or stdout or "systemctl reset-failed failed")[:2000]
             raise AdapterError(detail)
         return self._show(instance)
+
+    @staticmethod
+    def _forced_stop_reason(state: dict[str, Any]) -> str | None:
+        """Never reinterpret systemd timeout or SIGKILL as a graceful stop.
+
+        A successful `systemctl stop` return code alone cannot prove that the
+        game had time to persist its world. Preserve systemd's failure evidence
+        rather than clearing it with reset-failed.
+        """
+        if str(state.get("result") or "").lower() == "timeout":
+            return "instance stop timed out in systemd; world save not confirmed"
+        code = str(state.get("exec_main_code") or "").lower()
+        status = str(state.get("exec_main_status") or "")
+        if code in {"2", "3", "killed", "dumped"} and status == "9":
+            return "instance process received SIGKILL; world save not confirmed"
+        return None
 
     @staticmethod
     def _verify_committed_neoforge_launcher(instance: dict[str, Any]) -> None:
@@ -198,6 +217,9 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(detail)
         after = self._show(instance)
         if action == "stop":
+            unsafe = self._forced_stop_reason(after)
+            if unsafe:
+                raise AdapterError(unsafe)
             after = self._clear_failed_after_stop(unit, instance, after)
         expected_running = action != "stop"
         if not after["available"]:
@@ -225,6 +247,13 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         return self._lifecycle("stop", instance)
 
     def restart(self, instance: dict[str, Any]) -> dict[str, Any]:
+        if str(instance.get("game_id") or "").strip().lower() == "dayz":
+            # systemctl restart would start a new process even if the previous
+            # DayZ process was killed after TimeoutStopSec. Split the steps
+            # so that a failed/forced stop blocks the subsequent start.
+            self._lifecycle("stop", instance)
+            started = self._lifecycle("start", instance)
+            return {**started, "action": "restart", "idempotent": False}
         return self._lifecycle("restart", instance)
 
     def broadcast(
