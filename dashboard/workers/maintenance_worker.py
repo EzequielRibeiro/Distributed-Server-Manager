@@ -247,13 +247,20 @@ class MaintenanceWorker:
    state=dict(event.get('native_shutdown') or state)
    event=dict(event);event['native_shutdown']={**state,'status':'timeout'}
    self.repository.update_event(rid,event,stage='native-shutdown-timeout')
+   advisory = _payload(native).get('compatibility_warning') if isinstance(native,dict) else None
+   suspected = (isinstance(advisory,dict) and
+                advisory.get('code')=='dayz_linux_130_messages_xml_suspected')
+   detail = (
+    f'DayZ did not complete native shutdown within '
+    f'{NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds plus '
+    f'{NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS} seconds termination grace'
+   )
+   if suspected:
+    detail += ('; possible DayZ Linux 1.30 messages.xml defect (Bohemia DZG-2653: '
+               'No Shutdown message present in RPT); not proof of cause, no forced stop issued')
    self.repository.finish(
     rid,success=False,error_code='native_shutdown_timeout',
-    error_detail=(
-     f'DayZ did not complete native shutdown within '
-     f'{NATIVE_SHUTDOWN_TIMEOUT_SECONDS} seconds plus '
-     f'{NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS} seconds termination grace'
-    ),now=now)
+    error_detail=detail,now=now)
    result['native_shutdown_timeouts']+=1;result['failed']+=1
    return event,False
 
