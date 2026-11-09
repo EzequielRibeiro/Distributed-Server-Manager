@@ -222,7 +222,8 @@ def _create(config, command):
         size = path.stat().st_size
         sha256 = _digest(path)
         manifest["files_checksum"] = sha256
-        _retention(instance_dir, int(policy.get("retention_count") or 7))
+        if not policy.get("keep_single_operational"):
+            _retention(instance_dir, int(policy.get("retention_count") or 7))
         return {
             "backup_id": backup_id,
             "artifact_path": str(path),
