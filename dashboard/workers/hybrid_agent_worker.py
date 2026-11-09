@@ -880,6 +880,28 @@ def process_hybrid_current_neoforge_attestation_cycle(backend, root: Path, agent
         return {"status": "unavailable", "verified": 0}
 
 
+# Slow, read-only scan: never hash large modpacks every 30-second heartbeat.
+_SERVERPACK_OBSERVATION_LAST_RUN = 0.0
+
+
+def process_hybrid_serverpack_observation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    global _SERVERPACK_OBSERVATION_LAST_RUN
+    now=time.monotonic()
+    if _SERVERPACK_OBSERVATION_LAST_RUN and now-_SERVERPACK_OBSERVATION_LAST_RUN<3600:
+        return {"status":"throttled","checked":0,"verified":0}
+    _SERVERPACK_OBSERVATION_LAST_RUN=now
+    try:
+        from minecraft_serverpack_hybrid_observer import collect_hybrid_serverpack_observations
+        runtime=_instance_runtime_module(root)
+        observed=collect_hybrid_serverpack_observations(
+            backend,agent_id=agent_id,read_instance=runtime.get_instance,limit=1)
+        return {"status":"observed","checked":len(observed),
+                "verified":sum(x.get("status")=="physical_runtime_verified" for x in observed),
+                "observations":observed}
+    except Exception:
+        return {"status":"unavailable","checked":0,"verified":0}
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -955,6 +977,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
     minecraft_recovery_audit = process_hybrid_minecraft_recovery_audit_cycle(effective_backend, root, agent_id)
     minecraft_current_neoforge = process_hybrid_current_neoforge_attestation_cycle(effective_backend, root, agent_id)
+    minecraft_serverpack_observation = process_hybrid_serverpack_observation_cycle(effective_backend, root, agent_id)
     backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
     response = {
         "active": True,
@@ -972,63 +995,6 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "instance_health": instance_health,
         "minecraft_recovery_audit": minecraft_recovery_audit,
         "minecraft_current_neoforge": minecraft_current_neoforge,
+        "minecraft_serverpack_observation": minecraft_serverpack_observation,
         "backup": backup,
         "provisioning": provisioning,
-        "game_data": game_data,
-        "local_reconcile_error": local_reconcile_error,
-        **result,
-    }
-    game_state = game_data.get("state") if isinstance(game_data.get("state"), dict) else {}
-    message = (
-        f"hybrid heartbeat ok agent={agent_id} health={response.get('health_status')} "
-        f"public_ipv4={public_network.get('public_ipv4') or 'unavailable'} "
-        f"instance_reconcile={instance_reconcile.get('healthy', 0)}/{instance_reconcile.get('instances', 0)} "
-        f"instance_files={instance_reconcile.get('files_access_prepared', 0)} "
-        f"configuration={configuration.get('applied', 0)}a/{configuration.get('failed', 0)}f "
-        f"content={content.get('applied', 0)}a/{content.get('failed', 0)}f "
-        f"events={runtime_events.get('accepted', 0)}a/{runtime_events.get('rejected', 0)}r "
-        f"yarax={yarax_admin.get('status', 'idle')} "
-        f"instance_runtime={instance_runtime.get('status', 'idle')} "
-        f"native_restart={native_restart.get('status', 'idle')} "
-        f"dayz_operation={dayz_operation.get('status', 'idle')} "
-        f"instance_telemetry={instance_telemetry.get('accepted', 0)} "
-        f"instance_health={instance_health.get('healthy', 0)}/{instance_health.get('applied', 0)} "
-        f"backup={backup.get('completed', 0)}c/{backup.get('failed', 0)}f "
-        f"game_data={game_state.get('status', 'idle')}"
-    )
-    _append_hybrid_agent_log(root, message)
-    try:
-        response["published_log_lines"] = _publish_hybrid_agent_logs(
-            effective_backend, root, agent_id
-        )
-    except Exception:
-        response["published_log_lines"] = 0
-    response["log_message"] = message
-    return response
-
-
-def run_forever(root: Path = ROOT) -> None:
-    while True:
-        try:
-            result = heartbeat_cycle(root)
-            if result.get("active"):
-                print(result.get("log_message") or "hybrid heartbeat ok", flush=True)
-        except Exception as exc:
-            message = f"hybrid heartbeat failed: {exc}"
-            _append_hybrid_agent_log(root, message, error=True)
-            print(message, file=sys.stderr, flush=True)
-        time.sleep(INTERVAL_SECONDS)
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = list(sys.argv[1:] if argv is None else argv)
-    if args and args[0] == "once":
-        result = heartbeat_cycle(ROOT)
-        print(result)
-        return 0
-    run_forever(ROOT)
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
