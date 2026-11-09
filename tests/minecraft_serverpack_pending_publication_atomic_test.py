@@ -780,6 +780,44 @@ class AtomicPendingPublicationTest(unittest.TestCase):
                                ("replacement-agent",state["provisioning_id"]))
         self.assertEqual(evidence(),"missing")
 
+    def test_controller_projects_only_latest_owned_runtime_observation(self):
+        from datetime import datetime, timezone, timedelta
+        from dashboard.minecraft_serverpack_observation_events import persist_serverpack_runtime_observations
+        from universal_event_repository import UniversalEventRepository
+        now=datetime.now(timezone.utc)-timedelta(seconds=5)
+        stamp=now.isoformat().replace('+00:00','Z')
+        initial=self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]
+        self.assertEqual(initial["current_physical_observation"],"missing")
+        bundle=self.content._bundle_row("pr855-controller-atomic","atm11")
+        item={"instance_id":"pr855-controller-atomic","content_id":"atm11",
+              "bundle_revision":bundle["revision"],
+              "status":"physical_runtime_verified","reason":"boot_not_observed",
+              "boot_verified":False,"ready_for_release":False}
+        observed=persist_serverpack_runtime_observations(
+            self.backend,agent_id="pr839-isolated-agent",observations=[item],observed_at=stamp)
+        self.assertEqual(observed["created"],1)
+        summary=self.content.customer_view("pr855-controller-atomic")[0]["bundle_summary"]
+        self.assertEqual(summary["current_physical_observation"],"verified")
+        self.assertEqual(summary["health_gate"],"blocked")
+        self.assertEqual(summary["convergence_status"],"pending")
+        # A newer negative scan supersedes a positive result for the same revision.
+        self.assertEqual(persist_serverpack_runtime_observations(
+            self.backend,agent_id="pr839-isolated-agent",
+            observations=[{**item,"status":"unverified","reason":"physical_manifest_mismatch"}],
+            observed_at=(now+timedelta(seconds=1)).isoformat())["created"],1)
+        self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
+                         ["bundle_summary"]["current_physical_observation"],"unverified")
+        # A stray event carrying an older revision cannot resurrect success.
+        self.assertEqual(persist_serverpack_runtime_observations(
+            self.backend,agent_id="pr839-isolated-agent",
+            observations=[{**item,"bundle_revision":bundle["revision"]+1}],
+            observed_at=(now+timedelta(seconds=2)).isoformat())["created"],1)
+        self.assertEqual(self.content.customer_view("pr855-controller-atomic")[0]
+                         ["bundle_summary"]["current_physical_observation"],"missing")
+        self.assertEqual(UniversalEventRepository(self.backend).list_events(
+            limit=10,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
+            instance_id="pr855-controller-atomic")[0]["data"]["bundle_revision"],bundle["revision"]+1)
+
     def test_serverpack_never_claims_healthy_without_persisted_physical_evidence(self):
         parent_item=self.content.get("pr855-controller-atomic","atm11")
         child_item=self.content.get("pr855-controller-atomic","mod-a")
