@@ -78,6 +78,8 @@ def classify_recent_serverpack_observation(
     if not isinstance(data,dict):return 'missing'
     if (item.get('event_type')!='MINECRAFT_SERVERPACK_RUNTIME_OBSERVED'
         or item.get('agent_id')!=agent_id or item.get('instance_id')!=instance_id
+        or item.get('source')!='controller.local_hybrid_serverpack_observer'
+        or item.get('source_id')!=agent_id
         or data.get('content_id')!=content_id
         or type(data.get('bundle_revision')) is not int
         or data['bundle_revision']!=bundle_revision
