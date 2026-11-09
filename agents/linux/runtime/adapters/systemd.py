@@ -247,9 +247,9 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         return self._lifecycle("stop", instance)
 
     def restart(self, instance: dict[str, Any]) -> dict[str, Any]:
-        if str(instance.get("game_id") or "").strip().lower() == "dayz":
+        if str(instance.get("stop_signal") or "SIGTERM").strip().upper() == "SIGINT":
             # systemctl restart would start a new process even if the previous
-            # DayZ process was killed after TimeoutStopSec. Split the steps
+            # game process was killed after TimeoutStopSec. Split the steps
             # so that a failed/forced stop blocks the subsequent start.
             self._lifecycle("stop", instance)
             started = self._lifecycle("start", instance)
