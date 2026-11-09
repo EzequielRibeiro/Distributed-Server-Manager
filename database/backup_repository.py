@@ -373,11 +373,42 @@ class BackupRepository:
             created.append(self.request(policy["instance_id"],action="create",reason="schedule",requested_by="scheduler"))
         return created
 
+    def _single_operational_cleanup(self, instance_id, completed_backup_id):
+        """Queue deletions only after a replacement backup is persisted.
+
+        Never delete unmanaged/orphan archives and never delete the most recent
+        completed backup. Agent delete operations are idempotent.
+        """
+        schedule = self._workspace_schedule(instance_id)
+        if not schedule or not bool(schedule.get("keep_single_operational")):
+            return []
+        jobs = self.list_jobs(instance_id=instance_id, limit=2000)
+        completed = [job for job in jobs if job.get("action") == "create"
+                     and job.get("status") == "completed" and job.get("backup_id")
+                     and job.get("sha256") and job.get("artifact_path")]
+        if not completed or str(completed[0]["backup_id"]) != str(completed_backup_id):
+            return []  # fail closed if a newer completed backup exists
+        excluded = {str(job["backup_id"]) for job in jobs
+                    if job.get("action") == "delete"
+                    and job.get("status") in {"pending", "running", "completed"}
+                    and job.get("backup_id")}
+        queued = []
+        for job in completed[1:]:
+            old_id = str(job["backup_id"])
+            if old_id != str(completed_backup_id) and old_id not in excluded:
+                queued.append(self.request(instance_id, action="delete", backup_id=old_id,
+                                           reason="operational_retention", requested_by="scheduler"))
+                excluded.add(old_id)
+        return queued
+
     def commands_for_agent(self, agent_id):
         self.schedule_due(agent_id);output=[]
         for job in reversed(self.list_jobs(agent_id=agent_id,status="pending",limit=100)):
-            policy=self.get_policy(job["instance_id"])
-            output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy or {},"requested_by":job.get("requested_by")})
+            policy=dict(self.get_policy(job["instance_id"]) or {})
+            schedule=self._workspace_schedule(job["instance_id"])
+            if schedule is not None:
+                policy["keep_single_operational"] = bool(schedule.get("keep_single_operational"))
+            output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy,"requested_by":job.get("requested_by")})
         return output
 
     def record_agent_state(self, agent_id, reports: list[Mapping[str, Any]]):
@@ -393,6 +424,17 @@ class BackupRepository:
                     backup_id=report.get("backup_id") or dict(row).get("backup_id")
                     session.execute(f"UPDATE backup_jobs SET backup_id={self.ph},status={self.ph},size_bytes={self.ph},sha256={self.ph},artifact_path={self.ph},started_at={self.ph},completed_at={self.ph},last_error={self.ph},updated_at={self.ph} WHERE command_id={self.ph}",(backup_id,status,report.get("size_bytes"),report.get("sha256"),report.get("artifact_path"),report.get("started_at") or (now if status=="running" else None),report.get("completed_at") or (now if status in {"completed","failed"} else None),report.get("last_error"),now,command_id));accepted+=1
             finally:session.close()
+        # Physical deletion runs only after the successful create report is
+        # committed. An interrupted/failed backup never replaces its predecessor.
+        for report in reports[:500]:
+            if str(report.get("status") or "").lower() != "completed":
+                continue
+            job = self.get_job(str(report.get("command_id") or ""))
+            if (not job or job.get("agent_id") != agent_id or job.get("action") != "create"
+                or job.get("status") != "completed" or not job.get("backup_id")
+                or not job.get("sha256") or not job.get("artifact_path")):
+                continue
+            self._single_operational_cleanup(job["instance_id"], job["backup_id"])
         return accepted
 
 
