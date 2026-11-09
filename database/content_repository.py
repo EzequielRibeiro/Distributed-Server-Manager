@@ -454,6 +454,26 @@ class ContentRepository:
    except (TypeError,ValueError,KeyError,AttributeError):
     continue
   return "missing"
+ def _serverpack_recent_physical_observation(self,instance_id,content_id,bundle_revision):
+  """Project only the newest owned, scoped observation; never grant health."""
+  from universal_event_repository import UniversalEventRepository
+  from dashboard.minecraft_serverpack_observation_events import classify_recent_serverpack_observation
+  current=self._instance(instance_id)
+  if current is None:return "missing"
+  agent_id=str(dict(current).get("agent_id") or "")
+  if not agent_id:return "missing"
+  events=UniversalEventRepository(self.backend).list_events(
+   limit=1000,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
+   agent_id=agent_id,instance_id=instance_id)
+  for event in events:
+   data=event.get("data")
+   if not isinstance(data,dict) or data.get("content_id")!=content_id:continue
+   # Newer events for the same pack supersede earlier successful scans.
+   # In particular, a failure must not fall back to an older success.
+   return classify_recent_serverpack_observation(
+    event,agent_id=agent_id,instance_id=instance_id,
+    content_id=content_id,bundle_revision=bundle_revision)
+  return "missing"
  def customer_view(self,instance_id,limit=2000):
   items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
   def decorate(item):
@@ -502,6 +522,10 @@ class ContentRepository:
       instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
       str(bundle["manifest_sha256"])) if bundle else "missing")
     summary["physical_attestation"]=physical
+    summary["current_physical_observation"]=(
+     self._serverpack_recent_physical_observation(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]))
+     if bundle else "missing")
     # Publication attestation proves JAR bytes at migration time, not current
     # runtime health or a later NeoForge boot. Remain fail-closed.
     summary["convergence_status"]="failed" if alignment=="drift" or failed else "pending"
