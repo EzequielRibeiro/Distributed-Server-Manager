@@ -16,6 +16,29 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
     setUp=_fixtures.AtomicPendingPublicationTest.setUp
     tearDown=_fixtures.AtomicPendingPublicationTest.tearDown
 
+    def test_controller_returns_current_manifest_for_only_owned_serverpack(self):
+        from core.content_bundle import normalize_bundle
+        response=record_agent_heartbeat('pr839-isolated-agent',
+            {'agent_id':'pr839-isolated-agent'},backend=self.backend)
+        requests=response['serverpack_observation_requests']
+        self.assertEqual(len(requests),1)
+        request=requests[0]
+        self.assertEqual(request['instance_id'],'pr855-controller-atomic')
+        self.assertEqual(request['content_id'],'atm11')
+        canonical=normalize_bundle({**request['bundle'],
+            'instance_id':request['instance_id'],
+            'parent_content_id':request['content_id']})
+        self.assertEqual(request['manifest_sha256'],canonical['manifest_sha256'])
+        current=self.content._bundle_row('pr855-controller-atomic','atm11')
+        self.assertEqual(request['bundle_revision'],current['revision'])
+        self.assertEqual(request['manifest_sha256'],current['manifest_sha256'])
+        with self.backend.transaction() as connection:
+            connection.execute('UPDATE content_bundles SET manifest_sha256=? WHERE bundle_id=?',
+                ('f'*64,current['bundle_id']))
+        self.assertEqual(record_agent_heartbeat('pr839-isolated-agent',
+            {'agent_id':'pr839-isolated-agent'},backend=self.backend)
+            ['serverpack_observation_requests'],[])
+
     def test_remote_heartbeat_event_is_current_owned_and_never_healthy(self):
         bundle=self.content._bundle_row('pr855-controller-atomic','atm11')
         report={'instance_id':'pr855-controller-atomic','content_id':'atm11',
