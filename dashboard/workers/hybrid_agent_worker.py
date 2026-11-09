@@ -895,9 +895,14 @@ def process_hybrid_serverpack_observation_cycle(backend, root: Path, agent_id: s
         runtime=_instance_runtime_module(root)
         observed=collect_hybrid_serverpack_observations(
             backend,agent_id=agent_id,read_instance=runtime.get_instance,limit=1)
+        from datetime import datetime, timezone
+        from minecraft_serverpack_observation_events import persist_serverpack_runtime_observations
+        stamp=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        stored=persist_serverpack_runtime_observations(
+            backend,agent_id=agent_id,observations=observed,observed_at=stamp)
         return {"status":"observed","checked":len(observed),
                 "verified":sum(x.get("status")=="physical_runtime_verified" for x in observed),
-                "observations":observed}
+                "persisted":stored["created"],"observations":observed}
     except Exception:
         return {"status":"unavailable","checked":0,"verified":0}
 
