@@ -82,7 +82,11 @@ def persist_serverpack_runtime_observations(
         event_id='minecraft-serverpack-observed-'+hashlib.sha256('\0'.join(key).encode()).hexdigest()
         if event_id in seen:continue
         seen.add(event_id)
-        advisory=_advisory_boot(item.get('boot_observation'),stamp)
+        digest=item.get('manifest_sha256')
+        valid_digest=(isinstance(digest,str) and len(digest)==64
+                      and all(ch in '0123456789abcdef' for ch in digest))
+        advisory=(_advisory_boot(item.get('boot_observation'),stamp)
+                  if status=='physical_runtime_verified' and valid_digest else None)
         saved=events.publish({
             'event_id':event_id,'event_type':'MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
             'occurred_at':stamp,'source':source,
@@ -92,7 +96,8 @@ def persist_serverpack_runtime_observations(
                     'observation_status':status,'reason':reason,
                     'proof_scope':'current_filesystem_only',
                     'boot_verified':False,'release_authorized':False,
-                    **({'boot_observation':advisory} if advisory else {})},
+                    **({'manifest_sha256':digest,'boot_observation':advisory}
+                       if advisory else {})},
         })
         created+=int(saved['created'])
     return {'accepted':len(seen),'created':created}

@@ -70,4 +70,56 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
             event_type='MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
             instance_id='pr855-controller-atomic',limit=10)),1)
 
+    def test_boot_witness_is_scoped_to_current_manifest_and_never_grants_health(self):
+        from datetime import timedelta
+        bundle=self.content._bundle_row('pr855-controller-atomic','atm11')
+        now=datetime.now(timezone.utc)
+        observed_at=now.isoformat()
+        proof={
+            'status':'boot_process_observed',
+            'reason':'current_java_and_done_log_bound',
+            'proof_scope':'advisory_current_process_log',
+            'java_pid':12345,
+            'java_started_at':(now-timedelta(minutes=3)).isoformat(),
+            'done_at':(now-timedelta(minutes=1)).isoformat(),
+            'boot_verified':False,
+            'ready_for_release':False,
+        }
+        report={
+            'instance_id':'pr855-controller-atomic','content_id':'atm11',
+            'bundle_revision':bundle['revision'],
+            'manifest_sha256':bundle['manifest_sha256'],
+            'status':'physical_runtime_verified','reason':'boot_not_observed',
+            'boot_verified':False,'ready_for_release':False,
+            'boot_observation':proof,
+        }
+        payload={'agent_id':'pr839-isolated-agent',
+                 'minecraft_serverpack_observations':{
+                     'observed_at':observed_at,'observations':[report]}}
+        result=record_agent_heartbeat('pr839-isolated-agent',payload,backend=self.backend)
+        self.assertEqual(result['serverpack_observations_created'],1)
+        summary=self.content.customer_view('pr855-controller-atomic')[0]['bundle_summary']
+        self.assertEqual(summary['current_boot_witness'],'observed')
+        self.assertEqual(summary['health_gate'],'blocked')
+        self.assertEqual(summary['convergence_status'],'pending')
+        # Replaced bundle digest supersedes a previously valid boot witness.
+        with self.backend.transaction() as c:
+            c.execute('UPDATE content_bundles SET manifest_sha256=? WHERE bundle_id=?',
+                      ('f'*64,bundle['bundle_id']))
+        self.assertEqual(self.content.customer_view('pr855-controller-atomic')[0]
+                         ['bundle_summary']['current_boot_witness'],'missing')
+        with self.backend.transaction() as c:
+            c.execute('UPDATE content_bundles SET manifest_sha256=? WHERE bundle_id=?',
+                      (bundle['manifest_sha256'],bundle['bundle_id']))
+        # Newer unverified observation supersedes a previous positive one.
+        payload['minecraft_serverpack_observations']['observed_at']=(now+timedelta(seconds=1)).isoformat()
+        payload['minecraft_serverpack_observations']['observations']=[
+            {**report,'status':'unverified','reason':'physical_manifest_mismatch'}]
+        result=record_agent_heartbeat('pr839-isolated-agent',payload,backend=self.backend)
+        self.assertEqual(result['serverpack_observations_created'],1)
+        self.assertEqual(self.content.customer_view('pr855-controller-atomic')[0]
+                         ['bundle_summary']['current_boot_witness'],'missing')
+        self.assertEqual(self.content.customer_view('pr855-controller-atomic')[0]
+                         ['bundle_summary']['health_gate'],'blocked')
+
 if __name__=='__main__':unittest.main()

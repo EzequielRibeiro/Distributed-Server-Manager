@@ -66,7 +66,7 @@ class ObservationEventsTest(unittest.TestCase):
             repo.publish.return_value={'created':True}
             persist_serverpack_runtime_observations(
                 object(),agent_id='a',
-                observations=[{**self.item,'boot_observation':boot}],
+                observations=[{**self.item,'manifest_sha256':'a'*64,'boot_observation':boot}],
                 observed_at=self.stamp)
             event=repo.publish.call_args.args[0]
         self.assertEqual(event['data']['boot_observation']['java_pid'],12345)
@@ -90,7 +90,7 @@ class ObservationEventsTest(unittest.TestCase):
                 repo.publish.return_value={'created':True}
                 persist_serverpack_runtime_observations(
                     object(),agent_id='a',
-                    observations=[{**self.item,'boot_observation':bad}],
+                    observations=[{**self.item,'manifest_sha256':'a'*64,'boot_observation':bad}],
                     observed_at=self.stamp)
                 self.assertNotIn('boot_observation',repo.publish.call_args.args[0]['data'])
 

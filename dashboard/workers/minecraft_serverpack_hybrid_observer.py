@@ -64,6 +64,7 @@ def collect_hybrid_serverpack_observations(
                     if result.get('status')=='physical_runtime_verified' else None)
             observations.append({'instance_id':iid,'content_id':cid,
                                  'bundle_revision':int(row['revision']),
+                                 'manifest_sha256':row['manifest_sha256'],
                                  'status':result['status'],
                                  'reason':result['reason'],
                                  'boot_verified':False,

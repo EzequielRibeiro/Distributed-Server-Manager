@@ -474,6 +474,49 @@ class ContentRepository:
     event,agent_id=agent_id,instance_id=instance_id,
     content_id=content_id,bundle_revision=bundle_revision)
   return "missing"
+ def _serverpack_recent_boot_witness(self,instance_id,content_id,bundle_revision,manifest_sha256):
+  """Advisory only: latest scoped Agent observation, never release authority."""
+  from datetime import datetime,timezone
+  from universal_event_repository import UniversalEventRepository
+  current=self._instance(instance_id)
+  if current is None:return "missing"
+  agent_id=str(dict(current).get("agent_id") or "")
+  if not agent_id:return "missing"
+  events=UniversalEventRepository(self.backend).list_events(
+   limit=1000,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
+   agent_id=agent_id,instance_id=instance_id)
+  for event in events:
+   data=event.get("data")
+   if not isinstance(data,dict) or data.get("content_id")!=content_id:continue
+   # Newest observation supersedes old proofs after a failed scan or revision.
+   if (event.get("agent_id")!=agent_id or event.get("source_id")!=agent_id
+       or event.get("instance_id")!=instance_id
+       or event.get("source") not in {
+        "controller.local_hybrid_serverpack_observer",
+        "controller.authenticated_agent_serverpack_observer"}
+       or type(data.get("bundle_revision")) is not int
+       or data["bundle_revision"]!=bundle_revision
+       or data.get("manifest_sha256")!=manifest_sha256
+       or data.get("observation_status")!="physical_runtime_verified"
+       or data.get("proof_scope")!="current_filesystem_only"
+       or data.get("boot_verified") is not False
+       or data.get("release_authorized") is not False):
+    return "missing"
+   boot=data.get("boot_observation")
+   if (not isinstance(boot,dict)
+       or boot.get("status")!="boot_process_observed"
+       or boot.get("proof_scope")!="advisory_current_process_log"
+       or boot.get("boot_verified") is not False
+       or boot.get("ready_for_release") is not False):
+    return "missing"
+   try:
+    timestamp=datetime.fromisoformat(str(event["occurred_at"]).replace("Z","+00:00"))
+    if timestamp.tzinfo is None:return "missing"
+    age=(datetime.now(timezone.utc)-timestamp.astimezone(timezone.utc)).total_seconds()
+    if age<0 or age>7200:return "stale"
+   except (TypeError,ValueError,KeyError,OverflowError):return "missing"
+   return "observed"
+  return "missing"
  def _serverpack_runtime_process_observation(self,instance_id,max_age_seconds=180):
   """Correlate the currently owned Agent heartbeat, not JVM startup proof.
 
@@ -555,6 +598,10 @@ class ContentRepository:
      self._serverpack_recent_physical_observation(
       instance_id,str(item.get("content_id") or ""),int(bundle["revision"]))
      if bundle else "missing")
+    summary["current_boot_witness"]=(
+     self._serverpack_recent_boot_witness(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"])) if bundle else "missing")
     summary["runtime_process_observation"]=(
      self._serverpack_runtime_process_observation(instance_id) if bundle else "missing")
     # Publication attestation proves JAR bytes at migration time, not current
