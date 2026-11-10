@@ -66,6 +66,7 @@ def observe_boot_witness(
         if (props.get("ActiveState") != "active" or supervisor <= 1
                 or Path(props.get("WorkingDirectory", "")).resolve() != runtime.resolve()):
             return {**negative, "reason": "service_not_bound"}
+        supervisor_started = _process_start(supervisor)
         supervisor_cmd = _command(supervisor)
         if (not any(arg.endswith("/console_supervisor.py") for arg in supervisor_cmd)
                 or not any(instance_id in arg for arg in supervisor_cmd)):
@@ -107,6 +108,21 @@ def observe_boot_witness(
         # Guard races with exit/restart and PID reuse while reading the log.
         if _process_start(java_pid) != java_started or not Path(f"/proc/{java_pid}").exists():
             return {**negative, "reason": "java_process_changed"}
+        # A service restart between the first systemctl snapshot and the
+        # final log read must invalidate this witness, even if an old JVM PID
+        # remains visible briefly during unit teardown.
+        final = subprocess.run(
+            ["systemctl", "show", unit, "-p", "MainPID", "-p", "ActiveState",
+             "-p", "WorkingDirectory"],
+            capture_output=True, text=True, timeout=4, check=True,
+        )
+        end_props = dict(line.split("=", 1) for line in final.stdout.splitlines()
+                         if "=" in line)
+        if (end_props.get("ActiveState") != "active"
+                or end_props.get("MainPID") != str(supervisor)
+                or Path(end_props.get("WorkingDirectory", "")).resolve() != runtime.resolve()
+                or _process_start(supervisor) != supervisor_started):
+            return {**negative, "reason": "service_changed_during_probe"}
         return {
             **negative, "status": "boot_process_observed",
             "reason": "current_java_and_done_log_bound",

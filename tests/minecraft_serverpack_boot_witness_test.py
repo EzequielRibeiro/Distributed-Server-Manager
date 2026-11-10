@@ -37,18 +37,21 @@ class BootWitnessTest(unittest.TestCase):
             "Done (3.062s)! For help, type \"help\"\n"
         )
 
-    def probe(self):
+    def probe(self, *, second_service=None, process_starts=None):
         original_read = Path.read_text
         original_resolve = Path.resolve
         original_exists = Path.exists
         with (
             patch.object(witness.subprocess, "run",
-                         return_value=SimpleNamespace(stdout=self.stdout)),
+                         side_effect=[SimpleNamespace(stdout=self.stdout),
+                                      SimpleNamespace(stdout=second_service or self.stdout)]),
             patch.object(witness, "_command", side_effect=lambda pid:
                          ["/usr/bin/python3", "/opt/dsm/console_supervisor.py",
                           "capivara-instance-pr855-lab"] if pid == 1234 else
                          ["/usr/bin/java", "@capivara-launch.args"]),
-            patch.object(witness, "_process_start", return_value=self.start),
+            patch.object(witness, "_process_start",
+                         side_effect=process_starts or
+                         [self.start, self.start, self.start, self.start]),
             patch.object(witness.Path, "read_text", autospec=True) as reader,
         ):
             # Path.read_text mock only handles the proc children; logs still
@@ -77,6 +80,19 @@ class BootWitnessTest(unittest.TestCase):
         self.assertIs(result["boot_verified"], False)
         self.assertIs(result["ready_for_release"], False)
         self.assertEqual(result["java_pid"], 5678)
+
+    def test_service_restart_during_log_read_invalidates_positive_proof(self):
+        replacement=self.stdout.replace("MainPID=1234", "MainPID=9999")
+        result=self.probe(second_service=replacement)
+        self.assertEqual(result["status"], "boot_unverified")
+        self.assertEqual(result["reason"], "service_changed_during_probe")
+
+    def test_supervisor_pid_reuse_during_log_read_invalidates_proof(self):
+        changed=self.start + timedelta(seconds=3)
+        result=self.probe(process_starts=[
+            self.start, self.start, self.start, changed])
+        self.assertEqual(result["status"], "boot_unverified")
+        self.assertEqual(result["reason"], "service_changed_during_probe")
 
     def test_stale_done_and_missing_done_fail_closed(self):
         self.write_done((self.start - timedelta(minutes=15)).astimezone().replace(tzinfo=None))
