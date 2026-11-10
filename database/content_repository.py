@@ -527,7 +527,7 @@ class ContentRepository:
     sec=str(child.get("effective_security_state") or "unscanned");security_counts[sec]=security_counts.get(sec,0)+1;status=str((child.get("reconciliation") or {}).get("status") or "pending");status_counts[status]=status_counts.get(status,0)+1
    if members:
     worst=max([str(item.get("effective_security_state") or "unscanned"),*[str(child.get("effective_security_state") or "unscanned") for child in members]],key=lambda value:severity.get(value,2));item["effective_security_state"]=worst;item["reconciliation"]["security_state"]=worst
-   summary={"child_count":len(members),"security_states":security_counts,"reconciliation_statuses":status_counts}
+   summary={"child_count":len(members),"installed_child_count":sum(str(child.get("desired_state") or "installed")=="installed" for child in members),"absent_child_count":sum(str(child.get("desired_state") or "installed")=="absent" for child in members),"security_states":security_counts,"reconciliation_statuses":status_counts}
    if str(item.get("provider") or "")=="local" and bool((item.get("artifact") or {}).get("ephemeral_upload")):
     alignment=self._serverpack_manifest_alignment(instance_id,item,members)
     summary["manifest_alignment"]=alignment
