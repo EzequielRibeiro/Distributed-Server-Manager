@@ -401,6 +401,18 @@ class MaintenanceWorker:
   if observed!='running':
    if not (native_armed and observed=='stopped'):
     self.repository.finish(rid,success=True,now=now);result['completed']+=1;result['skipped']+=1;return
+  if capabilities.get('native_countdown') and not native_armed:
+   # Never replace an explicitly selected in-game countdown with an unannounced
+   # systemd stop. A missed preparation or failed prior maintenance must fail
+   # closed, rather than killing the running game during scheduled maintenance.
+   self.repository.finish(
+    rid,success=False,error_code='native_restart_unarmed',
+    error_detail=(
+     'Native in-game restart is enabled but no completed native preparation '
+     'matches the scheduled due time; automatic systemd stop and start blocked'
+    ),now=now)
+   result['failed']+=1
+   return
   if capabilities.get('save'):
    if not run.get('save_command_id'):
     try:self._enqueue(run,'save',self.repository.mark_save);result['saves']+=1
