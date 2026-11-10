@@ -33,6 +33,7 @@ EXTENDED=(
     'tests/minecraft_serverpack_remote_heartbeat_sqlite_test.py',
     'tests/minecraft_serverpack_remote_heartbeat_cycle_test.py',
     'tests/minecraft_serverpack_remote_producer_test.py',
+    'tests/minecraft_serverpack_boot_witness_test.py',
     'tests/minecraft_serverpack_observation_events_test.py',
     'tests/minecraft_serverpack_migration_readiness_test.py',
     'tests/minecraft_serverpack_migration_transaction_test.py',

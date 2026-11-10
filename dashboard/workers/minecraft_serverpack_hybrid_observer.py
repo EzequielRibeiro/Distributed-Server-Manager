@@ -6,11 +6,15 @@ from the Controller DB, while the runtime path comes from the owned Agent record
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
 from content_repository import ContentRepository
 from scripts.minecraft_serverpack_observe_runtime import observe_runtime
+_AGENT_RUNTIME=Path(__file__).resolve().parents[2]/"agents/linux/runtime"
+if str(_AGENT_RUNTIME) not in sys.path:sys.path.insert(0,str(_AGENT_RUNTIME))
+from minecraft_serverpack_boot_witness import observe_boot_witness
 
 
 def collect_hybrid_serverpack_observations(
@@ -56,12 +60,15 @@ def collect_hybrid_serverpack_observations(
             if (result.get('status')=='physical_runtime_verified'
                     and result.get('manifest_sha256')!=row.get('manifest_sha256')):
                 result={'status':'unverified','reason':'published_manifest_mismatch'}
+            boot = (observe_boot_witness(Path(source), instance_id=iid)
+                    if result.get('status')=='physical_runtime_verified' else None)
             observations.append({'instance_id':iid,'content_id':cid,
                                  'bundle_revision':int(row['revision']),
                                  'status':result['status'],
                                  'reason':result['reason'],
                                  'boot_verified':False,
-                                 'ready_for_release':False})
+                                 'ready_for_release':False,
+                                 **({'boot_observation':boot} if boot is not None else {})})
         except (OSError,ValueError,TypeError,KeyError,AttributeError):
             observations.append({'instance_id':iid,'content_id':cid,
                                  'bundle_revision':int(row['revision']),

@@ -19,6 +19,7 @@ for _path in (_COMMON,_CORE):
 from content_bundle import normalize_bundle
 from minecraft_serverpack_agent import verify_installed_neoforge
 from minecraft_serverpack_physical_manifest import attest_serverpack_mods
+from minecraft_serverpack_boot_witness import observe_boot_witness
 
 
 def observe_remote_requests(requests:list[dict[str,Any]]|None,*,
@@ -59,10 +60,13 @@ def observe_remote_requests(requests:list[dict[str,Any]]|None,*,
                 if proof['manifest_sha256']!=digest:raise ValueError('manifest mismatch')
             except (OSError,ValueError,TypeError,KeyError):
                 status='unverified';reason='physical_or_loader_mismatch'
+            boot = (observe_boot_witness(path, instance_id=iid)
+                    if status == 'physical_runtime_verified' else None)
             output['observations'].append({
                 'instance_id':iid,'content_id':cid,'bundle_revision':revision,
                 'manifest_sha256':digest,'status':status,'reason':reason,
-                'boot_verified':False,'ready_for_release':False})
+                'boot_verified':False,'ready_for_release':False,
+                **({'boot_observation':boot} if boot is not None else {})})
         except (OSError,ValueError,TypeError,KeyError,AttributeError):
             continue
     return output

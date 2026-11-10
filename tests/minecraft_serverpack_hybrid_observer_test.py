@@ -44,6 +44,24 @@ class HybridObservationTests(unittest.TestCase):
         self.assertFalse(results[0]['ready_for_release'])
         probe.assert_called_once()
 
+    def test_hybrid_process_witness_is_advisory_and_not_ready(self):
+        self.setup_mock_repo()
+        advisory={'status':'boot_process_observed',
+                  'reason':'current_java_and_done_log_bound',
+                  'proof_scope':'advisory_current_process_log',
+                  'java_pid':4444,'boot_verified':False,'ready_for_release':False}
+        with patch('minecraft_serverpack_hybrid_observer.observe_runtime',
+                   return_value={'status':'physical_runtime_verified',
+                                 'reason':'boot_not_observed',
+                                 'manifest_sha256':'a'*64}), \
+             patch('minecraft_serverpack_hybrid_observer.observe_boot_witness',
+                   return_value=advisory):
+            item=collect_hybrid_serverpack_observations(
+                object(),agent_id='agent',read_instance=lambda _:RECORD)[0]
+        self.assertEqual(item['boot_observation'],advisory)
+        self.assertFalse(item['boot_verified'])
+        self.assertFalse(item['ready_for_release'])
+
     def test_observed_hash_drift_cannot_be_promoted(self):
         self.setup_mock_repo()
         with patch('minecraft_serverpack_hybrid_observer.observe_runtime',

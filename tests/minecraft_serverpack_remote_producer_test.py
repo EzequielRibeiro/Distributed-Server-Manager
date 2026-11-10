@@ -69,6 +69,22 @@ class RemoteProducerTest(unittest.TestCase):
                for x in self.runtime.rglob('*') if x.is_file()}
         self.assertEqual(before,after)
 
+    def test_live_boot_witness_remains_advisory(self):
+        witness={'status':'boot_process_observed',
+                 'reason':'current_java_and_done_log_bound',
+                 'java_pid':43210,
+                 'java_started_at':'2026-11-10T18:18:33+00:00',
+                 'done_at':'2026-11-10T18:20:34+00:00',
+                 'proof_scope':'advisory_current_process_log',
+                 'boot_verified':False,'ready_for_release':False}
+        with patch('minecraft_serverpack_remote_observer.observe_boot_witness',
+                   return_value=witness) as boot:
+            result=self.collect()['observations'][0]
+        self.assertEqual(boot.call_count,1)
+        self.assertEqual(result['boot_observation'],witness)
+        self.assertFalse(result['boot_verified'])
+        self.assertFalse(result['ready_for_release'])
+
     def test_modified_jar_unexpected_jar_and_loader_mismatch_fail_closed(self):
         self.jar.write_bytes(b'x'*self.jar.stat().st_size)
         self.assertEqual(self.collect()['observations'][0]['status'],'unverified')

@@ -49,6 +49,51 @@ class ObservationEventsTest(unittest.TestCase):
             instance_id='inst',content_id='pack',bundle_revision=2,
             now=self.now+timedelta(hours=3)),'stale')
 
+    def test_advisory_boot_witness_is_persisted_without_health_authorization(self):
+        started=(self.now-timedelta(minutes=3)).isoformat()
+        done=(self.now-timedelta(minutes=1)).isoformat()
+        boot={
+            'status':'boot_process_observed',
+            'reason':'current_java_and_done_log_bound',
+            'java_pid':12345,
+            'java_started_at':started,'done_at':done,
+            'proof_scope':'advisory_current_process_log',
+            'boot_verified':False,'ready_for_release':False,
+        }
+        with patch('minecraft_serverpack_observation_events.UniversalEventRepository') as mocked:
+            repo=mocked.return_value
+            repo._instance_owned_by.return_value=True
+            repo.publish.return_value={'created':True}
+            persist_serverpack_runtime_observations(
+                object(),agent_id='a',
+                observations=[{**self.item,'boot_observation':boot}],
+                observed_at=self.stamp)
+            event=repo.publish.call_args.args[0]
+        self.assertEqual(event['data']['boot_observation']['java_pid'],12345)
+        self.assertFalse(event['data']['boot_observation']['boot_verified'])
+        self.assertFalse(event['data']['release_authorized'])
+        self.assertFalse(event['data']['boot_verified'])
+        self.assertEqual(classify_recent_serverpack_observation({
+            'event_type':event['event_type'],'agent_id':'a',
+            'instance_id':'inst','occurred_at':event['occurred_at'],
+            'source':event['source'],'source_id':event['source_id'],
+            'data':event['data'],
+        },agent_id='a',instance_id='inst',content_id='pack',bundle_revision=2,
+            now=self.now),'verified')
+        # Malformed or self-promoting proof is omitted, not upgraded to healthy.
+        for bad in ({**boot,'boot_verified':True},
+                    {**boot,'java_pid':0},
+                    {**boot,'done_at':(self.now+timedelta(hours=2)).isoformat()}):
+            with patch('minecraft_serverpack_observation_events.UniversalEventRepository') as mocked:
+                repo=mocked.return_value
+                repo._instance_owned_by.return_value=True
+                repo.publish.return_value={'created':True}
+                persist_serverpack_runtime_observations(
+                    object(),agent_id='a',
+                    observations=[{**self.item,'boot_observation':bad}],
+                    observed_at=self.stamp)
+                self.assertNotIn('boot_observation',repo.publish.call_args.args[0]['data'])
+
     def test_reject_unowned_future_and_invalid_health_claim(self):
         with patch('minecraft_serverpack_observation_events.UniversalEventRepository') as mocked:
             repo=mocked.return_value
