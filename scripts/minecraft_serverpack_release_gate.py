@@ -37,6 +37,7 @@ EXTENDED=(
     'tests/minecraft_serverpack_observation_events_test.py',
     'tests/minecraft_serverpack_migration_readiness_test.py',
     'tests/minecraft_serverpack_migration_transaction_test.py',
+    'tests/minecraft_serverpack_http_agent_transaction_joined_test.py',
     'tests/m9_modpack_bundle_read_model_test.py',
     'tests/universal_content_dashboard_test.py',
 )

@@ -27,8 +27,13 @@ for directory in (ROOT, ROOT / "agents/linux/runtime", ROOT / "core", ROOT / "da
 
 import dashboard.minecraft_serverpack_migration_service as migration_service
 import instance_runtime
-from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
+from minecraft_serverpack_migration_transaction import (
+    execute_minecraft_serverpack_migration,
+    MinecraftServerPackMigrationExecutionError,
+)
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
+from minecraft_serverpack_migration_recovery import recover_minecraft_serverpack_migration
+from runtime_operations import read_operation
 
 
 class JoinedCustomerAgentTransactionTest(ControllerServerPackFlowTest):
@@ -157,6 +162,75 @@ class JoinedCustomerAgentTransactionTest(ControllerServerPackFlowTest):
                 "commit": commit, "finalize": finalize,
                 "rollback": lambda *_: self.fail("rollback unexpectedly called"),
             }
+            # Inject a post-swap readiness failure in the *same* HTTP/queue
+            # transaction. The Agent must restore the physical old runtime
+            # without publishing revision 2, and permit a later safe retry.
+            rollback_calls = []
+            def restore(*_):
+                rollback_calls.append(True)
+                self.assertEqual((old / "loader.txt").read_text(), "26.1.2.109")
+                self.assertEqual((rollback / "loader.txt").read_text(), "26.1.2.94")
+                os.rename(old, stage)
+                os.rename(rollback, old)
+            failed_hooks = {
+                **hooks,
+                "readiness": lambda *_: False,
+                "rollback": restore,
+            }
+            with patch.object(instance_runtime, "STATE_DIR", state):
+                with self.assertRaises(MinecraftServerPackMigrationExecutionError) as failure:
+                    execute_minecraft_serverpack_migration(
+                        {"agent_id": "pr839-isolated-agent"},
+                        "pr855-controller-e2e", migration, failed_hooks,
+                    )
+            self.assertIn("rolled_back", failure.exception.trace)
+            self.assertEqual(len(rollback_calls), 1)
+            self.assertEqual((old / "loader.txt").read_text(), "26.1.2.94")
+            self.assertEqual((old / "world/original-marker.txt").read_text(), "PRESERVED")
+            self.assertEqual((stage / "loader.txt").read_text(), "26.1.2.109")
+            self.assertFalse(rollback.exists())
+            self.assertEqual(jobs.snapshot(provisioning_id)["status"], "queued")
+            self.assertEqual(
+                self.content.bundle_history("pr855-controller-e2e", "atm11")[0]["revision"], 1
+            )
+
+            # The real outer journal remains fail-closed even after the
+            # fixture's in-process rollback: retry is forbidden until the
+            # dedicated coordinator receives independently verified recovery.
+            with patch.object(instance_runtime, "STATE_DIR", state):
+                self.assertEqual(read_operation("pr855-controller-e2e")["status"], "failed")
+                with self.assertRaisesRegex(RuntimeError, "requires manual recovery"):
+                    execute_minecraft_serverpack_migration(
+                        {"agent_id": "pr839-isolated-agent"},
+                        "pr855-controller-e2e", migration, hooks,
+                    )
+                self.assertEqual((old / "loader.txt").read_text(), "26.1.2.94")
+                self.assertEqual((stage / "loader.txt").read_text(), "26.1.2.109")
+                def verified_restore(*_):
+                    # Unlike production, this fixture has no real privileged
+                    # swap journal; the filesystem proof is explicitly mocked.
+                    self.assertEqual((old / "world/original-marker.txt").read_text(), "PRESERVED")
+                    self.assertEqual((old / "loader.txt").read_text(), "26.1.2.94")
+                    self.assertFalse(rollback.exists())
+                    return {"status": "recovered", "failed_runtime_retained": True}
+                record={"instance_id":"pr855-controller-e2e",
+                        "instance_state_root":str(root/"storage"),
+                        "working_directory":str(old)}
+                with patch.object(instance_runtime, "_owned", return_value=record), patch(
+                    "minecraft_serverpack_migration_recovery.minecraft_serverpack_swap_phase",
+                    side_effect=verified_restore,
+                ):
+                    recovered = recover_minecraft_serverpack_migration(
+                        {"agent_id":"pr839-isolated-agent"},
+                        "pr855-controller-e2e", instance_state_root=root/"storage",
+                    )
+                self.assertEqual(recovered["status"], "recovered")
+                self.assertEqual(read_operation("pr855-controller-e2e")["status"], "recovered")
+            self.assertEqual(jobs.snapshot(provisioning_id)["status"], "queued")
+            self.assertEqual(
+                self.content.bundle_history("pr855-controller-e2e", "atm11")[0]["revision"], 1
+            )
+
             with patch.object(instance_runtime, "STATE_DIR", state):
                 detail = execute_minecraft_serverpack_migration(
                     {"agent_id": "pr839-isolated-agent"},
@@ -189,5 +263,7 @@ class JoinedCustomerAgentTransactionTest(ControllerServerPackFlowTest):
                 "journal": detail["commit"]["journal"]["phase"],
                 "physical_swap": True, "rollback_copy": True, "original_world": True,
                 "stale_fingerprint_rejected": True, "replay_idempotent": True,
+                "readiness_failure_rolled_back": True,
+                "retry_after_verified_recovery": True,
                 "real_jvm_boot": False, "physical_multi_host": False,
             }, sort_keys=True), flush=True)
