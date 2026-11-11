@@ -96,8 +96,8 @@ def persist_serverpack_runtime_observations(
                     'observation_status':status,'reason':reason,
                     'proof_scope':'current_filesystem_only',
                     'boot_verified':False,'release_authorized':False,
-                    **({'manifest_sha256':digest,'boot_observation':advisory}
-                       if advisory else {})},
+                    **({'manifest_sha256':digest} if valid_digest else {}),
+                    **({'boot_observation':advisory} if advisory else {})},
         })
         created+=int(saved['created'])
     return {'accepted':len(seen),'created':created}
@@ -106,7 +106,7 @@ def persist_serverpack_runtime_observations(
 def classify_recent_serverpack_observation(
         item:dict[str,Any]|None,*,agent_id:str,instance_id:str,
         content_id:str,bundle_revision:int,now:datetime|None=None,
-        max_age_seconds:int=7200)->str:
+        max_age_seconds:int=7200,manifest_sha256:str|None=None)->str:
     """Fail-closed freshness projection; never returns healthy/ready."""
     if not isinstance(item,dict) or max_age_seconds<=0:return 'missing'
     data=item.get('data')
@@ -120,6 +120,8 @@ def classify_recent_serverpack_observation(
         or type(data.get('bundle_revision')) is not int
         or data['bundle_revision']!=bundle_revision
         or data.get('proof_scope')!='current_filesystem_only'
+        or (manifest_sha256 is not None and
+            data.get('manifest_sha256')!=manifest_sha256)
         or data.get('boot_verified') is not False
         or data.get('release_authorized') is not False):
         return 'missing'

@@ -791,6 +791,7 @@ class AtomicPendingPublicationTest(unittest.TestCase):
         bundle=self.content._bundle_row("pr855-controller-atomic","atm11")
         item={"instance_id":"pr855-controller-atomic","content_id":"atm11",
               "bundle_revision":bundle["revision"],
+              "manifest_sha256":bundle["manifest_sha256"],
               "status":"physical_runtime_verified","reason":"boot_not_observed",
               "boot_verified":False,"ready_for_release":False}
         observed=persist_serverpack_runtime_observations(

@@ -62,6 +62,16 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
         self.assertEqual(summary['current_physical_observation'],'verified')
         self.assertEqual(summary['health_gate'],'blocked')
         self.assertEqual(summary['convergence_status'],'pending')
+        # A DB manifest change invalidates an otherwise successful, still
+        # fresh physical report for the same numeric revision.
+        with self.backend.transaction() as connection:
+            connection.execute('UPDATE content_bundles SET manifest_sha256=? WHERE bundle_id=?',
+                               ('f'*64,bundle['bundle_id']))
+        self.assertEqual(self.content.customer_view('pr855-controller-atomic')[0]
+                         ['bundle_summary']['current_physical_observation'],'missing')
+        with self.backend.transaction() as connection:
+            connection.execute('UPDATE content_bundles SET manifest_sha256=? WHERE bundle_id=?',
+                               (bundle['manifest_sha256'],bundle['bundle_id']))
         payload['minecraft_serverpack_observations']['observations']=[
             {**report,'bundle_revision':report['bundle_revision']+1}]
         second=record_agent_heartbeat('pr839-isolated-agent',payload,backend=self.backend)

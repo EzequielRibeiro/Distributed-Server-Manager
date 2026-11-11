@@ -454,7 +454,7 @@ class ContentRepository:
    except (TypeError,ValueError,KeyError,AttributeError):
     continue
   return "missing"
- def _serverpack_recent_physical_observation(self,instance_id,content_id,bundle_revision):
+ def _serverpack_recent_physical_observation(self,instance_id,content_id,bundle_revision,manifest_sha256):
   """Project only the newest owned, scoped observation; never grant health."""
   from universal_event_repository import UniversalEventRepository
   from dashboard.minecraft_serverpack_observation_events import classify_recent_serverpack_observation
@@ -472,7 +472,8 @@ class ContentRepository:
    # In particular, a failure must not fall back to an older success.
    return classify_recent_serverpack_observation(
     event,agent_id=agent_id,instance_id=instance_id,
-    content_id=content_id,bundle_revision=bundle_revision)
+    content_id=content_id,bundle_revision=bundle_revision,
+    manifest_sha256=manifest_sha256)
   return "missing"
  def _serverpack_recent_boot_witness(self,instance_id,content_id,bundle_revision,manifest_sha256):
   """Advisory only: latest scoped Agent observation, never release authority."""
@@ -596,7 +597,8 @@ class ContentRepository:
     summary["physical_attestation"]=physical
     summary["current_physical_observation"]=(
      self._serverpack_recent_physical_observation(
-      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]))
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"]))
      if bundle else "missing")
     summary["current_boot_witness"]=(
      self._serverpack_recent_boot_witness(
