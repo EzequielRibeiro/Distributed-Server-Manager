@@ -64,7 +64,14 @@ def observed_systemd_restart(*, instance_id, expected_at, deadline_at, observati
         starts = [_utc(item['at']) for item in events
                   if isinstance(item, dict) and item.get('event') == 'started'
                   and item.get('unit') == f'capivara-instance-{instance_id}.service']
+        failures = [_utc(item['at']) for item in events
+                    if isinstance(item, dict) and item.get('event') == 'failed'
+                    and item.get('unit') == f'capivara-instance-{instance_id}.service']
+        # An observed stop/start following a systemd failure is not evidence
+        # of clean shutdown. Journal 'Stopped' is emitted even after SIGKILL.
+        # This classification remains observational and cannot authorize work.
         return any(lower <= stopped <= upper and stopped <= started <= upper
+                   and not any(lower <= failed <= started for failed in failures)
                    for stopped in stops for started in starts)
     except (KeyError, TypeError, ValueError, OverflowError):
         return False

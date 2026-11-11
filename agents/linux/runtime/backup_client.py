@@ -212,17 +212,26 @@ def _create(config, command):
         )
         path = instance_dir / f"{backup_id}{suffix}"
         manifest = _manifest(record, backup_id)
-        _create_archive(
-            root,
-            _selected(root, policy),
-            path,
-            str(policy.get("compression") or "gzip"),
-            manifest,
-        )
-        size = path.stat().st_size
-        sha256 = _digest(path)
+        if path.exists():
+            raise FileExistsError(f"backup destination already exists: {path}")
+        try:
+            _create_archive(
+                root,
+                _selected(root, policy),
+                path,
+                str(policy.get("compression") or "gzip"),
+                manifest,
+            )
+            size = path.stat().st_size
+            sha256 = _digest(path)
+        except Exception:
+            # Only this newly allocated destination may be removed on failure.
+            # An earlier completed backup is never affected by a failed create.
+            path.unlink(missing_ok=True)
+            raise
         manifest["files_checksum"] = sha256
-        _retention(instance_dir, int(policy.get("retention_count") or 7))
+        if not policy.get("keep_single_operational"):
+            _retention(instance_dir, int(policy.get("retention_count") or 7))
         return {
             "backup_id": backup_id,
             "artifact_path": str(path),

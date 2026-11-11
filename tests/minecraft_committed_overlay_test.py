@@ -38,6 +38,57 @@ class NeoForgeCommittedOverlayTest(unittest.TestCase):
                 self.assertEqual((target/name).read_text(),"26.1.2.109")
             self.assertEqual((target/"eula.txt").read_text(),"eula=true")
 
+    def test_archived_commit_overlay_preserves_upgraded_launcher(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "instance"
+            source = Path(temp) / "seed"
+            target = state / "runtime"
+            source.mkdir()
+            target.mkdir(parents=True)
+            control = state / ".dsm"
+            control.mkdir()
+            history = control / "migration-history"
+            for name in ("capivara-launch.args", "run.sh", "run.bat"):
+                (source / name).write_text("26.1.2.94")
+                (target / name).write_text("26.1.2.126")
+            (source / "eula.txt").write_text("eula=true")
+            committed = json.dumps({"phase": "committed", "target_loader_version": "26.1.2.126"}).encode()
+            digest = hashlib.sha256(committed).hexdigest()
+            archived = history / digest[:24] / "minecraft-serverpack-migration.json"
+            archived.parent.mkdir(parents=True)
+            archived.write_bytes(committed)
+            (control / "minecraft-serverpack-archive-checkpoint.json").write_text(
+                json.dumps({"schema_version": 1, "sha256": digest}))
+            mod._seed_directory(source, target, pwd.getpwuid(os.getuid()), overlay=True)
+            mod._seed_directory(source, target, pwd.getpwuid(os.getuid()), overlay=True)
+            for name in ("capivara-launch.args", "run.sh", "run.bat"):
+                self.assertEqual((target / name).read_text(), "26.1.2.126")
+            self.assertEqual((target / "eula.txt").read_text(), "eula=true")
+
+    def test_archived_commit_corruption_blocks_overlay(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp) / "instance"
+            source = Path(temp) / "seed"
+            target = state / "runtime"
+            source.mkdir()
+            target.mkdir(parents=True)
+            control = state / ".dsm"
+            control.mkdir()
+            (source / "capivara-launch.args").write_text("old")
+            (target / "capivara-launch.args").write_text("new")
+            committed = b'{"phase":"committed"}'
+            digest = hashlib.sha256(committed).hexdigest()
+            archived = control / "migration-history" / digest[:24] / "minecraft-serverpack-migration.json"
+            archived.parent.mkdir(parents=True)
+            archived.write_bytes(b'{"phase":"corrupted"}')
+            (control / "minecraft-serverpack-archive-checkpoint.json").write_text(
+                json.dumps({"schema_version": 1, "sha256": digest}))
+            with self.assertRaisesRegex(RuntimeError, "unverified Minecraft archival evidence"):
+                mod._seed_directory(source, target, pwd.getpwuid(os.getuid()), overlay=True)
+            self.assertEqual((target / "capivara-launch.args").read_text(), "new")
+
     def test_uncommitted_overlay_remains_unchanged(self):
         with tempfile.TemporaryDirectory() as temp:
             base=Path(temp)

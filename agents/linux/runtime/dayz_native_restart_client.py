@@ -25,6 +25,7 @@ from dayz_messages import (
     materialize_shutdown_messages_xml,
     native_restart_plan,
 )
+from dayz_shutdown_diagnostic import suspected_linux_130_messages_issue
 from instance_runtime import get_instance
 
 STATE_DIR = Path(
@@ -125,6 +126,8 @@ def handle_command(
             plan.message,
         )
 
+        compatibility_warning = suspected_linux_130_messages_issue(record)
+
         result = {
             "command_id": command_id,
             "instance_id": instance_id,
@@ -137,6 +140,7 @@ def handle_command(
                 "deadline_minutes": deadline_minutes,
                 "materialized": True,
                 "due_at": str(due_at),
+                "compatibility_warning": compatibility_warning,
             },
             "generated_at": _now(),
         }

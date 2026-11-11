@@ -716,21 +716,28 @@ def process_hybrid_content_cycle(
     previous = client.content_state()
     if not isinstance(previous, list):
         raise RuntimeError("Hybrid content client returned an invalid state payload")
-    held = _held_content_instance_ids()
-    previous = [item for item in previous if isinstance(item, dict)
-                and str(item.get("instance_id") or "") not in held]
+    protected,transacting = repository.serverpack_content_fence(agent_id)
+    held = _held_content_instance_ids() | transacting
+    def allowed(item):
+        key=(str(item.get("instance_id") or ""),str(item.get("content_id") or ""))
+        return key[0] not in held and key not in protected
+    previous = [item for item in previous if isinstance(item, dict) and allowed(item)]
     reported = repository.record_agent_state(agent_id, previous)
 
     commands = repository.desired_for_agent(agent_id)
     if not isinstance(commands, list):
         raise RuntimeError("Hybrid content repository returned an invalid command payload")
-    commands = [item for item in commands if isinstance(item, dict)
-                and str(item.get("instance_id") or "") not in held]
+    # Double-check the fence after readback: a migration can be queued
+    # between reporting the prior state and dispatching desired work.
+    fresh_protected,fresh_transacting=repository.serverpack_content_fence(agent_id)
+    protected |= fresh_protected
+    held |= fresh_transacting
+    commands = [item for item in commands if isinstance(item, dict) and allowed(item)]
 
     reports = client.apply_content_commands(config, commands)
     if not isinstance(reports, list):
         raise RuntimeError("Hybrid content client returned an invalid result payload")
-    reports = [item for item in reports if isinstance(item, dict)]
+    reports = [item for item in reports if isinstance(item, dict) and allowed(item)]
     accepted = repository.record_agent_state(agent_id, reports)
 
     return {
