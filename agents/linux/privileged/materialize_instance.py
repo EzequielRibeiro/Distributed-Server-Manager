@@ -509,16 +509,46 @@ def _prepare_seed_parent(parent: Path, account: pwd.struct_passwd) -> None:
 
 
 def _has_committed_minecraft_migration(target: Path) -> bool:
-    journal = target.parent / ".dsm" / "minecraft-serverpack-migration.json"
-    if not journal.exists():
-        return False
-    if journal.is_symlink() or not journal.is_file():
+    control = target.parent / ".dsm"
+    journal = control / "minecraft-serverpack-migration.json"
+    if journal.is_symlink() or (journal.exists() and not journal.is_file()):
         raise RuntimeError("unsafe Minecraft migration journal during seed overlay")
+    if journal.is_file():
+        try:
+            data = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("unreadable Minecraft migration journal during seed overlay") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError("invalid Minecraft migration journal during seed overlay")
+        if data.get("phase") == "committed":
+            return True
+
+    # Finalization moves the committed journal into migration-history. A
+    # subsequent installer overlay must not revert the upgraded launcher.
+    checkpoint = control / "minecraft-serverpack-archive-checkpoint.json"
+    if checkpoint.is_symlink() or (checkpoint.exists() and not checkpoint.is_file()):
+        raise RuntimeError("unsafe Minecraft archival checkpoint during seed overlay")
+    if not checkpoint.exists():
+        return False
     try:
-        data = json.loads(journal.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise RuntimeError("unreadable Minecraft migration journal during seed overlay") from exc
-    return isinstance(data, dict) and data.get("phase") == "committed"
+        saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        digest = saved.get("sha256") if isinstance(saved, dict) and saved.get("schema_version") == 1 else None
+        if (not isinstance(digest, str) or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)):
+            raise ValueError("invalid checkpoint digest")
+        history = control / "migration-history"
+        archived = history / digest[:24] / "minecraft-serverpack-migration.json"
+        if (history.is_symlink() or archived.is_symlink() or not archived.is_file()):
+            raise ValueError("archived journal is missing or unsafe")
+        payload = archived.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError("archived journal checksum mismatch")
+        data = json.loads(payload)
+        if not isinstance(data, dict) or data.get("phase") != "committed":
+            raise ValueError("archived journal does not prove commit")
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError("unverified Minecraft archival evidence during seed overlay") from exc
+    return True
 
 
 def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False, overlay: bool = False) -> None:
