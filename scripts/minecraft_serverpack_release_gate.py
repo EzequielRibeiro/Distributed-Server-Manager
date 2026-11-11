@@ -38,6 +38,8 @@ EXTENDED=(
     'tests/minecraft_serverpack_migration_readiness_test.py',
     'tests/minecraft_serverpack_migration_transaction_test.py',
     'tests/minecraft_serverpack_http_agent_transaction_joined_test.py',
+    'tests/minecraft_serverpack_outbox_loopback_http_e2e_test.py',
+    'tests/minecraft_serverpack_content_convergence_test.py',
     'tests/m9_modpack_bundle_read_model_test.py',
     'tests/universal_content_dashboard_test.py',
 )
