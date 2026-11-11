@@ -35,7 +35,7 @@ jobs:
           cd "$RUNNER_TEMP/neoforge-disposable"
           curl --fail --location --retry 3 --connect-timeout 20 --max-time 180 \
             -o neoforge-installer.jar \
-            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.1.2.109/neoforge-26.1.2.109-installer.jar
+            https://maven.neoforged.net/releases/net/neoforged/neoforge/26.1.2.126/neoforge-26.1.2.126-installer.jar
           sha256sum neoforge-installer.jar | tee installer.sha256
           jar tf neoforge-installer.jar | grep -q 'META-INF/'
       - name: Install NeoForge in disposable directory
@@ -44,11 +44,11 @@ jobs:
           set -euo pipefail
           cd "$RUNNER_TEMP/neoforge-disposable"
           timeout 360 java -jar neoforge-installer.jar --installServer
-          test -f libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt
-          sha256sum libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt
+          test -f libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt
+          sha256sum libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt
           printf 'eula=true\n' > eula.txt
           printf 'server-ip=127.0.0.1\nserver-port=25595\nonline-mode=false\nmax-players=1\nview-distance=2\nsimulation-distance=2\n' > server.properties
-      - name: Boot actual NeoForge, validate Done and physical world, then stop
+      - name: Boot actual NeoForge 26.1.2.126 (loader-only), validate Done and physical world, then stop
         shell: bash
         run: |
           set -euo pipefail
@@ -57,7 +57,7 @@ jobs:
           (sleep 150; echo stop) > console.pipe &
           writer=$!
           timeout --signal=INT --kill-after=10 190 \
-            java -Xms512M -Xmx2048M @libraries/net/neoforged/neoforge/26.1.2.109/unix_args.txt nogui \
+            java -Xms512M -Xmx2048M @libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt nogui \
             < console.pipe > boot.log 2>&1 || rc=$?
           kill "$writer" 2>/dev/null || true
           tail -80 boot.log
