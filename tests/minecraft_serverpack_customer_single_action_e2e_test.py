@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import re
+import stat
 import subprocess
 import time
 import zipfile
@@ -36,7 +37,8 @@ from tests.minecraft_serverpack_authenticated_493_http_e2e_test import LargeReal
 from agent_instance_provisioning_repository import AgentInstanceProvisioningRepository
 from core.minecraft_serverpack_pending_commit import build_pending_bundle_commit
 from minecraft_serverpack_physical_manifest import attest_serverpack_mods
-from minecraft_serverpack_migration_transaction import execute_minecraft_serverpack_migration
+from minecraft_serverpack_migration_transaction import (execute_minecraft_serverpack_migration,
+    MinecraftServerPackMigrationExecutionError)
 from minecraft_serverpack_report_outbox import read_serverpack_report_delivery
 from minecraft_serverpack_content_promotion import promote_verified_sources
 from minecraft_serverpack_local_state_promotion import promote_local_state_snapshot
@@ -46,6 +48,7 @@ from minecraft_serverpack_content_convergence import (
 
 
 OFFICIAL_PACK_SHA256="b8635562de0931eb5cadb51954c0fb78658033928ef54b5f73be6cae5c8897fa"
+OFFICIAL_PREVIOUS_SHA256="78cbca8ffd26fef6d5bef27dcf44fb53cf118c20d9da6a19d9af7911b6d8768e"
 
 
 class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
@@ -74,12 +77,25 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
                 assert all("mods/"+x.name in infos and infos["mods/"+x.name].file_size==x.stat().st_size for x in self.official_files)
             self.official_zip_size=source_zip.stat().st_size
             self.official_zip_sha=OFFICIAL_PACK_SHA256
+            self.official_previous_zip=self.real_pack_root/"ServerFiles-0.13.0-beta.zip"
+            assert self.official_previous_zip.is_file(), "missing official ATM11 0.13 ZIP"
+            with self.official_previous_zip.open("rb") as stream:
+                assert hashlib.file_digest(stream,"sha256").hexdigest()==OFFICIAL_PREVIOUS_SHA256
+            with zipfile.ZipFile(self.official_previous_zip) as archive:
+                assert archive.testzip() is None
+                old_names=[i.filename for i in archive.infolist()
+                    if i.filename.startswith("mods/") and i.filename.endswith(".jar")]
+                assert len(old_names)==282 and len(set(old_names))==282
+                assert "neoforge-26.1.2.124-installer.jar" in archive.namelist()
+                self.official_previous_mods=sorted(old_names)
+            self.official_previous_hashes={}
         else:
+            self.official_previous_mods=None
             self.official_files=None
             self.official_zip_size=823456
             self.official_zip_sha="d"*64
         def actual_loader(value):
-            return {"26.1.2.94":"26.1.2.109","26.1.2.109":"26.1.2.126"}.get(value,value)
+            return {"26.1.2.94":"26.1.2.124","26.1.2.109":"26.1.2.126"}.get(value,value)
         base_bundle=scale_fixture.bundle
         base_child=scale_fixture.child
         base_artifact=scale_fixture.local_artifact
@@ -126,7 +142,7 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             pending.update(rebound)
             aid="pr839-isolated-agent"
             target=pending["bundle"]["loader_version"]
-            old="26.1.2.109"
+            old="26.1.2.124"
             with fixture.backend.transaction() as conn:
                 conn.execute("UPDATE instances SET build_id=? WHERE id=?",(old,iid))
             previous=fixture.content.bundle_history(iid,"atm11")[0]
@@ -241,8 +257,14 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             (runtime/"world/original-marker.txt").write_text("PRIVATE_WORLD_013")
             (runtime/"config").mkdir()
             (runtime/"config/customer.toml").write_text("CUSTOM_SETTING_PRESERVED")
-            (runtime/"loader.txt").write_text("26.1.2.109")
+            (runtime/"loader.txt").write_text("26.1.2.124")
             (runtime/"mods").mkdir()
+            if self.real_pack_root is not None:
+                self._stage_official_previous_runtime(runtime)
+                # Customer data is never sourced from a modpack ZIP.
+                (runtime/"world/original-marker.txt").write_text("PRIVATE_WORLD_013")
+                (runtime/"config/customer.toml").write_text("CUSTOM_SETTING_PRESERVED")
+                assert len(list((runtime/"mods").glob("*.jar")))==282
             (stage/"world").mkdir()
             (stage/"world/original-marker.txt").write_text("PRIVATE_WORLD_013")
             (stage/"config").mkdir()
@@ -337,7 +359,12 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             detail["physical_manifest"]=physical
             self.assertEqual((runtime/"world/original-marker.txt").read_text(),"PRIVATE_WORLD_013")
             self.assertEqual((runtime/"config/customer.toml").read_text(),"CUSTOM_SETTING_PRESERVED")
-            self.assertEqual((previous/"loader.txt").read_text(),"26.1.2.109")
+            self.assertEqual((previous/"loader.txt").read_text(),"26.1.2.124")
+            if self.real_pack_root is not None:
+                self.assertEqual(len(list((previous/"mods").glob("*.jar"))),282)
+                for name,digest in self.official_previous_hashes.items():
+                    with (previous/"mods"/name).open("rb") as stream:
+                        self.assertEqual(hashlib.file_digest(stream,"sha256").hexdigest(),digest)
             if self.real_pack_root is not None:
                 self.assertTrue(self.real_boot_result["pass"])
                 detail["real_boot"]=dict(self.real_boot_result)
@@ -355,6 +382,134 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             super().setUp()
         self._promote_managed_sources_and_agent_states()
 
+
+    def _stage_official_previous_runtime(self,runtime):
+        """Read-only source ZIP; extract official 0.13 files only to disposable runtime."""
+        assert self.real_pack_root is not None
+        assert self.official_previous_zip.is_file()
+        with zipfile.ZipFile(self.official_previous_zip) as archive:
+            for info in archive.infolist():
+                parts=Path(info.filename).parts
+                if not parts or parts[0] not in ("mods","config","kubegroovy","local"):
+                    continue
+                assert ".." not in parts and not info.filename.startswith("/")
+                assert "\\" not in info.filename
+                assert not stat.S_ISLNK(info.external_attr >> 16)
+                dest=runtime.joinpath(*parts)
+                assert dest.resolve().is_relative_to(runtime.resolve())
+                if info.is_dir():
+                    dest.mkdir(parents=True,exist_ok=True)
+                    continue
+                dest.parent.mkdir(parents=True,exist_ok=True)
+                with archive.open(info) as source,dest.open("wb") as output:
+                    shutil.copyfileobj(source,output,1024*1024)
+        old_mods=list((runtime/"mods").glob("*.jar"))
+        assert len(old_mods)==282
+        assert {p.name for p in old_mods} == {Path(x).name for x in self.official_previous_mods}
+        self.official_previous_hashes={}
+        for path in old_mods:
+            with path.open("rb") as stream:
+                self.official_previous_hashes[path.name]=hashlib.file_digest(stream,"sha256").hexdigest()
+        assert len(self.official_previous_hashes)==282
+        print("DSM1013_OFFICIAL_013_READY",
+              json.dumps({"files":282,"loader":"26.1.2.124",
+                 "zip_sha256":OFFICIAL_PREVIOUS_SHA256}),flush=True)
+
+    def _prove_readiness_rollback_with_official_013(self):
+        """Inject a failure after swapping *real* 0.14 mods over *real* 0.13 mods.
+
+        Reuses the already-verified disposable runtime and preserved previous
+        tree. Does NOT restart the JVM or touch the Controller in this failure
+        rehearsal. Validates automatic compensation before lock release.
+        """
+        assert self.real_pack_root is not None
+        base=Path(self.fixture.temp.name)/"joined-agent/storage"
+        live=self.runtime
+        previous=base/"runtime.migration-rollback"
+        staged=base/"official-readiness-failure-stage"
+        testroot=base/"official-readiness-failure-root"
+        testroot.mkdir()
+        active=testroot/"live"
+        backup=testroot/"before-swap"
+        aborted=testroot/"aborted-new"
+        assert live.is_dir() and previous.is_dir()
+        assert not any(p.exists() for p in (staged,active,backup,aborted))
+        # Both are in the same disposable fixture; move rather than copy 1+ GiB.
+        os.rename(live,staged)
+        os.rename(previous,active)
+        assert len(list((active/"mods").glob("*.jar")))==282
+        assert len(list((staged/"mods").glob("*.jar")))==291
+        original_sha=self.official_previous_hashes.copy()
+        for name,digest in original_sha.items():
+            with (active/"mods"/name).open("rb") as stream:
+                self.assertEqual(hashlib.file_digest(stream,"sha256").hexdigest(),digest)
+        events=[]
+        archive=testroot/"before-update.tar.gz"
+        with tarfile.open(archive,"w:gz") as tar:
+            for item in ("world/original-marker.txt","config/customer.toml"):
+                tar.add(active/item,arcname=item)
+        with archive.open("rb") as f:
+            archive_sha=hashlib.file_digest(f,"sha256").hexdigest()
+        backup_receipt={"backup_id":"official-013-failure-injection",
+             "sha256":archive_sha,"size_bytes":archive.stat().st_size,
+             "integrity_verified":True}
+        def swap(*_):
+            events.append("swap")
+            os.rename(active,backup)
+            os.rename(staged,active)
+        def readiness(*_):
+            events.append("readiness_injected_false")
+            assert len(list((active/"mods").glob("*.jar")))==291
+            return False
+        def commit(*_):
+            raise AssertionError("Controller commit must not run after readiness failure")
+        def rollback(*_):
+            events.append("rollback")
+            assert backup.is_dir()
+            os.rename(active,aborted)
+            os.rename(backup,active)
+            assert len(list((active/"mods").glob("*.jar")))==282
+        hooks={
+            "revalidate":lambda e:{"valid":True,"install_allowed":False,
+                "migration_plan_sha256":e["migration_plan_sha256"]},
+            "capacity":lambda e:{"sufficient":True,"install_allowed":False,
+                "requires_exclusive_recheck":True},
+            "stop":lambda *_:events.append("stop"),
+            "backup":lambda *_:dict(backup_receipt),
+            "stage":lambda *_:events.append("stage"),
+            "swap":swap,
+            "readiness":readiness,
+            "commit":commit,
+            "rollback":rollback,
+        }
+        with patch.object(instance_runtime,"STATE_DIR",self.root/"isolated-failure-lock"):
+            with self.assertRaises(MinecraftServerPackMigrationExecutionError) as caught:
+                execute_minecraft_serverpack_migration(
+                    {"agent_id":self.agent},self.iid,self.agent_migration,hooks)
+        self.assertIn("rolled_back",caught.exception.trace)
+        self.assertNotIn("committed",caught.exception.trace)
+        self.assertEqual(events,["stop","stage","swap","readiness_injected_false","rollback"])
+        self.assertTrue((active/"world/original-marker.txt").read_text()=="PRIVATE_WORLD_013")
+        self.assertTrue((active/"config/customer.toml").read_text()=="CUSTOM_SETTING_PRESERVED")
+        self.assertEqual((active/"loader.txt").read_text(),"26.1.2.124")
+        self.assertEqual((aborted/"loader.txt").read_text(),"26.1.2.126")
+        for name,digest in original_sha.items():
+            with (active/"mods"/name).open("rb") as stream:
+                self.assertEqual(hashlib.file_digest(stream,"sha256").hexdigest(),digest)
+        self.assertEqual(self.fixture.content.bundle_history(self.iid,"atm11")[0]["revision"],3)
+        self.assertEqual(self.count(),493)
+        self.assertIsNone(read_serverpack_report_delivery(self.root))
+        self.failure_rollback_verified=True
+        print("DSM1013_OFFICIAL_ROLLBACK_PASS",json.dumps({
+            "old_mods":282,"new_mods":291,
+            "old_loader":"26.1.2.124","target_loader":"26.1.2.126",
+            "world_restored":True,"config_restored":True,
+            "all_old_hashes_restored":True,"agent_rollback_before_unlock":True,
+            "controller_revision_unchanged":3,"agent_states_unchanged":493,
+            "injected_failure":"readiness_false_after_physical_swap",
+            "jvm_boot_for_failure_injection":"not_started",
+            "production_touched":False,
+        },sort_keys=True),flush=True)
 
     def _boot_real_official_runtime(self,runtime):
         """One actual JVM startup under the same Agent migration operation fence.
@@ -436,11 +591,22 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
         shared=["mod-a"]+[f"common-{i:03d}" for i in range(80)]
         oldids=shared+[f"legacy-{i:03d}" for i in range(201)]
         self.assertEqual(len(oldids),282)
-        for cid in oldids:
-            (source_parent/"mods"/(cid+".jar")).write_bytes(b"old-"+cid.encode())
+        if self.real_pack_root is not None:
+            old_path=Path(self.fixture.temp.name)/"joined-agent/storage/runtime.migration-rollback/mods"
+            actual_old=sorted(old_path.glob("*.jar"))
+            self.assertEqual(len(actual_old),282)
+        else:
+            actual_old=[]
+        for index,cid in enumerate(oldids):
             child_dir=source_children/cid
             child_dir.mkdir()
-            (child_dir/(cid+".jar")).write_bytes(b"old-"+cid.encode())
+            if self.real_pack_root is not None:
+                file=actual_old[index]
+                shutil.copy2(file,source_parent/"mods"/file.name)
+                shutil.copy2(file,child_dir/file.name)
+            else:
+                (source_parent/"mods"/(cid+".jar")).write_bytes(b"old-"+cid.encode())
+                (child_dir/(cid+".jar")).write_bytes(b"old-"+cid.encode())
         prepared=self.root/"prepared-source"
         (prepared/"parent/mods").mkdir(parents=True)
         (prepared/"children").mkdir()
@@ -479,6 +645,9 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
         self.assertEqual(len(list((source_parent/"mods").glob("*.jar"))),291)
         self.assertEqual(len(list((recovery/"previous-parent/mods").glob("*.jar"))),282)
         self.assertEqual(len([x for x in (recovery/"previous-children").iterdir() if x.is_dir()]),282)
+        if self.real_pack_root is not None:
+            self.assertEqual({p.name for p in (recovery/"previous-parent/mods").glob("*.jar")},
+                set(self.official_previous_hashes))
 
         # Stage 493 local records, then actually perform journaled activation.
         active_states=self.paths["active_states"]
@@ -571,9 +740,11 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             verify_serverpack_content_convergence(**convergence_args)
         file.write_bytes(original)
         self.assertEqual(verify_serverpack_content_convergence(**convergence_args)["status"],"ready")
+        if self.real_pack_root is not None:
+            self._prove_readiness_rollback_with_official_013()
         print("ONE_CUSTOMER_ACTION_TO_ACK_PASS",json.dumps({
             "single_http_customer_action":True,
-            "loader_transition":"26.1.2.109->26.1.2.126",
+            "loader_transition":"26.1.2.124->26.1.2.126",
             "controller_queue_revision_before_agent":2,
             "controller_revision_after_agent":3,
             "physical_swap":True,"retained_old_world":True,
@@ -582,7 +753,9 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             "agent_report_count":493,"agent_ack_retired":True,
             "jvm_readiness":"real_official_done_and_clean_stop" if self.real_pack_root is not None else "simulated",
             "official_zip_verified":self.real_pack_root is not None,
-            "previous_013_runtime":"disposable_synthetic_fixture",
+            "previous_013_runtime":"official_282_mods_and_configs_with_disposable_world"
+                if self.real_pack_root is not None else "disposable_synthetic_fixture",
+            "readiness_failure_rollback_verified":getattr(self,"failure_rollback_verified",False),
             "customer_preview":"controlled_isolated_fixture",
             "agent_source_promotion":"real_journaled_291_mod_files",
             "agent_local_state_promotion":"real_journaled_493_states",
