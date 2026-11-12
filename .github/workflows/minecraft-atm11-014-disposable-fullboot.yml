@@ -1,0 +1,141 @@
+name: ATM11 0.14 Disposable Full Modpack Boot
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/minecraft-atm11-014-disposable-fullboot.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  atm11-full-disposable:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Verify disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTIONS" = true
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test ! -e /opt/dsm/runtime/hybrid-instance-storage
+          test "$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')" -gt 4194304
+          test "$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)" -gt 5242880
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Download and authenticate official ATM11 0.14 Server Pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/dsm-atm11-014"
+          cd "$RUNNER_TEMP/dsm-atm11-014"
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 360 \
+            --output ServerFiles-0.14.0-beta.zip \
+            https://mediafilez.forgecdn.net/files/9426/897/ServerFiles-0.14.0-beta.zip
+          echo 'b8635562de0931eb5cadb51954c0fb78658033928ef54b5f73be6cae5c8897fa  ServerFiles-0.14.0-beta.zip' | sha256sum --check -
+      - name: Extract 291 mods and install NeoForge 26.1.2.126
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dsm-atm11-014"
+          python3 - <<'PY'
+          import shutil,stat,zipfile
+          from pathlib import Path
+          root=Path.cwd()
+          with zipfile.ZipFile("ServerFiles-0.14.0-beta.zip") as archive:
+              assert archive.testzip() is None
+              entries=archive.infolist()
+              jars=[i for i in entries if i.filename.startswith("mods/") and i.filename.endswith(".jar")]
+              assert len(jars)==291, f"expected 291 mods, found {len(jars)}"
+              for i in entries:
+                  name=i.filename
+                  parts=Path(name).parts
+                  assert name and not name.startswith("/") and "\\" not in name and ".." not in parts
+                  assert not stat.S_ISLNK(i.external_attr>>16)
+                  target=root.joinpath(*parts)
+                  assert target.resolve().is_relative_to(root.resolve())
+                  if i.is_dir():target.mkdir(parents=True,exist_ok=True)
+                  else:
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      with archive.open(i) as source,target.open("xb") as dest:
+                          shutil.copyfileobj(source,dest,1024*1024)
+          assert len(list((root/"mods").glob("*.jar")))==291
+          assert not (root/"world").exists()
+          print("EXTRACTED_291_OFFICIAL_MODS",flush=True)
+          PY
+          timeout 360 java -jar neoforge-26.1.2.126-installer.jar --installServer
+          test -f libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt
+          printf 'eula=true\n' > eula.txt
+          printf 'server-ip=127.0.0.1\nserver-port=25596\nonline-mode=false\nmax-players=1\nview-distance=2\nsimulation-distance=2\nenable-query=false\nenable-rcon=false\n' > server.properties
+      - name: Boot actual ATM11 with all 291 mods and stop gracefully
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/dsm-atm11-014"
+          python3 - <<'PY'
+          import json,os,re,subprocess,time
+          from pathlib import Path
+          root=Path.cwd();log=root/"atm11-boot.log"
+          result={"kind":"ATM11RealFullBoot","pack":"0.14.0-beta","loader":"26.1.2.126",
+                  "mod_jars":291,"boot_done":False,"clean_stop":False,
+                  "world_generated":False}
+          started=time.monotonic();proc=None
+          try:
+              with log.open("w") as out:
+                  proc=subprocess.Popen(["java","-Xms1024M","-Xmx5120M",
+                      "-Djava.awt.headless=true",
+                      "@libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt","nogui"],
+                      cwd=root,stdin=subprocess.PIPE,stdout=out,stderr=subprocess.STDOUT,
+                      text=True,env={**os.environ,"HOME":str(root),"TMPDIR":str(root)})
+                  print("FULL_MODPACK_JVM_STARTED",flush=True)
+                  while time.monotonic()-started<720:
+                      time.sleep(3)
+                      if re.search(r"Done \([0-9.]+s\)!",log.read_text(errors="replace")):
+                          result["boot_done"]=True
+                          print("FULL_MODPACK_BOOT_DONE",flush=True)
+                          break
+                      if proc.poll() is not None:break
+                  if proc.poll() is None:
+                      if result["boot_done"]:time.sleep(5)
+                      try:
+                          proc.stdin.write("stop\n");proc.stdin.flush()
+                          proc.wait(timeout=75)
+                          result["clean_stop"]=proc.returncode==0
+                      except (BrokenPipeError,subprocess.TimeoutExpired):
+                          proc.terminate()
+                          try:proc.wait(timeout=10)
+                          except subprocess.TimeoutExpired:
+                              proc.kill();proc.wait(timeout=10)
+                  result["exit_code"]=proc.returncode
+              world=root/"world/level.dat"
+              result["world_generated"]=world.is_file() and world.stat().st_size>0
+          except Exception as exc:
+              result["exception"]=repr(exc)
+          finally:
+              if proc and proc.poll() is None:
+                  proc.kill();proc.wait(timeout=10)
+              result["duration_seconds"]=round(time.monotonic()-started,2)
+              result["pass"]=bool(result["boot_done"] and result["clean_stop"]
+                    and result["world_generated"] and result.get("exit_code")==0)
+              lines=log.read_text(errors="replace").splitlines() if log.exists() else []
+              result["log_tail"]=lines[-70:]
+              (root/"boot-evidence.json").write_text(json.dumps(result,indent=2)+"\n")
+              print("ATM11_BOOT_RESULT",json.dumps({k:v for k,v in result.items() if k!="log_tail"}),flush=True)
+              print("\n".join(result["log_tail"]),flush=True)
+          if not result["pass"]:raise SystemExit("full 291-mod boot not attested")
+          PY
+      - name: Retain diagnostic boot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atm11-014-fullboot-evidence
+          path: |
+            ${{ runner.temp }}/dsm-atm11-014/atm11-boot.log
+            ${{ runner.temp }}/dsm-atm11-014/boot-evidence.json
+          if-no-files-found: ignore
+          retention-days: 7
