@@ -185,6 +185,15 @@ jobs:
               print("\n".join(result["log_tail"]),flush=True)
           if not result["pass"]:raise SystemExit("full 291-mod boot not attested")
           PY
+      - name: Install pinned Chromium for same real-JVM customer browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTIONS:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/dsm1013-playwright-browsers"
+          npm install --no-save --ignore-scripts --no-package-lock playwright@1.56.1
+          npx --no-install playwright install --with-deps chromium
       - name: Live official 291-mod systemd JVM proof and authenticated Controller health
         shell: bash
         env:
@@ -204,10 +213,17 @@ jobs:
             PYTHONDONTWRITEBYTECODE=1 \
             PYTHONPATH="$GITHUB_WORKSPACE" \
             PATH="$PATH" \
+            CAPIVARA_RUN_1013_BROWSER_E2E=1 \
+            DSM_1013_BROWSER_REAL_JVM=1 \
+            PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/dsm1013-playwright-browsers" \
             python3 -u tests/minecraft_serverpack_official_systemd_health_e2e.py \
             2>&1 | tee "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
           grep -q 'DSM1013_REAL_JVM_CONTROLLER_HEALTH_READY' "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
           grep -q 'DSM1013_REAL_JVM_CONTROLLER_HEALTH_REVOKED' "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
+          grep -q 'DSM1013_REAL_JVM_AUTHENTICATED_BROWSER_PASS' "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
+          grep -q 'owned_real_jvm_same_controller' "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
+          test -s "$RUNNER_TEMP/dsm-atm11-014/dsm1013-real-browser-ready.png"
+          test -s "$RUNNER_TEMP/dsm-atm11-014/dsm1013-real-browser.png"
           test -s "$RUNNER_TEMP/dsm-atm11-014/systemd-health-evidence.json"
       - name: Single customer HTTP action, official 0.13 to 0.14 boot, authenticated ACK and injected rollback
         shell: bash
@@ -230,6 +246,7 @@ jobs:
             ${{ runner.temp }}/dsm-atm11-014/joined-one-action-boot.json
             ${{ runner.temp }}/dsm-atm11-014/systemd-health-run.log
             ${{ runner.temp }}/dsm-atm11-014/systemd-health-evidence.json
+            ${{ runner.temp }}/dsm-atm11-014/dsm1013-real-browser*.png
             ${{ runner.temp }}/dsm1013-systemd-official.log
           if-no-files-found: ignore
           retention-days: 7

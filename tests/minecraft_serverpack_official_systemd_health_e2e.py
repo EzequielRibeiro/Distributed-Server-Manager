@@ -219,29 +219,39 @@ TimeoutStopSec=15
             'status':'ready','status_protocol':True,
             'release_authorized':False,'production_touched':False,
         }),flush=True)
-        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as conn:
-            conn.settimeout(5)
-            conn.connect(str(sock))
-            conn.sendall(b'stop\n')
-            assert conn.recv(64).startswith(b'OK')
-        until=time.monotonic()+100
-        while time.monotonic()<until and unit_command('is-active',unit).returncode==0:
-            time.sleep(2)
-        assert unit_command('is-active',unit).returncode!=0,'JVM did not stop gracefully'
-        payload['minecraft_serverpack_observations']['observed_at']=datetime.now(timezone.utc).isoformat()
-        payload['minecraft_serverpack_observations']['observations']=[{
-            **payload['minecraft_serverpack_observations']['observations'][0],
-            'status':'unverified','reason':'current_jvm_stopped',
-            'boot_observation':None,'operational_attestation':None}]
-        payload['instance_runtime_health'][0].update(
-            observed_state='stopped',reconcile_status='degraded',health='degraded')
-        assert record_agent_heartbeat(AGENT,payload,backend=fixture.backend)['serverpack_observations_created']==1
-        revoked=fixture.content.customer_view(IID)[0]['bundle_summary']
-        assert revoked['health_gate']=='blocked',revoked
-        print('DSM1013_REAL_JVM_CONTROLLER_HEALTH_REVOKED',json.dumps({
-            'health_gate':'blocked','release_authorized':False,
-            'production_touched':False}),flush=True)
+        def stop_and_revoke_owned_java():
+            with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as conn:
+                conn.settimeout(5)
+                conn.connect(str(sock))
+                conn.sendall(b'stop\n')
+                assert conn.recv(64).startswith(b'OK')
+            until=time.monotonic()+100
+            while time.monotonic()<until and unit_command('is-active',unit).returncode==0:
+                time.sleep(2)
+            assert unit_command('is-active',unit).returncode!=0,'JVM did not stop gracefully'
+            payload['minecraft_serverpack_observations']['observed_at']=datetime.now(timezone.utc).isoformat()
+            payload['minecraft_serverpack_observations']['observations']=[{
+                **payload['minecraft_serverpack_observations']['observations'][0],
+                'status':'unverified','reason':'current_jvm_stopped',
+                'boot_observation':None,'operational_attestation':None}]
+            payload['instance_runtime_health'][0].update(
+                observed_state='stopped',reconcile_status='degraded',health='degraded')
+            assert record_agent_heartbeat(AGENT,payload,backend=fixture.backend)['serverpack_observations_created']==1
+            revoked=fixture.content.customer_view(IID)[0]['bundle_summary']
+            assert revoked['health_gate']=='blocked',revoked
+            print('DSM1013_REAL_JVM_CONTROLLER_HEALTH_REVOKED',json.dumps({
+                'health_gate':'blocked','release_authorized':False,
+                'production_touched':False}),flush=True)
+
+        if os.environ.get('DSM_1013_BROWSER_REAL_JVM')!='1':
+            raise RuntimeError('same-JVM authenticated browser gate is required')
+        from tests.minecraft_serverpack_real_jvm_browser import verify_real_browser
+        browser=verify_real_browser(
+            fixture,instance_id=IID,agent_id=AGENT,root=root,
+            stop_and_revoke=stop_and_revoke_owned_java,
+            expected_mods=291,expected_removed=1)
         return {'systemd_functional_boot':True,'controller_ready_then_revoked':True,
+                'same_real_jvm_authenticated_browser':bool(browser['real_browser_same_jvm']),
                 'mods':291,'manifest_sha256':bundle['manifest_sha256'],
                 'release_authorized':False}
     finally:

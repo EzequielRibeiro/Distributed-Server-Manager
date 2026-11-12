@@ -17,6 +17,10 @@ async function main(){
   const info=JSON.parse(fs.readFileSync(process.env.DSM_1013_BROWSER_READY_FILE,'utf8'));
   const {base_url,instance_id,customer_token,controller_token}=info;
   const positive=info.health_gate==='ready';
+  const realJvm=process.env.DSM_1013_BROWSER_REAL_JVM==='1';
+  if(realJvm)assert.equal(info.evidence_scope,'owned_real_jvm_same_controller');
+  const absent=Number(info.expected_absent);
+  assert.ok(Number.isInteger(absent)&&absent>=0);
   assert.equal(positive,process.env.DSM_1013_BROWSER_HEALTH_READY==='1');
   const url=base_url+'/api/customer/instance/workspace/content?instance_id='+encodeURIComponent(instance_id);
   const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
@@ -33,7 +37,7 @@ async function main(){
     const item=readModel.content[0];
     assert.equal(item.reconciliation.status,'applied');
     assert.equal(item.bundle_summary.child_count,291);
-    assert.equal(item.bundle_summary.absent_child_count,201);
+    assert.equal(item.bundle_summary.absent_child_count,absent);
     assert.equal(item.bundle_summary.health_gate,positive?'ready':'blocked');
     assert.equal(item.bundle_summary.current_boot_witness,positive?'observed':'missing');
     if(positive){
@@ -50,7 +54,7 @@ async function main(){
     await page.locator('#content-installed .content-item').first().waitFor({timeout:20000});
     const panelText=await page.locator('#content-installed').innerText();
     assert.match(panelText,/291 ativos/);
-    assert.match(panelText,/201 removidos/);
+    assert.match(panelText,new RegExp(String(absent)+' removidos'));
     if(positive){
       assert.match(panelText,/Saúde operacional confirmada para a revisão instalada/);
       assert.doesNotMatch(panelText,/Liberação bloqueada/);
@@ -71,10 +75,11 @@ async function main(){
       });
     }
     if(positive){
-      // Explicit fixture-only revocation: simulate loss of current runtime
-      // health, then confirm the Controller and Chromium fail closed.
+      // Synthetic fixture revokes a health record; the real-JVM fixture sends
+      // 'stop' to the owned live JVM before the authenticated negative event.
       const revoke=await customer.request.post(base_url+'/__dsm_fixture__/revoke',{
         headers:{'X-DSM-Fixture-Control':info.fixture_control_token},
+        timeout:realJvm?120000:30000,
       });
       assert.equal(revoke.status(),200);
       const revoked=await customer.request.get(url,{
@@ -112,8 +117,8 @@ async function main(){
       browser:'chromium',dom:'real_customer_instance_html_and_js',
       server:'real_http_controller_read_model',session:'actual_customer_cookie',
       anon_rejected:true,controller_cookie_rejected:true,mods:291,
-      absent_states:201,health_gate:positive?'ready_then_blocked':'blocked',
-      boot_witness:positive?'injected_disposable':'missing',
+      absent_states:absent,health_gate:positive?'ready_then_blocked':'blocked',
+      boot_witness:positive?(realJvm?'owned_real_java_process':'injected_disposable'):'missing',
       status_presented:positive?'ready_then_revoked':'applied_but_not_released',
       evidence_scope:info.evidence_scope,
       production_touched:false,

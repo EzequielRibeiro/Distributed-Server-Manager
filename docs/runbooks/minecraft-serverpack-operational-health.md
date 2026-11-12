@@ -18,6 +18,7 @@ O frontend só deve mostrar "Saúde operacional confirmada" quando a projeção 
 
 ## Evidências ainda obrigatórias
 
-- Prova real em instalação isolada com processo Java do ATM11 oficial, boot testemunhado na revisão correspondente e `ready` no navegador autenticado.
+- Na CI, realizar prova do processo Java oficial do ATM11 sob systemd descartável, com `ready` no **mesmo Controller SQLite e navegador Chromium autenticado**. O browser não recebe uma atestação sintética: o evento vem do observador do Java real; ao emitir `stop` para o mesmo supervisor, o read model precisa voltar a `blocked` e a tela a `degraded`. Usar `CAPIVARA_RUN_1013_BROWSER_REAL_JVM=1` e o marcador `DSM1013_REAL_JVM_AUTHENTICATED_BROWSER_PASS` somente no runner GitHub-hosted.
+- Guardar separadamente as evidências de teste do navegador com atestação sintética e do navegador conectado à JVM real, sem confundir seu alcance.
 - Morte/restart durante e após a prova, mod JAR alterado, manifesto/revisão divergente, agente offline, health stale, hold ativo, rollback e queda de conexão. Todos devem bloquear o estado em no máximo o TTL de observação, sem apresentar resultado antigo como atual.
 - Teste do gate FULL + workflows GitHub Actions sobre o HEAD exato e revisão formal da PR.
