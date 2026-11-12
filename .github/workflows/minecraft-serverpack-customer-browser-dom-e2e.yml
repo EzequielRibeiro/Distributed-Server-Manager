@@ -8,6 +8,8 @@ on:
       - 'tests/minecraft_serverpack_customer_browser_fixture.py'
       - 'tests/minecraft_serverpack_customer_real_browser_e2e.test.js'
       - 'tests/minecraft_serverpack_customer_session_readmodel_e2e_test.py'
+      - 'database/content_repository.py'
+      - 'dashboard/minecraft_serverpack_observation_events.py'
       - '.github/workflows/minecraft-serverpack-customer-browser-dom-e2e.yml'
 
 permissions:
@@ -50,32 +52,55 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/dsm-1013-browser"
           export DSM_ROOT="$RUNNER_TEMP/dsm-1013-browser"
-          export DSM_1013_BROWSER_READY_FILE="$RUNNER_TEMP/dsm-1013-browser/ready.json"
-          export DSM_1013_BROWSER_SCREENSHOT="$RUNNER_TEMP/dsm-1013-browser/customer-content-dom.png"
-          python3 -u tests/minecraft_serverpack_customer_browser_fixture.py \
-            "$DSM_1013_BROWSER_READY_FILE" \
-            > "$RUNNER_TEMP/dsm-1013-browser/controller.log" 2>&1 &
-          SERVER_PID=$!
-          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; rm -f "$DSM_1013_BROWSER_READY_FILE"' EXIT
-          for i in $(seq 1 120); do
-            if test -s "$DSM_1013_BROWSER_READY_FILE"; then break; fi
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              cat "$RUNNER_TEMP/dsm-1013-browser/controller.log"
-              exit 1
+          SERVER_PID=""
+          cleanup(){
+            if test -n "${SERVER_PID:-}"; then
+              kill "$SERVER_PID" 2>/dev/null || true
+              wait "$SERVER_PID" 2>/dev/null || true
+              SERVER_PID=""
             fi
-            sleep 0.25
+            if test -n "${DSM_1013_BROWSER_READY_FILE:-}"; then
+              rm -f "$DSM_1013_BROWSER_READY_FILE"
+            fi
+          }
+          trap cleanup EXIT
+          for CASE in blocked ready; do
+            CASE_ROOT="$RUNNER_TEMP/dsm-1013-browser/$CASE"
+            mkdir -p "$CASE_ROOT"
+            export DSM_1013_BROWSER_READY_FILE="$CASE_ROOT/ready.json"
+            export DSM_1013_BROWSER_SCREENSHOT="$CASE_ROOT/customer-content-dom.png"
+            if test "$CASE" = ready; then
+              export DSM_1013_BROWSER_HEALTH_READY=1
+              export DSM_SERVERPACK_HEALTH_PROMOTION_ENABLED=1
+            else
+              export DSM_1013_BROWSER_HEALTH_READY=0
+              unset DSM_SERVERPACK_HEALTH_PROMOTION_ENABLED || true
+            fi
+            python3 -u tests/minecraft_serverpack_customer_browser_fixture.py \
+              "$DSM_1013_BROWSER_READY_FILE" \
+              > "$CASE_ROOT/controller.log" 2>&1 &
+            SERVER_PID=$!
+            for i in $(seq 1 120); do
+              if test -s "$DSM_1013_BROWSER_READY_FILE"; then break; fi
+              if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+                cat "$CASE_ROOT/controller.log"
+                exit 1
+              fi
+              sleep 0.25
+            done
+            test -s "$DSM_1013_BROWSER_READY_FILE" || { cat "$CASE_ROOT/controller.log"; exit 1; }
+            node tests/minecraft_serverpack_customer_real_browser_e2e.test.js
+            grep -q 'DSM1013_BROWSER_FIXTURE_READY' "$CASE_ROOT/controller.log"
+            test -s "$DSM_1013_BROWSER_SCREENSHOT"
+            cleanup
           done
-          test -s "$DSM_1013_BROWSER_READY_FILE" || { cat "$RUNNER_TEMP/dsm-1013-browser/controller.log"; exit 1; }
-          node tests/minecraft_serverpack_customer_real_browser_e2e.test.js
-          grep -q 'DSM1013_BROWSER_FIXTURE_READY' "$RUNNER_TEMP/dsm-1013-browser/controller.log"
-          test -s "$DSM_1013_BROWSER_SCREENSHOT"
       - name: Retain disposable DOM screenshot and fixture log
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: dsm1013-customer-browser-evidence
           path: |
-            ${{ runner.temp }}/dsm-1013-browser/customer-content-dom.png
-            ${{ runner.temp }}/dsm-1013-browser/controller.log
+            ${{ runner.temp }}/dsm-1013-browser/*/customer-content-dom*.png
+            ${{ runner.temp }}/dsm-1013-browser/*/controller.log
           retention-days: 7
           if-no-files-found: ignore

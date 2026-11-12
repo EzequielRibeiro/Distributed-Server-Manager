@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import signal
 import sys
@@ -47,6 +49,66 @@ def serve(ready_file:Path)->None:
         assert item["bundle_summary"]["physical_attestation"]=="verified"
         assert item["bundle_summary"]["child_count"]==291
         assert item["bundle_summary"]["absent_child_count"]==201
+        # A second browser acceptance case tests the positive read-model
+        # projection with an injected, strictly disposable authenticated Agent
+        # witness. It does NOT claim a real JVM boot in this browser fixture.
+        health_ready=os.environ.get('DSM_1013_BROWSER_HEALTH_READY')=='1'
+        fixture_control_token=secrets.token_urlsafe(24)
+        health_state={'running':health_ready}
+        if health_ready:
+            assert os.environ.get('DSM_SERVERPACK_HEALTH_PROMOTION_ENABLED')=='1'
+            from content_repository import ContentRepository
+            from agent_heartbeat_api import record_agent_heartbeat
+            from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
+            current=ContentRepository(fixture.backend)._bundle_row(fixture.iid,'atm11')
+            assert current and int(current['revision'])==3
+            with fixture.backend.connect() as connection:
+                rows=connection.execute(
+                    "SELECT port FROM instance_ports WHERE instance_id=? AND name='game' AND protocol='tcp'",
+                    (fixture.iid,)).fetchall()
+            assert len(rows)==1
+            game_port=int(rows[0]['port'])
+            now=datetime.now(timezone.utc)
+            start,done=now-timedelta(minutes=3),now-timedelta(minutes=1)
+            boot={'status':'boot_process_observed',
+                  'reason':'current_java_and_done_log_bound',
+                  'proof_scope':'advisory_current_process_log',
+                  'java_pid':41234,'java_started_at':start.isoformat(),
+                  'done_at':done.isoformat(),
+                  'boot_verified':False,'ready_for_release':False}
+            operational={'status':'functional_boot_attested',
+                         'proof_scope':'owned_jvm_and_live_minecraft_status',
+                         'instance_id':fixture.iid,'bundle_revision':int(current['revision']),
+                         'manifest_sha256':current['manifest_sha256'],
+                         'game_port':game_port,'java_pid':41234,
+                         'java_started_at':start.isoformat(),
+                         'done_at':done.isoformat(),
+                         'boot_verified':True,'ready_for_release':False}
+            health={'instance_id':fixture.iid,'desired_state':'running',
+                    'observed_state':'running','reconcile_status':'healthy',
+                    'health':'healthy','operation_status':'idle',
+                    'generated_at':now.isoformat()}
+            response=record_agent_heartbeat(fixture.agent,{
+                'agent_id':fixture.agent,'instance_runtime_health':[health],
+                'minecraft_serverpack_observations':{
+                    'observed_at':now.isoformat(),
+                    'observations':[{
+                        'instance_id':fixture.iid,'content_id':'atm11',
+                        'bundle_revision':int(current['revision']),
+                        'manifest_sha256':current['manifest_sha256'],
+                        'status':'physical_runtime_verified',
+                        'reason':'boot_not_observed',
+                        'boot_verified':False,'ready_for_release':False,
+                        'boot_observation':boot,
+                        'operational_attestation':operational,
+                    }],
+                },
+            },backend=fixture.backend)
+            assert response['serverpack_observations_created']==1
+            status,confirmed=fixture.fetch(fixture.customer_token)
+            assert status==200 and confirmed['content'][0]['bundle_summary']['health_gate']=='ready'
+        else:
+            from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
         real_handler=fixture.customer_server.RequestHandlerClass
         webroot=ROOT/"dashboard/web"
         allowed_assets={
@@ -86,8 +148,9 @@ def serve(ready_file:Path)->None:
                     return self.send_json(200,{
                         "permissions":["content.read"],
                         "instance":{"id":fixture.iid,"name":"ATM11 homologacao descartavel",
-                                    "game_id":"minecraft","status":"stopped"},
-                        "runtime":{"state":"stopped","health":"degraded"},
+                                    "game_id":"minecraft","status":"running" if health_state['running'] else "stopped"},
+                        "runtime":{"state":"running" if health_state['running'] else "stopped",
+                                   "health":"healthy" if health_state['running'] else "degraded"},
                         "content_sections":["modpacks"],
                         "runtime_capabilities":{"modpacks":True,"providers":{"modpack":[]}},
                         "content_policy":{"external_upload_allowed":False},
@@ -96,6 +159,20 @@ def serve(ready_file:Path)->None:
                 if path=="/api/customer/instance/workspace/telemetry":
                     return self.send_json(200,{"samples":[]})
                 return super().do_GET()
+            def do_POST(self):
+                if urlparse(self.path).path=='/__dsm_fixture__/revoke':
+                    if (not health_ready or self.client_address[0]!='127.0.0.1'
+                            or self.headers.get('X-DSM-Fixture-Control')!=fixture_control_token):
+                        return self.send_json(403,{'error':'forbidden'})
+                    AgentInstanceRuntimeHealthRepository(fixture.backend).apply_inventory(
+                        fixture.agent,[{'instance_id':fixture.iid,
+                                        'desired_state':'running','observed_state':'stopped',
+                                        'reconcile_status':'degraded','health':'degraded',
+                                        'operation_status':'idle',
+                                        'generated_at':datetime.now(timezone.utc).isoformat()}])
+                    health_state['running']=False
+                    return self.send_json(200,{'status':'revoked'})
+                return super().do_POST()
         fixture.customer_server.RequestHandlerClass=BrowserHandler
         ready_file.parent.mkdir(parents=True,exist_ok=True)
         assert not ready_file.exists()
@@ -106,7 +183,9 @@ def serve(ready_file:Path)->None:
             "controller_token":fixture.controller_token,
             "expected_mods":291,
             "expected_absent":201,
-            "health_gate":"blocked",
+            "health_gate":"ready" if health_ready else "blocked",
+            "fixture_control_token":fixture_control_token,
+            "evidence_scope":"injected_disposable_agent_witness" if health_ready else "no_boot_witness",
         }))
         ready_file.chmod(0o600)
         print("DSM1013_BROWSER_FIXTURE_READY",flush=True)
