@@ -66,6 +66,19 @@ def _safe_extract(archive,dest):
 def _retention(instance_dir,keep):
  archives=sorted([p for p in instance_dir.glob("*.tar*") if p.is_file()],key=lambda p:p.stat().st_mtime,reverse=True)
  for old in archives[max(1,int(keep)):]:old.unlink(missing_ok=True)
+def _retained_backup_capacity(instance_dir,policy):
+ if "retention_days" not in policy:return
+ days=policy["retention_days"]
+ if type(days) is not int or not 1<=days<=365:raise ValueError("invalid retention_days in backup command")
+ prior=sorted((p for p in instance_dir.glob("*.tar*") if p.is_file()),
+              key=lambda p:p.stat().st_mtime,reverse=True)
+ estimate=prior[0].stat().st_size if prior else 0
+ required=max(8*1024**3,estimate*2+4*1024**3)
+ disk_root=instance_dir.parent
+ while not disk_root.exists() and disk_root!=disk_root.parent:disk_root=disk_root.parent
+ if shutil.disk_usage(disk_root).free<required:
+  raise OSError("backup age retention capacity preflight failed: preserve existing backups")
+
 def _create(config,cmd):
  iid=str(cmd["instance_id"]);record,root=_owned(config,iid);policy=dict(cmd.get("policy") or {});cons=str(policy.get("consistency") or "live");was_running=False
  if cons=="quiesced":raise RuntimeError("quiesced backup requires a game-specific consistency hook")
@@ -73,7 +86,7 @@ def _create(config,cmd):
   was_running=status(config,iid).get("observed_state")=="running"
   if was_running:lifecycle(config,iid,"stop")
  try:
-  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid)
+  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";_retained_backup_capacity(idir,policy);path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid)
   if path.exists():raise FileExistsError(f"backup destination already exists: {path}")
   try:
    _create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"),manifest)
@@ -82,7 +95,7 @@ def _create(config,cmd):
    path.unlink(missing_ok=True)
    raise
   manifest["files_checksum"]=sha
-  if not policy.get("keep_single_operational"):_retention(idir,int(policy.get("retention_count") or 7))
+  if not policy.get("keep_single_operational") and not policy.get("retention_days"):_retention(idir,int(policy.get("retention_count") or 7))
   return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha,"manifest":manifest}
  finally:
   if cons=="stopped" and was_running:lifecycle(config,iid,"start")
