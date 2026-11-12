@@ -140,10 +140,12 @@ class TwoDisposableSystemdServicesE2E(unittest.TestCase):
                        ("ctrl","node-controller","Controller fixture"))
             db.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES (?,?,?,?,?)",
                        (self.agent_id,"ctrl","node-agent","Agent fixture","active"))
-            db.execute("INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id) "
-                       "VALUES (?,?,?,?,?,?,?)",
+            customer=db.execute("INSERT INTO customers(controller_id,name) VALUES (?,?)",
+                                ("ctrl","Disposable customer"))
+            db.execute("INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) "
+                       "VALUES (?,?,?,?,?,?,?,?)",
                        (self.instance_id,"node-agent","minecraft","Scratch","stopped",
-                        "ctrl",self.agent_id))
+                        "ctrl",self.agent_id,customer.lastrowid))
             db.execute("INSERT INTO agent_credentials "
                 "(id,agent_id,controller_id,credential_type,secret_hash,fingerprint,status)"
                 " VALUES (?,?,?,?,?,?,?)",
