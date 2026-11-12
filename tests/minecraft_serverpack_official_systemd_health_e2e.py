@@ -134,7 +134,7 @@ def unit_command(action:str,unit:str):
 def live_attested_boot(root:Path,fixture,bundle:dict):
     unit=f'capivara-instance-{IID}.service'
     file=Path('/run/systemd/system')/unit
-    sock=root/'dsm1013-console.sock'
+    sock=root/f'dsm1013-console-{IID}.sock'  # supervisor cmd binds its Agent instance ID
     if file.exists() or unit_command('is-active',unit).returncode==0:
         raise RuntimeError('refuse pre-existing service')
     launcher=root/'capivara-launch.args'
@@ -147,6 +147,8 @@ def live_attested_boot(root:Path,fixture,bundle:dict):
     command=[sys.executable,str(supervisor),'--socket',str(sock),'--',
              java,'-Xms1024M','-Xmx5120M','-Djava.awt.headless=true',
              '@capivara-launch.args','nogui']
+    assert any(IID in str(arg) for arg in command), 'supervisor process not bound to instance ID'
+    if len(str(sock).encode())>100:raise RuntimeError('disposable UNIX socket path too long')
     props='''[Unit]
 Description=DSM1013 official disposable ATM11 JVM health proof
 [Service]
