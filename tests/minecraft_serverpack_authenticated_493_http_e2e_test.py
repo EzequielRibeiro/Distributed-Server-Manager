@@ -31,8 +31,9 @@ class LargeRealCredentialHTTP(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.tearDown)
         f=self.fixture
-        # Current project scale: 201 previous mods plus 291 current children, one parent.
-        oldids=["mod-a"]+[f"legacy-{i:03d}" for i in range(200)]
+        # Actual ATM11 scale: 282 old -> 291 new (81 shared), 201 absent, one parent.
+        shared=["mod-a"]+[f"common-{i:03d}" for i in range(80)]
+        oldids=shared+[f"legacy-{i:03d}" for i in range(201)]
         oldpack=bundle("0.13","26.1.2.94","a")
         oldchildren=[]
         oldpack["members"]=[]
@@ -43,9 +44,11 @@ class LargeRealCredentialHTTP(unittest.TestCase):
             c=child("0.13","26.1.2.94","a")
             c.update(content_id=cid,target=f"mods/{cid}",artifact=artifact)
             oldchildren.append(c)
+        self.assertEqual(len(oldids),282)
         b=f.content.put_bundle(parent("0.13"),oldpack,oldchildren,requested_by="customer")
         self.assertEqual(b["bundle_revision"],2)
-        newids=[f"new-mod-{i:03d}" for i in range(291)]
+        newids=shared+[f"new-mod-{i:03d}" for i in range(210)]
+        self.assertEqual(len(newids),291)
         newpack=bundle("0.14","26.1.2.109","b")
         newpack["members"]=[]
         newchildren=[]
