@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backend-neutral desired-state persistence for Universal Content."""
 from __future__ import annotations
-import json,re,sys,uuid
+import json,os,re,sys,uuid
 from pathlib import Path
 from typing import Any,Mapping
 ROOT=Path(__file__).resolve().parents[1]; CORE=ROOT/"core"
@@ -518,6 +518,21 @@ class ContentRepository:
    except (TypeError,ValueError,KeyError,OverflowError):return "missing"
    return "observed"
   return "missing"
+ def _serverpack_reserved_game_port(self,instance_id):
+  """Controller-owned active node and TCP game port; never trust a claimed port."""
+  with self.backend.connect() as connection:
+   session=AlertSession(self.backend,connection)
+   try:
+    rows=session.execute(
+     "SELECT p.port FROM instance_ports p JOIN instances i "
+     "ON i.id=p.instance_id AND i.node_id=p.node_id "
+     f"WHERE p.instance_id={self.ph} AND p.name={self.ph} "
+     f"AND p.protocol={self.ph}",(instance_id,'game','tcp')).fetchall()
+   finally:session.close()
+  if len(rows)!=1:return None
+  try:port=int(rows[0]['port'])
+  except (TypeError,ValueError,KeyError):return None
+  return port if 1<=port<=65535 else None
  def _serverpack_recent_operational_attestation(self,instance_id,content_id,bundle_revision,manifest_sha256,max_age_seconds=90):
   """Non-authorizing fresh functional evidence, scoped to the current bundle.
 
@@ -530,6 +545,8 @@ class ContentRepository:
   if current is None:return "missing"
   agent_id=str(dict(current).get("agent_id") or "")
   if not agent_id:return "missing"
+  reserved_port=self._serverpack_reserved_game_port(instance_id)
+  if reserved_port is None:return "missing"
   events=UniversalEventRepository(self.backend).list_events(
    limit=1000,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
    agent_id=agent_id,instance_id=instance_id)
@@ -556,6 +573,8 @@ class ContentRepository:
      or type(proof.get('bundle_revision')) is not int
      or proof['bundle_revision']!=bundle_revision
      or proof.get('manifest_sha256')!=manifest_sha256
+     or type(proof.get('game_port')) is not int
+     or proof.get('game_port')!=reserved_port
      or proof.get('boot_verified') is not True
      or proof.get('ready_for_release') is not False):return 'missing'
    try:
@@ -694,13 +713,31 @@ class ContentRepository:
       str(bundle["manifest_sha256"])) if bundle else "missing")
     summary["runtime_process_observation"]=(
      self._serverpack_runtime_process_observation(instance_id) if bundle else "missing")
-    # Publication attestation proves JAR bytes at migration time, not current
-    # runtime health or a later NeoForge boot. Remain fail-closed.
-    summary["convergence_status"]="failed" if alignment=="drift" or failed else "pending"
-    summary["health_gate"]="blocked"
-    summary["health_reason"]=("manifest_metadata_drift" if alignment=="drift"
+    # The published JAR receipt alone is not operational readiness. Enabling
+    # the feature is a separate Controller rollout decision, NEVER the release
+    # authorization. The latest authenticated Agent observation must cover the
+    # current revision/manifest and expire quickly, and a second runtime-health
+    # heartbeat must still report a healthy owned process.
+    enabled=os.environ.get("DSM_SERVERPACK_HEALTH_PROMOTION_ENABLED")=="1"
+    operational=(summary["current_physical_observation"]=="verified"
+                 and summary["current_boot_witness"]=="observed"
+                 and summary["current_operational_attestation"]=="observed"
+                 and summary["runtime_process_observation"]=="reported_running")
+    held={value.strip() for value in os.environ.get("DSM_CONTENT_HOLD_INSTANCE_IDS","").split(",") if value.strip()}
+    ready=(enabled and instance_id not in held
+           and alignment=="metadata_aligned" and not failed
+           and complete and physical=="verified" and operational)
+    summary["convergence_status"]=("failed" if alignment=="drift" or failed
+      else "ready" if ready else "pending")
+    summary["health_gate"]="ready" if ready else "blocked"
+    summary["health_reason"]=("runtime_functionally_attested" if ready
+       else "manifest_metadata_drift" if alignment=="drift"
        else "agent_reconciliation_failed" if failed
        else "physical_runtime_attestation_not_persisted" if complete and physical!="verified"
+       else "activation_hold_active" if complete and physical=="verified" and instance_id in held
+       else "health_promotion_disabled" if complete and physical=="verified" and operational and not enabled
+       else "runtime_operational_attestation_missing" if (enabled and complete
+           and physical=="verified" and not operational)
        else "runtime_boot_not_attested" if complete and physical=="verified"
        else "agent_reconciliation_pending")
    item["bundle_summary"]=summary

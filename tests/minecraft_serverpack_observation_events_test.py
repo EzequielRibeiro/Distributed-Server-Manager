@@ -104,7 +104,16 @@ class ObservationEventsTest(unittest.TestCase):
             'done_at':(self.now-timedelta(minutes=1)).isoformat(),
             'boot_verified':True,'ready_for_release':False,
         }
-        def saved(value):
+        advisory={
+            'status':'boot_process_observed',
+            'reason':'current_java_and_done_log_bound',
+            'proof_scope':'advisory_current_process_log',
+            'java_pid':evidence['java_pid'],
+            'java_started_at':evidence['java_started_at'],
+            'done_at':evidence['done_at'],
+            'boot_verified':False,'ready_for_release':False,
+        }
+        def saved(value,boot=advisory):
             with patch('minecraft_serverpack_observation_events.UniversalEventRepository') as mocked:
                 repo=mocked.return_value
                 repo._instance_owned_by.return_value=True
@@ -112,13 +121,16 @@ class ObservationEventsTest(unittest.TestCase):
                 persist_serverpack_runtime_observations(
                     object(),agent_id='a',observations=[{
                         **self.item,'manifest_sha256':'a'*64,
-                        'operational_attestation':value}],observed_at=self.stamp)
+                        'operational_attestation':value,
+                        'boot_observation':boot}],observed_at=self.stamp)
                 return repo.publish.call_args.args[0]['data']
         valid=saved(evidence)
         self.assertEqual(valid['operational_attestation']['game_port'],25597)
         self.assertIs(valid['operational_attestation']['boot_verified'],True)
         self.assertIs(valid['boot_verified'],False)
         self.assertIs(valid['release_authorized'],False)
+        self.assertNotIn('operational_attestation',saved(evidence,boot={**advisory,'java_pid':54321}))
+        self.assertNotIn('operational_attestation',saved(evidence,boot=None))
         for damaged in ({**evidence,'instance_id':'foreign'},
                         {**evidence,'bundle_revision':3},
                         {**evidence,'manifest_sha256':'f'*64},

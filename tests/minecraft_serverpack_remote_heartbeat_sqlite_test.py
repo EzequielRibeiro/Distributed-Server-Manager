@@ -90,7 +90,7 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
             'instance_id':'pr855-controller-atomic',
             'bundle_revision':bundle['revision'],
             'manifest_sha256':bundle['manifest_sha256'],
-            'java_pid':43210,'game_port':25597,
+            'java_pid':43210,'game_port':25582,
             'java_started_at':(now-timedelta(minutes=3)).isoformat(),
             'done_at':(now-timedelta(minutes=1)).isoformat(),
             'boot_verified':True,'ready_for_release':False,
@@ -102,6 +102,14 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
             'status':'physical_runtime_verified','reason':'boot_not_observed',
             'boot_verified':False,'ready_for_release':False,
             'operational_attestation':evidence,
+            'boot_observation':{
+                'status':'boot_process_observed',
+                'proof_scope':'advisory_current_process_log',
+                'reason':'current_java_and_done_log_bound',
+                'java_pid':evidence['java_pid'],
+                'java_started_at':evidence['java_started_at'],
+                'done_at':evidence['done_at'],
+                'boot_verified':False,'ready_for_release':False},
         }
         payload={'agent_id':'pr839-isolated-agent',
                  'minecraft_serverpack_observations':{
@@ -111,7 +119,7 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
         events=UniversalEventRepository(self.backend).list_events(
             event_type='MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
             instance_id='pr855-controller-atomic',limit=10)
-        self.assertEqual(events[0]['data']['operational_attestation']['game_port'],25597)
+        self.assertEqual(events[0]['data']['operational_attestation']['game_port'],25582)
         self.assertFalse(events[0]['data']['release_authorized'])
         summary=self.content.customer_view('pr855-controller-atomic')[0]['bundle_summary']
         self.assertEqual(summary['current_operational_attestation'],'observed')

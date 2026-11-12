@@ -124,6 +124,12 @@ def persist_serverpack_runtime_observations(
         functional=(_functional_boot(item.get('operational_attestation'),stamp,
                     instance_id=iid,revision=revision,manifest_sha256=digest)
                     if status=='physical_runtime_verified' and valid_digest else None)
+        # A positive live status must belong to the very same JVM observed by
+        # systemd and its boot log in this heartbeat. No cross-process mixing.
+        if functional and (not advisory or any(
+                functional.get(k)!=advisory.get(k)
+                for k in ('java_pid','java_started_at','done_at'))):
+            functional=None
         saved=events.publish({
             'event_id':event_id,'event_type':'MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
             'occurred_at':stamp,'source':source,

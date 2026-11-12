@@ -25,6 +25,7 @@ QUICK=(
     'tests/minecraft_serverpack_pending_commit_test.py',
     'tests/minecraft_serverpack_pending_publication_atomic_test.py',
     'tests/minecraft_serverpack_live_readiness_test.py',
+    'tests/minecraft_serverpack_health_promotion_gate_test.py',
 )
 EXTENDED=(
     'tests/minecraft_serverpack_physical_swap_e2e_test.py',

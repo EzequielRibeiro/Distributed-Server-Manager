@@ -52,5 +52,6 @@ const blocked={health_gate:'blocked',current_physical_observation:'verified',cur
 assert.match(evidenceCtx.serverpackEvidenceLabel(blocked),/Liberação bloqueada/);
 assert.match(evidenceCtx.serverpackEvidenceLabel(blocked),/consultiva/);
 assert.match(evidenceCtx.serverpackEvidenceLabel({health_gate:'blocked',current_boot_witness:'missing'}),/inicialização não atestada/);
-assert.equal(evidenceCtx.serverpackEvidenceLabel({...blocked,health_gate:'ready'}),'');
+assert.match(evidenceCtx.serverpackEvidenceLabel({...blocked,health_gate:'ready'}),/Saúde operacional confirmada/);
+assert.match(evidenceCtx.serverpackEvidenceLabel({...blocked,health_reason:'activation_hold_active'}),/hold operacional ativo/);
 console.log('Server Pack manifest drift, health gate and completion-label UI checks passed');
