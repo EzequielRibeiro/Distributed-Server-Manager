@@ -38,7 +38,7 @@ def forecast(
     """
     if not instance_ids or len(set(instance_ids)) != len(instance_ids):
         raise ValueError("specify unique instance IDs")
-    if any(not INSTANCE_ID.fullmatch(value) for value in instance_ids):
+    if any(value in {".", ".."} or not INSTANCE_ID.fullmatch(value) for value in instance_ids):
         raise ValueError("invalid instance ID")
     if not (1 <= days <= 365 and 1 <= copies_per_day <= 24
             and 1 <= reserve_gib <= 1000 and 1 <= safety_cycles <= 4):

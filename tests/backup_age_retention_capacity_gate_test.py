@@ -86,8 +86,9 @@ class BackupRetentionCapacityGateTest(unittest.TestCase):
         self.archive("ok", 10)
         with self.assertRaisesRegex(ValueError, "unique"):
             forecast(self.root, ["ok", "ok"], now=self.now, available_bytes=10*GIB)
-        with self.assertRaisesRegex(ValueError, "invalid instance"):
-            forecast(self.root, ["../unsafe"], now=self.now, available_bytes=10*GIB)
+        for unsafe_id in ("../unsafe", ".", ".."):
+            with self.subTest(instance_id=unsafe_id), self.assertRaisesRegex(ValueError, "invalid instance"):
+                forecast(self.root, [unsafe_id], now=self.now, available_bytes=10*GIB)
 
     def test_invalid_parameters_fail_closed(self):
         self.archive("ok", 10)
