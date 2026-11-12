@@ -24,7 +24,7 @@ jobs:
           test "$GITHUB_ACTIONS" = true
           test "$RUNNER_ENVIRONMENT" = github-hosted
           test ! -e /opt/dsm/runtime/hybrid-instance-storage
-          test "$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')" -gt 4194304
+          test "$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')" -gt 8388608
           test "$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)" -gt 5242880
       - uses: actions/checkout@v4
         with:
@@ -33,7 +33,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
-      - name: Download and authenticate official ATM11 0.14 Server Pack
+      - name: Download and authenticate official ATM11 0.13 and 0.14 Server Packs
         shell: bash
         run: |
           set -euo pipefail
@@ -43,6 +43,17 @@ jobs:
             --output ServerFiles-0.14.0-beta.zip \
             https://mediafilez.forgecdn.net/files/9426/897/ServerFiles-0.14.0-beta.zip
           echo 'b8635562de0931eb5cadb51954c0fb78658033928ef54b5f73be6cae5c8897fa  ServerFiles-0.14.0-beta.zip' | sha256sum --check -
+          curl --fail --location --retry 3 --connect-timeout 20 --max-time 360             --output ServerFiles-0.13.0-beta.zip             https://mediafilez.forgecdn.net/files/9343/842/ServerFiles-0.13.0-beta.zip
+          echo '78cbca8ffd26fef6d5bef27dcf44fb53cf118c20d9da6a19d9af7911b6d8768e  ServerFiles-0.13.0-beta.zip' | sha256sum --check -
+          python3 - <<'PYZIP'
+          from zipfile import ZipFile
+          from pathlib import Path
+          with ZipFile('ServerFiles-0.13.0-beta.zip') as z:
+              mods=[n for n in z.namelist() if n.startswith('mods/') and n.endswith('.jar')]
+              assert len(mods)==282
+              assert 'neoforge-26.1.2.124-installer.jar' in z.namelist()
+              print('OFFICIAL_013_BASELINE_VERIFIED',len(mods),flush=True)
+          PYZIP
       - name: Extract 291 mods and install NeoForge 26.1.2.126
         shell: bash
         run: |
@@ -134,7 +145,7 @@ jobs:
               print("\n".join(result["log_tail"]),flush=True)
           if not result["pass"]:raise SystemExit("full 291-mod boot not attested")
           PY
-      - name: Single customer HTTP action to official 291-mod JVM boot and authenticated Controller ACK
+      - name: Single customer HTTP action, official 0.13 to 0.14 boot, authenticated ACK and injected rollback
         shell: bash
         env:
           CAPIVARA_RUN_OFFICIAL_ATM11_JOINED_E2E: '1'
