@@ -1,0 +1,83 @@
+'use strict';
+// Actual Chromium DOM and cookies against the isolated Python customer HTTP
+// gateway and authoritative temporary SQLite read model. Never production.
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const {chromium}=require('playwright');
+
+async function main(){
+  if(process.env.CAPIVARA_RUN_1013_BROWSER_E2E!=='1'||
+     process.env.GITHUB_ACTIONS!=='true'||
+     process.env.RUNNER_ENVIRONMENT!=='github-hosted'){
+    throw new Error('browser E2E restricted to opted-in GitHub-hosted runner');
+  }
+  if(fs.existsSync('/opt/dsm/runtime/hybrid-instance-storage')){
+    throw new Error('installed DSM detected: forbidden browser E2E');
+  }
+  const info=JSON.parse(fs.readFileSync(process.env.DSM_1013_BROWSER_READY_FILE,'utf8'));
+  const {base_url,instance_id,customer_token,controller_token}=info;
+  const url=base_url+'/api/customer/instance/workspace/content?instance_id='+encodeURIComponent(instance_id);
+  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+  try{
+    const customer=await browser.newContext({viewport:{width:1320,height:900},locale:'pt-BR'});
+    await customer.addCookies([{
+      name:'capivara_customer_session',value:customer_token,url:base_url,
+      httpOnly:true,sameSite:'Lax',
+    }]);
+    const data=await customer.request.get(url,{headers:{'X-Capivara-Auth-Area':'customer'}});
+    assert.equal(data.status(),200);
+    const readModel=await data.json();
+    assert.equal(readModel.content.length,1);
+    const item=readModel.content[0];
+    assert.equal(item.reconciliation.status,'applied');
+    assert.equal(item.bundle_summary.child_count,291);
+    assert.equal(item.bundle_summary.absent_child_count,201);
+    assert.equal(item.bundle_summary.health_gate,'blocked');
+    assert.equal(item.bundle_summary.current_boot_witness,'missing');
+    const page=await customer.newPage();
+    const response=await page.goto(base_url+'/customer-instance.html?instance_id='+encodeURIComponent(instance_id),{
+      waitUntil:'domcontentloaded',timeout:25000,
+    });
+    assert.equal(response.status(),200);
+    await page.locator('button[data-view="content"]').click();
+    await page.locator('#content-installed .content-item').first().waitFor({timeout:20000});
+    const panelText=await page.locator('#content-installed').innerText();
+    assert.match(panelText,/291 ativos/);
+    assert.match(panelText,/201 removidos/);
+    assert.match(panelText,/Liberação bloqueada/);
+    assert.match(panelText,/inicialização não atestada/);
+    assert.match(panelText,/Aplicado: aplicado/);
+    assert.doesNotMatch(panelText,/Instalação concluída\./);
+    assert.equal(await page.locator('#content-installed button', {hasText:'Reverter'}).count(),0);
+    assert.equal(await page.locator('button[data-view="content"]').getAttribute('class'),'active');
+    const health=await page.locator('#health').innerText();
+    assert.equal(health,'degraded');
+    if(process.env.DSM_1013_BROWSER_SCREENSHOT){
+      await page.screenshot({path:process.env.DSM_1013_BROWSER_SCREENSHOT,fullPage:true});
+    }
+    const anonymous=await browser.newContext();
+    const unauthorized=await anonymous.request.get(url,{headers:{'X-Capivara-Auth-Area':'customer'}});
+    assert.equal(unauthorized.status(),401);
+    await anonymous.close();
+    const admin=await browser.newContext();
+    await admin.addCookies([{
+      name:'capivara_controller_session',value:controller_token,url:base_url,
+      httpOnly:true,sameSite:'Lax',
+    }]);
+    const wrongArea=await admin.request.get(url,{headers:{'X-Capivara-Auth-Area':'customer'}});
+    assert.equal(wrongArea.status(),401);
+    await admin.close();
+    await customer.close();
+    console.log('DSM1013_AUTHENTICATED_CHROMIUM_READMODEL_PASS',JSON.stringify({
+      browser:'chromium',dom:'real_customer_instance_html_and_js',
+      server:'real_http_controller_read_model',session:'actual_customer_cookie',
+      anon_rejected:true,controller_cookie_rejected:true,mods:291,
+      absent_states:201,health_gate:'blocked',boot_witness:'missing',
+      status_presented:'applied_but_not_released',
+      production_touched:false,
+    }));
+  }finally{
+    await browser.close();
+  }
+}
+main().catch(e=>{console.error(e);process.exitCode=1});
