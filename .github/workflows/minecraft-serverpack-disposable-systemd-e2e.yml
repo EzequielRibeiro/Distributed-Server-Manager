@@ -39,10 +39,16 @@ jobs:
           PYTHONPATH: .
           CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E: '1'
         run: |
-          sudo --preserve-env=PYTHONPATH,CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E \
+          set -euo pipefail
+          sudo -n env \
+            PYTHONPATH="$PYTHONPATH" \
+            CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E="$CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E" \
+            GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
             python3 -m unittest -v \
               tests.minecraft_serverpack_finalization_systemd_e2e_test \
               tests.minecraft_serverpack_finalization_real_adapter_e2e_test \
               tests.minecraft_serverpack_privileged_real_systemd_e2e_test \
               tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test \
-              tests.minecraft_serverpack_two_transient_systemd_e2e_test
+              tests.minecraft_serverpack_two_transient_systemd_e2e_test 2>&1 | tee "$RUNNER_TEMP/dsm-1013-systemd-evidence.log"
+          grep -q 'DSM1013_TWO_SYSTEMD_SERVICES_PASS' "$RUNNER_TEMP/dsm-1013-systemd-evidence.log"
