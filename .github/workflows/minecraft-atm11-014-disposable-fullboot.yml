@@ -6,6 +6,8 @@ on:
       - '.github/workflows/minecraft-atm11-014-disposable-fullboot.yml'
       - 'tests/minecraft_serverpack_customer_single_action_e2e_test.py'
       - 'tests/minecraft_serverpack_authenticated_493_http_e2e_test.py'
+      - 'tests/minecraft_serverpack_customer_official_http_upload_test.py'
+      - 'tests/minecraft_serverpack_customer_official_preview_session_test.py'
   workflow_dispatch:
 
 permissions:
@@ -54,6 +56,15 @@ jobs:
               assert 'neoforge-26.1.2.124-installer.jar' in z.namelist()
               print('OFFICIAL_013_BASELINE_VERIFIED',len(mods),flush=True)
           PYZIP
+      - name: Stream official 751 MiB ZIP via Customer HTTP PUT to Agent ACK and preview
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          DSM_1013_OFFICIAL_REAL_UPLOAD: '1'
+        run: |
+          set -euo pipefail
+          export DSM_1013_OFFICIAL_PACK_ROOT="$RUNNER_TEMP/dsm-atm11-014"
+          python3 -m unittest -v tests.minecraft_serverpack_customer_official_http_upload_test.OfficialCustomerRealPutAgentAckE2E.test_customer_upload_agent_real_get_ack_and_official_preview
       - name: Extract 291 mods and install NeoForge 26.1.2.126
         shell: bash
         run: |
