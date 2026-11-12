@@ -48,6 +48,32 @@ para outro disco ou estabelecer destino externo validado. A prechecagem de 8 GiB
 do Agent protege apenas contra as proximas criacoes, **nao substitui**
 a reserva de capacidade para toda a janela.
 
+## Preflight de capacidade (somente leitura)
+
+Execute antes de habilitar os opt-ins no Controller, diretamente no host de
+armazenamento. O comando retorna 0 apenas se houver espaço para completar a
+janela de 14 dias no ritmo atual de uma copia diaria por instancia, **mais**
+uma copia transitoria por instancia (limpeza somente apos ACK) e 20 GiB
+reservados para sistema, jogos e restauracao:
+
+```sh
+python3 scripts/backup_age_retention_capacity_gate.py \
+  --backup-root /opt/dsm/runtime/hybrid-agent-state/backups \
+  --instance cli-000001-minecraft-005 \
+  --instance cli-000001-dayz-001 \
+  --days 14 --copies-per-day 1 --reserve-gib 20
+```
+
+`status=blocked_insufficient_capacity` e codigo 2 **impedem a ativacao**.
+A projecao usa o maior arquivo completo encontrado para cada instancia e
+supoe que esse tamanho nao cresca; portanto, `pass` e necessario, mas nao
+suficiente para autorizar o release. Falha na inspeção ou ausencia de uma
+copia-base tambem bloqueia, sem tentar remover cache ou backups.
+
+Protecoes de rollback do Steam Workshop podem manter revisoes fisicas
+de conteudo atualmente marcado como `absent`. Nao remover esses caches
+automaticamente apenas pela ausencia da atribuicao atual.
+
 ## Aceite
 
 Verificar com dados descartaveis: cobertura em 13 e 16 dias; substituicao
