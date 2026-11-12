@@ -278,6 +278,13 @@ class CustomerContentWorkspaceService:
   current_row=history[0];current_manifest=manifest(current_row);members={str(item.get("content_id") or ""):item for item in current_manifest.get("members") or [] if isinstance(item,Mapping) and str(item.get("content_id") or "").strip()}
   assignments={str(item.get("content_id") or ""):item for item in self.content.list(instance_id=instance_id,limit=2000)}
   reasons=[];visible=[]
+  expected_manifest_sha=str(current_row.get("manifest_sha256") or "")
+  parent_metadata=parent.get("metadata") if isinstance(parent.get("metadata"),Mapping) else {}
+  parent_marker=parent_metadata.get("bundle") if isinstance(parent_metadata.get("bundle"),Mapping) else {}
+  if (not expected_manifest_sha or
+      str(parent_marker.get("parent_content_id") or "")!=content_id or
+      str(parent_marker.get("manifest_sha256") or "")!=expected_manifest_sha):
+   reasons.append({"content_id":content_id,"reason":"parent_manifest_drift"})
   for cid in sorted(members):
    declared=members[cid];item=assignments.get(cid)
    if not item:
@@ -285,11 +292,13 @@ class CustomerContentWorkspaceService:
    marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),Mapping) else None
    owned=isinstance(marker,Mapping) and str(marker.get("parent_content_id") or "")==content_id
    artifact_matches=(item.get("artifact") or {})==(declared.get("artifact") or {})
+   revision_matches=bool(expected_manifest_sha and isinstance(marker,Mapping) and str(marker.get("manifest_sha256") or "")==expected_manifest_sha)
    active=str(item.get("desired_state") or "installed")!="absent"
    if not owned:reasons.append({"content_id":cid,"reason":"ownership_drift"})
    elif not artifact_matches:reasons.append({"content_id":cid,"reason":"artifact_drift"})
+   elif not revision_matches:reasons.append({"content_id":cid,"reason":"manifest_revision_drift"})
    elif not active:reasons.append({"content_id":cid,"reason":"member_absent"})
-   visible.append({"content_id":cid,"content_type":str(item.get("content_type") or "mod"),"provider":str(item.get("provider") or ""),"version":str(item.get("version") or ""),"desired_state":str(item.get("desired_state") or "installed"),"activation_state":str(item.get("activation_state") or "enabled"),"security_state":str(item.get("security_state") or "unscanned"),"state":"managed" if owned and artifact_matches and active else "customized"})
+   visible.append({"content_id":cid,"content_type":str(item.get("content_type") or "mod"),"provider":str(item.get("provider") or ""),"version":str(item.get("version") or ""),"desired_state":str(item.get("desired_state") or "installed"),"activation_state":str(item.get("activation_state") or "enabled"),"security_state":str(item.get("security_state") or "unscanned"),"state":"managed" if owned and artifact_matches and revision_matches and active else "customized"})
   extras=[]
   for cid,item in assignments.items():
    if cid==content_id or cid in members or str(item.get("desired_state") or "installed")=="absent":continue

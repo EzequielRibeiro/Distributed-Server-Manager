@@ -62,6 +62,7 @@ from minecraft_serverpack_report_outbox import (
     read_serverpack_report_delivery, acknowledge_serverpack_report_delivery,
 )
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
+from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
@@ -73,6 +74,8 @@ DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_RECONCILE_SECONDS = 15
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 HOST_IDENTITY_PATH = Path(os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY", str(STATE_DIR / "host-identity")))
+_SERVERPACK_OBSERVATION_PENDING: dict[str,object] | None = None
+_SERVERPACK_LAST_SCANNED = 0.0
 AGENT_LOG = STATE_DIR / "agent-runtime.log"
 
 
@@ -169,6 +172,8 @@ def _inventory(config):
             ids, agent_id=str(config["agent_id"]), read_instance=get_registered_instance)
     except (TypeError, ValueError, OSError, NameError):
         payload["minecraft_current_neoforge_attestations"] = []
+    if _SERVERPACK_OBSERVATION_PENDING is not None:
+        payload["minecraft_serverpack_observations"] = _SERVERPACK_OBSERVATION_PENDING
     if os.environ.get("DSM_SERVERPACK_RECOVERY_PROBE_ENABLED") == "1":
         # Probe is strictly read-only. Sending does not authorize or execute
         # recovery and can be disabled without affecting Agent heartbeat.
@@ -246,6 +251,7 @@ def _flush_command_results(config):
     return response
 
 def heartbeat(config):
+    global _SERVERPACK_OBSERVATION_PENDING, _SERVERPACK_LAST_SCANNED
     base=str(config["controller_url"]).rstrip("/")
     payload=_inventory(config)
     result=_post(base+"/api/agent/heartbeat",payload,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
@@ -258,6 +264,21 @@ def heartbeat(config):
             )
         except Exception:
             pass
+    # The physical observation is advisory and independent of durable report ACK.
+    _SERVERPACK_OBSERVATION_PENDING=None
+    now=time.monotonic()
+    if not _SERVERPACK_LAST_SCANNED or now-_SERVERPACK_LAST_SCANNED>=3600:
+        requests=result.get('serverpack_observation_requests')
+        if isinstance(requests,list) and requests:
+            _SERVERPACK_LAST_SCANNED=now
+            try:
+                observed=observe_remote_requests(
+                    requests,agent_id=str(config['agent_id']),
+                    read_instance=get_registered_instance,limit=1)
+                if observed['observations']:
+                    _SERVERPACK_OBSERVATION_PENDING=observed
+            except (OSError,ValueError,TypeError,KeyError):
+                pass
     ids=result.get("accepted_event_ids")
     if isinstance(ids,list):acknowledge_runtime_events(STATE_DIR,ids)
     commands=result.get("configuration_commands")

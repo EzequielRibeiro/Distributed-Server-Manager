@@ -89,6 +89,32 @@ class M9ModpackBundleReadModelTest(unittest.TestCase):
         self.assertEqual(view["bundle_state"],"customized")
         self.assertIn({"content_id":"a","reason":"artifact_drift"},view["customization_reasons"])
 
+    def _mutate_bundle_marker(self,content_id):
+        item=self.repo.get("inst",content_id)
+        raw={key:item.get(key) for key in (
+            "instance_id","content_id","content_type","desired_state","activation_state",
+            "activation_order","version","provider","target","artifact","provenance",
+            "metadata","dependencies","conflicts")}
+        metadata=dict(raw["metadata"])
+        metadata["bundle"]={**metadata["bundle"],"manifest_sha256":"f"*64}
+        raw["metadata"]=metadata
+        self.repo.put(raw,requested_by="test")
+
+    def test_old_child_manifest_marker_is_detected_even_with_same_artifact(self):
+        self.install()
+        self._mutate_bundle_marker("a")
+        view=self.service.bundle_details({"username":"customer"},"inst","pack")
+        self.assertEqual(view["bundle_state"],"customized")
+        self.assertIn({"content_id":"a","reason":"manifest_revision_drift"},view["customization_reasons"])
+        self.assertEqual(next(m for m in view["members"] if m["content_id"]=="a")["state"],"customized")
+
+    def test_old_parent_manifest_marker_is_detected(self):
+        self.install()
+        self._mutate_bundle_marker("pack")
+        view=self.service.bundle_details({"username":"customer"},"inst","pack")
+        self.assertEqual(view["bundle_state"],"customized")
+        self.assertIn({"content_id":"pack","reason":"parent_manifest_drift"},view["customization_reasons"])
+
     def test_customer_cannot_mutate_bundle_child_directly(self):
         self.install()
         for action in ("remove","disable","enable","reorder","update","rollback"):
