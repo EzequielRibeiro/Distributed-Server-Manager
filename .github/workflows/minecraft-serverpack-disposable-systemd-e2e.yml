@@ -44,4 +44,5 @@ jobs:
               tests.minecraft_serverpack_finalization_systemd_e2e_test \
               tests.minecraft_serverpack_finalization_real_adapter_e2e_test \
               tests.minecraft_serverpack_privileged_real_systemd_e2e_test \
-              tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test
+              tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test \
+              tests.minecraft_serverpack_two_transient_systemd_e2e_test
