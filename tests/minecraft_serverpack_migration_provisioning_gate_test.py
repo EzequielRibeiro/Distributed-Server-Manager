@@ -78,6 +78,38 @@ class HomologationGateTest(unittest.TestCase):
             self.assertFalse(module.enabled_for({**request,"agent_id":"agent-node1"}))
             self.assertFalse(module.enabled_for({**request,"configuration":{}}))
 
+    def test_production_rejects_missing_manifest_before_instance_or_install(self):
+        request={"instance_id":"cli-production-test","agent_id":"agent-production-test",
+                 "desired_state":"stopped","configuration":{
+                     "minecraft_serverpack_execution_mode":"production",
+                     "minecraft_serverpack_migration":{}}}
+        env={"CAPIVARA_SERVERPACK_MIGRATION_MODE":"production",
+             "CAPIVARA_SERVERPACK_MIGRATION_PRODUCTION_ACK":"AUTHORIZED",
+             "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_INSTANCES":"cli-production-test",
+             "CAPIVARA_SERVERPACK_MIGRATION_ALLOWED_AGENTS":"agent-production-test"}
+        with patch.dict(os.environ,env,clear=True), \
+             patch.object(module,"validate_minecraft_serverpack_migration",return_value={}), \
+             patch.object(module.instance_runtime,"get_instance") as lookup, \
+             patch.object(module,"execute_game_data") as install:
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "requires a pending bundle manifest"):
+                module.execute_homologated_migration({"agent_id":"agent-production-test"},request)
+            lookup.assert_not_called()
+            install.assert_not_called()
+
+    def test_homologation_rejects_mismatched_manifest_before_instance_lookup(self):
+        request={"instance_id":"pr855-lab","agent_id":"pr839-isolated-agent",
+                 "desired_state":"stopped","configuration":{
+                     "minecraft_serverpack_migration":{},
+                     "minecraft_serverpack_pending_bundle":{"invalid":"candidate"}}}
+        with patch.dict(os.environ,{"CAPIVARA_ENABLE_SERVERPACK_MIGRATION_HOMOLOGATION":"YES"},clear=True), \
+             patch.object(module,"validate_minecraft_serverpack_migration",return_value={}), \
+             patch.object(module.instance_runtime,"get_instance") as lookup:
+            with self.assertRaisesRegex(module.MinecraftServerPackProvisioningHomologationError,
+                                        "invalid pending Server Pack manifest"):
+                module.execute_homologated_migration({"agent_id":"pr839-isolated-agent"},request)
+            lookup.assert_not_called()
+
     def test_migration_accepts_running_request_before_instance_lookup(self):
         request={"instance_id":"pr855-lab","agent_id":"pr839-isolated-agent",
                  "desired_state":"running","configuration":{"minecraft_serverpack_migration":{}}}

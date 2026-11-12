@@ -716,21 +716,28 @@ def process_hybrid_content_cycle(
     previous = client.content_state()
     if not isinstance(previous, list):
         raise RuntimeError("Hybrid content client returned an invalid state payload")
-    held = _held_content_instance_ids()
-    previous = [item for item in previous if isinstance(item, dict)
-                and str(item.get("instance_id") or "") not in held]
+    protected,transacting = repository.serverpack_content_fence(agent_id)
+    held = _held_content_instance_ids() | transacting
+    def allowed(item):
+        key=(str(item.get("instance_id") or ""),str(item.get("content_id") or ""))
+        return key[0] not in held and key not in protected
+    previous = [item for item in previous if isinstance(item, dict) and allowed(item)]
     reported = repository.record_agent_state(agent_id, previous)
 
     commands = repository.desired_for_agent(agent_id)
     if not isinstance(commands, list):
         raise RuntimeError("Hybrid content repository returned an invalid command payload")
-    commands = [item for item in commands if isinstance(item, dict)
-                and str(item.get("instance_id") or "") not in held]
+    # Double-check the fence after readback: a migration can be queued
+    # between reporting the prior state and dispatching desired work.
+    fresh_protected,fresh_transacting=repository.serverpack_content_fence(agent_id)
+    protected |= fresh_protected
+    held |= fresh_transacting
+    commands = [item for item in commands if isinstance(item, dict) and allowed(item)]
 
     reports = client.apply_content_commands(config, commands)
     if not isinstance(reports, list):
         raise RuntimeError("Hybrid content client returned an invalid result payload")
-    reports = [item for item in reports if isinstance(item, dict)]
+    reports = [item for item in reports if isinstance(item, dict) and allowed(item)]
     accepted = repository.record_agent_state(agent_id, reports)
 
     return {
@@ -880,6 +887,33 @@ def process_hybrid_current_neoforge_attestation_cycle(backend, root: Path, agent
         return {"status": "unavailable", "verified": 0}
 
 
+# Slow, read-only scan: never hash large modpacks every 30-second heartbeat.
+_SERVERPACK_OBSERVATION_LAST_RUN = 0.0
+
+
+def process_hybrid_serverpack_observation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    global _SERVERPACK_OBSERVATION_LAST_RUN
+    now=time.monotonic()
+    if _SERVERPACK_OBSERVATION_LAST_RUN and now-_SERVERPACK_OBSERVATION_LAST_RUN<3600:
+        return {"status":"throttled","checked":0,"verified":0}
+    _SERVERPACK_OBSERVATION_LAST_RUN=now
+    try:
+        from minecraft_serverpack_hybrid_observer import collect_hybrid_serverpack_observations
+        runtime=_instance_runtime_module(root)
+        observed=collect_hybrid_serverpack_observations(
+            backend,agent_id=agent_id,read_instance=runtime.get_instance,limit=1)
+        from datetime import datetime, timezone
+        from minecraft_serverpack_observation_events import persist_serverpack_runtime_observations
+        stamp=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        stored=persist_serverpack_runtime_observations(
+            backend,agent_id=agent_id,observations=observed,observed_at=stamp)
+        return {"status":"observed","checked":len(observed),
+                "verified":sum(x.get("status")=="physical_runtime_verified" for x in observed),
+                "persisted":stored["created"],"observations":observed}
+    except Exception:
+        return {"status":"unavailable","checked":0,"verified":0}
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -955,6 +989,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
     minecraft_recovery_audit = process_hybrid_minecraft_recovery_audit_cycle(effective_backend, root, agent_id)
     minecraft_current_neoforge = process_hybrid_current_neoforge_attestation_cycle(effective_backend, root, agent_id)
+    minecraft_serverpack_observation = process_hybrid_serverpack_observation_cycle(effective_backend, root, agent_id)
     backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
     response = {
         "active": True,
@@ -972,6 +1007,7 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "instance_health": instance_health,
         "minecraft_recovery_audit": minecraft_recovery_audit,
         "minecraft_current_neoforge": minecraft_current_neoforge,
+        "minecraft_serverpack_observation": minecraft_serverpack_observation,
         "backup": backup,
         "provisioning": provisioning,
         "game_data": game_data,
