@@ -88,6 +88,14 @@ jobs:
           test -f libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt
           printf 'eula=true\n' > eula.txt
           printf 'server-ip=127.0.0.1\nserver-port=25596\nonline-mode=false\nmax-players=1\nview-distance=2\nsimulation-distance=2\nenable-query=false\nenable-rcon=false\n' > server.properties
+      - name: Session-authenticated official ZIP preview and read-only revalidation
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: |
+          set -euo pipefail
+          export DSM_1013_OFFICIAL_PACK_ROOT="$RUNNER_TEMP/dsm-atm11-014"
+          python3 -m unittest -v tests.minecraft_serverpack_customer_official_preview_session_test.CustomerOfficialPreviewSessionE2E.test_customer_cookie_real_014_zip_preview_revalidate_and_deny_unsafe
       - name: Boot actual ATM11 with all 291 mods and stop gracefully
         shell: bash
         run: |
