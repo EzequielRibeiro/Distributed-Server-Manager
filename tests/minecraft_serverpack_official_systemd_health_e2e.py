@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import pwd
+import grp
 from pathlib import Path
 import shlex
 import shutil
@@ -149,16 +151,24 @@ def live_attested_boot(root:Path,fixture,bundle:dict):
              '@capivara-launch.args','nogui']
     assert any(IID in str(arg) for arg in command), 'supervisor process not bound to instance ID'
     if len(str(sock).encode())>100:raise RuntimeError('disposable UNIX socket path too long')
+    owner=root.stat()
+    if owner.st_uid==0 or owner.st_gid==0:
+        raise RuntimeError('refuse to launch modpack as privileged root-owned user')
+    user=pwd.getpwuid(owner.st_uid).pw_name
+    group=grp.getgrgid(owner.st_gid).gr_name
     props='''[Unit]
 Description=DSM1013 official disposable ATM11 JVM health proof
 [Service]
 Type=simple
+User={user}
+Group={group}
 WorkingDirectory={work}
 ExecStart={exec}
 KillMode=control-group
 Restart=no
 TimeoutStopSec=15
-'''.format(work=root,exec=' '.join(shlex.quote(arg) for arg in command))
+'''.format(user=user,group=group,work=root,
+           exec=' '.join(shlex.quote(arg) for arg in command))
     boot=None;report={};reasons=Counter();start=time.monotonic()
     try:
         file.write_text(props)
