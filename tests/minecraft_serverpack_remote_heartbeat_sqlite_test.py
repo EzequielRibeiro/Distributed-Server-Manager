@@ -80,6 +80,54 @@ class RemoteServerpackSQLiteIntegrationTest(unittest.TestCase):
             event_type='MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
             instance_id='pr855-controller-atomic',limit=10)),1)
 
+    def test_authenticated_functional_boot_evidence_is_scoped_and_non_authorizing(self):
+        from datetime import timedelta
+        bundle=self.content._bundle_row('pr855-controller-atomic','atm11')
+        now=datetime.now(timezone.utc)
+        evidence={
+            'status':'functional_boot_attested',
+            'proof_scope':'owned_jvm_and_live_minecraft_status',
+            'instance_id':'pr855-controller-atomic',
+            'bundle_revision':bundle['revision'],
+            'manifest_sha256':bundle['manifest_sha256'],
+            'java_pid':43210,'game_port':25597,
+            'java_started_at':(now-timedelta(minutes=3)).isoformat(),
+            'done_at':(now-timedelta(minutes=1)).isoformat(),
+            'boot_verified':True,'ready_for_release':False,
+        }
+        report={
+            'instance_id':evidence['instance_id'],'content_id':'atm11',
+            'bundle_revision':bundle['revision'],
+            'manifest_sha256':bundle['manifest_sha256'],
+            'status':'physical_runtime_verified','reason':'boot_not_observed',
+            'boot_verified':False,'ready_for_release':False,
+            'operational_attestation':evidence,
+        }
+        payload={'agent_id':'pr839-isolated-agent',
+                 'minecraft_serverpack_observations':{
+                     'observed_at':now.isoformat(),'observations':[report]}}
+        outcome=record_agent_heartbeat('pr839-isolated-agent',payload,backend=self.backend)
+        self.assertEqual(outcome['serverpack_observations_created'],1)
+        events=UniversalEventRepository(self.backend).list_events(
+            event_type='MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
+            instance_id='pr855-controller-atomic',limit=10)
+        self.assertEqual(events[0]['data']['operational_attestation']['game_port'],25597)
+        self.assertFalse(events[0]['data']['release_authorized'])
+        summary=self.content.customer_view('pr855-controller-atomic')[0]['bundle_summary']
+        self.assertEqual(summary['current_operational_attestation'],'observed')
+        self.assertEqual(summary['health_gate'],'blocked')
+        # A newer negative observation invalidates the positive, not vice versa.
+        payload['minecraft_serverpack_observations']['observed_at']=(now+timedelta(seconds=1)).isoformat()
+        payload['minecraft_serverpack_observations']['observations']=[
+            {**report,'status':'unverified','reason':'physical_or_loader_mismatch',
+             'operational_attestation':None}]
+        self.assertEqual(record_agent_heartbeat('pr839-isolated-agent',payload,
+            backend=self.backend)['serverpack_observations_created'],1)
+        self.assertEqual(self.content.customer_view('pr855-controller-atomic')[0]
+                         ['bundle_summary']['current_operational_attestation'],'missing')
+        self.assertEqual(self.content.customer_view('pr855-controller-atomic')[0]
+                         ['bundle_summary']['health_gate'],'blocked')
+
     def test_boot_witness_is_scoped_to_current_manifest_and_never_grants_health(self):
         from datetime import timedelta
         bundle=self.content._bundle_row('pr855-controller-atomic','atm11')

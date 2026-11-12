@@ -85,6 +85,24 @@ class RemoteProducerTest(unittest.TestCase):
         self.assertFalse(result['boot_verified'])
         self.assertFalse(result['ready_for_release'])
 
+    def test_reserved_owned_tcp_port_triggers_functional_probe_only_after_hashes(self):
+        record={**self.record,'ports':{'game':{'port':25597,'protocol':'tcp'}}}
+        proof={'status':'functional_boot_attested','boot_verified':True,
+               'ready_for_release':False,'instance_id':'inst',
+               'bundle_revision':3,'manifest_sha256':self.normalized['manifest_sha256']}
+        with patch('minecraft_serverpack_remote_observer.attest_live_serverpack_readiness',
+                   return_value=proof) as attester:
+            report=self.collect(record=record)['observations'][0]
+        self.assertEqual(report['operational_attestation'],proof)
+        self.assertFalse(report['boot_verified'])
+        self.assertFalse(report['ready_for_release'])
+        attester.assert_called_once()
+        self.jar.write_bytes(b'wrong file')
+        with patch('minecraft_serverpack_remote_observer.attest_live_serverpack_readiness') as attester:
+            report=self.collect(record=record)['observations'][0]
+        self.assertEqual(report['status'],'unverified')
+        attester.assert_not_called()
+
     def test_modified_jar_unexpected_jar_and_loader_mismatch_fail_closed(self):
         self.jar.write_bytes(b'x'*self.jar.stat().st_size)
         self.assertEqual(self.collect()['observations'][0]['status'],'unverified')

@@ -94,6 +94,41 @@ class ObservationEventsTest(unittest.TestCase):
                     observed_at=self.stamp)
                 self.assertNotIn('boot_observation',repo.publish.call_args.args[0]['data'])
 
+    def test_scoped_functional_boot_evidence_is_stored_but_never_grants_release(self):
+        evidence={
+            'status':'functional_boot_attested',
+            'proof_scope':'owned_jvm_and_live_minecraft_status',
+            'instance_id':'inst','bundle_revision':2,
+            'manifest_sha256':'a'*64,'game_port':25597,'java_pid':12345,
+            'java_started_at':(self.now-timedelta(minutes=3)).isoformat(),
+            'done_at':(self.now-timedelta(minutes=1)).isoformat(),
+            'boot_verified':True,'ready_for_release':False,
+        }
+        def saved(value):
+            with patch('minecraft_serverpack_observation_events.UniversalEventRepository') as mocked:
+                repo=mocked.return_value
+                repo._instance_owned_by.return_value=True
+                repo.publish.return_value={'created':True}
+                persist_serverpack_runtime_observations(
+                    object(),agent_id='a',observations=[{
+                        **self.item,'manifest_sha256':'a'*64,
+                        'operational_attestation':value}],observed_at=self.stamp)
+                return repo.publish.call_args.args[0]['data']
+        valid=saved(evidence)
+        self.assertEqual(valid['operational_attestation']['game_port'],25597)
+        self.assertIs(valid['operational_attestation']['boot_verified'],True)
+        self.assertIs(valid['boot_verified'],False)
+        self.assertIs(valid['release_authorized'],False)
+        for damaged in ({**evidence,'instance_id':'foreign'},
+                        {**evidence,'bundle_revision':3},
+                        {**evidence,'manifest_sha256':'f'*64},
+                        {**evidence,'java_pid':0},
+                        {**evidence,'ready_for_release':True},
+                        {**evidence,'game_port':True},
+                        {**evidence,'done_at':(self.now+timedelta(hours=1)).isoformat()}):
+            with self.subTest(damaged=damaged):
+                self.assertNotIn('operational_attestation',saved(damaged))
+
     def test_reject_unowned_future_and_invalid_health_claim(self):
         with patch('minecraft_serverpack_observation_events.UniversalEventRepository') as mocked:
             repo=mocked.return_value

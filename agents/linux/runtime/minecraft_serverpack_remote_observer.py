@@ -20,6 +20,8 @@ from content_bundle import normalize_bundle
 from minecraft_serverpack_agent import verify_installed_neoforge
 from minecraft_serverpack_physical_manifest import attest_serverpack_mods
 from minecraft_serverpack_boot_witness import observe_boot_witness
+from minecraft_serverpack_live_readiness import (
+    attest_live_serverpack_readiness, reserved_game_port)
 
 
 def observe_remote_requests(requests:list[dict[str,Any]]|None,*,
@@ -62,11 +64,18 @@ def observe_remote_requests(requests:list[dict[str,Any]]|None,*,
                 status='unverified';reason='physical_or_loader_mismatch'
             boot = (observe_boot_witness(path, instance_id=iid)
                     if status == 'physical_runtime_verified' else None)
+            game_port = reserved_game_port(record)
+            operational = (attest_live_serverpack_readiness(
+                path, instance_id=iid, game_port=game_port,
+                bundle_revision=revision, manifest_sha256=digest)
+                if status == 'physical_runtime_verified' and game_port is not None
+                else None)
             output['observations'].append({
                 'instance_id':iid,'content_id':cid,'bundle_revision':revision,
                 'manifest_sha256':digest,'status':status,'reason':reason,
                 'boot_verified':False,'ready_for_release':False,
-                **({'boot_observation':boot} if boot is not None else {})})
+                **({'boot_observation':boot} if boot is not None else {}),
+                **({'operational_attestation':operational} if operational is not None else {})})
         except (OSError,ValueError,TypeError,KeyError,AttributeError):
             continue
     return output

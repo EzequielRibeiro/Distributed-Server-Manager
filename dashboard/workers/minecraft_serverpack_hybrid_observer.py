@@ -15,6 +15,8 @@ from scripts.minecraft_serverpack_observe_runtime import observe_runtime
 _AGENT_RUNTIME=Path(__file__).resolve().parents[2]/"agents/linux/runtime"
 if str(_AGENT_RUNTIME) not in sys.path:sys.path.insert(0,str(_AGENT_RUNTIME))
 from minecraft_serverpack_boot_witness import observe_boot_witness
+from minecraft_serverpack_live_readiness import (
+    attest_live_serverpack_readiness, reserved_game_port)
 
 
 def collect_hybrid_serverpack_observations(
@@ -62,6 +64,13 @@ def collect_hybrid_serverpack_observations(
                 result={'status':'unverified','reason':'published_manifest_mismatch'}
             boot = (observe_boot_witness(Path(source), instance_id=iid)
                     if result.get('status')=='physical_runtime_verified' else None)
+            game_port = reserved_game_port(record)
+            operational = (attest_live_serverpack_readiness(
+                Path(source), instance_id=iid, game_port=game_port,
+                bundle_revision=int(row['revision']),
+                manifest_sha256=row['manifest_sha256'])
+                if result.get('status') == 'physical_runtime_verified' and game_port is not None
+                else None)
             observations.append({'instance_id':iid,'content_id':cid,
                                  'bundle_revision':int(row['revision']),
                                  'manifest_sha256':row['manifest_sha256'],
@@ -69,8 +78,16 @@ def collect_hybrid_serverpack_observations(
                                  'reason':result['reason'],
                                  'boot_verified':False,
                                  'ready_for_release':False,
-                                 **({'boot_observation':boot} if boot is not None else {})})
+                                 **({'boot_observation':boot} if boot is not None else {}),
+                                 **({'operational_attestation':operational} if operational is not None else {})})
         except (OSError,ValueError,TypeError,KeyError,AttributeError):
+            game_port = reserved_game_port(record)
+            operational = (attest_live_serverpack_readiness(
+                Path(source), instance_id=iid, game_port=game_port,
+                bundle_revision=int(row['revision']),
+                manifest_sha256=row['manifest_sha256'])
+                if result.get('status') == 'physical_runtime_verified' and game_port is not None
+                else None)
             observations.append({'instance_id':iid,'content_id':cid,
                                  'bundle_revision':int(row['revision']),
                                  'status':'unverified','reason':'observation_error',
