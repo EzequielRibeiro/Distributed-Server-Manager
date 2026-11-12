@@ -7,6 +7,7 @@ on:
       - 'tests/minecraft_serverpack_customer_single_action_e2e_test.py'
       - 'tests/minecraft_serverpack_authenticated_493_http_e2e_test.py'
       - 'tests/minecraft_serverpack_customer_official_http_upload_test.py'
+      - 'tests/minecraft_serverpack_two_transient_systemd_e2e_test.py'
       - 'tests/minecraft_serverpack_customer_official_preview_session_test.py'
   workflow_dispatch:
 
@@ -65,6 +66,21 @@ jobs:
           set -euo pipefail
           export DSM_1013_OFFICIAL_PACK_ROOT="$RUNNER_TEMP/dsm-atm11-014"
           python3 -m unittest -v tests.minecraft_serverpack_customer_official_http_upload_test.OfficialCustomerRealPutAgentAckE2E.test_customer_upload_agent_real_get_ack_and_official_preview
+      - name: Official 751 MiB ZIP between isolated Controller and Agent systemd services
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E: '1'
+          DSM_1013_SYSTEMD_OFFICIAL_ZIP: '1'
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTIONS:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test ! -e /opt/dsm/runtime/hybrid-instance-storage
+          test -d /run/systemd/system
+          export DSM_1013_OFFICIAL_PACK_ROOT="$RUNNER_TEMP/dsm-atm11-014"
+          sudo -n env PYTHONPATH="$GITHUB_WORKSPACE"             PYTHONDONTWRITEBYTECODE="$PYTHONDONTWRITEBYTECODE"             GITHUB_ACTIONS="$GITHUB_ACTIONS"             RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT"             CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E="$CAPIVARA_RUN_SYSTEMD_FINALIZATION_E2E"             DSM_1013_SYSTEMD_OFFICIAL_ZIP="$DSM_1013_SYSTEMD_OFFICIAL_ZIP"             DSM_1013_OFFICIAL_PACK_ROOT="$DSM_1013_OFFICIAL_PACK_ROOT"             python3 -m unittest -v               tests.minecraft_serverpack_two_transient_systemd_e2e_test.TwoDisposableSystemdServicesE2E.test_separate_systemd_units_authenticated_agent_heartbeat_ack             2>&1 | tee "$RUNNER_TEMP/dsm1013-systemd-official.log"
+          grep -q 'DSM1013_TWO_SYSTEMD_OFFICIAL_ZIP_PASS' "$RUNNER_TEMP/dsm1013-systemd-official.log"
       - name: Extract 291 mods and install NeoForge 26.1.2.126
         shell: bash
         run: |
@@ -183,5 +199,6 @@ jobs:
             ${{ runner.temp }}/dsm-atm11-014/boot-evidence.json
             ${{ runner.temp }}/dsm-atm11-014/joined-one-action-boot.log
             ${{ runner.temp }}/dsm-atm11-014/joined-one-action-boot.json
+            ${{ runner.temp }}/dsm1013-systemd-official.log
           if-no-files-found: ignore
           retention-days: 7

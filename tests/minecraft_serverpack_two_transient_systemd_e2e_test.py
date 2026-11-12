@@ -153,12 +153,26 @@ class TwoDisposableSystemdServicesE2E(unittest.TestCase):
                  secret_digest(self.cred_secret),self.fingerprint,"active"))
         from artifact_transfer_repository import ArtifactTransferRepository
         self.repo=ArtifactTransferRepository(self.backend,self.controller_root)
-        self.source=self.root/"tiny-isolated-serverpack.zip"
-        with zipfile.ZipFile(self.source,"w") as archive:
-            archive.writestr("mods/isolation.jar",b"safe-synthetic-fixture")
-            archive.writestr("config/demo.toml",b"mock-server-mode=true")
+        self.official=(os.environ.get("DSM_1013_SYSTEMD_OFFICIAL_ZIP")=="1")
+        if self.official:
+            source_root=Path(os.environ.get("DSM_1013_OFFICIAL_PACK_ROOT") or "")
+            self.source=source_root/"ServerFiles-0.14.0-beta.zip"
+            assert self.source.is_file(), "missing official ATM11 Server Pack"
+        else:
+            self.source=self.root/"tiny-isolated-serverpack.zip"
+            with zipfile.ZipFile(self.source,"w") as archive:
+                archive.writestr("mods/isolation.jar",b"safe-synthetic-fixture")
+                archive.writestr("config/demo.toml",b"mock-server-mode=true")
         with self.source.open("rb") as f:
             self.digest=hashlib.file_digest(f,"sha256").hexdigest()
+        if self.official:
+            assert self.digest=="b8635562de0931eb5cadb51954c0fb78658033928ef54b5f73be6cae5c8897fa"
+            assert self.source.stat().st_size==751264085
+            with zipfile.ZipFile(self.source) as archive:
+                mods=[i.filename for i in archive.infolist()
+                      if i.filename.startswith("mods/") and i.filename.endswith(".jar")]
+                assert len(mods)==291
+
         self.transfer=self.repo.create(agent_id=self.agent_id,
             instance_id=self.instance_id,direction="controller_to_agent",
             purpose="content_upload",filename=self.source.name,requested_by="ci")
@@ -189,9 +203,9 @@ class TwoDisposableSystemdServicesE2E(unittest.TestCase):
         self._start_controller()
 
     def _props(self):
-        return ["--collect","--property=RuntimeMaxSec=90",
+        return ["--collect","--property=RuntimeMaxSec="+("300" if self.official else "90"),
                 "--property=NoNewPrivileges=yes",
-                "--property=MemoryMax=768M",
+                "--property=MemoryMax="+("1536M" if self.official else "768M"),
                 "--property=ProtectSystem=strict",
                 "--property=ReadWritePaths="+str(self.root)]
 
@@ -236,7 +250,8 @@ class TwoDisposableSystemdServicesE2E(unittest.TestCase):
         args=["systemd-run","--unit="+self.agent_unit,"--wait","--pipe",
               *self._props(),*env,sys.executable,str(Path(__file__).resolve()),
               "agent",str(self.config_file)]
-        completed=subprocess.run(args,text=True,capture_output=True,timeout=60)
+        completed=subprocess.run(args,text=True,capture_output=True,
+                                 timeout=260 if self.official else 60)
         self.assertEqual(completed.returncode,0,
                          completed.stdout+"\n"+completed.stderr)
         self.assertTrue(self.result_file.is_file())
@@ -254,14 +269,20 @@ class TwoDisposableSystemdServicesE2E(unittest.TestCase):
         self.assertEqual(self.repo.get(self.transfer["transfer_id"])["transferred_bytes"],
                          self.source.stat().st_size)
         self.assertFalse(Path("/opt/dsm/runtime/hybrid-instance-storage").exists())
-        print("DSM1013_TWO_SYSTEMD_SERVICES_PASS",json.dumps({
+        if self.official:
+            self.assertEqual(result["download_report"]["archive_type"],"zip")
+            self.assertEqual(result["download_report"]["archive_entries"],2090)
+        print("DSM1013_TWO_SYSTEMD_OFFICIAL_ZIP_PASS" if self.official
+              else "DSM1013_TWO_SYSTEMD_SERVICES_PASS",json.dumps({
             "controller_unit":self.controller_unit,
             "agent_unit":self.agent_unit,
             "heartbeat":"real_dispatch_heartbeat",
             "agent_download":"real_artifact_transfer_client",
             "result":"durable_completed",
             "agent_credential":"authenticated",
-            "disposable_synthetic_zip":True,
+            "disposable_synthetic_zip":not self.official,
+            "official_serverpack_verified":self.official,
+            "zip_bytes":self.source.stat().st_size,
             "localhost_only":True,"production_touched":False,
         },sort_keys=True),flush=True)
 
