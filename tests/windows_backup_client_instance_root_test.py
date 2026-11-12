@@ -133,6 +133,21 @@ class WindowsBackupClientInstanceRootTest(unittest.TestCase):
         self.assertEqual(selected, self.private.resolve())
         self.assertNotEqual(selected, self.shared.resolve())
 
+    def test_failed_creation_does_not_leave_partial_archive(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            prior = backup_client._create(self.config, command)
+            def fail_mid_write(root, paths, destination, compression, manifest):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b"incomplete archive")
+                raise PermissionError("failed during archive read")
+            with patch.object(backup_client, "_create_archive", side_effect=fail_mid_write):
+                with self.assertRaises(PermissionError):
+                    backup_client._create(self.config, command)
+        archived = list((self.root / "backups" / "instance-safe").glob("*.tar*"))
+        self.assertEqual([Path(prior["artifact_path"])], archived)
+
     def test_create_does_not_archive_shared_game_content(self):
         with patch.object(
             backup_client,

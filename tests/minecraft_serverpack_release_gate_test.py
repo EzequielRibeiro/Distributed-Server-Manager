@@ -23,6 +23,9 @@ class ReleaseGateTest(unittest.TestCase):
         self.assertNotIn(['bash','tests/agent_package_test.sh'],quick)
         self.assertIn('tests/minecraft_serverpack_finalization_subprocess_e2e_test.py',full[-1])
         self.assertIn('tests/minecraft_serverpack_remote_heartbeat_sqlite_test.py',full[-1])
+        self.assertIn('tests/minecraft_serverpack_outbox_loopback_http_e2e_test.py',full[-1])
+        self.assertIn('tests/minecraft_serverpack_content_convergence_test.py',full[-1])
+        self.assertNotIn('tests/minecraft_serverpack_outbox_loopback_http_e2e_test.py',quick[-1])
         for command in full:
             self.assertNotIn('systemctl',command)
             self.assertNotIn('docker',command)

@@ -24,6 +24,8 @@ QUICK=(
     'tests/minecraft_serverpack_physical_manifest_test.py',
     'tests/minecraft_serverpack_pending_commit_test.py',
     'tests/minecraft_serverpack_pending_publication_atomic_test.py',
+    'tests/minecraft_serverpack_live_readiness_test.py',
+    'tests/minecraft_serverpack_health_promotion_gate_test.py',
 )
 EXTENDED=(
     'tests/minecraft_serverpack_physical_swap_e2e_test.py',
@@ -33,9 +35,19 @@ EXTENDED=(
     'tests/minecraft_serverpack_remote_heartbeat_sqlite_test.py',
     'tests/minecraft_serverpack_remote_heartbeat_cycle_test.py',
     'tests/minecraft_serverpack_remote_producer_test.py',
+    'tests/minecraft_serverpack_boot_witness_test.py',
     'tests/minecraft_serverpack_observation_events_test.py',
     'tests/minecraft_serverpack_migration_readiness_test.py',
     'tests/minecraft_serverpack_migration_transaction_test.py',
+    'tests/minecraft_serverpack_http_agent_transaction_joined_test.py',
+    'tests/minecraft_serverpack_outbox_loopback_http_e2e_test.py',
+    'tests/minecraft_serverpack_authenticated_493_http_e2e_test.py',
+    'tests/minecraft_serverpack_customer_single_action_e2e_test.py',
+    'tests/minecraft_serverpack_customer_session_readmodel_e2e_test.py',
+    'tests/minecraft_serverpack_customer_official_preview_session_test.py',
+    'tests/minecraft_serverpack_customer_official_http_upload_test.py',
+    'tests/minecraft_serverpack_two_transient_systemd_e2e_test.py',
+    'tests/minecraft_serverpack_content_convergence_test.py',
     'tests/m9_modpack_bundle_read_model_test.py',
     'tests/universal_content_dashboard_test.py',
 )

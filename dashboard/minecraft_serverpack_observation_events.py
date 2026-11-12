@@ -5,7 +5,7 @@ health table, and a stored observation alone cannot authorize a release.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 from typing import Any
 
@@ -23,6 +23,66 @@ def _timestamp(value:Any)->str|None:
     now=datetime.now(timezone.utc)
     if abs((now-parsed).total_seconds())>300:return None
     return parsed.isoformat().replace('+00:00','Z')
+
+
+def _advisory_boot(value:Any,stamp:str)->dict[str,Any]|None:
+    """Bound an Agent-owned OS/log witness; never accept it as boot health."""
+    if not isinstance(value,dict):return None
+    if (value.get('status')!='boot_process_observed'
+        or value.get('proof_scope')!='advisory_current_process_log'
+        or value.get('reason')!='current_java_and_done_log_bound'
+        or value.get('boot_verified') is not False
+        or value.get('ready_for_release') is not False
+        or type(value.get('java_pid')) is not int or value['java_pid']<=1):
+        return None
+    try:
+        started=datetime.fromisoformat(value['java_started_at'].replace('Z','+00:00'))
+        done=datetime.fromisoformat(value['done_at'].replace('Z','+00:00'))
+        observed=datetime.fromisoformat(stamp.replace('Z','+00:00'))
+        if not all(x.tzinfo is not None for x in (started,done,observed)):return None
+        if not started <= done <= observed + timedelta(seconds=5):return None
+        if (done-started).total_seconds()>1800:return None
+    except (TypeError,ValueError,KeyError,OverflowError,AttributeError):return None
+    return {'status':'boot_process_observed',
+            'proof_scope':'advisory_current_process_log',
+            'java_pid':value['java_pid'],
+            'java_started_at':started.astimezone(timezone.utc).isoformat(),
+            'done_at':done.astimezone(timezone.utc).isoformat(),
+            'boot_verified':False,'ready_for_release':False}
+
+
+def _functional_boot(value:Any,stamp:str,*,instance_id:str,
+                     revision:int,manifest_sha256:str)->dict[str,Any]|None:
+    """Validate an owned Agent's functional status proof; event remains non-authoritative."""
+    if (not isinstance(value,dict)
+        or value.get('status')!='functional_boot_attested'
+        or value.get('proof_scope')!='owned_jvm_and_live_minecraft_status'
+        or value.get('boot_verified') is not True
+        or value.get('ready_for_release') is not False
+        or value.get('instance_id')!=instance_id
+        or type(value.get('bundle_revision')) is not int
+        or value['bundle_revision']!=revision
+        or value.get('manifest_sha256')!=manifest_sha256
+        or type(value.get('game_port')) is not int
+        or not 1 <= value['game_port'] <= 65535
+        or type(value.get('java_pid')) is not int or value['java_pid']<=1):
+        return None
+    try:
+        started=datetime.fromisoformat(value['java_started_at'].replace('Z','+00:00'))
+        done=datetime.fromisoformat(value['done_at'].replace('Z','+00:00'))
+        observed=datetime.fromisoformat(stamp.replace('Z','+00:00'))
+        if not all(x.tzinfo is not None for x in (started,done,observed)):return None
+        if not started <= done <= observed + timedelta(seconds=5):return None
+        if (done-started).total_seconds()>1800:return None
+    except (TypeError,ValueError,KeyError,OverflowError,AttributeError):return None
+    return {'status':'functional_boot_attested',
+            'proof_scope':'owned_jvm_and_live_minecraft_status',
+            'instance_id':instance_id,'bundle_revision':revision,
+            'manifest_sha256':manifest_sha256,'game_port':value['game_port'],
+            'java_pid':value['java_pid'],
+            'java_started_at':started.astimezone(timezone.utc).isoformat(),
+            'done_at':done.astimezone(timezone.utc).isoformat(),
+            'boot_verified':True,'ready_for_release':False}
 
 
 def persist_serverpack_runtime_observations(
@@ -56,6 +116,20 @@ def persist_serverpack_runtime_observations(
         event_id='minecraft-serverpack-observed-'+hashlib.sha256('\0'.join(key).encode()).hexdigest()
         if event_id in seen:continue
         seen.add(event_id)
+        digest=item.get('manifest_sha256')
+        valid_digest=(isinstance(digest,str) and len(digest)==64
+                      and all(ch in '0123456789abcdef' for ch in digest))
+        advisory=(_advisory_boot(item.get('boot_observation'),stamp)
+                  if status=='physical_runtime_verified' and valid_digest else None)
+        functional=(_functional_boot(item.get('operational_attestation'),stamp,
+                    instance_id=iid,revision=revision,manifest_sha256=digest)
+                    if status=='physical_runtime_verified' and valid_digest else None)
+        # A positive live status must belong to the very same JVM observed by
+        # systemd and its boot log in this heartbeat. No cross-process mixing.
+        if functional and (not advisory or any(
+                functional.get(k)!=advisory.get(k)
+                for k in ('java_pid','java_started_at','done_at'))):
+            functional=None
         saved=events.publish({
             'event_id':event_id,'event_type':'MINECRAFT_SERVERPACK_RUNTIME_OBSERVED',
             'occurred_at':stamp,'source':source,
@@ -64,7 +138,10 @@ def persist_serverpack_runtime_observations(
             'data':{'content_id':cid,'bundle_revision':revision,
                     'observation_status':status,'reason':reason,
                     'proof_scope':'current_filesystem_only',
-                    'boot_verified':False,'release_authorized':False},
+                    'boot_verified':False,'release_authorized':False,
+                    **({'manifest_sha256':digest} if valid_digest else {}),
+                    **({'boot_observation':advisory} if advisory else {}),
+                    **({'operational_attestation':functional} if functional else {})},
         })
         created+=int(saved['created'])
     return {'accepted':len(seen),'created':created}
@@ -73,7 +150,7 @@ def persist_serverpack_runtime_observations(
 def classify_recent_serverpack_observation(
         item:dict[str,Any]|None,*,agent_id:str,instance_id:str,
         content_id:str,bundle_revision:int,now:datetime|None=None,
-        max_age_seconds:int=7200)->str:
+        max_age_seconds:int=7200,manifest_sha256:str|None=None)->str:
     """Fail-closed freshness projection; never returns healthy/ready."""
     if not isinstance(item,dict) or max_age_seconds<=0:return 'missing'
     data=item.get('data')
@@ -87,6 +164,8 @@ def classify_recent_serverpack_observation(
         or type(data.get('bundle_revision')) is not int
         or data['bundle_revision']!=bundle_revision
         or data.get('proof_scope')!='current_filesystem_only'
+        or (manifest_sha256 is not None and
+            data.get('manifest_sha256')!=manifest_sha256)
         or data.get('boot_verified') is not False
         or data.get('release_authorized') is not False):
         return 'missing'
