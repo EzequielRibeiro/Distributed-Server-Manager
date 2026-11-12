@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -373,6 +375,25 @@ class BackupRepository:
             created.append(self.request(policy["instance_id"],action="create",reason="schedule",requested_by="scheduler"))
         return created
 
+    @staticmethod
+    def _age_retention_days(instance_id):
+        """Opt-in, instance-scoped age policy. Never fall back to destructive
+        count retention when a requested policy is malformed.
+        """
+        days_raw = os.environ.get("DSM_BACKUP_RETENTION_DAYS", "").strip()
+        allow_raw = os.environ.get("DSM_BACKUP_RETENTION_INSTANCE_IDS", "").strip()
+        if not days_raw and not allow_raw:
+            return None
+        if not days_raw or not allow_raw or not days_raw.isascii() or not days_raw.isdecimal():
+            raise ValueError("age backup retention requires days and instance allowlist")
+        days = int(days_raw)
+        if not 1 <= days <= 365:
+            raise ValueError("backup retention days must be between 1 and 365")
+        instance_ids = [value.strip() for value in allow_raw.split(",")]
+        if not all(re.fullmatch(r"[A-Za-z0-9._-]{1,191}", value) for value in instance_ids):
+            raise ValueError("invalid backup retention instance allowlist")
+        return days if instance_id in instance_ids else None
+
     def _single_operational_cleanup(self, instance_id, completed_backup_id):
         """Queue deletions only after a replacement backup is persisted.
 
@@ -382,12 +403,17 @@ class BackupRepository:
         schedule = self._workspace_schedule(instance_id)
         if not schedule or not bool(schedule.get("keep_single_operational")):
             return []
+        days = self._age_retention_days(instance_id)
         jobs = self.list_jobs(instance_id=instance_id, limit=2000)
         completed = [job for job in jobs if job.get("action") == "create"
                      and job.get("status") == "completed" and job.get("backup_id")
                      and job.get("sha256") and job.get("artifact_path")]
         if not completed or str(completed[0]["backup_id"]) != str(completed_backup_id):
             return []  # fail closed if a newer completed backup exists
+        # A 14-day policy keeps EVERY completed backup in the window; an
+        # unparseable timestamp is always retained, never guessed stale.
+        # The latest confirmed backup is protected even beyond the window.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days else None
         excluded = {str(job["backup_id"]) for job in jobs
                     if job.get("action") == "delete"
                     and job.get("status") in {"pending", "running", "completed"}
@@ -395,10 +421,17 @@ class BackupRepository:
         queued = []
         for job in completed[1:]:
             old_id = str(job["backup_id"])
-            if old_id != str(completed_backup_id) and old_id not in excluded:
-                queued.append(self.request(instance_id, action="delete", backup_id=old_id,
-                                           reason="operational_retention", requested_by="scheduler"))
-                excluded.add(old_id)
+            if old_id == str(completed_backup_id) or old_id in excluded:
+                continue
+            if cutoff is not None:
+                completed_at = _datetime(job.get("completed_at"))
+                if completed_at is None or completed_at >= cutoff:
+                    continue
+            queued.append(self.request(
+                instance_id, action="delete", backup_id=old_id,
+                reason="age_retention" if days else "operational_retention",
+                requested_by="scheduler"))
+            excluded.add(old_id)
         return queued
 
     def commands_for_agent(self, agent_id):
@@ -408,6 +441,9 @@ class BackupRepository:
             schedule=self._workspace_schedule(job["instance_id"])
             if schedule is not None:
                 policy["keep_single_operational"] = bool(schedule.get("keep_single_operational"))
+            days = self._age_retention_days(job["instance_id"])
+            if days is not None:
+                policy["retention_days"] = days  # explicit no-count-prune contract to Agent
             output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy,"requested_by":job.get("requested_by")})
         return output
 
