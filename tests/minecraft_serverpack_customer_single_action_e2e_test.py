@@ -11,6 +11,10 @@ import io
 import json
 import os
 import shutil
+import re
+import subprocess
+import time
+import zipfile
 from pathlib import Path
 import sys
 import tarfile
@@ -41,6 +45,9 @@ from minecraft_serverpack_content_convergence import (
     verify_serverpack_content_convergence, ServerPackConvergenceError)
 
 
+OFFICIAL_PACK_SHA256="b8635562de0931eb5cadb51954c0fb78658033928ef54b5f73be6cae5c8897fa"
+
+
 class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
     """Real customer route, Agent transaction and authenticated heartbeat joined."""
 
@@ -48,6 +55,29 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
         self.client_count=0
         self.physical_transaction=None
         self.accepted=None
+        self.real_pack_root=getattr(self,"official_pack_root",None)
+        if self.real_pack_root is not None:
+            assert os.environ.get("GITHUB_ACTIONS")=="true", "official integration only on GitHub Actions"
+            assert os.environ.get("RUNNER_ENVIRONMENT")=="github-hosted", "requires disposable runner"
+            self.real_pack_root=Path(self.real_pack_root).resolve()
+            source_zip=self.real_pack_root/"ServerFiles-0.14.0-beta.zip"
+            assert source_zip.is_file()
+            with source_zip.open("rb") as stream:
+                assert hashlib.file_digest(stream,"sha256").hexdigest()==OFFICIAL_PACK_SHA256
+            self.official_files=sorted((self.real_pack_root/"mods").glob("*.jar"))
+            assert len(self.official_files)==291
+            assert len({x.name for x in self.official_files})==291
+            assert (self.real_pack_root/"libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt").is_file()
+            with zipfile.ZipFile(source_zip) as archive:
+                infos={i.filename:i for i in archive.infolist() if i.filename.startswith("mods/") and i.filename.endswith(".jar")}
+                assert len(infos)==291
+                assert all("mods/"+x.name in infos and infos["mods/"+x.name].file_size==x.stat().st_size for x in self.official_files)
+            self.official_zip_size=source_zip.stat().st_size
+            self.official_zip_sha=OFFICIAL_PACK_SHA256
+        else:
+            self.official_files=None
+            self.official_zip_size=823456
+            self.official_zip_sha="d"*64
         def actual_loader(value):
             return {"26.1.2.94":"26.1.2.109","26.1.2.109":"26.1.2.126"}.get(value,value)
         base_bundle=scale_fixture.bundle
@@ -65,16 +95,29 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             self.assertEqual(self.client_count,1)
             self.assertEqual(pending["expected_previous_revision"],2)
             iid=pending["instance_id"]
-            # Bind the frozen candidate to real filesystem-verifiable synthetic bytes.
-            for item in pending["children"]:
-                cid=item["content_id"]
-                raw=b"offline-simulated-jar-"+cid.encode()
-                item["artifact"]["sha256"]=hashlib.sha256(raw).hexdigest()
-                item["artifact"]["size_bytes"]=len(raw)
-                item["artifact"]["filename"]=cid+".jar"
+            # Bind the frozen pending candidate to the official ZIP filenames/hashes
+            # on the opt-in CI path, or deterministic tiny fixtures in normal tests.
             member_index={m["content_id"]:m for m in pending["bundle"]["members"]}
-            for item in pending["children"]:
-                member_index[item["content_id"]]["artifact"]=dict(item["artifact"])
+            for number,item in enumerate(pending["children"]):
+                cid=item["content_id"]
+                if self.official_files is not None:
+                    file=self.official_files[number]
+                    with file.open("rb") as stream:
+                        digest=hashlib.file_digest(stream,"sha256").hexdigest()
+                    filename=file.name
+                    size=file.stat().st_size
+                else:
+                    raw=b"offline-simulated-jar-"+cid.encode()
+                    digest=hashlib.sha256(raw).hexdigest()
+                    filename=cid+".jar"
+                    size=len(raw)
+                item["artifact"]["sha256"]=digest
+                item["artifact"]["size_bytes"]=size
+                item["artifact"]["filename"]=filename
+                if self.official_files is not None:
+                    item["artifact"]["bundle_member"]="mods/"+filename
+                    member_index[cid]["path"]="mods/"+filename
+                member_index[cid]["artifact"]=dict(item["artifact"])
             rebound=build_pending_bundle_commit(**{key:pending[key] for key in (
                 "instance_id","content_id","transfer_id",
                 "migration_plan_sha256","expected_previous_revision",
@@ -97,9 +140,9 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
                 "evidence":{
                     "instance_id":iid,"content_id":"atm11",
                     "transfer_id":pending["transfer_id"],
-                    "incoming_sha256":"d"*64,
+                    "incoming_sha256":self.official_zip_sha,
                     "filename":"ServerFiles-0.14.0-beta.zip",
-                    "archive_size_bytes":823456,
+                    "archive_size_bytes":self.official_zip_size,
                     "serverpack_prefix":"",
                     "serverpack_mod_count":len(pending["children"]),
                     "serverpack_override_dirs":["config","kubejs"],
@@ -206,10 +249,32 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             (stage/"config/customer.toml").write_text("CUSTOM_SETTING_PRESERVED")
             (stage/"loader.txt").write_text(pending["bundle"]["loader_version"])
             (stage/"mods").mkdir()
-            for child in pending["children"]:
-                (stage/"mods"/(child["content_id"]+".jar")).write_bytes(
-                    b"offline-simulated-jar-"+child["content_id"].encode())
-            self.assertEqual(len(list((stage/"mods").glob("*.jar"))),291)
+            if self.real_pack_root is None:
+                for child in pending["children"]:
+                    (stage/"mods"/(child["content_id"]+".jar")).write_bytes(
+                        b"offline-simulated-jar-"+child["content_id"].encode())
+                self.assertEqual(len(list((stage/"mods").glob("*.jar"))),291)
+            def prepare_files(*_):
+                if self.real_pack_root is None:
+                    return
+                for name in ("libraries","config","kubegroovy","local"):
+                    source=self.real_pack_root/name
+                    if source.is_dir():
+                        shutil.copytree(source,stage/name,dirs_exist_ok=True)
+                for child in pending["children"]:
+                    name=child["artifact"]["filename"]
+                    source=self.real_pack_root/"mods"/name
+                    target=stage/"mods"/name
+                    shutil.copy2(source,target)
+                    with target.open("rb") as stream:
+                        assert hashlib.file_digest(stream,"sha256").hexdigest()==child["artifact"]["sha256"]
+                (stage/"eula.txt").write_text("eula=true\n")
+                (stage/"server.properties").write_text(
+                    "server-ip=127.0.0.1\nserver-port=25596\nonline-mode=false\n"
+                    "max-players=1\nview-distance=2\nsimulation-distance=2\n"
+                    "enable-query=false\nenable-rcon=false\n")
+                self.assertEqual(len(list((stage/"mods").glob("*.jar"))),291)
+                assert (stage/"libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt").is_file()
             archive=root/"retained-preupdate.tar.gz"
             with tarfile.open(archive,"w:gz") as tar:
                 for relative in ("world/original-marker.txt","config/customer.toml"):
@@ -224,10 +289,25 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
                 os.rename(runtime,previous)
                 os.rename(stage,runtime)
             def ready(*_):
-                return (runtime/"loader.txt").read_text()==migration["target_loader_version"] and (
+                files_ready=(runtime/"loader.txt").read_text()==migration["target_loader_version"] and (
                     runtime/"world/original-marker.txt").read_text()=="PRIVATE_WORLD_013" and (
                     runtime/"config/customer.toml").read_text()=="CUSTOM_SETTING_PRESERVED" and (
                     len(list((runtime/"mods").glob("*.jar")))==291)
+                if not files_ready:return False
+                if self.real_pack_root is None:return True
+                return self._boot_real_official_runtime(runtime)
+            def rollback(*_):
+                # If real boot fails, restore the old world, configs and runtime
+                # under the migration lock (the failing test remains fail closed).
+                if runtime.is_dir():
+                    failed=root/"storage/runtime.migration-failed"
+                    if failed.exists():raise RuntimeError("preexisting failed runtime")
+                    os.rename(runtime,failed)
+                if previous.is_dir():
+                    os.rename(previous,runtime)
+                assert (runtime/"world/original-marker.txt").read_text()=="PRIVATE_WORLD_013"
+                assert (runtime/"config/customer.toml").read_text()=="CUSTOM_SETTING_PRESERVED"
+                self.readiness_failure_rolled_back=True
             def finalize(*_):
                 assert previous.is_dir()
                 return {"status":"archived","observed_state":"stopped"}
@@ -238,12 +318,13 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
                     "requires_exclusive_recheck":True},
                 "stop":lambda *_:None,
                 "backup":lambda *_:backup,
-                "stage":lambda *_:None,
+                "stage":prepare_files,
                 "swap":swap,
                 "readiness":ready,
                 "commit":lambda *_:{"status":"committed","journal":journal},
                 "finalize":finalize,
-                "rollback":lambda *_:self.fail("unexpected Agent rollback"),
+                "rollback":rollback if self.real_pack_root is not None else (
+                    lambda *_:self.fail("unexpected Agent rollback")),
             }
             with patch.object(instance_runtime,"STATE_DIR",state_root):
                 detail=execute_minecraft_serverpack_migration(
@@ -257,6 +338,9 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             self.assertEqual((runtime/"world/original-marker.txt").read_text(),"PRIVATE_WORLD_013")
             self.assertEqual((runtime/"config/customer.toml").read_text(),"CUSTOM_SETTING_PRESERVED")
             self.assertEqual((previous/"loader.txt").read_text(),"26.1.2.109")
+            if self.real_pack_root is not None:
+                self.assertTrue(self.real_boot_result["pass"])
+                detail["real_boot"]=dict(self.real_boot_result)
             self.physical_transaction=detail
             return {"provisioning_id":state["provisioning_id"],
                     "instance_id":pending["instance_id"],
@@ -270,6 +354,70 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
              patch.object(atomic_fixture.AtomicPendingPublicationTest,"completed",actual_agent_completion):
             super().setUp()
         self._promote_managed_sources_and_agent_states()
+
+
+    def _boot_real_official_runtime(self,runtime):
+        """One actual JVM startup under the same Agent migration operation fence.
+
+        No real customer server is touched. The official runner supplies
+        NeoForge libraries + 291 official JARs; temp world/port are isolated.
+        The Agent can commit only if Done, level.dat and clean stop all pass.
+        """
+        root=self.real_pack_root
+        assert root is not None
+        report_file=root/"joined-one-action-boot.json"
+        log_file=root/"joined-one-action-boot.log"
+        if report_file.exists() or log_file.exists():
+            raise RuntimeError("stale boot evidence; refuse overwriting")
+        command=["java","-Xms1024M","-Xmx5120M","-Djava.awt.headless=true",
+            "@libraries/net/neoforged/neoforge/26.1.2.126/unix_args.txt","nogui"]
+        result={"kind":"ATM11JoinedSingleActionOfficialBoot","version":"0.14.0-beta",
+                "loader":"26.1.2.126","mods":291,"done":False,
+                "world":False,"stopped":False,"pass":False}
+        proc=None
+        started=time.monotonic()
+        try:
+            with log_file.open("w",encoding="utf-8") as out:
+                env={**os.environ,"HOME":str(runtime),"TMPDIR":str(runtime)}
+                env.pop("JAVA_TOOL_OPTIONS",None)
+                proc=subprocess.Popen(command,cwd=runtime,stdin=subprocess.PIPE,
+                    stdout=out,stderr=subprocess.STDOUT,text=True,env=env)
+                print("DSM1013_JOINED_OFFICIAL_JVM_STARTED",flush=True)
+                while time.monotonic()-started<720:
+                    time.sleep(3)
+                    if re.search(r"Done \([0-9.]+s\)!",log_file.read_text(errors="replace")):
+                        result["done"]=True
+                        break
+                    if proc.poll() is not None:break
+                if proc.poll() is None:
+                    if result["done"]:time.sleep(4)
+                    try:
+                        proc.stdin.write("stop\n");proc.stdin.flush()
+                        proc.wait(timeout=75)
+                        result["stopped"]=proc.returncode==0
+                    except (BrokenPipeError,subprocess.TimeoutExpired):
+                        proc.terminate()
+                        try:proc.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            proc.kill();proc.wait(timeout=10)
+                result["exit_code"]=proc.returncode
+            level=runtime/"world/level.dat"
+            result["world"]=level.is_file() and level.stat().st_size>0
+        except Exception as exc:
+            result["exception"]=repr(exc)
+        finally:
+            if proc and proc.poll() is None:
+                proc.kill();proc.wait(timeout=10)
+            result["duration_seconds"]=round(time.monotonic()-started,2)
+            result["pass"]=bool(result["done"] and result["world"]
+                                  and result["stopped"] and result.get("exit_code")==0)
+            lines=log_file.read_text(errors="replace").splitlines() if log_file.exists() else []
+            result["log_tail"]=lines[-40:]
+            report_file.write_text(json.dumps(result,sort_keys=True,indent=2)+"\n")
+            self.real_boot_result={k:v for k,v in result.items() if k!="log_tail"}
+            print("DSM1013_JOINED_OFFICIAL_BOOT_RESULT",
+                json.dumps(self.real_boot_result,sort_keys=True),flush=True)
+        return bool(result["pass"])
 
     def _promote_managed_sources_and_agent_states(self):
         """Really promote 291 hashed JARs and 493 Agent states with Controller CAS."""
@@ -441,6 +589,19 @@ class SingleCustomerActionToAuthenticatedAckE2E(LargeRealCredentialHTTP):
             "agent_291_physical_sha_attestation":True,
             "production_touched":False,
         },sort_keys=True),flush=True)
+
+# Never run the 291-mod real JVM on an installed DSM host.
+class OfficialATM11SingleActionBootE2E(SingleCustomerActionToAuthenticatedAckE2E):
+    def setUp(self):
+        if (os.environ.get("CAPIVARA_RUN_OFFICIAL_ATM11_JOINED_E2E")!="1"
+                or os.environ.get("GITHUB_ACTIONS")!="true"
+                or os.environ.get("RUNNER_ENVIRONMENT")!="github-hosted"):
+            self.skipTest("official ATM11 joined E2E requires opt-in disposable runner")
+        name=os.environ.get("DSM_1013_OFFICIAL_PACK_ROOT")
+        if not name:raise RuntimeError("missing official Server Pack directory")
+        self.official_pack_root=Path(name)
+        super().setUp()
+
 
 if __name__=="__main__":
     import unittest
