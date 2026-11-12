@@ -9,6 +9,11 @@ on:
       - 'tests/minecraft_serverpack_customer_official_http_upload_test.py'
       - 'tests/minecraft_serverpack_two_transient_systemd_e2e_test.py'
       - 'tests/minecraft_serverpack_customer_official_preview_session_test.py'
+      - 'tests/minecraft_serverpack_official_systemd_health_e2e.py'
+      - 'agents/linux/runtime/minecraft_serverpack_boot_witness.py'
+      - 'agents/linux/runtime/minecraft_serverpack_live_readiness.py'
+      - 'database/content_repository.py'
+      - 'dashboard/minecraft_serverpack_observation_events.py'
   workflow_dispatch:
 
 permissions:
@@ -180,6 +185,30 @@ jobs:
               print("\n".join(result["log_tail"]),flush=True)
           if not result["pass"]:raise SystemExit("full 291-mod boot not attested")
           PY
+      - name: Live official 291-mod systemd JVM proof and authenticated Controller health
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          CAPIVARA_RUN_1013_REAL_SYSTEMD_HEALTH: '1'
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTIONS:-}" = true
+          test "${RUNNER_ENVIRONMENT:-}" = github-hosted
+          test ! -e /opt/dsm/runtime/hybrid-instance-storage
+          test -d /run/systemd/system
+          sudo -n env GITHUB_ACTIONS="$GITHUB_ACTIONS" \
+            RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" \
+            CAPIVARA_RUN_1013_REAL_SYSTEMD_HEALTH="$CAPIVARA_RUN_1013_REAL_SYSTEMD_HEALTH" \
+            DSM_SERVERPACK_HEALTH_PROMOTION_ENABLED=1 \
+            DSM_1013_OFFICIAL_PACK_ROOT="$RUNNER_TEMP/dsm-atm11-014" \
+            PYTHONDONTWRITEBYTECODE=1 \
+            PYTHONPATH="$GITHUB_WORKSPACE" \
+            PATH="$PATH" \
+            python3 -u tests/minecraft_serverpack_official_systemd_health_e2e.py \
+            2>&1 | tee "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
+          grep -q 'DSM1013_REAL_JVM_CONTROLLER_HEALTH_READY' "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
+          grep -q 'DSM1013_REAL_JVM_CONTROLLER_HEALTH_REVOKED' "$RUNNER_TEMP/dsm-atm11-014/systemd-health-run.log"
+          test -s "$RUNNER_TEMP/dsm-atm11-014/systemd-health-evidence.json"
       - name: Single customer HTTP action, official 0.13 to 0.14 boot, authenticated ACK and injected rollback
         shell: bash
         env:
@@ -199,6 +228,8 @@ jobs:
             ${{ runner.temp }}/dsm-atm11-014/boot-evidence.json
             ${{ runner.temp }}/dsm-atm11-014/joined-one-action-boot.log
             ${{ runner.temp }}/dsm-atm11-014/joined-one-action-boot.json
+            ${{ runner.temp }}/dsm-atm11-014/systemd-health-run.log
+            ${{ runner.temp }}/dsm-atm11-014/systemd-health-evidence.json
             ${{ runner.temp }}/dsm1013-systemd-official.log
           if-no-files-found: ignore
           retention-days: 7
