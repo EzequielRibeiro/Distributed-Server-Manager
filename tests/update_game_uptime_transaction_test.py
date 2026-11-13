@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import signal
+import subprocess
+import sys
 import json
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -145,6 +149,106 @@ class DisposableUptimeTransactionTest(unittest.TestCase):
             tx.execute(alias, self.units, inspect=self.inspect,
                        apply=self.apply, rollback=self.rollback)
         self.assertEqual(self.apply_count, 0)
+
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(signal, "SIGKILL"), "POSIX test")
+    def test_real_sigkill_then_explicit_recovery_preserves_original_identity(self):
+        """Kill a dedicated test child after a durable journal but before apply returns."""
+        item = self.root/"disposable-product.txt"
+        item.write_text("before")
+        script = """
+from importlib.machinery import SourceFileLoader
+import importlib.util, json, os, signal, sys
+from pathlib import Path
+loader = SourceFileLoader("dsm928_crash_child", sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+module = importlib.util.module_from_spec(spec)
+loader.exec_module(module)
+root = Path(sys.argv[2])
+snapshots = json.loads(sys.argv[3])
+def crash():
+    (root / "disposable-product.txt").write_text("after")
+    os.kill(os.getpid(), signal.SIGKILL)
+module.execute(root, sorted(snapshots), inspect=lambda name: snapshots[name],
+               apply=crash, rollback=lambda: (root / "disposable-product.txt").write_text("before"))
+"""
+        result = subprocess.run(
+            (sys.executable, "-c", script,
+             str(ROOT/"update-manager/game-uptime-transaction.py"),
+             str(self.root), json.dumps(self.snapshots)),
+            check=False, capture_output=True, text=True, timeout=12,
+        )
+        self.assertEqual(result.returncode, -signal.SIGKILL, result.stderr)
+        self.assertEqual(item.read_text(), "after")
+        self.assertEqual(self.journal()["status"], "prepared")
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "existing transaction"):
+            self.run_tx()
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "operator review"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: item.write_text("before"))
+        self.assertEqual(item.read_text(), "after")
+        outcome = tx.recover_interrupted(
+            self.root, self.units, inspect=self.inspect,
+            rollback=lambda: item.write_text("before"), operator_reviewed=True)
+        self.assertEqual(outcome["status"], "recovered_rollback")
+        self.assertFalse(outcome["live_no_drain_authorized"])
+        self.assertEqual(item.read_text(), "before")
+        self.assertEqual(self.journal()["status"], "recovered_rollback")
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "recoverable interruption"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: self.fail("must not replay"),
+                                   operator_reviewed=True)
+
+    def test_interrupted_journal_with_changed_pid_refuses_rollback(self):
+        with self.assertRaises(SystemExit):
+            self.run_tx(apply=lambda: (_ for _ in ()).throw(SystemExit(12)))
+        self.snapshots[self.units[0]]["pid"] += 1
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "process identity changed"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: self.fail("unexpected rollback"),
+                                   operator_reviewed=True)
+        self.assertEqual(self.journal()["status"], "prepared")
+
+    def test_corrupted_and_symlinked_journal_refuse_recovery(self):
+        with self.assertRaises(SystemExit):
+            self.run_tx(apply=lambda: (_ for _ in ()).throw(SystemExit(12)))
+        journal = self.root/"game-uptime-transaction.json"
+        journal.write_text("{invalid")
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "unreadable"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: self.fail("bad journal rollback"),
+                                   operator_reviewed=True)
+        journal.unlink()
+        journal.symlink_to(self.root/"other")
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "unsafe"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: self.fail("symlink rollback"),
+                                   operator_reviewed=True)
+
+    def test_failed_operator_recovery_is_manual_only_after_first_attempt(self):
+        with self.assertRaises(SystemExit):
+            self.run_tx(apply=lambda: (_ for _ in ()).throw(SystemExit(12)))
+        count = {"n": 0}
+        def fail_once():
+            count["n"] += 1
+            raise RuntimeError("injected rollback failure")
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "manual review"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=fail_once, operator_reviewed=True)
+        self.assertEqual(count["n"], 1)
+        self.assertEqual(self.journal()["status"], "manual_recovery_required")
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "recoverable interruption"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=fail_once, operator_reviewed=True)
+        self.assertEqual(count["n"], 1)
+
+    def test_completed_transaction_never_recovered(self):
+        self.run_tx()
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "recoverable interruption"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: self.fail("completed rollback"),
+                                   operator_reviewed=True)
+
 
 
 if __name__ == "__main__":
