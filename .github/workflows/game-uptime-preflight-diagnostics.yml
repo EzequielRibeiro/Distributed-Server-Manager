@@ -1,0 +1,44 @@
+name: Game Uptime Preflight Diagnostics
+on:
+  pull_request:
+    paths:
+      - 'update-manager/game-uptime-*.py'
+      - 'update-manager/preflight.sh'
+      - 'tests/update_game_uptime_*test.py'
+      - 'tests/update_preflight_test.sh'
+      - '.github/workflows/game-uptime-preflight-diagnostics.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'update-manager/game-uptime-*.py'
+      - 'update-manager/preflight.sh'
+      - 'tests/update_game_uptime_*test.py'
+      - 'tests/update_preflight_test.sh'
+      - '.github/workflows/game-uptime-preflight-diagnostics.yml'
+  workflow_dispatch:
+
+jobs:
+  readonly-preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Unit tests for fail-closed impact and per-unit snapshots
+        run: python3 -m unittest discover -s tests -p 'update_game_uptime_*test.py' -v
+      - name: Ensure updater preflight still requires game drain
+        run: bash tests/update_preflight_test.sh
+
+  disposable-systemd-rehearsal:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Refuse live DSM and run 2 transient units in disposable runner
+        run: |
+          test -d /run/systemd/system
+          test ! -e /opt/dsm/runtime/hybrid-instance-storage
+          sudo env CAPIVARA_DSM928_SYSTEMD_E2E=1 python3 -m unittest discover -s tests -p 'update_game_uptime_systemd_e2e_test.py' -v

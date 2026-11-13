@@ -25,12 +25,48 @@ plan = importlib.util.module_from_spec(spec)
 loader.exec_module(plan)
 
 
+def disposable_systemd_host(installed_storage=Path("/opt/dsm/runtime/hybrid-instance-storage"),
+                            unit_output=None):
+    """Deny systemd exercises on installed DSM hosts or any with live games."""
+    if installed_storage.exists() or not Path("/run/systemd/system").is_dir():
+        return False
+    if unit_output is None:
+        try:
+            result = subprocess.run(
+                ("systemctl", "list-units", "--type=service", "--state=active",
+                 "--all", "--no-legend", "--plain", "capivara-instance-*.service"),
+                text=True, capture_output=True, timeout=8, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode != 0:
+            return False
+        unit_output = result.stdout
+    return not bool(unit_output.strip())
+
+
+class DisposableSystemdHostSafetyTests(unittest.TestCase):
+    def test_refuses_installed_dsm_even_when_opted_in(self):
+        with tempfile.TemporaryDirectory(prefix="dsm928-test-installed-") as tmp:
+            installed=Path(tmp)/"hybrid-instance-storage"
+            installed.mkdir()
+            self.assertFalse(disposable_systemd_host(installed, unit_output=""))
+
+    def test_refuses_active_game_service(self):
+        with tempfile.TemporaryDirectory(prefix="dsm928-test-units-") as tmp:
+            self.assertFalse(disposable_systemd_host(
+                Path(tmp)/"absent", unit_output="capivara-instance-minecraft-005.service loaded active running"
+            ))
+
+
 class DisposableSystemdNoDrainTest(unittest.TestCase):
     def setUp(self):
         if os.environ.get("CAPIVARA_DSM928_SYSTEMD_E2E") != "1":
             self.skipTest("opt-in required: CAPIVARA_DSM928_SYSTEMD_E2E=1")
         if os.geteuid() != 0 or not shutil.which("systemd-run"):
             self.skipTest("requires root and systemd-run")
+        if not disposable_systemd_host():
+            self.skipTest("refuse transient systemd test on a DSM or live-game host")
         self.units = []
         self.addCleanup(self._stop_units)
         self.temp = tempfile.TemporaryDirectory(prefix="dsm928-e2e-")
