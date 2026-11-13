@@ -28,6 +28,7 @@ def report(list_units=None, inspect=None):
                 identity=inspect(unit)
                 items.append({"unit":unit,"eligible":False,"identity_verified":True,
                               "main_pid":identity["main_pid"],
+                              "start_stamp":identity.get("start_stamp"),
                               "reason":"no-drain transaction is not implemented"})
             except (guard.GateError,OSError,ValueError,KeyError) as exc:
                 items.append({"unit":unit,"eligible":False,"identity_verified":False,
