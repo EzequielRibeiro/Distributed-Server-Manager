@@ -4,6 +4,7 @@ All fixtures mock heartbeat persistence and credentials. No live DSM services,
 updates, database or game processes are touched.
 """
 from __future__ import annotations
+import ast
 import importlib.util
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -146,6 +147,33 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
         status, data = self.post({"no_drain_compatibility_probe": probe})
         self.assertEqual(status, 401)
         self.assertNotIn("no_drain_compatibility_offer", data)
+
+
+
+class AgentHeartbeatScopeTests(unittest.TestCase):
+    def test_serverpack_observation_globals_belong_to_heartbeat(self):
+        """Protect the unrelated Server Pack observation path during PR sync."""
+        source = (ROOT / "agents/linux/runtime/agent.py").read_text()
+        functions = {
+            node.name: node for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertIn("heartbeat", functions)
+        self.assertIn("enroll", functions)
+        heartbeat_globals = {
+            name for node in functions["heartbeat"].body
+            if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        enroll_globals = {
+            name for node in functions["enroll"].body
+            if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        required = {"_SERVERPACK_OBSERVATION_PENDING", "_SERVERPACK_LAST_SCANNED"}
+        self.assertTrue(required.issubset(heartbeat_globals))
+        self.assertFalse(required.intersection(enroll_globals))
+
 
 
 if __name__ == "__main__":
