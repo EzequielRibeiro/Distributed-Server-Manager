@@ -63,3 +63,31 @@ descartaveis e injeta falha apos a aplicacao, verificando rollback e PIDs.
 **Nao ativar no Horizon**: update.sh continua parando os servicos gerenciados
 durante a atualizacao. Nenhuma mudanca de producao e autorizada por estes
 testes. Armazenamento extra #1049 continua adiado independentemente da #928.
+
+
+## Compatibilidade Controller/Agent via heartbeat (diagnostico)
+
+O Agent so envia `no_drain_compatibility_probe` quando
+`DSM928_COMPAT_DIAGNOSTIC=1`. A mensagem contem `agent_id`,
+`request_id` aleatorio de 128 bits, `schema_version=1` e o contrato
+`dsm928-readonly-v1`. Nao ha comandos, reinicio ou transicao de estado.
+
+A resposta `no_drain_compatibility_offer` so e emitida depois que
+`AgentPairingRepository.authenticate` validou as credenciais.
+O Controller usa exclusivamente o `agent_id` autenticado para vincular a
+solicitacao, nunca o `agent_id` solto no payload. O Agent confere retorno,
+identidade, nonce e contrato exato. Um Controller antigo pode ignorar o probe:
+nesse caso o diagnostico local falha fechado e o heartbeat normal prossegue.
+
+`status=wire_compatible` atesta **somente a compatibilidade do envelope
+diagnostico**. Nao atesta schema do banco, compatibility do runtime,
+processos systemd, rollback, release, versao binaria ou garantia de
+continuidade de jogos. Em todas as respostas,
+`live_no_drain_authorized=false`. A flag nao pode ser habilitada por
+essas mensagens. O updater real continua drenando jogos.
+
+Passos ainda obrigatorios: inventario dos contratos reais Controller/Agent
+e suas versões antes/depois, verificador do supervisor no unit systemd de
+teste, reinicio independente do Controller mantendo o PID original do game,
+rollback apos crash da transacao real, ensaio com pacote distribuivel e
+observacoes confiaveis de jogo e persistencia. PR permanece Draft.
