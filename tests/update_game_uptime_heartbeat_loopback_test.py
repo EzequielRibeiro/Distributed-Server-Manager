@@ -24,7 +24,7 @@ for directory in (ROOT, ROOT / "dashboard", ROOT / "database", ROOT / "core",
 
 from agent_remote_http import dispatch_heartbeat
 from agent_pairing_repository import AgentCredentialInvalid
-from game_uptime_heartbeat_compat import build_probe, verify_offer
+from game_uptime_agent_wire import build_probe, verify_offer
 
 
 class LoopbackHeartbeatTests(unittest.TestCase):
