@@ -41,7 +41,7 @@ class PinnedSupervisorUnitTests(unittest.TestCase):
         with self.assertRaises(mod.SupervisorUnitError): self.verify()
 
     def test_replaceable_controller_path_rejected(self):
-        self.obs["exec"] += " /opt/dsm/agents/linux/runtime/helper.py"
+        self.obs["exec"] = self.obs["exec"].replace(" ; ignore_errors=no", " /opt/dsm/agents/linux/runtime/helper.py ; ignore_errors=no")
         with self.assertRaises(mod.SupervisorUnitError): self.verify()
 
     def test_pid_invalid_rejected(self):
