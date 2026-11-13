@@ -125,3 +125,69 @@ def execute(
             _checkpoint(path, "manual_recovery_required", before, str(rollback_exc))
             raise TransactionSafetyError("rollback failed; manual recovery required") from rollback_exc
         raise TransactionSafetyError("transaction rejected and rollback completed") from exc
+
+def recover_interrupted(
+    workspace: Path,
+    units: list[str],
+    *,
+    inspect: Callable[[str], Mapping],
+    rollback: Callable[[], None],
+    operator_reviewed: bool = False,
+) -> dict:
+    """Explicit, disposable-only rollback of one interrupted transaction.
+
+    Not automatic startup recovery: the operator must review journal and
+    externally verify the appropriate rollback callback before opting in.
+    A process crash *during* this recovery remains manual-only, not replayed.
+    """
+    root = _workspace(workspace)
+    if operator_reviewed is not True:
+        raise TransactionSafetyError("explicit operator review is required")
+    if (not isinstance(units, list) or not units
+            or any(not isinstance(unit, str) or not _UNIT.fullmatch(unit)
+                   for unit in units)
+            or len(units) != len(set(units))):
+        raise TransactionSafetyError("only named disposable E2E systemd units are allowed")
+    path = root / "game-uptime-transaction.json"
+    if path.is_symlink() or not path.is_file():
+        raise TransactionSafetyError("missing or unsafe transaction journal")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+        with os.fdopen(fd, "r", encoding="utf-8") as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("oversized journal")
+        report = json.loads(raw)
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise TransactionSafetyError("unreadable transaction journal") from exc
+    if (not isinstance(report, dict)
+            or report.get("kind") != "DSM928DisposableUptimeTransaction"
+            or report.get("scope") != "disposable_only_not_production"
+            or report.get("live_no_drain_authorized") is not False
+            or report.get("status") not in {"prepared", "applied"}
+            or not isinstance(report.get("original_units"), list)):
+        raise TransactionSafetyError("journal does not prove recoverable interruption")
+    recorded = report["original_units"]
+    if len(recorded) != len(units) or any(
+            not isinstance(item, dict)
+            for item in recorded):
+        raise TransactionSafetyError("journal inventory mismatch")
+    # The journal must match the *same* processes by unit, PID and start stamp.
+    # Never invoke rollback if an observed unit was replaced while we were down.
+    actual = [_snapshot(name, inspect) for name in sorted(units)]
+    if recorded != actual:
+        raise TransactionSafetyError("process identity changed; manual recovery required")
+    _checkpoint(path, "recovery_started", actual,
+                "explicit disposable-only recovery")
+    try:
+        rollback()
+        after = [_snapshot(name, inspect) for name in sorted(units)]
+        if after != actual:
+            raise TransactionSafetyError("process changed during recovery rollback")
+        _checkpoint(path, "recovered_rollback", actual)
+        return {"status": "recovered_rollback",
+                "live_no_drain_authorized": False, "units": after}
+    except Exception as exc:
+        _checkpoint(path, "manual_recovery_required", actual, str(exc))
+        raise TransactionSafetyError("recovery rollback failed; manual review required") from exc
