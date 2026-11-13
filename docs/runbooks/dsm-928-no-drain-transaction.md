@@ -114,3 +114,33 @@ com `CAPIVARA_DSM928_SYSTEMD_E2E=1`, `root` e nenhuma instancia DSM ativa.
 entre dois hosts, schema real, JVM Minecraft, arquivo de unit de cliente,
 `cap update run` nem o `main()` em modo sem drenagem. O resultado positivo
 nao autoriza deploy; `live_no_drain_authorized=false` permanece obrigatorio.
+
+
+## Recuperacao controlada apos interrupcao abrupta (descartavel)
+
+O metodo `recover_interrupted()` em `game-uptime-transaction.py`
+**nao** executa automaticamente durante inicializacao ou nova tentativa.
+
+- Exige `operator_reviewed=True` explicitamente e restringe o workspace a
+  subdiretorio de `/tmp` e os processos a `dsm928-e2e-*.service`.
+- Aceita apenas journal duravel original nos estados `prepared` ou `applied`,
+  com formato, escopo e lista de unidades validos.
+- Antes de chamar o callback de rollback, compara unidade, PID, timestamp
+  monotonico e estado ativo com os registros anteriores a interrupcao.
+- Grava `recovery_started` com fsync **antes** do rollback; em sucesso grava
+  `recovered_rollback`. Nao reutiliza o journal nem permite reexecutar o
+  rollback apos um resultado terminal.
+- Em divergencia de identidade, journal invalido ou falta de revisao, nao
+  chama o callback. Se o rollback falha ou ha nova queda abrupta, o journal
+  fica em estado de recuperacao manual: **nao e repetido automaticamente**.
+
+Os testes descartaveis incluem processo filho encerrado com SIGKILL apos
+alterar um arquivo de teste, bloqueio de replay, rollback revisado, PID
+alterado, symlink/journal corrompido e falha durante recuperacao.
+
+**Limitacao:** o callback de rollback e fornecido pelo teste; o codigo
+nao sabe recuperar um pacote DSM real. O journal nao e prova contra
+manipulacao pelo proprio proprietario/root. Nao e um modo no-drain para
+`update.sh main()`, nao cobre migração real de DB, servidor Minecraft
+Java nem integracao com plano de controle em producao. Continua bloqueado
+para uso em instancias reais.
