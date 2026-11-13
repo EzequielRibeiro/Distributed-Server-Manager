@@ -62,6 +62,7 @@ from minecraft_serverpack_report_outbox import (
     read_serverpack_report_delivery, acknowledge_serverpack_report_delivery,
 )
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
+from game_uptime_heartbeat_compat import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
@@ -151,6 +152,14 @@ def _inventory(config):
     except OSError:installed_version=str(config.get("capivara_version","unknown"))
     network=collect_network_inventory();network["public_ipv4_observation"]=observe_public_ipv4()
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":network,"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+    if os.environ.get("DSM928_COMPAT_DIAGNOSTIC") == "1":
+        # Bounded optional, authenticated heartbeat metadata only.
+        # The Controller might be older and safely ignore this field.
+        try:
+            payload["no_drain_compatibility_probe"] = build_no_drain_probe(
+                str(config["agent_id"]))
+        except (KeyError, ValueError, TypeError):
+            pass
     # Every inventory record is Agent-owned and supplies instance_id.
     # Keep malformed inventory entries fail-closed without blocking heartbeat.
     try:
@@ -249,6 +258,12 @@ def heartbeat(config):
     base=str(config["controller_url"]).rstrip("/")
     payload=_inventory(config)
     result=_post(base+"/api/agent/heartbeat",payload,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    if "no_drain_compatibility_probe" in payload:
+        # Never start, stop, restart, drain or update games based on this result.
+        result["no_drain_wire_diagnostic"] = verify_no_drain_offer(
+            payload["no_drain_compatibility_probe"],
+            result.get("no_drain_compatibility_offer"),
+        )
     if "serverpack_report_delivery" in payload:
         try:
             sent=payload["serverpack_report_delivery"]
