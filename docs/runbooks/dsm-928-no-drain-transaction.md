@@ -91,3 +91,26 @@ e suas versões antes/depois, verificador do supervisor no unit systemd de
 teste, reinicio independente do Controller mantendo o PID original do game,
 rollback apos crash da transacao real, ensaio com pacote distribuivel e
 observacoes confiaveis de jogo e persistencia. PR permanece Draft.
+
+
+## Ensaio Controller HTTP substituto + rollback com supervisor isolado
+
+O teste opt-in `test_controller_http_surrogate_restarts_while_pinned_supervisor_survives_rollback`
+em `tests/update_game_uptime_systemd_e2e_test.py` roda somente em runner descartavel,
+com `CAPIVARA_DSM928_SYSTEMD_E2E=1`, `root` e nenhuma instancia DSM ativa.
+
+- Inicializa `console_supervisor.py` real a partir de copia versionada SHA-256
+  em uma unidade systemd `dsm928-e2e-*.service`; o processo filho e apenas
+  `/usr/bin/sleep`, nao uma JVM Minecraft.
+- Inicia servidor Python `http.server` transitorio em loopback como
+  **substituto do Controller**, sobre arquivos ficticios em `/tmp`.
+- Prepara, aplica e reverte arquivos com as funcoes reais de `update.sh`.
+  Reinicia o servidor HTTP descartavel entre a aplicacao e o rollback.
+- Injeta falha apos a troca e verifica o journal `rolled_back`, o mundo e
+  banco ficticios, o mesmo PID e start stamp do supervisor, SHA-256 e
+  comunicacao via socket antes e depois.
+
+**Escopo limitado:** nao exercita o Controller DSM real, a negociacao real
+entre dois hosts, schema real, JVM Minecraft, arquivo de unit de cliente,
+`cap update run` nem o `main()` em modo sem drenagem. O resultado positivo
+nao autoriza deploy; `live_no_drain_authorized=false` permanece obrigatorio.
