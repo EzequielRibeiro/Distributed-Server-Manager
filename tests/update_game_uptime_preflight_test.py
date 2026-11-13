@@ -160,5 +160,39 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(result["no_drain_compatibility_verified"])
         self.assertFalse(result["live_no_drain_authorized"])
 
+
+    def test_operational_coverage_never_accepts_stopped_minecraft(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        actual = [unit for unit in self.units if "dayz" in unit]
+        result = module.preflight(
+            self.installed, self.target,
+            list_units=lambda: actual,
+            inspect=lambda unit: {"main_pid": 3456, "start_stamp": 7890},
+            expected_active_units=self.units,
+        )
+        self.assertFalse(result["no_drain_operational_coverage_verified"])
+        self.assertEqual(
+            result["operational_coverage"]["missing_active_units"],
+            [next(unit for unit in self.units if "minecraft" in unit)],
+        )
+        self.assertFalse(result["live_no_drain_authorized"])
+
+    def test_operational_coverage_requires_explicit_full_active_baseline(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        inspect = lambda unit: {"main_pid": 3456 if "dayz" in unit else 4567,
+                                "start_stamp": 7890 if "dayz" in unit else 8901}
+        unknown = module.preflight(
+            self.installed, self.target, list_units=lambda: self.units,
+            inspect=inspect,
+        )
+        self.assertFalse(unknown["no_drain_operational_coverage_verified"])
+        confirmed = module.preflight(
+            self.installed, self.target, list_units=lambda: self.units,
+            inspect=inspect, expected_active_units=self.units,
+        )
+        self.assertTrue(confirmed["no_drain_operational_coverage_verified"])
+        self.assertFalse(confirmed["live_no_drain_authorized"])
+        self.assertTrue(confirmed["current_updater_drains_active_games"])
+
 if __name__ == "__main__":
     unittest.main()
