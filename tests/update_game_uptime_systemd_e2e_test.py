@@ -303,8 +303,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
             client.settimeout(3)
             client.connect(str(sock_path))
-            client.sendall(b"status\\n")
-            self.assertEqual(client.recv(128), b"OK\\n")
+            client.sendall(b"status\n")
+            self.assertEqual(client.recv(128), b"OK\n")
         self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(), digest)
         fake = self.workspace/"pinned-updater-fixture"
         create_tiny_release_fixture(fake)
