@@ -62,7 +62,7 @@ from minecraft_serverpack_report_outbox import (
     read_serverpack_report_delivery, acknowledge_serverpack_report_delivery,
 )
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
-from game_uptime_heartbeat_compat import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
+from game_uptime_agent_wire import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
