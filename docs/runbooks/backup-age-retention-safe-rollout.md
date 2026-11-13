@@ -73,6 +73,20 @@ python3 scripts/backup_age_retention_capacity_gate.py \
   --days 14 --copies-per-day 1 --reserve-gib 20
 ```
 
+Para uma ativacao gradual, informe **tambem** as instancias que continuam
+gerando backups sob a politica legada, com seu limite `retention_count`.
+Caso contrario, um `pass` de uma unica instancia nao garante capacidade
+para o volume compartilhado. Exemplo para testar 14 dias de Minecraft
+mantendo DayZ com 7 copias (antes de ativar a nova politica):
+
+```sh
+python3 scripts/backup_age_retention_capacity_gate.py \
+  --backup-root /opt/dsm/runtime/hybrid-agent-state/backups \
+  --instance cli-000001-minecraft-005 \
+  --legacy-instance cli-000001-dayz-001=7 \
+  --days 14 --copies-per-day 1 --reserve-gib 20
+```
+
 `status=blocked_insufficient_capacity` e codigo 2 **impedem a ativacao**.
 A projecao usa o maior arquivo completo encontrado para cada instancia e
 supoe que esse tamanho nao cresca; portanto, `pass` e necessario, mas nao

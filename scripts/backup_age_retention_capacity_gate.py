@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+from typing import Mapping
 
 GIB = 1024 ** 3
 INSTANCE_ID = re.compile(r"[A-Za-z0-9._-]{1,191}\Z")
@@ -29,6 +30,7 @@ def forecast(
     safety_cycles: int = 1,
     now: datetime | None = None,
     available_bytes: int | None = None,
+    legacy_instance_counts: Mapping[str, int] | None = None,
 ) -> dict:
     """Project *minimum* required free disk using current full-backup sizes.
 
@@ -43,6 +45,17 @@ def forecast(
     if not (1 <= days <= 365 and 1 <= copies_per_day <= 24
             and 1 <= reserve_gib <= 1000 and 1 <= safety_cycles <= 4):
         raise ValueError("invalid retention sizing parameters")
+    legacy = dict(legacy_instance_counts or {})
+    if any(
+        key in {".", ".."}
+        or not isinstance(key, str)
+        or not INSTANCE_ID.fullmatch(key)
+        or key in instance_ids
+        or type(keep) is not int
+        or not 1 <= keep <= 2000
+        for key, keep in legacy.items()
+    ):
+        raise ValueError("invalid or overlapping legacy backup retention instance")
     root = Path(backup_root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("backup root must be an existing non-symlink directory")
@@ -63,7 +76,14 @@ def forecast(
     required_growth = 0
     transient_slack = 0
     expected_total_copies = days * copies_per_day
-    for instance_id in instance_ids:
+    # A staged opt-in must account for legacy jobs still producing archives
+    # on the very same filesystem, not only the selected age-retained games.
+    plan = [
+        (iid, "age", expected_total_copies) for iid in instance_ids
+    ] + [
+        (iid, "count", keep) for iid, keep in legacy.items()
+    ]
+    for instance_id, mode, target_copies in plan:
         folder = root / instance_id
         if folder.is_symlink() or not folder.is_dir():
             raise ValueError(f"missing or symlinked backup directory: {instance_id}")
@@ -84,17 +104,21 @@ def forecast(
         # Using the largest observed full archive avoids underestimating
         # archive growth from historical compression differences.
         max_size = max(size for size, _ in archives)
-        current = sum(1 for _, date in archives if date >= threshold)
-        additional = max(0, expected_total_copies - current)
+        current = (
+            sum(1 for _, date in archives if date >= threshold)
+            if mode == "age" else len(archives)
+        )
+        additional = max(0, target_copies - current)
         growth = additional * max_size
         slack = max_size * safety_cycles
         required_growth += growth
         transient_slack += slack
         projections.append({
             "instance_id": instance_id,
+            "retention_mode": mode,
             "existing_archives": len(archives),
-            "within_retention_days": current,
-            "expected_copies": expected_total_copies,
+            "within_retention_days": current if mode == "age" else None,
+            "expected_copies": target_copies,
             "max_archive_bytes": max_size,
             "additional_archive_bytes": growth,
             "next_cycle_slack_bytes": slack,
@@ -110,6 +134,7 @@ def forecast(
         "copies_per_day": copies_per_day,
         "reserve_gib": reserve_gib,
         "safety_cycles": safety_cycles,
+        "legacy_instance_count": len(legacy),
         "free_bytes": available_bytes,
         "additional_archive_bytes": required_growth,
         "transient_slack_bytes": transient_slack,
@@ -130,12 +155,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--copies-per-day", type=int, default=1)
     parser.add_argument("--reserve-gib", type=int, default=20)
     parser.add_argument("--safety-cycles", type=int, default=1)
+    parser.add_argument("--legacy-instance", action="append", default=[],
+                        metavar="INSTANCE_ID=KEEP_COUNT",
+                        help="other active legacy backup policy on the same filesystem")
     args = parser.parse_args(argv)
     try:
+        legacy = {}
+        for value in args.legacy_instance:
+            iid, sep, keep = value.partition("=")
+            if not sep or iid in legacy or not keep.isascii() or not keep.isdecimal():
+                raise ValueError("invalid legacy backup policy; use INSTANCE_ID=KEEP_COUNT")
+            legacy[iid] = int(keep)
         result = forecast(
             args.backup_root, args.instance, days=args.days,
             copies_per_day=args.copies_per_day, reserve_gib=args.reserve_gib,
-            safety_cycles=args.safety_cycles,
+            safety_cycles=args.safety_cycles, legacy_instance_counts=legacy,
         )
     except (OSError, ValueError) as exc:
         print(json.dumps({"status": "blocked_invalid_evidence", "reason": str(exc)}))
