@@ -26,7 +26,7 @@ def _load(name, path):
     return module
 
 
-agent_wire = _load("dsm928_agent_wire", ROOT/"agents/linux/runtime/game_uptime_heartbeat_compat.py")
+agent_wire = _load("dsm928_agent_wire", ROOT/"agents/linux/runtime/game_uptime_agent_wire.py")
 controller_wire = _load("dsm928_controller_wire", ROOT/"dashboard/game_uptime_heartbeat_compat.py")
 from agent_remote_http import dispatch_heartbeat
 
