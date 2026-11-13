@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from content_repository import ContentRepository
+from core.content_bundle import normalize_bundle, ContentBundleValidationError
 from alert_repository import dialect_for_backend
 from core.minecraft_serverpack_pending_commit import (
     MinecraftServerPackPendingCommitError,
@@ -36,6 +37,25 @@ def publish_pending_serverpack_bundle(
         authorized=authorize_after_agent_completion(pending,result)
     except MinecraftServerPackPendingCommitError as exc:
         raise MinecraftServerPackPendingPublicationError(str(exc)) from exc
+    if str(configuration.get("minecraft_serverpack_execution_mode") or "") == "production":
+        migration=result.get("minecraft_serverpack_migration")
+        proof=migration.get("physical_manifest") if isinstance(migration,Mapping) else None
+        try:
+            canonical=normalize_bundle({**authorized["bundle"],
+                "instance_id":authorized["instance_id"],
+                "parent_content_id":authorized["content_id"]})
+            sha=canonical["manifest_sha256"]
+            count=len(canonical["manifest"]["members"])
+        except (ContentBundleValidationError,KeyError,TypeError,ValueError) as exc:
+            raise MinecraftServerPackPendingPublicationError(
+                "pending Server Pack manifest cannot be normalized for physical attestation") from exc
+        if (not isinstance(proof,Mapping)
+            or proof.get("status")!="physical_mods_verified"
+            or proof.get("manifest_sha256")!=sha
+            or type(proof.get("mod_count")) is not int
+            or proof["mod_count"]!=count):
+            raise MinecraftServerPackPendingPublicationError(
+                "production Server Pack publication requires matching Agent physical JAR attestation")
     if str(authorized.get("instance_id") or "")!=str(instance_id or ""):
         raise MinecraftServerPackPendingPublicationError(
             "pending Server Pack instance differs from provisioning operation"
@@ -105,6 +125,7 @@ def publish_pending_serverpack_bundle(
         # concurrency gate; the normal customer modpack guard would otherwise
         # reject the in-flight parent that this very operation is completing.
         customer_install_guard=False,
+        expected_previous_revision=expected,
     )
     if not published.get("changed"):
         raise MinecraftServerPackPendingPublicationError(

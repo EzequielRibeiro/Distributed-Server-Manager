@@ -184,6 +184,31 @@ def _retention(instance_dir, keep):
         old.unlink(missing_ok=True)
 
 
+def _retained_backup_capacity(instance_dir, policy):
+    """Conservative headroom guard for explicitly enabled age retention.
+
+    A failed preflight does not create a partial archive or delete older ones.
+    The initial storage sizing must still be approved before production opt-in.
+    """
+    if "retention_days" not in policy:
+        return
+    days = policy["retention_days"]
+    if type(days) is not int or not 1 <= days <= 365:
+        raise ValueError("invalid retention_days in backup command")
+    previous = sorted(
+        (item for item in instance_dir.glob("*.tar*") if item.is_file()),
+        key=lambda item: item.stat().st_mtime, reverse=True,
+    )
+    expected_bytes = previous[0].stat().st_size if previous else 0
+    required_free = max(8 * 1024 ** 3, expected_bytes * 2 + 4 * 1024 ** 3)
+    disk_root = instance_dir.parent
+    while not disk_root.exists() and disk_root != disk_root.parent:
+        disk_root = disk_root.parent
+    available_free = shutil.disk_usage(disk_root).free
+    if available_free < required_free:
+        raise OSError("backup age retention capacity preflight failed: preserve existing backups")
+
+
 def _create(config, command):
     instance_id = str(command["instance_id"])
     record, root = _owned(config, instance_id)
@@ -210,6 +235,7 @@ def _create(config, command):
             if str(policy.get("compression") or "gzip") == "gzip"
             else ".tar"
         )
+        _retained_backup_capacity(instance_dir, policy)
         path = instance_dir / f"{backup_id}{suffix}"
         manifest = _manifest(record, backup_id)
         if path.exists():
@@ -230,7 +256,7 @@ def _create(config, command):
             path.unlink(missing_ok=True)
             raise
         manifest["files_checksum"] = sha256
-        if not policy.get("keep_single_operational"):
+        if not policy.get("keep_single_operational") and not policy.get("retention_days"):
             _retention(instance_dir, int(policy.get("retention_count") or 7))
         return {
             "backup_id": backup_id,

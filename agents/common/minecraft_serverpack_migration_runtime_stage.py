@@ -187,8 +187,12 @@ def build_staged_runtime(
         _inherit_runtime_access(active_runtime / "mods", destination / "mods")
         for installed_mod in (destination / "mods").iterdir():
             _inherit_runtime_access(active_runtime / "mods", installed_mod)
-        # Approved Server Pack overrides replace incompatible modpack-owned
-        # scripts/configurations, while world and instance settings stay intact.
+        # Merge new pack defaults into the isolated copy. Never delete or
+        # overwrite existing private config/KubeJS files: the pack archive is
+        # not a grant to discard customer edits or locally installed scripts.
+        # Readiness must validate compatibility before committing the swap.
+        preserved_overrides = 0
+        added_overrides = 0
         override_root = serverpack_stage / "server-overrides"
         for name in ("config", "kubejs"):
             source = override_root / name
@@ -197,26 +201,38 @@ def build_staged_runtime(
             if source.is_symlink() or not source.is_dir():
                 raise MinecraftServerPackRuntimeStageError("invalid Server Pack override directory")
             target = destination / name
-            if target.is_dir():
-                shutil.rmtree(target)
-            elif target.exists():
+            original = active_runtime / name
+            if target.exists() and (not target.is_dir() or target.is_symlink()):
                 raise MinecraftServerPackRuntimeStageError("invalid existing override destination")
-            shutil.copytree(source, target, copy_function=shutil.copy2)
-            if (active_runtime / name).is_dir():
-                shutil.copystat(active_runtime / name, target)
-                original = active_runtime / name
-                for item in sorted(target.rglob("*")):
-                    relative = item.relative_to(target)
-                    counterpart = original / relative
-                    if counterpart.exists() and counterpart.is_dir() == item.is_dir():
-                        policy = counterpart
-                    else:
-                        parent = original / relative.parent
-                        while not parent.is_dir() and parent != original:
-                            parent = parent.parent
-                        policy = parent
-                    _inherit_runtime_access(policy, item)
-                _inherit_runtime_access(original, target)
+            target.mkdir(parents=True, exist_ok=True)
+            _inherit_runtime_access(original if original.is_dir() else active_runtime, target)
+            for item in sorted(source.rglob("*")):
+                if item.is_symlink() or (not item.is_file() and not item.is_dir()):
+                    raise MinecraftServerPackRuntimeStageError("unsafe Server Pack override entry")
+                relative = item.relative_to(source)
+                output = target / relative
+                if output.exists():
+                    if item.is_dir() and output.is_dir() and not output.is_symlink():
+                        continue
+                    if item.is_file() and output.is_file() and not output.is_symlink():
+                        preserved_overrides += 1
+                        continue
+                    raise MinecraftServerPackRuntimeStageError("Server Pack override type conflicts with private data")
+                if item.is_dir():
+                    output.mkdir(parents=True)
+                else:
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, output)
+                    added_overrides += 1
+                # Reuse the private access policy for newly introduced items.
+                policy = original / relative
+                if not policy.exists():
+                    policy = original / relative.parent
+                while not policy.exists() and policy != original:
+                    policy = policy.parent
+                if not policy.exists():
+                    policy = active_runtime
+                _inherit_runtime_access(policy, output)
         _reject_unsafe_tree(destination, "candidate runtime")
         proof = verify_installed_neoforge(destination, target_loader_version)
         protected_after = _protected_tree_hash(destination)
@@ -235,7 +251,9 @@ def build_staged_runtime(
         "mods": len(mod_files),
         "protected_tree_sha256": protected_after,
         "candidate_path": str(destination),
-        "existing_config_preserved": not any((serverpack_stage / "server-overrides" / name).is_dir() for name in ("config", "kubejs")),
+        "existing_config_preserved": True,
+        "preserved_override_files": preserved_overrides,
+        "new_override_files": added_overrides,
         "world_preserved": True,
         "activated": False,
     }

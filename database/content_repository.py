@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Backend-neutral desired-state persistence for Universal Content."""
 from __future__ import annotations
-import json,re,sys,uuid
+import json,os,re,sys,uuid
 from pathlib import Path
 from typing import Any,Mapping
 ROOT=Path(__file__).resolve().parents[1]; CORE=ROOT/"core"
@@ -233,7 +233,7 @@ class ContentRepository:
      s.execute(f"INSERT INTO content_bundle_revisions(bundle_id,revision,parent_assignment_id,provider,provider_project_id,provider_version_id,minecraft_version,loader_id,loader_version,manifest_kind,manifest_sha256,manifest_json,override_roots_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*16)})",(bundle_id,bundle_revision,parent_stored["assignment_id"],bundle["provider"],bundle["provider_project_id"],bundle["provider_version_id"],bundle["minecraft_version"],bundle["loader_id"],bundle["loader_version"],bundle["manifest_kind"],bundle["manifest_sha256"],manifest_json,roots_json,bundle["checksum"],requested_by,now));changed_any=True
    finally:s.close()
   return {"bundle_id":bundle_id,"bundle_revision":bundle_revision,"manifest_sha256":bundle["manifest_sha256"],"assignment":self.get(instance_id,parent["content_id"]),"children":[self.get(instance_id,cid) for cid in sorted(child_ids)],"changed":changed_any}
- def put_bundle_session(self,s,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None,customer_install_guard=False):
+ def put_bundle_session(self,s,parent_raw:Mapping[str,Any],bundle_raw:Mapping[str,Any],children_raw:list[Mapping[str,Any]],*,requested_by:str|None=None,customer_install_guard=False,expected_previous_revision:int|None=None):
   """Publish a validated bundle inside the caller's existing DB transaction.
 
   This is used by provisioning completion so the Agent job cannot become
@@ -264,6 +264,8 @@ class ContentRepository:
   now=utc_now();changed_any=False
   if customer_install_guard:self._guard_parallel_modpack_session(s,instance_id,parent["content_id"],dict(inst).get("game_id"))
   existing_bundle_row=s.execute(f"SELECT * FROM content_bundles WHERE instance_id={self.ph} AND parent_content_id={self.ph}",(instance_id,parent["content_id"])).fetchone();existing_bundle=dict(existing_bundle_row) if existing_bundle_row else None
+  if expected_previous_revision is not None and (not existing_bundle or int(existing_bundle["revision"])!=int(expected_previous_revision)):
+   raise ContentValidationError("Server Pack bundle revision changed during publication")
   if (existing_bundle and parent_body["desired_state"]=="installed"
       and str(existing_bundle.get("manifest_kind") or "")=="serverpack-local-v1"):
    revised_metadata=dict(parent_body.get("metadata") or {});revised_activation=dict(revised_metadata.get("activation") or {});revised_activation["mode"]="bundle-parent-preserve-config";revised_metadata["activation"]=revised_activation;parent_body["metadata"]=revised_metadata;parent=self._prepare_assignment(parent_body,inst)
@@ -296,7 +298,10 @@ class ContentRepository:
   roots_json=json.dumps(bundle["override_roots"],separators=(",",":"));manifest_json=json.dumps(bundle["manifest"],sort_keys=True,separators=(",",":"),ensure_ascii=False)
   if bundle_changed:
    values=(instance_id,parent_stored["assignment_id"],parent["content_id"],bundle["provider"],bundle["provider_project_id"],bundle["provider_version_id"],bundle["minecraft_version"],bundle["loader_id"],bundle["loader_version"],bundle["manifest_kind"],bundle["manifest_sha256"],roots_json,bundle_revision,bundle["checksum"],requested_by,now)
-   if existing_bundle:s.execute(f"UPDATE content_bundles SET instance_id={self.ph},parent_assignment_id={self.ph},parent_content_id={self.ph},provider={self.ph},provider_project_id={self.ph},provider_version_id={self.ph},minecraft_version={self.ph},loader_id={self.ph},loader_version={self.ph},manifest_kind={self.ph},manifest_sha256={self.ph},override_roots_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE bundle_id={self.ph}",(*values,bundle_id))
+   if existing_bundle:
+    guard=f" AND revision={self.ph}" if expected_previous_revision is not None else ""
+    update=s.execute(f"UPDATE content_bundles SET instance_id={self.ph},parent_assignment_id={self.ph},parent_content_id={self.ph},provider={self.ph},provider_project_id={self.ph},provider_version_id={self.ph},minecraft_version={self.ph},loader_id={self.ph},loader_version={self.ph},manifest_kind={self.ph},manifest_sha256={self.ph},override_roots_json={self.ph},revision={self.ph},checksum={self.ph},requested_by={self.ph},updated_at={self.ph} WHERE bundle_id={self.ph}{guard}",(*values,bundle_id,*([int(expected_previous_revision)] if expected_previous_revision is not None else [])))
+    if expected_previous_revision is not None and int(getattr(update,"rowcount",0) or 0)!=1:raise ContentValidationError("Server Pack bundle revision changed during publication")
    else:s.execute(f"INSERT INTO content_bundles(bundle_id,instance_id,parent_assignment_id,parent_content_id,provider,provider_project_id,provider_version_id,minecraft_version,loader_id,loader_version,manifest_kind,manifest_sha256,override_roots_json,revision,checksum,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*18)})",(bundle_id,*values,now))
    s.execute(f"INSERT INTO content_bundle_revisions(bundle_id,revision,parent_assignment_id,provider,provider_project_id,provider_version_id,minecraft_version,loader_id,loader_version,manifest_kind,manifest_sha256,manifest_json,override_roots_json,checksum,requested_by,created_at) VALUES ({','.join([self.ph]*16)})",(bundle_id,bundle_revision,parent_stored["assignment_id"],bundle["provider"],bundle["provider_project_id"],bundle["provider_version_id"],bundle["minecraft_version"],bundle["loader_id"],bundle["loader_version"],bundle["manifest_kind"],bundle["manifest_sha256"],manifest_json,roots_json,bundle["checksum"],requested_by,now));changed_any=True
   return {"bundle_id":bundle_id,"bundle_revision":bundle_revision,"manifest_sha256":bundle["manifest_sha256"],"assignment":self._existing_session(s,instance_id,parent["content_id"]),"children":[self._existing_session(s,instance_id,cid) for cid in sorted(child_ids)],"changed":changed_any}
@@ -348,13 +353,276 @@ class ContentRepository:
     rows=s.execute(f"SELECT * FROM agent_content_state WHERE instance_id={self.ph}",(instance_id,)).fetchall()
     return {str(row["content_id"]):dict(row) for row in rows}
    finally:s.close()
+ def _serverpack_manifest_alignment(self,instance_id,parent,children):
+  """Read-only Controller metadata gate; physical runtime proof is separate."""
+  content_id=str(parent.get("content_id") or "")
+  bundle=self._bundle_row(instance_id,content_id)
+  if not bundle or str(bundle.get("manifest_kind") or "")!="serverpack-local-v1":return "drift"
+  try:history=self._bundle_revision(instance_id,content_id,int(bundle["revision"]))
+  except (ContentValidationError,TypeError,ValueError):return "drift"
+  if str(history.get("manifest_sha256") or "")!=str(bundle.get("manifest_sha256") or ""):
+   return "drift"
+  try:manifest=json.loads(history.get("manifest_json") or "{}")
+  except (TypeError,ValueError):return "drift"
+  # The revision row and current row can agree on a stale checksum even
+  # when the persisted manifest payload itself was corrupted. Rehash bytes
+  # using the same canonical encoding as core.content_bundle.normalize_bundle.
+  from hashlib import sha256
+  canonical=json.dumps(manifest,sort_keys=True,separators=(",",":"),ensure_ascii=False)
+  if sha256(canonical.encode("utf-8")).hexdigest()!=str(bundle.get("manifest_sha256") or ""):
+   return "drift"
+  members=manifest.get("members") if isinstance(manifest,dict) else None
+  if not isinstance(members,list):return "drift"
+  declared={}
+  for entry in members:
+   if not isinstance(entry,dict):return "drift"
+   cid=str(entry.get("content_id") or "")
+   if not cid or cid in declared:return "drift"
+   declared[cid]=entry.get("artifact")
+  def marker(item):
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),dict) else {}
+   return metadata.get("bundle") if isinstance(metadata.get("bundle"),dict) else {}
+  sha=str(bundle.get("manifest_sha256") or "")
+  if not sha or marker(parent).get("manifest_sha256")!=sha or marker(parent).get("parent_content_id")!=content_id:
+   return "drift"
+  active={}
+  for child in children:
+   if str(child.get("desired_state") or "installed")!="installed":continue
+   cid=str(child.get("content_id") or "")
+   if cid in active:return "drift"
+   active[cid]=child
+  if set(active)!=set(declared):return "drift"
+  for cid,item in active.items():
+   value=marker(item)
+   if (value.get("parent_content_id")!=content_id or value.get("manifest_sha256")!=sha
+       or item.get("artifact")!=declared[cid]):return "drift"
+  return "metadata_aligned"
+ def _serverpack_published_physical_proof(self,instance_id,content_id,bundle_revision,manifest_sha256):
+  """Read the proof stored atomically with a terminal Controller publication.
+
+  The terminal Agent result is the existing durable receipt. Do not create a
+  second, separately updated source of truth or expose raw hashes to customers.
+  """
+  with self.backend.connect() as c:
+   session=AlertSession(self.backend,c)
+   try:
+    current=session.execute(
+     f"SELECT agent_id,runtime_id,game_version,build_id FROM instances WHERE id={self.ph}",
+     (instance_id,),
+    ).fetchone()
+    if current is None or str(current["runtime_id"] or "")!="minecraft.java.neoforge":return "missing"
+    rows=session.execute(
+     f"SELECT agent_id,request_json,result_json FROM agent_instance_provisioning "
+     f"WHERE instance_id={self.ph} AND status='completed' AND agent_id={self.ph} "
+     "ORDER BY completed_at DESC,created_at DESC LIMIT 20",
+     (instance_id,str(current["agent_id"] or "")),
+    ).fetchall()
+   finally:session.close()
+  for row in rows:
+   try:
+    request=json.loads(row["request_json"] or "{}")
+    result=json.loads(row["result_json"] or "{}")
+    if not isinstance(request,dict) or not isinstance(result,dict):continue
+    configuration=request.get("configuration")
+    if not isinstance(configuration,dict) or configuration.get("minecraft_serverpack_execution_mode")!="production":continue
+    pending=configuration.get("minecraft_serverpack_pending_bundle")
+    publication=result.get("controller_bundle_publication")
+    migration=result.get("minecraft_serverpack_migration")
+    if not all(isinstance(value,dict) for value in (pending,publication,migration)):continue
+    physical=migration.get("physical_manifest")
+    if not isinstance(physical,dict):continue
+    if (publication.get("status")!="published"
+      or publication.get("content_id")!=content_id
+      or int(publication.get("bundle_revision") or 0)!=int(bundle_revision)
+      or publication.get("manifest_sha256")!=manifest_sha256
+      or str(publication.get("target_loader_version") or "")!=str(current["build_id"] or "")
+      or str(publication.get("minecraft_version") or "")!=str(current["game_version"] or "")
+      or str(migration.get("target_loader_version") or "")!=str(current["build_id"] or "")
+      or publication.get("candidate_sha256")!=pending.get("candidate_sha256")
+      or publication.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
+      or pending.get("instance_id")!=instance_id
+      or pending.get("content_id")!=content_id
+      or migration.get("instance_id")!=instance_id
+      or migration.get("content_id")!=content_id
+      or migration.get("migration_plan_sha256")!=pending.get("migration_plan_sha256")
+      or physical.get("status")!="physical_mods_verified"
+      or physical.get("manifest_sha256")!=manifest_sha256
+      or type(physical.get("mod_count")) is not int
+      or physical.get("mod_count")!=len(pending.get("bundle",{}).get("members",[]))):
+     continue
+    return "verified"
+   except (TypeError,ValueError,KeyError,AttributeError):
+    continue
+  return "missing"
+ def _serverpack_recent_physical_observation(self,instance_id,content_id,bundle_revision,manifest_sha256):
+  """Project only the newest owned, scoped observation; never grant health."""
+  from universal_event_repository import UniversalEventRepository
+  from dashboard.minecraft_serverpack_observation_events import classify_recent_serverpack_observation
+  current=self._instance(instance_id)
+  if current is None:return "missing"
+  agent_id=str(dict(current).get("agent_id") or "")
+  if not agent_id:return "missing"
+  events=UniversalEventRepository(self.backend).list_events(
+   limit=1000,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
+   agent_id=agent_id,instance_id=instance_id)
+  for event in events:
+   data=event.get("data")
+   if not isinstance(data,dict) or data.get("content_id")!=content_id:continue
+   # Newer events for the same pack supersede earlier successful scans.
+   # In particular, a failure must not fall back to an older success.
+   return classify_recent_serverpack_observation(
+    event,agent_id=agent_id,instance_id=instance_id,
+    content_id=content_id,bundle_revision=bundle_revision,
+    manifest_sha256=manifest_sha256)
+  return "missing"
+ def _serverpack_recent_boot_witness(self,instance_id,content_id,bundle_revision,manifest_sha256):
+  """Advisory only: latest scoped Agent observation, never release authority."""
+  from datetime import datetime,timezone
+  from universal_event_repository import UniversalEventRepository
+  current=self._instance(instance_id)
+  if current is None:return "missing"
+  agent_id=str(dict(current).get("agent_id") or "")
+  if not agent_id:return "missing"
+  events=UniversalEventRepository(self.backend).list_events(
+   limit=1000,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
+   agent_id=agent_id,instance_id=instance_id)
+  for event in events:
+   data=event.get("data")
+   if not isinstance(data,dict) or data.get("content_id")!=content_id:continue
+   # Newest observation supersedes old proofs after a failed scan or revision.
+   if (event.get("agent_id")!=agent_id or event.get("source_id")!=agent_id
+       or event.get("instance_id")!=instance_id
+       or event.get("source") not in {
+        "controller.local_hybrid_serverpack_observer",
+        "controller.authenticated_agent_serverpack_observer"}
+       or type(data.get("bundle_revision")) is not int
+       or data["bundle_revision"]!=bundle_revision
+       or data.get("manifest_sha256")!=manifest_sha256
+       or data.get("observation_status")!="physical_runtime_verified"
+       or data.get("proof_scope")!="current_filesystem_only"
+       or data.get("boot_verified") is not False
+       or data.get("release_authorized") is not False):
+    return "missing"
+   boot=data.get("boot_observation")
+   if (not isinstance(boot,dict)
+       or boot.get("status")!="boot_process_observed"
+       or boot.get("proof_scope")!="advisory_current_process_log"
+       or boot.get("boot_verified") is not False
+       or boot.get("ready_for_release") is not False):
+    return "missing"
+   try:
+    timestamp=datetime.fromisoformat(str(event["occurred_at"]).replace("Z","+00:00"))
+    if timestamp.tzinfo is None:return "missing"
+    age=(datetime.now(timezone.utc)-timestamp.astimezone(timezone.utc)).total_seconds()
+    if age<0 or age>7200:return "stale"
+   except (TypeError,ValueError,KeyError,OverflowError):return "missing"
+   return "observed"
+  return "missing"
+ def _serverpack_reserved_game_port(self,instance_id):
+  """Controller-owned active node and TCP game port; never trust a claimed port."""
+  with self.backend.connect() as connection:
+   session=AlertSession(self.backend,connection)
+   try:
+    rows=session.execute(
+     "SELECT p.port FROM instance_ports p JOIN instances i "
+     "ON i.id=p.instance_id AND i.node_id=p.node_id "
+     f"WHERE p.instance_id={self.ph} AND p.name={self.ph} "
+     f"AND p.protocol={self.ph}",(instance_id,'game','tcp')).fetchall()
+   finally:session.close()
+  if len(rows)!=1:return None
+  try:port=int(rows[0]['port'])
+  except (TypeError,ValueError,KeyError):return None
+  return port if 1<=port<=65535 else None
+ def _serverpack_recent_operational_attestation(self,instance_id,content_id,bundle_revision,manifest_sha256,max_age_seconds=90):
+  """Non-authorizing fresh functional evidence, scoped to the current bundle.
+
+  The latest observation supersedes older positive evidence. The report alone
+  is not permission to mark a runtime healthy or to publish a release.
+  """
+  from datetime import datetime,timezone
+  from universal_event_repository import UniversalEventRepository
+  current=self._instance(instance_id)
+  if current is None:return "missing"
+  agent_id=str(dict(current).get("agent_id") or "")
+  if not agent_id:return "missing"
+  reserved_port=self._serverpack_reserved_game_port(instance_id)
+  if reserved_port is None:return "missing"
+  events=UniversalEventRepository(self.backend).list_events(
+   limit=1000,event_type="MINECRAFT_SERVERPACK_RUNTIME_OBSERVED",
+   agent_id=agent_id,instance_id=instance_id)
+  for event in events:
+   data=event.get('data')
+   if not isinstance(data,dict) or data.get('content_id')!=content_id:continue
+   proof=data.get('operational_attestation')
+   if (event.get('agent_id')!=agent_id or event.get('source_id')!=agent_id
+     or event.get('instance_id')!=instance_id
+     or event.get('source') not in {
+      'controller.local_hybrid_serverpack_observer',
+      'controller.authenticated_agent_serverpack_observer'}
+     or data.get('observation_status')!='physical_runtime_verified'
+     or data.get('proof_scope')!='current_filesystem_only'
+     or data.get('boot_verified') is not False
+     or data.get('release_authorized') is not False
+     or type(data.get('bundle_revision')) is not int
+     or data['bundle_revision']!=bundle_revision
+     or data.get('manifest_sha256')!=manifest_sha256
+     or not isinstance(proof,dict)
+     or proof.get('status')!='functional_boot_attested'
+     or proof.get('proof_scope')!='owned_jvm_and_live_minecraft_status'
+     or proof.get('instance_id')!=instance_id
+     or type(proof.get('bundle_revision')) is not int
+     or proof['bundle_revision']!=bundle_revision
+     or proof.get('manifest_sha256')!=manifest_sha256
+     or type(proof.get('game_port')) is not int
+     or proof.get('game_port')!=reserved_port
+     or proof.get('boot_verified') is not True
+     or proof.get('ready_for_release') is not False):return 'missing'
+   try:
+    timestamp=datetime.fromisoformat(str(event.get('occurred_at')).replace('Z','+00:00'))
+    if timestamp.tzinfo is None:return 'missing'
+    age=(datetime.now(timezone.utc)-timestamp.astimezone(timezone.utc)).total_seconds()
+   except (TypeError,ValueError,OverflowError):return 'missing'
+   return 'observed' if 0<=age<=max_age_seconds else 'stale'
+  return 'missing'
+ def _serverpack_runtime_process_observation(self,instance_id,max_age_seconds=180):
+  """Correlate the currently owned Agent heartbeat, not JVM startup proof.
+
+  A stale/foreign/unknown health row must never let a Server Pack appear ready.
+  """
+  from datetime import datetime,timezone
+  with self.backend.connect() as connection:
+   session=AlertSession(self.backend,connection)
+   try:
+    row=session.execute(
+     f"SELECT h.agent_id,h.desired_state,h.observed_state,h.reconcile_status,"
+     "h.health,h.operation_status,h.last_error,h.reported_at,h.updated_at "
+     "FROM agent_instance_runtime_health h JOIN instances i ON i.id=h.instance_id "
+     f"WHERE h.instance_id={self.ph} AND h.agent_id=i.agent_id",(instance_id,),
+    ).fetchone()
+   finally:session.close()
+  if not row:return "missing"
+  reported=str(row["reported_at"] or "")
+  try:
+   at=datetime.fromisoformat(reported.replace("Z","+00:00"))
+   if at.tzinfo is None:return "missing"
+   age=(datetime.now(timezone.utc)-at.astimezone(timezone.utc)).total_seconds()
+  except (ValueError,TypeError,OverflowError):return "missing"
+  if age<0 or age>max_age_seconds:return "stale"
+  if (row["desired_state"]=="running" and row["observed_state"]=="running"
+     and row["health"]=="healthy" and row["reconcile_status"] in ("healthy","unknown")
+     and row["operation_status"] in ("idle",None)
+     and not row["last_error"]):return "reported_running"
+  return "not_running"
  def customer_view(self,instance_id,limit=2000):
   items=self.list(instance_id=instance_id,limit=limit);states=self.agent_state_for_instance(instance_id);children={}
   def decorate(item):
    value=dict(item);state=states.get(str(value.get("content_id") or ""));aligned=bool(state and int(state.get("desired_revision") or 0)==int(value.get("revision") or 0) and str(state.get("desired_checksum") or "")==str(value.get("checksum") or ""))
    effective_security=str(state.get("security_state") or "unscanned") if aligned else str(value.get("security_state") or "unscanned")
+   applied_matches_desired=bool(state and aligned
+    and int(state.get("applied_revision") or 0)==int(value.get("revision") or 0)
+    and str(state.get("applied_checksum") or "")==str(value.get("checksum") or ""))
    value["effective_security_state"]=effective_security
-   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
+   value["reconciliation"]={"status":str(state.get("status") or "pending") if aligned else "pending","aligned":aligned,"applied_matches_desired":applied_matches_desired,"desired_revision":int(value.get("revision") or 0),"applied_revision":int(state.get("applied_revision") or 0) if state else None,"installed_version":state.get("installed_version") if state else None,"security_state":effective_security,"last_error":state.get("last_error") if state else None,"reported_at":state.get("reported_at") if state else None}
    return value
   visible=[]
   for item in items:
@@ -401,12 +669,78 @@ class ContentRepository:
                and child["reconciliation"]["installed_version"]==child["version"]
                for child in active)):
     convergence="ready"
-   item["bundle_summary"]={
+   summary={
     "child_count":len(active),"removed_child_count":len(removed),
     "pending_removed_count":pending_removed,"expected_child_count":expected,
     "security_states":security_counts,"reconciliation_statuses":status_counts,
     "convergence_status":convergence,
    }
+   summary["installed_child_count"]=len(active)
+   summary["absent_child_count"]=len(removed)
+   if str(item.get("provider") or "")=="local" and bool((item.get("artifact") or {}).get("ephemeral_upload")):
+    alignment=self._serverpack_manifest_alignment(instance_id,item,members)
+    summary["manifest_alignment"]=alignment
+    # Read-only projection of desired vs Agent reported revisions. An Agent
+    # "applied" verdict alone never proves physical JAR hashes or JVM boot.
+    statuses=[item.get("reconciliation") or {},
+              *((child.get("reconciliation") or {}) for child in members)]
+    failure={"failed","error","rollback_failed","security_blocked","security_scan_failed"}
+    failed=any(str(state.get("status") or "") in failure for state in statuses)
+    failed=failed or any(str(row.get("effective_security_state") or "") in {"blocked","suspicious","scan_failed"} for row in [item,*members])
+    complete=all(state.get("aligned") is True and state.get("applied_matches_desired") is True
+                 and state.get("status")=="applied" for state in statuses)
+    complete=complete and all(child.get("reconciliation",{}).get("installed_version")==child.get("version") for child in active)
+    complete=complete and all(child.get("reconciliation",{}).get("installed_version") in (None,"") for child in removed)
+    complete=complete and all(row.get("effective_security_state")=="clean" for row in [item,*active])
+    summary["metadata_convergence"]="failed" if alignment=="drift" or failed else ("aligned" if complete else "pending")
+    bundle=self._bundle_row(instance_id,str(item.get("content_id") or "")) if alignment=="metadata_aligned" else None
+    physical=(self._serverpack_published_physical_proof(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"])) if bundle else "missing")
+    summary["physical_attestation"]=physical
+    summary["current_physical_observation"]=(
+     self._serverpack_recent_physical_observation(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"]))
+     if bundle else "missing")
+    summary["current_boot_witness"]=(
+     self._serverpack_recent_boot_witness(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"])) if bundle else "missing")
+    summary["current_operational_attestation"]=(
+     self._serverpack_recent_operational_attestation(
+      instance_id,str(item.get("content_id") or ""),int(bundle["revision"]),
+      str(bundle["manifest_sha256"])) if bundle else "missing")
+    summary["runtime_process_observation"]=(
+     self._serverpack_runtime_process_observation(instance_id) if bundle else "missing")
+    # The published JAR receipt alone is not operational readiness. Enabling
+    # the feature is a separate Controller rollout decision, NEVER the release
+    # authorization. The latest authenticated Agent observation must cover the
+    # current revision/manifest and expire quickly, and a second runtime-health
+    # heartbeat must still report a healthy owned process.
+    enabled=os.environ.get("DSM_SERVERPACK_HEALTH_PROMOTION_ENABLED")=="1"
+    operational=(summary["current_physical_observation"]=="verified"
+                 and summary["current_boot_witness"]=="observed"
+                 and summary["current_operational_attestation"]=="observed"
+                 and summary["runtime_process_observation"]=="reported_running")
+    held={value.strip() for value in os.environ.get("DSM_CONTENT_HOLD_INSTANCE_IDS","").split(",") if value.strip()}
+    ready=(enabled and instance_id not in held
+           and alignment=="metadata_aligned" and not failed
+           and complete and physical=="verified" and operational)
+    summary["convergence_status"]=("failed" if alignment=="drift" or failed
+      else "ready" if ready else "pending")
+    summary["health_gate"]="ready" if ready else "blocked"
+    summary["health_reason"]=("runtime_functionally_attested" if ready
+       else "manifest_metadata_drift" if alignment=="drift"
+       else "agent_reconciliation_failed" if failed
+       else "physical_runtime_attestation_not_persisted" if complete and physical!="verified"
+       else "activation_hold_active" if complete and physical=="verified" and instance_id in held
+       else "health_promotion_disabled" if complete and physical=="verified" and operational and not enabled
+       else "runtime_operational_attestation_missing" if (enabled and complete
+           and physical=="verified" and not operational)
+       else "runtime_boot_not_attested" if complete and physical=="verified"
+       else "agent_reconciliation_pending")
+   item["bundle_summary"]=summary
   return visible
  def _revision_for(self,instance_id,content_id,revision):
   current=self.get(instance_id,content_id)
@@ -582,8 +916,21 @@ class ContentRepository:
   return assignments,in_flight
 
  def desired_for_agent(self,agent_id):
-  applied=self._applied(agent_id);out=[]
+  applied=self._applied(agent_id);out=[];serverpack_cache={}
   for a in self.list(agent_id=agent_id,limit=2000):
+   # Production Server Packs are installed by the atomic provisioning swap.
+   # A stale/missing content report must NEVER enqueue the legacy installer:
+   # it could reapply a separate content tree after publication, outside the
+   # verified migration checkpoint and rollback journal. Keep reconciliation
+   # read-only until the Agent can independently attest its current runtime.
+   marker=(a.get("metadata") or {}).get("bundle") if isinstance(a.get("metadata"),dict) else None
+   parent=str(marker.get("parent_content_id") or "") if isinstance(marker,dict) else ""
+   if parent and str(a.get("provider") or "")!="":
+    key=(str(a.get("instance_id") or ""),parent)
+    if key not in serverpack_cache:
+     bundle=self._bundle_row(*key)
+     serverpack_cache[key]=bool(bundle and str(bundle.get("manifest_kind") or "")=="serverpack-local-v1")
+    if serverpack_cache[key]:continue
    state=applied.get((a["instance_id"],a["content_id"]))
    if state and state[0]==int(a["revision"]) and state[1]==str(a["checksum"]):
     if state[2]=="applied" and state[3] in {"clean","unscanned"}:continue

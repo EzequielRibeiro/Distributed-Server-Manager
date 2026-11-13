@@ -18,7 +18,7 @@ VERSION=$(tr -d '\r\n' <"${ROOT}/version"); ARCHIVE="capivara-agent-linux-${VERS
 cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is not reproducible"
 (cd "${TMP}/one" && sha256sum -c "${ARCHIVE}.sha256" >/dev/null)
 mkdir "${TMP}/extract"; tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"; PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
-for path in install-agent.sh manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/privileged/console_journal_reader.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-console-reader.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path config/README.md; do [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"; done
+for path in agent/runtime/content_bundle.py agent/runtime/minecraft_serverpack_physical_manifest.py install-agent.sh manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/privileged/console_journal_reader.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-console-reader.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path config/README.md; do [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"; done
 for file in agent.py capabilities.py network_inventory.py update_client.py update_state.py local_cli.py cap_dispatch.py native_restart_client.py game_data_client.py game_data_executor.py game_data_state.py instance_runtime.py runtime_spec.py runtime_events.py runtime_materialization.py runtime_reconciler.py runtime_lock.py runtime_limits.py runtime_operations.py runtime_health.py runtime_metrics.py observability_client.py configuration_client.py content_client.py backup_client.py broadcast_client.py game_runtime.py provisioning_contract.py provisioning_state.py provisioning_client.py provisioning_executor.py privileged_materialization.py storage_migration_client.py uninstall_client.py; do [[ -f "${PACKAGE}/agent/runtime/${file}" ]] || fail "missing Agent package runtime file: ${file}"; done
 
 python3 - "${PACKAGE}" "${ROOT}" <<'PY'
@@ -32,6 +32,9 @@ for source in (root/'agents/linux/runtime').rglob('*.py'):
  rel='agent/runtime/'+source.relative_to(root/'agents/linux/runtime').as_posix(); assert (package/rel).read_bytes()==source.read_bytes(), rel
 for source in (root/'agents/common').glob('*.py'):
  rel='agent/common/'+source.name; assert (package/rel).read_bytes()==source.read_bytes(), rel
+for source in ('core/content_bundle.py','core/minecraft_serverpack_physical_manifest.py'):
+ rel='agent/runtime/'+pathlib.Path(source).name
+ assert (package/rel).read_bytes()==(root/source).read_bytes(), rel
 for source in (root/'agents/common').glob('*.py'):
  rel='agent/runtime/compat_common/'+source.name; assert (package/rel).read_bytes()==source.read_bytes(), rel
 for rel in (

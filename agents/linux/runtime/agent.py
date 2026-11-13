@@ -63,6 +63,7 @@ from minecraft_serverpack_report_outbox import (
 )
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
 from game_uptime_agent_wire import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
+from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
@@ -74,6 +75,8 @@ DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_RECONCILE_SECONDS = 15
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 HOST_IDENTITY_PATH = Path(os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY", str(STATE_DIR / "host-identity")))
+_SERVERPACK_OBSERVATION_PENDING: dict[str,object] | None = None
+_SERVERPACK_LAST_SCANNED = 0.0
 AGENT_LOG = STATE_DIR / "agent-runtime.log"
 
 
@@ -178,6 +181,8 @@ def _inventory(config):
             ids, agent_id=str(config["agent_id"]), read_instance=get_registered_instance)
     except (TypeError, ValueError, OSError, NameError):
         payload["minecraft_current_neoforge_attestations"] = []
+    if _SERVERPACK_OBSERVATION_PENDING is not None:
+        payload["minecraft_serverpack_observations"] = _SERVERPACK_OBSERVATION_PENDING
     if os.environ.get("DSM_SERVERPACK_RECOVERY_PROBE_ENABLED") == "1":
         # Probe is strictly read-only. Sending does not authorize or execute
         # recovery and can be disabled without affecting Agent heartbeat.
@@ -208,6 +213,7 @@ def _inventory(config):
 def enroll(config):
     token=str(config.get("pairing_token","")).strip()
     if not token:raise RuntimeError("Agent has no permanent credential and no pairing token")
+    global _SERVERPACK_OBSERVATION_PENDING, _SERVERPACK_LAST_SCANNED
     base=str(config["controller_url"]).rstrip("/")
     result=_post(base+"/api/agent/enroll",{"pairing_token":token,"agent_id":config["agent_id"],"node_id":config["node_id"],"name":config.get("name") or socket.gethostname(),"fingerprint":config["fingerprint"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":config.get("capivara_version"),"address":config.get("advertise_address")})
     config.update({"controller_id":result["controller_id"],"credential_id":result["credential_id"],"credential_secret":result["credential_secret"],"credential_type":result.get("credential_type","opaque-v1")});config.pop("pairing_token",None);_write_config(config);return config
@@ -273,6 +279,21 @@ def heartbeat(config):
             )
         except Exception:
             pass
+    # The physical observation is advisory and independent of durable report ACK.
+    _SERVERPACK_OBSERVATION_PENDING=None
+    now=time.monotonic()
+    if not _SERVERPACK_LAST_SCANNED or now-_SERVERPACK_LAST_SCANNED>=3600:
+        requests=result.get('serverpack_observation_requests')
+        if isinstance(requests,list) and requests:
+            _SERVERPACK_LAST_SCANNED=now
+            try:
+                observed=observe_remote_requests(
+                    requests,agent_id=str(config['agent_id']),
+                    read_instance=get_registered_instance,limit=1)
+                if observed['observations']:
+                    _SERVERPACK_OBSERVATION_PENDING=observed
+            except (OSError,ValueError,TypeError,KeyError):
+                pass
     ids=result.get("accepted_event_ids")
     if isinstance(ids,list):acknowledge_runtime_events(STATE_DIR,ids)
     commands=result.get("configuration_commands")
