@@ -11,7 +11,15 @@ ROOT="$(realpath -e -- "$ROOT")"
 case "$ROOT" in /tmp/*) ;; *) exit 2 ;; esac
 [[ -f "$UPDATER" && ! -L "$UPDATER" && "$(basename "$UPDATER")" == update.sh ]] || exit 2
 UPDATER="$(realpath -e -- "$UPDATER")"
-case "$UPDATER" in /tmp/*) ;; *) exit 2 ;; esac
+# GitHub-hosted runners check out the same reviewed source under /home/runner/work.
+# This grants READ access to the checked-out updater, never to its install root.
+case "$UPDATER" in
+  /tmp/*) ;;
+  /home/runner/work/*)
+    [[ -f "$(dirname "$UPDATER")/tests/update_game_uptime_main_path_test.py" ]] || exit 2
+    ;;
+  *) exit 2 ;;
+esac
 [[ ! -e /tmp/dsm928-unsafe-marker-should-not-exist ]] || exit 2
 # Reject paths where an attacker tries to make the sandbox point into /opt.
 for path in "$ROOT/installed" "$ROOT/new-payload"; do
