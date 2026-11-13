@@ -1,0 +1,29 @@
+name: Minecraft Restored World Boot Preflight
+on:
+  pull_request:
+    paths:
+      - 'scripts/minecraft_restored_world_boot_preflight.py'
+      - 'tests/minecraft_restored_world_boot_preflight_test.py'
+      - 'docs/runbooks/minecraft-restored-world-boot-homologation.md'
+      - '.github/workflows/minecraft-restored-world-boot-preflight.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/minecraft_restored_world_boot_preflight.py'
+      - 'tests/minecraft_restored_world_boot_preflight_test.py'
+      - 'docs/runbooks/minecraft-restored-world-boot-homologation.md'
+      - '.github/workflows/minecraft-restored-world-boot-preflight.yml'
+  workflow_dispatch:
+
+jobs:
+  offline-safety-gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test fail-closed world boot preflight without customer backups
+        run: |
+          python3 -m py_compile scripts/minecraft_restored_world_boot_preflight.py
+          python3 -m unittest discover -s tests -p 'minecraft_restored_world_boot_preflight_test.py' -v
