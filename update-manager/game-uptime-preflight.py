@@ -20,10 +20,49 @@ def _load(name: str, filename: str):
 plan = _load("game_uptime_plan", "game-uptime-plan.py")
 reporter = _load("game_uptime_report", "game-uptime-report.py")
 compatibility = _load("game_uptime_compatibility", "game-uptime-compatibility.py")
+supervisor_unit = _load("game_uptime_supervisor_unit", "game-uptime-supervisor-unit.py")
+
+
+def _pinned_minecraft_evidence(units, *, versions_dir, expected_sha256, inspect):
+    """Bind the *same* active unit's PID/start stamp to its versioned ExecStart.
+
+    A caller-provided bool is never accepted as a substitute for systemd proof.
+    """
+    minecraft = [item for item in units if "minecraft" in item["unit"].lower()]
+    if not minecraft:
+        return {"verified": True, "scope": "no_active_minecraft", "observations": [],
+                "blockers": []}
+    if versions_dir is None or expected_sha256 is None:
+        return {"verified": False, "scope": "active_minecraft", "observations": [],
+                "blockers": ["pinned_supervisor_evidence_missing"]}
+    observations = []
+    blockers = []
+    verify = inspect if inspect is not None else reporter.guard.inspect
+    for item in minecraft:
+        if not item.get("identity_verified"):
+            blockers.append(item["unit"] + ":initial_identity_unverified")
+            continue
+        try:
+            result = supervisor_unit.verify_pinned_supervisor(
+                item["unit"], versions_dir=Path(versions_dir),
+                expected_sha256=expected_sha256, inspect=verify,
+            )
+            if (item.get("main_pid") != result["main_pid"] or
+                    not isinstance(item.get("start_stamp"), int) or
+                    item["start_stamp"] != result["start_stamp"]):
+                raise supervisor_unit.SupervisorUnitError("process identity changed between inspections")
+            observations.append(result)
+        except (supervisor_unit.SupervisorUnitError, OSError, ValueError,
+                TypeError, KeyError) as exc:
+            blockers.append(item["unit"] + ":" + str(exc)[:160])
+    return {"verified": not blockers and len(observations) == len(minecraft),
+            "scope": "active_minecraft", "observations": observations,
+            "blockers": blockers}
 
 
 def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
-              controller_contract=None, agent_contract=None, supervisor_pinned=False):
+              controller_contract=None, agent_contract=None, supervisor_pinned=False,
+              supervisor_versions_dir=None, supervisor_expected_sha256=None):
     """Report *current updater* behavior, not a hypothetical permission to update."""
     state = {"kind": "CapivaraDSMNoDrainPreflight", "schema_version": 1,
              "mode": "read_only", "live_no_drain_authorized": False,
@@ -37,11 +76,20 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
         state["release_impact"] = impact
         # Independent, fail-closed gate: legacy candidate means only worth review,
         # never process-safe. Controller/Agent declarations are not inferred.
+        pin = _pinned_minecraft_evidence(
+            units["units"], versions_dir=supervisor_versions_dir,
+            expected_sha256=supervisor_expected_sha256, inspect=inspect,
+        )
+        # The legacy supervisor_pinned flag cannot self-authorize isolation.
+        # Only an independently inspected, same-PID/start-stamp systemd witness
+        # may elevate the compatibility diagnostic to further rehearsal.
         gate = compatibility.assess(
             installed, target, controller_contract, agent_contract,
-            minecraft_active=any("minecraft" in item["unit"] for item in units["units"]),
-            supervisor_pinned=supervisor_pinned,
+            minecraft_active=any("minecraft" in item["unit"].lower()
+                                 for item in units["units"]),
+            supervisor_pinned=pin["verified"],
         )
+        state["supervisor_pin_evidence"] = pin
         state["compatibility_gate"] = gate
         state["no_drain_compatibility_verified"] = gate["compatible_for_further_rehearsal"]
         if units.get("inventory_error"):
