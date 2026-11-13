@@ -318,5 +318,126 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
 
 
+    def test_controller_http_surrogate_restarts_while_pinned_supervisor_survives_rollback(self):
+        """Isolated HTTP control-plane *surrogate* restart + real file rollback.
+
+        Exercises the real console_supervisor.py and update.sh file functions,
+        NOT the real DSM Controller, real Minecraft JVM or no-drain main().
+        """
+        import hashlib
+        import socket
+        import sys
+        from urllib.request import urlopen
+        from urllib.error import URLError
+
+        source = ROOT/"agents/linux/runtime/console_supervisor.py"
+        loader = SourceFileLoader("dsm928_supervisor_stage_control_restart",
+                                  str(ROOT/"update-manager/game-uptime-supervisor-stage.py"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        stage = importlib.util.module_from_spec(spec)
+        loader.exec_module(stage)
+        versions = self.workspace/"control-restart-pinned"
+        versions.mkdir(mode=0o700)
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        pinned = Path(stage.stage_supervisor(source, versions, expected_sha256=digest)["path"])
+        sock = self.workspace/"stable-console.sock"
+        game_unit = f"{self.prefix}-stable-game.service"
+        self._run("systemd-run", "--unit", game_unit[:-8], "--collect",
+                  "--property=Type=simple", sys.executable, str(pinned),
+                  "--socket", str(sock), "--", "/usr/bin/sleep", "180")
+        self.units.append(game_unit)
+        for _ in range(60):
+            prior = self._snapshot(game_unit)
+            if prior["state"] == "active" and prior["pid"] > 1 and prior["started"] > 0 and sock.is_socket():
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("pinned game supervisor failed to become ready")
+
+        def check_game():
+            self.assertEqual(self._snapshot(game_unit), prior)
+            self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(), digest)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(3)
+                client.connect(str(sock))
+                client.sendall(b"status\n")
+                self.assertEqual(client.recv(32), b"OK\n")
+
+        # Only a tiny, owner-marked test installation under /tmp is modified.
+        fake = self.workspace/"control-restart-release-fixture"
+        create_tiny_release_fixture(fake)
+        web_root = fake/"installed/dashboard/web"
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as bound:
+            bound.bind(("127.0.0.1", 0))
+            port = bound.getsockname()[1]
+        url = "http://127.0.0.1:%d/presentation.js" % port
+
+        def controller_start(suffix):
+            name = f"{self.prefix}-http-{suffix}.service"
+            self._run("systemd-run", "--unit", name[:-8], "--collect",
+                      "--property=Type=simple",
+                      sys.executable, "-m", "http.server", str(port),
+                      "--bind", "127.0.0.1", "--directory", str(web_root))
+            self.units.append(name)
+            return name
+
+        def content(expected):
+            for _ in range(60):
+                try:
+                    with urlopen(url, timeout=1) as response:
+                        body = response.read().decode("utf-8")
+                    if body == expected:
+                        return
+                except (URLError, TimeoutError, OSError):
+                    pass
+                time.sleep(0.1)
+            self.fail("disposable HTTP controller surrogate did not serve " + expected)
+
+        def update_step(step):
+            completed = run_real_update_fns(fake, step)
+            if completed.returncode != 0:
+                raise RuntimeError("fixture " + step + " failed: " + completed.stderr[-350:])
+
+        controller_old = controller_start("old")
+        content("from-2.0.998-fixture")
+        check_game()
+        update_step("prepare")
+        journal = self.workspace/"control-restart-journal"
+        journal.mkdir()
+        controller_new = [None]
+        controller_restored = [None]
+
+        def update_then_inject_failure():
+            self._run("systemctl", "stop", controller_old)
+            check_game()
+            update_step("apply")
+            check_game()
+            controller_new[0] = controller_start("new")
+            content("from-2.0.999-fixture")
+            check_game()
+            raise RuntimeError("injected failure after disposable Controller restart")
+
+        def compensate():
+            if controller_new[0] is not None:
+                self._run("systemctl", "stop", controller_new[0])
+            update_step("rollback")
+            controller_restored[0] = controller_start("restored")
+            content("from-2.0.998-fixture")
+            check_game()
+
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "rollback completed"):
+            transaction.execute(journal, [game_unit], inspect=self._snapshot,
+                                apply=update_then_inject_failure,
+                                rollback=compensate)
+        check_game()
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
+        self.assertEqual((fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
+                         b"saved-world-private-test")
+        self.assertEqual((fake/"installed/data/database.txt").read_text(), "db durable")
+        self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
+                         "rolled_back")
+        self.assertIsNotNone(controller_restored[0])
+
+
 if __name__ == "__main__":
     unittest.main()
