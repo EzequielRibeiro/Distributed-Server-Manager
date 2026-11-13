@@ -98,6 +98,84 @@ class BackupRetentionCapacityGateTest(unittest.TestCase):
             with self.subTest(settings=settings), self.assertRaises(ValueError):
                 forecast(self.root, ["ok"], now=self.now, **settings)
 
+    def test_gradual_enablement_counts_legacy_backups_on_same_disk(self):
+        for _ in range(3):
+            self.archive("minecraft005", 12, 1)
+        for _ in range(2):
+            self.archive("dayz001", 15, 1)
+        # This budget appears sufficient if the old DayZ schedule is ignored.
+        pass_without_legacy = forecast(
+            self.root, ["minecraft005"], now=self.now,
+            available_bytes=GIB + 200, reserve_gib=1,
+        )
+        self.assertEqual("pass", pass_without_legacy["status"])
+        # DayZ will refill its count-based window from two to seven snapshots.
+        with_legacy = forecast(
+            self.root, ["minecraft005"], now=self.now,
+            available_bytes=GIB + 200, reserve_gib=1,
+            legacy_instance_counts={"dayz001": 7},
+        )
+        self.assertEqual("blocked_insufficient_capacity", with_legacy["status"])
+        self.assertEqual(1, with_legacy["legacy_instance_count"])
+        self.assertEqual(
+            {"instance_id": "dayz001", "retention_mode": "count",
+             "existing_archives": 2, "within_retention_days": None,
+             "expected_copies": 7, "max_archive_bytes": 15,
+             "additional_archive_bytes": 5*15, "next_cycle_slack_bytes": 15},
+            with_legacy["instances"][1],
+        )
+        self.assertEqual(with_legacy["additional_archive_bytes"], 11*12 + 5*15)
+
+    def test_legacy_count_includes_all_existing_backups_regardless_of_age(self):
+        self.archive("minecraft", 25, age_days=1)
+        self.archive("old-dayz", 40, age_days=30)
+        self.archive("old-dayz", 40, age_days=40)
+        outcome = forecast(
+            self.root, ["minecraft"], now=self.now,
+            available_bytes=100*GIB, reserve_gib=1,
+            legacy_instance_counts={"old-dayz": 7},
+        )
+        self.assertEqual(outcome["instances"][1]["expected_copies"], 7)
+        self.assertEqual(outcome["instances"][1]["additional_archive_bytes"], 5*40)
+
+    def test_legacy_policy_invalid_overlap_or_missing_baseline_fails_closed(self):
+        self.archive("minecraft", 10)
+        self.archive("dayz", 20)
+        for bad in (
+            {"minecraft": 7}, {"dayz": 0}, {"dayz": -1},
+            {"dayz": "7"}, {"../dayz": 7}, {".": 7}, {"..": 7},
+            {"dayz": 2001}, {"unknown": 7},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                forecast(self.root, ["minecraft"],
+                         now=self.now, available_bytes=100*GIB,
+                         legacy_instance_counts=bad)
+
+    def test_legacy_cli_budget_is_read_only_and_rejects_bad_count(self):
+        self.archive("minecraft", 12)
+        self.archive("dayz", 15)
+        cli = ROOT / "scripts" / "backup_age_retention_capacity_gate.py"
+        before = tuple(sorted(str(p) for p in self.root.rglob("*")))
+        base_args = [
+            sys.executable, str(cli), "--backup-root", str(self.root),
+            "--instance", "minecraft", "--reserve-gib", "1",
+        ]
+        run = subprocess.run(
+            base_args + ["--legacy-instance", "dayz=7"],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('"legacy_instance_count":1', run.stdout)
+        for bad in ("dayz=0", "dayz=cat", "dayz", "minecraft=7", "../bad=7"):
+            with self.subTest(bad=bad):
+                failed = subprocess.run(
+                    base_args + ["--legacy-instance", bad],
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(failed.returncode, 2)
+                self.assertIn('"blocked_invalid_evidence"', failed.stdout)
+        self.assertEqual(before, tuple(sorted(str(p) for p in self.root.rglob("*"))))
+
     def test_cli_never_writes_and_returns_nonzero_on_insufficient_space(self):
         self.archive("ok", 128)
         path = ROOT / "scripts" / "backup_age_retention_capacity_gate.py"
