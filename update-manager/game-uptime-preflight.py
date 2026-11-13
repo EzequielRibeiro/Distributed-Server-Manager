@@ -19,9 +19,11 @@ def _load(name: str, filename: str):
 
 plan = _load("game_uptime_plan", "game-uptime-plan.py")
 reporter = _load("game_uptime_report", "game-uptime-report.py")
+compatibility = _load("game_uptime_compatibility", "game-uptime-compatibility.py")
 
 
-def preflight(installed: Path, target: Path, *, list_units=None, inspect=None):
+def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
+              controller_contract=None, agent_contract=None, supervisor_pinned=False):
     """Report *current updater* behavior, not a hypothetical permission to update."""
     state = {"kind": "CapivaraDSMNoDrainPreflight", "schema_version": 1,
              "mode": "read_only", "live_no_drain_authorized": False,
@@ -33,6 +35,15 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None):
         impact = plan.analyze(installed, target)
         units = reporter.report(list_units=list_units, inspect=inspect)
         state["release_impact"] = impact
+        # Independent, fail-closed gate: legacy candidate means only worth review,
+        # never process-safe. Controller/Agent declarations are not inferred.
+        gate = compatibility.assess(
+            installed, target, controller_contract, agent_contract,
+            minecraft_active=any("minecraft" in item["unit"] for item in units["units"]),
+            supervisor_pinned=supervisor_pinned,
+        )
+        state["compatibility_gate"] = gate
+        state["no_drain_compatibility_verified"] = gate["compatible_for_further_rehearsal"]
         if units.get("inventory_error"):
             state.update(classification="blocked", requires_game_drain=True,
                          reason="Cannot establish complete game service inventory: " +
@@ -46,7 +57,9 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None):
             state["units"].append({"unit": item["unit"], "current_action": "stop_and_restart",
                                    "no_drain_candidate": bool(verified and
                                       not impact["requires_game_drain"]),
-                                   "no_drain_authorized": False, "reason": reason})
+                                   "no_drain_authorized": False,
+                                   "no_drain_compatibility_verified": bool(verified and gate["compatible_for_further_rehearsal"]),
+                                   "reason": reason})
             state["planned_game_actions"].append({"unit": item["unit"],
                                                    "action": "stop_and_restart"})
         state["classification"] = ("maintenance_required" if
