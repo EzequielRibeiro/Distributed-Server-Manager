@@ -103,9 +103,55 @@ class BackupRepository:
             try:return [dict(row) for row in session.execute(f"SELECT * FROM backup_policy_revisions WHERE policy_id={self.ph} ORDER BY revision DESC",(policy_id,)).fetchall()]
             finally:session.close()
 
+    def _protect_age_retention_delete(self, instance_id, backup_id):
+        """Reject manual/scheduled deletion of the last confirmed or young backup.
+
+        The opt-in is the same instance-scoped flag as automatic retention. When
+        disabled, existing customer deletion behavior remains unchanged.
+        """
+        days = self._age_retention_days(instance_id)
+        if days is None:
+            return
+        target_id = str(backup_id or "").strip()
+        if not target_id:
+            raise BackupValidationError("backup ID is required for age-retained deletion")
+        jobs = self.list_effective_jobs(instance_id=instance_id, limit=2000)
+        confirmed = [
+            row for row in jobs
+            if row.get("action") == "create"
+            and row.get("status") == "completed"
+            and row.get("backup_id")
+            and row.get("sha256")
+            and row.get("artifact_path")
+        ]
+        if not confirmed:
+            raise BackupValidationError("cannot delete without a confirmed replacement backup")
+        protected_id = str(confirmed[0]["backup_id"])
+        if protected_id == target_id:
+            raise BackupValidationError("cannot delete the last confirmed backup")
+        matching = next(
+            (row for row in confirmed if str(row["backup_id"]) == target_id),
+            None,
+        )
+        if matching is None:
+            raise BackupValidationError("refusing deletion of an unconfirmed backup")
+        completed_at = _datetime(matching.get("completed_at"))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        if completed_at is None or completed_at >= cutoff:
+            raise BackupValidationError("backup is protected by the retention window")
+        if any(
+            row.get("action") == "delete"
+            and row.get("status") in {"pending", "running"}
+            and str(row.get("backup_id") or "") == target_id
+            for row in jobs
+        ):
+            raise BackupValidationError("backup deletion is already queued")
+
     def request(self, instance_id, *, action="create", backup_id=None, reason="manual", requested_by=None):
         instance=self._instance(instance_id)
         if instance is None:raise BackupValidationError("instance does not exist")
+        if str(action).strip().lower()=="delete":
+            self._protect_age_retention_delete(instance_id, backup_id)
         aid=str(dict(instance).get("agent_id") or "");policy=self.get_policy(instance_id);command_id=str(uuid.uuid4());now=utc_now()
         with self.backend.transaction() as connection:
             session=AlertSession(self.backend,connection)
