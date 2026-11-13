@@ -167,3 +167,32 @@ CI, sem opt-in e sem acessar o Horizon. Utiliza:
 credencial, mas nao executa `dashboard/server.py` como processo completo,
 nao troca binarios reais do Controller, nao cria Agent remoto de verdade,
 nao reinicia uma JVM Minecraft e nao autoriza atualizacao sem drenagem.
+
+
+## Cobertura operacional obrigatoria dos jogos (preflight #928)
+
+O modulo `update-manager/game-uptime-coverage.py`, conectado ao preflight,
+recebe a lista **explicita** de unidades de jogo que devem continuar ativas
+(`expected_active_units`) e o inventario observado pelo systemd.
+
+- A lista deve incluir ao menos uma instancia Minecraft e uma DayZ para
+  esta homologacao multi-jogo; campos ausentes, repetidos ou invalidos bloqueiam.
+- Exige conjunto exato de unidades observado (sem unidade ausente ou inesperada),
+  `identity_verified=True`, PID maior que 1, timestamp monotonico de inicio
+  valido e quantidade do inventario consistente.
+- Se o Minecraft estiver parado e o DayZ ativo, reporta
+  `expected_active_service_not_running`; nao permite declarar sucesso para
+  continuidade do Minecraft.
+- Se o baseline esperado nao for fornecido, a cobertura e considerada
+  **nao comprovada**; nao infere que a ausencia de processos e estabilidade.
+- `no_drain_operational_coverage_verified` significa apenas inventario
+  instantaneo elegivel para ensaio **descartavel**, NAO uptime entre
+  snapshots nem autorizacao de update. `live_no_drain_authorized=False`
+  em todos os caminhos.
+
+Estado operacional observado em 13/11/2026: Node1 disponivel, Agent
+2.0.132 ativo e comunicacao TLS com Controller; Horizon 2.0.132 com
+DayZ ativo e Minecraft 005 inativo em uma verificacao. A parada do
+Minecraft foi registrada pelo systemd as 20:08 (America/Sao_Paulo),
+sem causa de comando identificada nesta auditoria. Essa observacao
+**nao** e uma homologacao multi-jogo de atualizacao no-drain.
