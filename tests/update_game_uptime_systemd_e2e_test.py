@@ -439,5 +439,57 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertIsNotNone(controller_restored[0])
 
 
+    def test_disposable_systemd_pids_survive_interrupted_apply_and_operator_rollback(self):
+        """Recover a partial file transaction with real transient systemd PIDs.
+
+        The crash here is SystemExit. A separate unit test uses actual SIGKILL.
+        """
+        originals = [self._start("recovery-alpha"), self._start("recovery-beta")]
+        fake = self.workspace/"recovery-real-updater-functions"
+        create_tiny_release_fixture(fake)
+
+        def run(step):
+            result = run_real_update_fns(fake, step)
+            if result.returncode:
+                raise RuntimeError("fixture " + step + " failed: " + result.stderr[-450:])
+
+        run("prepare")
+        journal = self.workspace/"interrupted-real-systemd-journal"
+        journal.mkdir()
+
+        def interrupted_apply():
+            run("apply")
+            self._assert_unchanged(originals)
+            raise SystemExit(47)
+
+        with self.assertRaises(SystemExit):
+            transaction.execute(
+                journal,
+                [row["unit"] for row in originals],
+                inspect=self._snapshot,
+                apply=interrupted_apply,
+                rollback=lambda: run("rollback"),
+            )
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
+        self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
+                         "prepared")
+        self._assert_unchanged(originals)
+
+        outcome = transaction.recover_interrupted(
+            journal, [row["unit"] for row in originals],
+            inspect=self._snapshot, rollback=lambda: run("rollback"),
+            operator_reviewed=True,
+        )
+        self.assertEqual(outcome["status"], "recovered_rollback")
+        self.assertFalse(outcome["live_no_drain_authorized"])
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
+        self.assertEqual((fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
+                         b"saved-world-private-test")
+        self.assertEqual((fake/"installed/data/database.txt").read_text(), "db durable")
+        self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
+                         "recovered_rollback")
+        self._assert_unchanged(originals)
+
+
 if __name__ == "__main__":
     unittest.main()
