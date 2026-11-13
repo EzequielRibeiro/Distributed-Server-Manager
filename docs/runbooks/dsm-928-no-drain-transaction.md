@@ -144,3 +144,26 @@ manipulacao pelo proprio proprietario/root. Nao e um modo no-drain para
 `update.sh main()`, nao cobre migração real de DB, servidor Minecraft
 Java nem integracao com plano de controle em producao. Continua bloqueado
 para uso em instancias reais.
+
+
+## HTTP autenticado com persistencia SQLite isolada
+
+O teste `tests/update_game_uptime_sqlite_http_integration_test.py` roda no
+CI, sem opt-in e sem acessar o Horizon. Utiliza:
+
+- `AgentPairingRepository` real para emitir credencial e parear um Agent
+  ficticio; identidade Controller criada por `RegistryRepository`;
+- backend SQLite descartavel e o **dispatcher de heartbeat real**
+  `agent_remote_http.dispatch_heartbeat` exposto por listener HTTP
+  minimo em `127.0.0.1`; nao importa o servidor web DSM completo;
+- primeira negociacao opcional com nonce por heartbeat, armazenamento real
+  em `agent_runtime_inventory`, encerramento do listener e da conexao
+  backend, reabertura do mesmo banco e segunda negociacao com novo nonce;
+- autenticacao invalida e divergencia de identidade entre credencial,
+  envelope e payload, mantendo `live_no_drain_authorized=false`;
+- preservacao do fluxo de heartbeat legado sem probe opcional.
+
+**Limite de escopo:** o teste comprova persistencia do dispatcher real e da
+credencial, mas nao executa `dashboard/server.py` como processo completo,
+nao troca binarios reais do Controller, nao cria Agent remoto de verdade,
+nao reinicia uma JVM Minecraft e nao autoriza atualizacao sem drenagem.
