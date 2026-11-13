@@ -83,5 +83,34 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertEqual(state["units"],[])
 
 
+    def test_preflight_embeds_fail_closed_compatibility_gate(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        state = self.result()
+        self.assertFalse(state["no_drain_compatibility_verified"])
+        self.assertIn("controller_agent_contract_missing", state["compatibility_gate"]["blockers"])
+        self.assertFalse(any(row["no_drain_compatibility_verified"] for row in state["units"]))
+        self.assertFalse(state["live_no_drain_authorized"])
+
+    def test_matching_contract_requires_supervisor_isolation(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        for root in (self.installed, self.target):
+            supervisor = root / module.compatibility.SUPERVISOR_RELATIVE
+            supervisor.parent.mkdir(parents=True, exist_ok=True)
+            supervisor.write_text("same supervisor")
+        contract = {"protocol": "v1", "schema": "22",
+                    "controller_api": "v2", "agent_api": "v2"}
+        blocked = module.preflight(self.installed, self.target,
+                    list_units=lambda: self.units, inspect=self.inspect,
+                    controller_contract=contract, agent_contract=contract)
+        self.assertIn("minecraft_supervisor_lifecycle_not_isolated",
+                      blocked["compatibility_gate"]["blockers"])
+        candidate = module.preflight(self.installed, self.target,
+                    list_units=lambda: self.units, inspect=self.inspect,
+                    controller_contract=contract, agent_contract=contract,
+                    supervisor_pinned=True)
+        self.assertTrue(candidate["no_drain_compatibility_verified"])
+        self.assertFalse(candidate["live_no_drain_authorized"])
+        self.assertTrue(candidate["current_updater_drains_active_games"])
+
 if __name__ == "__main__":
     unittest.main()
