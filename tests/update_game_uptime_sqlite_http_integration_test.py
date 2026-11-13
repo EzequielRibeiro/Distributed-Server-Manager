@@ -183,14 +183,19 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
     def test_identity_spoof_and_old_heartbeat_behavior(self):
         forged = build_probe("foreign-928-agent")
         code, response = self._request(
-            self._payload(agent_id="foreign-928-agent",
-                          no_drain_compatibility_probe=forged))
-        # The authenticated identity, never the body, controls the offer.
+            self._payload(no_drain_compatibility_probe=forged))
+        # The authenticated identity, never a probe's agent_id, controls the offer.
         self.assertEqual(code, 200, response)
         self.assertEqual(response["no_drain_compatibility_offer"]["agent_id"],
                          self.agent_id)
         self.assertEqual(response["no_drain_compatibility_offer"]["status"],
                          "blocked")
+        # A forged main heartbeat identity also must not yield an offer.
+        code, rejected = self._request(
+            self._payload(agent_id="foreign-928-agent",
+                          no_drain_compatibility_probe=forged))
+        self.assertNotEqual(code, 200)
+        self.assertNotIn("no_drain_compatibility_offer", rejected)
         code, legacy = self._request(self._payload())
         self.assertEqual(code, 200, legacy)
         self.assertEqual(legacy["health_status"], "online")
