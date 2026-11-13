@@ -21,6 +21,7 @@ plan = _load("game_uptime_plan", "game-uptime-plan.py")
 reporter = _load("game_uptime_report", "game-uptime-report.py")
 compatibility = _load("game_uptime_compatibility", "game-uptime-compatibility.py")
 supervisor_unit = _load("game_uptime_supervisor_unit", "game-uptime-supervisor-unit.py")
+coverage = _load("game_uptime_coverage", "game-uptime-coverage.py")
 
 
 def _pinned_minecraft_evidence(units, *, versions_dir, expected_sha256, inspect):
@@ -62,7 +63,8 @@ def _pinned_minecraft_evidence(units, *, versions_dir, expected_sha256, inspect)
 
 def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
               controller_contract=None, agent_contract=None, supervisor_pinned=False,
-              supervisor_versions_dir=None, supervisor_expected_sha256=None):
+              supervisor_versions_dir=None, supervisor_expected_sha256=None,
+              expected_active_units=None):
     """Report *current updater* behavior, not a hypothetical permission to update."""
     state = {"kind": "CapivaraDSMNoDrainPreflight", "schema_version": 1,
              "mode": "read_only", "live_no_drain_authorized": False,
@@ -74,6 +76,11 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
         impact = plan.analyze(installed, target)
         units = reporter.report(list_units=list_units, inspect=inspect)
         state["release_impact"] = impact
+        operational_coverage = coverage.assess(expected_active_units, units)
+        state["operational_coverage"] = operational_coverage
+        state["no_drain_operational_coverage_verified"] = (
+            operational_coverage["verified_for_disposable_rehearsal"]
+        )
         # Independent, fail-closed gate: legacy candidate means only worth review,
         # never process-safe. Controller/Agent declarations are not inferred.
         pin = _pinned_minecraft_evidence(
