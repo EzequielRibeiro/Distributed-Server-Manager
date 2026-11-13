@@ -266,6 +266,57 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertFalse(impact["live_no_drain_authorized"])
         self._assert_unchanged(originals)
 
+    def test_pinned_minecraft_console_supervisor_survives_fixture_apply_and_rollback(self):
+        """Run the real console supervisor from a versioned path under transient systemd."""
+        import hashlib
+        import socket
+        import sys
+        source = ROOT/"agents/linux/runtime/console_supervisor.py"
+        stage_loader = SourceFileLoader(
+            "dsm928_supervisor_stage_systemd",
+            str(ROOT/"update-manager/game-uptime-supervisor-stage.py"),
+        )
+        stage_spec = importlib.util.spec_from_loader(stage_loader.name, stage_loader)
+        stage_module = importlib.util.module_from_spec(stage_spec)
+        stage_loader.exec_module(stage_module)
+        versions = self.workspace/"pinned-supervisors"
+        versions.mkdir(mode=0o700)
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        staged = stage_module.stage_supervisor(source, versions, expected_sha256=digest)
+        pinned = Path(staged["path"])
+        self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(), digest)
+        self.assertFalse(staged["live_no_drain_authorized"])
+        sock_path = self.workspace/"minecraft-console.sock"
+        unit = f"{self.prefix}-pinned-minecraft.service"
+        self._run("systemd-run", "--unit", unit[:-8], "--collect",
+                  "--property=Type=simple", sys.executable, str(pinned),
+                  "--socket", str(sock_path), "--", "/usr/bin/sleep", "180")
+        self.units.append(unit)
+        for _ in range(50):
+            snap = self._snapshot(unit)
+            if snap["state"] == "active" and snap["pid"] > 1 and snap["started"] > 0 and sock_path.is_socket():
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("disposable versioned console supervisor did not start")
+        original = self._snapshot(unit)
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(3)
+            client.connect(str(sock_path))
+            client.sendall(b"status\\n")
+            self.assertEqual(client.recv(128), b"OK\\n")
+        self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(), digest)
+        fake = self.workspace/"pinned-updater-fixture"
+        create_tiny_release_fixture(fake)
+        for phase in ("prepare", "apply", "rollback"):
+            result = run_real_update_fns(fake, phase)
+            self.assertEqual(result.returncode, 0, result.stderr[-800:])
+            self.assertEqual(self._snapshot(unit), original)
+            self.assertTrue(sock_path.is_socket())
+            self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(), digest)
+        self.assertFalse(staged["systemd_integrated"])
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
+
 
 if __name__ == "__main__":
     unittest.main()
