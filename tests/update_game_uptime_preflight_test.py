@@ -1,5 +1,6 @@
 """Read-only no-drain impact reporting for two real-shaped managed game units."""
 import importlib.util
+import hashlib
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import tempfile
@@ -91,7 +92,7 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(any(row["no_drain_compatibility_verified"] for row in state["units"]))
         self.assertFalse(state["live_no_drain_authorized"])
 
-    def test_matching_contract_requires_supervisor_isolation(self):
+    def test_matching_contract_requires_verified_systemd_pin_not_boolean(self):
         self.write("dashboard/web/style.css", "old", "new")
         for root in (self.installed, self.target):
             supervisor = root / module.compatibility.SUPERVISOR_RELATIVE
@@ -99,18 +100,65 @@ class UpdatePreflightTest(unittest.TestCase):
             supervisor.write_text("same supervisor")
         contract = {"protocol": "v1", "schema": "22",
                     "controller_api": "v2", "agent_api": "v2"}
-        blocked = module.preflight(self.installed, self.target,
-                    list_units=lambda: self.units, inspect=self.inspect,
-                    controller_contract=contract, agent_contract=contract)
-        self.assertIn("minecraft_supervisor_lifecycle_not_isolated",
-                      blocked["compatibility_gate"]["blockers"])
-        candidate = module.preflight(self.installed, self.target,
-                    list_units=lambda: self.units, inspect=self.inspect,
-                    controller_contract=contract, agent_contract=contract,
-                    supervisor_pinned=True)
+        versions = self.installed.parent / "versions"
+        versions.mkdir()
+        digest = hashlib.sha256(b"pinned fixture").hexdigest()
+        pinned = versions / ("console-supervisor-" + digest + ".py")
+        pinned.write_bytes(b"pinned fixture")
+        def observed(unit):
+            if "minecraft" not in unit:
+                return {"main_pid": 12345, "start_stamp": 666}
+            return {"main_pid": 54321, "start_stamp": 777,
+                    "exec": "path=/usr/bin/python3 ; argv[]=/usr/bin/python3 " +
+                            str(pinned) + " --socket /tmp/fixture.sock -- /usr/bin/sleep 15 ;",
+                    "fragment": "/etc/systemd/system/" + unit}
+        kwargs = dict(list_units=lambda: self.units, inspect=observed,
+                      controller_contract=contract, agent_contract=contract)
+        blocked = module.preflight(self.installed, self.target, **kwargs,
+                                   supervisor_pinned=True)
+        self.assertFalse(blocked["no_drain_compatibility_verified"])
+        self.assertIn("pinned_supervisor_evidence_missing",
+                      blocked["supervisor_pin_evidence"]["blockers"])
+        candidate = module.preflight(
+            self.installed, self.target, **kwargs,
+            supervisor_versions_dir=versions, supervisor_expected_sha256=digest)
+        self.assertTrue(candidate["supervisor_pin_evidence"]["verified"])
         self.assertTrue(candidate["no_drain_compatibility_verified"])
         self.assertFalse(candidate["live_no_drain_authorized"])
         self.assertTrue(candidate["current_updater_drains_active_games"])
+
+    def test_pid_change_between_inventory_and_supervisor_inspection_blocks(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        versions = self.installed.parent / "versions"
+        versions.mkdir()
+        digest = hashlib.sha256(b"supervisor").hexdigest()
+        path = versions / ("console-supervisor-" + digest + ".py")
+        path.write_bytes(b"supervisor")
+        for root in (self.installed, self.target):
+            source = root / module.compatibility.SUPERVISOR_RELATIVE
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("supervisor")
+        calls = {"minecraft": 0}
+        def observed(unit):
+            if "minecraft" not in unit:
+                return {"main_pid": 12345, "start_stamp": 666}
+            calls["minecraft"] += 1
+            return {"main_pid": 532 if calls["minecraft"] == 1 else 533,
+                    "start_stamp": 777,
+                    "exec": "path=/usr/bin/python3 ; argv[]=/usr/bin/python3 " +
+                            str(path) + " --socket /tmp/test.sock -- /usr/bin/sleep 15 ;",
+                    "fragment": "/etc/systemd/system/" + unit}
+        contract = {"protocol": "v1", "schema": "22",
+                    "controller_api": "v2", "agent_api": "v2"}
+        result = module.preflight(
+            self.installed, self.target, list_units=lambda: self.units, inspect=observed,
+            controller_contract=contract, agent_contract=contract,
+            supervisor_versions_dir=versions, supervisor_expected_sha256=digest)
+        self.assertFalse(result["supervisor_pin_evidence"]["verified"])
+        self.assertTrue(any("process identity changed" in blocker
+                            for blocker in result["supervisor_pin_evidence"]["blockers"]))
+        self.assertFalse(result["no_drain_compatibility_verified"])
+        self.assertFalse(result["live_no_drain_authorized"])
 
 if __name__ == "__main__":
     unittest.main()
