@@ -32,9 +32,15 @@ Adicionalmente, a fixture tests/fixtures/update_928_real_functions_rehearsal.sh
 validate_preserved_data, create_backup, create_staging, preserve_data,
 validate_staging, apply_update e rollback sobre uma instalacao
 **ficticia e pequena** em /tmp, com mundo e estado persistentes de teste.
-O script principal main() NAO e invocado. O systemctl, a restauracao do banco,
-e os handlers de stop/start sao substituidos por stubs locais; nao e um
-teste integral de atualizacao do DSM, de migracao de banco nem do supervisor.
+A fixture de funcoes NAO chama main(); adicionalmente, a fixture
+tests/fixtures/update_928_main_path_rehearsal.sh chama o **main() real**
+sobre a instalacao de teste, executando as validacoes de versao SemVer, pacote,
+disco, backup, staging, apply_update, update_version_file,
+update_configuration_version e validate_final_installation. Executa tambem o
+caminho real de tratamento de erro e rollback ao injetar falha apos aplicar
+os arquivos. O systemctl, banco e handlers de stop/start sao stubs locais.
+Os testes comprovam a **ordem de drenagem atual do main()**, nao demonstram
+uma atualizacao real de producao sem drenagem nem a compatibilidade de protocolo.
 O teste combina o fluxo de arquivos real com duas unidades systemd
 descartaveis e injeta falha apos a aplicacao, verificando rollback e PIDs.
 

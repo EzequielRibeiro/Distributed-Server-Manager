@@ -36,6 +36,7 @@ tx_loader.exec_module(transaction)
 from update_game_uptime_real_update_functions_test import (
     create_tiny_release_fixture, run_real_update_fns,
 )
+from update_game_uptime_main_path_test import main_rehearsal
 
 
 def disposable_systemd_host(installed_storage=Path("/opt/dsm/runtime/hybrid-instance-storage"),
@@ -119,6 +120,24 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
     def _assert_unchanged(self, originals):
         for prior in originals:
             self.assertEqual(self._snapshot(prior["unit"]), prior)
+
+    def test_two_systemd_processes_survive_actual_updater_main_and_failure_rollback(self):
+        """Call actual update.sh main() with ONLY production-facing hooks stubbed."""
+        originals = [self._start("main-alpha"), self._start("main-beta")]
+        for mode, outcome_version in (("success", "2.0.999"), ("fail_after_apply", "2.0.998")):
+            with self.subTest(mode=mode):
+                fixture = self.workspace/("real-main-" + mode)
+                create_tiny_release_fixture(fixture)
+                (fixture/"installed/version").write_text("2.0.998")
+                (fixture/"new-payload/version").write_text("2.0.999")
+                result = main_rehearsal(fixture, mode)
+                self.assertEqual(result.returncode == 0, mode == "success",
+                                 (result.stdout[-500:], result.stderr[-500:]))
+                self.assertEqual((fixture/"installed/version").read_text().strip(), outcome_version)
+                self.assertEqual((fixture/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
+                                 b"saved-world-private-test")
+                self.assertEqual((fixture/"installed/data/database.txt").read_text(),"db durable")
+                self._assert_unchanged(originals)
 
     def test_two_real_systemd_processes_survive_actual_updater_file_functions(self):
         """Run actual update.sh backup/staging/apply/rollback on fake /tmp install."""

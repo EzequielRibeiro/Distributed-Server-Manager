@@ -7,6 +7,7 @@ on:
       - 'docs/runbooks/dsm-928-no-drain-transaction.md'
       - 'tests/update_game_uptime_*test.py'
       - 'tests/fixtures/update_928_real_functions_rehearsal.sh'
+      - 'tests/fixtures/update_928_main_path_rehearsal.sh'
       - 'tests/update_preflight_test.sh'
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'
   push:
@@ -17,6 +18,7 @@ on:
       - 'docs/runbooks/dsm-928-no-drain-transaction.md'
       - 'tests/update_game_uptime_*test.py'
       - 'tests/fixtures/update_928_real_functions_rehearsal.sh'
+      - 'tests/fixtures/update_928_main_path_rehearsal.sh'
       - 'tests/update_preflight_test.sh'
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'
   workflow_dispatch:
