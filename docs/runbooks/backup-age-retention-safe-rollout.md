@@ -30,6 +30,11 @@ Quando habilitada e `keep_single_operational=true`, a politica:
   e contabilizado no Controller, nunca durante uma tentativa falha;
 - impede o Agent Linux/Windows de aplicar a antiga exclusao por quantidade,
   mesmo que `retention_count` ainda esteja em 7;
+- bloqueia pedidos de exclusao manual feitos pelo cliente/Admin contra a
+  ultima copia confirmada, contra backups de menos de 14 dias e contra
+  artefatos nao confirmados. A API devolve erro 400 em vez de agendar a
+  operacao. Copias antigas podem ser excluidas depois que exista uma nova
+  copia confirmada e fora da janela de retencao;
 - rejeita novas criacoes antes da escrita caso nao haja espaco de seguranca
   (minimo 8 GiB ou duas vezes o ultimo backup mais 4 GiB).
 
@@ -43,6 +48,10 @@ No Horizon, em 12/11/2026, havia aproximadamente 37 GiB livres, enquanto os
 sete arquivos Minecraft 005 ocupavam ~17 GiB e os sete DayZ ~21 GiB.
 Com uma copia por dia, prolongar ambos de 7 para 14 dias requer cerca de
 **40 GiB adicionais**, fora a margem operacional e o crescimento dos mundos.
+Na ativacao, confirmar que nao existem jobs `delete` pendentes/running
+enfileirados antes do opt-in, pois os processos antigos podem ter autorizado
+comandos sob a politica anterior. Nao ativar durante jobs de exclusao.
+
 Nao ativar a politica nesse volume sem adicionar capacidade, migrar o destino
 para outro disco ou estabelecer destino externo validado. A prechecagem de 8 GiB
 do Agent protege apenas contra as proximas criacoes, **nao substitui**
