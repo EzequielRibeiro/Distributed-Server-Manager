@@ -4,6 +4,7 @@ on:
     paths:
       - 'update-manager/game-uptime-*.py'
       - 'update-manager/preflight.sh'
+      - 'docs/runbooks/dsm-928-no-drain-transaction.md'
       - 'tests/update_game_uptime_*test.py'
       - 'tests/update_preflight_test.sh'
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'
@@ -12,6 +13,7 @@ on:
     paths:
       - 'update-manager/game-uptime-*.py'
       - 'update-manager/preflight.sh'
+      - 'docs/runbooks/dsm-928-no-drain-transaction.md'
       - 'tests/update_game_uptime_*test.py'
       - 'tests/update_preflight_test.sh'
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'

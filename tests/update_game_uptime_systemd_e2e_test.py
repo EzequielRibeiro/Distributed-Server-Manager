@@ -8,6 +8,7 @@ real systemd MainPID/start stamp invariant on both processes.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -23,6 +24,14 @@ loader = SourceFileLoader("dsm928_uptime_plan", str(ROOT/"update-manager/game-up
 spec = importlib.util.spec_from_loader(loader.name, loader)
 plan = importlib.util.module_from_spec(spec)
 loader.exec_module(plan)
+
+tx_loader = SourceFileLoader(
+    "dsm928_disposable_transaction",
+    str(ROOT/"update-manager/game-uptime-transaction.py"),
+)
+tx_spec = importlib.util.spec_from_loader(tx_loader.name, tx_loader)
+transaction = importlib.util.module_from_spec(tx_spec)
+tx_loader.exec_module(transaction)
 
 
 def disposable_systemd_host(installed_storage=Path("/opt/dsm/runtime/hybrid-instance-storage"),
@@ -121,20 +130,48 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         impact = plan.analyze(installed,target)
         self.assertEqual(impact["classification"],"review_only")
         self.assertFalse(impact["live_no_drain_authorized"])
-        # Rehearse ONLY a file replacement in a disposable tree; never invoke
-        # the installed updater, whose no-drain path is not implemented.
+        # Exercise the reusable transaction journal and PID invariants, not
+        # the production update.sh (which still drains all game instances).
         snapshot = installed/"dashboard/web/status.js"
-        replacement = snapshot.with_name("status.js.candidate")
-        replacement.write_text((target/"dashboard/web/status.js").read_text())
-        os.replace(replacement,snapshot)
-        self._assert_unchanged(originals)
-        self.assertEqual(snapshot.read_text(),"updated")
 
-        rollback = snapshot.with_name("status.js.rollback")
-        rollback.write_text("original")
-        os.replace(rollback,snapshot)
+        def write_content(content):
+            temp = snapshot.with_name(snapshot.name+".candidate")
+            temp.write_text(content)
+            os.replace(temp, snapshot)
+
+        completed = transaction.execute(
+            self.workspace/"installed",
+            [unit["unit"] for unit in originals],
+            inspect=lambda unit: self._snapshot(unit),
+            apply=lambda: write_content("updated"),
+            rollback=lambda: write_content("original"),
+        )
+        self.assertEqual(completed["status"], "verified")
+        self.assertFalse(completed["live_no_drain_authorized"])
+        self.assertEqual(snapshot.read_text(), "updated")
         self._assert_unchanged(originals)
-        self.assertEqual(snapshot.read_text(),"original")
+
+        # An apply failure must roll back the modified files, while both
+        # disposable units preserve PID and start-time identity.
+        rollback_stage = self.workspace/"rollback-fixture"
+        rollback_stage.mkdir()
+
+        def failed_change():
+            write_content("bad-candidate")
+            raise ValueError("simulated update failure")
+
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "rollback completed"):
+            transaction.execute(
+                rollback_stage,
+                [unit["unit"] for unit in originals],
+                inspect=lambda unit: self._snapshot(unit),
+                apply=failed_change,
+                rollback=lambda: write_content("original"),
+            )
+        self.assertEqual(snapshot.read_text(), "original")
+        self._assert_unchanged(originals)
+        recorded = json.loads((rollback_stage/"game-uptime-transaction.json").read_text())
+        self.assertEqual(recorded["status"], "rolled_back")
 
         # Unknown runtime change never becomes an authorized no-drain update.
         runtime = installed/"agents/linux/runtime/worker.py"
