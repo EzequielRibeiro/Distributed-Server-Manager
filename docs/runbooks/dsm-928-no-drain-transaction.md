@@ -25,8 +25,19 @@ duravel (update-manager/game-uptime-transaction.py).
   reexecutado. Requer analise manual antes de qualquer tentativa nova.
 
 O job disposable-systemd-rehearsal roda com duas unidades systemd transitorias
-em runner GitHub-hosted, repete o processo em aplicacao/rollback simulado e
-confirma que ambas preservam PID/timestamp.
+em runner GitHub-hosted e confirma que ambas preservam PID/timestamp.
+
+Adicionalmente, a fixture tests/fixtures/update_928_real_functions_rehearsal.sh
+**importa o codigo real de update.sh** e executa suas funcoes
+validate_preserved_data, create_backup, create_staging, preserve_data,
+validate_staging, apply_update e rollback sobre uma instalacao
+**ficticia e pequena** em /tmp, com mundo e estado persistentes de teste.
+O script principal main() NAO e invocado. O systemctl, a restauracao do banco,
+e os handlers de stop/start sao substituidos por stubs locais; nao e um
+teste integral de atualizacao do DSM, de migracao de banco nem do supervisor.
+O teste combina o fluxo de arquivos real com duas unidades systemd
+descartaveis e injeta falha apos a aplicacao, verificando rollback e PIDs.
+
 
 ## Ainda falta para atualizar sem derrubar jogos
 
@@ -39,8 +50,9 @@ confirma que ambas preservam PID/timestamp.
    reconciliacao; excluir alteracoes de systemd, runtime e schema inseguras.
 4. Exigir snapshot completo de instancias e verificar que *nenhuma* unidade
    ativa foi esquecida. Incluir verificacao de estado apos update e rollback.
-5. Homologar o proprio update.sh, nao somente callback da fixture, com
-   dois servicos descartaveis. So depois considerar modo no-drain opt-in.
+5. Homologar o fluxo principal main() do proprio update.sh, incluindo
+   atualizacao real de services, esquema e Agent, em runner descartavel.
+   So depois considerar modo no-drain opt-in.
 
 **Nao ativar no Horizon**: update.sh continua parando os servicos gerenciados
 durante a atualizacao. Nenhuma mudanca de producao e autorizada por estes

@@ -33,6 +33,10 @@ tx_spec = importlib.util.spec_from_loader(tx_loader.name, tx_loader)
 transaction = importlib.util.module_from_spec(tx_spec)
 tx_loader.exec_module(transaction)
 
+from update_game_uptime_real_update_functions_test import (
+    create_tiny_release_fixture, run_real_update_fns,
+)
+
 
 def disposable_systemd_host(installed_storage=Path("/opt/dsm/runtime/hybrid-instance-storage"),
                             unit_output=None):
@@ -115,6 +119,64 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
     def _assert_unchanged(self, originals):
         for prior in originals:
             self.assertEqual(self._snapshot(prior["unit"]), prior)
+
+    def test_two_real_systemd_processes_survive_actual_updater_file_functions(self):
+        """Run actual update.sh backup/staging/apply/rollback on fake /tmp install."""
+        originals = [self._start("real-alpha"), self._start("real-beta")]
+        fake = self.workspace/"real-update-fixture"
+        create_tiny_release_fixture(fake)
+
+        def run(mode):
+            completed = run_real_update_fns(fake, mode)
+            if completed.returncode:
+                raise RuntimeError(
+                    f"real update.sh {mode} function failed: "
+                    +completed.stderr[-350:]
+                )
+
+        run("prepare")
+        journal = self.workspace/"real-update-journal"
+        journal.mkdir()
+
+        outcome = transaction.execute(
+            journal,
+            [unit["unit"] for unit in originals],
+            inspect=self._snapshot,
+            apply=lambda: run("apply"),
+            rollback=lambda: run("rollback"),
+        )
+        self.assertEqual(outcome["status"], "verified")
+        self.assertFalse(outcome["live_no_drain_authorized"])
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
+        self.assertEqual(
+            (fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
+            b"saved-world-private-test",
+        )
+        self._assert_unchanged(originals)
+
+        # Rehearse the real update.sh rollback, still leaving systemd PIDs intact.
+        run("rollback")
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
+        self._assert_unchanged(originals)
+
+        def fail_after_real_file_replacement():
+            run("apply")
+            raise RuntimeError("fault injected after actual update.sh apply")
+
+        failure_journal = self.workspace/"real-update-failure-journal"
+        failure_journal.mkdir()
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "rollback completed"):
+            transaction.execute(
+                failure_journal,
+                [unit["unit"] for unit in originals],
+                inspect=self._snapshot,
+                apply=fail_after_real_file_replacement,
+                rollback=lambda: run("rollback"),
+            )
+        self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
+        self._assert_unchanged(originals)
+        with (failure_journal/"game-uptime-transaction.json").open() as f:
+            self.assertEqual(json.load(f)["status"], "rolled_back")
 
     def test_two_transient_game_processes_survive_isolated_change_and_rollback(self):
         originals = [self._start("alpha"), self._start("beta")]
