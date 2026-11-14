@@ -259,6 +259,11 @@ def heartbeat(config):
     base=str(config["controller_url"]).rstrip("/")
     payload=_inventory(config)
     result=_post(base+"/api/agent/heartbeat",payload,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    # Controller coordinates are received independently of the Agent's own GeoIP.
+    received_controller_location=result.get("controller_location")
+    if isinstance(received_controller_location,dict) and config.get("controller_location")!=received_controller_location:
+        config["controller_location"]=dict(received_controller_location)
+        _write_config(config)
     if "serverpack_report_delivery" in payload:
         try:
             sent=payload["serverpack_report_delivery"]
