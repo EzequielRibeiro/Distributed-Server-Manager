@@ -100,6 +100,14 @@
         .map(server => ({
           ref: String(server.ref),
           label: String(server.label || "Servidor").slice(0, 128),
+          country_code: String(server.country_code || item.country_code || "").toUpperCase(),
+          country_name: String(server.country_name || item.country_name || ""),
+          state_code: String(server.state_code || item.state_code || "").toUpperCase(),
+          state_name: String(server.state_name || item.state_name || ""),
+          city: String(server.city || item.city || ""),
+          latency_ms: typeof server.latency?.value_ms === "number" && Number.isFinite(server.latency.value_ms)
+            ? Math.max(0, Math.round(server.latency.value_ms)) : null,
+          latency_kind: "estimated",
           recommended: server.recommended === true,
         })) : [],
       recommended: item.recommended === true,
@@ -244,9 +252,11 @@
     }
 
     const regions = available.map(publicRegion);
+    const serverCount = regions.reduce((count, region) => count + region.servers.length, 0);
     setPlacementStatus(
       "available",
-      regions.map(region => region.display_label).filter(Boolean).join(" | ")
+      serverCount ? `${serverCount} servidor(es) elegível(is). Escolha um Agent na lista de localização.`
+        : "Regiões disponíveis. O Controller selecionará um Agent elegível."
     );
 
     return {regions};
