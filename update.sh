@@ -148,7 +148,7 @@ parse_arguments() {
                 ;;
             --no-drain)
                 echo "No-drain update is not yet homologated; refusing to update." >&2
-                return 2
+                exit 2
                 ;;
             --no-backup)
                 NO_BACKUP=1
