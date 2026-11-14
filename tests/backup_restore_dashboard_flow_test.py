@@ -66,6 +66,21 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
             self.assertIn("Pronto para restaurar", js)
             self.assertNotIn('fetch(`/api/customer/artifacts/upload?', js)
 
+    def test_backup_import_displays_real_controller_to_agent_transmission_before_restore(self):
+        for filename in ("customer-backup-transfer.js", "controller-instance-backup-transfer.js"):
+            js = (ROOT / "dashboard/web" / filename).read_text(encoding="utf-8")
+            self.assertIn("renderAgentDeliveryProgress(d)", js)
+            self.assertIn('transfer.transferred_bytes', js)
+            self.assertIn('transfer.direction!=="controller_to_agent"', js)
+            self.assertIn('transfer.purpose!=="backup_import"', js)
+            self.assertIn('status==="queued"', js)
+            self.assertIn('status==="delivered"', js)
+            self.assertIn('status!=="transferring"', js)
+            self.assertIn('Math.floor(sent*100/total)', js)
+            self.assertIn('100% transmitido pelo Controller. Aguardando validação do Agent', js)
+            self.assertIn('pendingImportedTransfer=completed', js)
+            self.assertIn('restore.hidden=!pendingImportedTransfer', js)
+
     def test_customer_and_admin_share_permission_guarded_backend(self):
         service = (ROOT / "dashboard/customer_instance_workspace_service.py").read_text(encoding="utf-8")
         http = (ROOT / "dashboard/customer_instance_workspace_http.py").read_text(encoding="utf-8")
