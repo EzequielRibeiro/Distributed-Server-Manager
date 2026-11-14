@@ -150,7 +150,7 @@ def customer_placement_locations(
         # candidates of this Controller/region are exposed, with opaque refs.
         # Re-evaluate at creation time rather than trusting this discovery.
         servers = []
-        if available:
+        if available and contract_id and runtime_id:
             for candidate in all_candidates:
                 if str(candidate.get("region_id") or "") != region_id:
                     continue
