@@ -491,5 +491,169 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self._assert_unchanged(originals)
 
 
+    def test_minecraft_supervisor_and_dayz_udp_standin_survive_apply_and_rollback(self):
+        """Two distinct disposable game-shaped units remain responsive.
+
+        Minecraft uses actual SHA-pinned console_supervisor.py with a sleep
+        child (not a Minecraft JVM). DayZ uses a UDP echo stand-in (not DayZ).
+        updater functions operate exclusively on an owned /tmp fixture.
+        """
+        import hashlib
+        import socket
+        import sys
+
+        source = ROOT / "agents/linux/runtime/console_supervisor.py"
+        loader = SourceFileLoader(
+            "dsm928_supervisor_stage_dual_game",
+            str(ROOT / "update-manager/game-uptime-supervisor-stage.py"),
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        stage = importlib.util.module_from_spec(spec)
+        loader.exec_module(stage)
+        versions = self.workspace / "dual-game-pinned-versions"
+        versions.mkdir(mode=0o700)
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        staged = stage.stage_supervisor(
+            source, versions, expected_sha256=digest)
+        pinned = Path(staged["path"])
+        self.assertFalse(staged["live_no_drain_authorized"])
+
+        minecraft_sock = self.workspace / "dual-game-console.sock"
+        minecraft_unit = f"{self.prefix}-minecraft-pinned.service"
+        self._run(
+            "systemd-run", "--unit", minecraft_unit[:-8], "--collect",
+            "--property=Type=simple", sys.executable, str(pinned),
+            "--socket", str(minecraft_sock), "--", "/usr/bin/sleep", "180",
+        )
+        self.units.append(minecraft_unit)
+
+        dayz_script = self.workspace / "dayz-udp-standin.py"
+        dayz_script.write_text(
+            "import socket,sys\n"
+            "sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n"
+            "sock.bind(('127.0.0.1',int(sys.argv[1])))\n"
+            "while True:\n"
+            " data,peer=sock.recvfrom(4096)\n"
+            " if data==b'dayz-fixture-query':\n"
+            "  sock.sendto(b'dayz-fixture-ok',peer)\n",
+            encoding="utf-8",
+        )
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reserve:
+            reserve.bind(("127.0.0.1", 0))
+            dayz_port = reserve.getsockname()[1]
+        dayz_unit = f"{self.prefix}-dayz-udp.service"
+        self._run(
+            "systemd-run", "--unit", dayz_unit[:-8], "--collect",
+            "--property=Type=simple", sys.executable, str(dayz_script),
+            str(dayz_port),
+        )
+        self.units.append(dayz_unit)
+
+        def query_dayz():
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+                client.settimeout(0.5)
+                client.sendto(b"dayz-fixture-query", ("127.0.0.1", dayz_port))
+                return client.recvfrom(128)[0]
+
+        for _ in range(60):
+            minecraft = self._snapshot(minecraft_unit)
+            dayz = self._snapshot(dayz_unit)
+            ready = (
+                minecraft["state"] == "active" and minecraft["pid"] > 1
+                and minecraft["started"] > 0 and dayz["state"] == "active"
+                and dayz["pid"] > 1 and dayz["started"] > 0
+                and minecraft_sock.is_socket()
+            )
+            if ready:
+                try:
+                    if query_dayz() == b"dayz-fixture-ok":
+                        break
+                except (socket.timeout, OSError):
+                    pass
+            time.sleep(0.1)
+        else:
+            self.fail("disposable supervisor or UDP stand-in not ready")
+        originals = [minecraft, dayz]
+
+        def check_both():
+            self._assert_unchanged(originals)
+            self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(),
+                             digest)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(3)
+                client.connect(str(minecraft_sock))
+                client.sendall(b"status\n")
+                self.assertEqual(client.recv(128), b"OK\n")
+            self.assertEqual(query_dayz(), b"dayz-fixture-ok")
+
+        def updater(workspace, phase):
+            result = run_real_update_fns(workspace, phase)
+            self.assertEqual(result.returncode, 0,
+                             (phase, result.stdout[-500:], result.stderr[-700:]))
+
+        check_both()
+        for mode in ("success", "fault_after_apply"):
+            with self.subTest(mode=mode):
+                fixture = self.workspace / ("dual-game-" + mode)
+                create_tiny_release_fixture(fixture)
+                updater(fixture, "prepare")
+                check_both()
+                journal = self.workspace / ("dual-game-transaction-" + mode)
+                journal.mkdir(mode=0o700)
+
+                def apply():
+                    updater(fixture, "apply")
+                    self.assertEqual(
+                        (fixture / "installed/version").read_text(),
+                        "2.0.999-fixture",
+                    )
+                    check_both()
+                    if mode == "fault_after_apply":
+                        raise RuntimeError("injected after files swapped")
+
+                def rollback():
+                    updater(fixture, "rollback")
+                    check_both()
+
+                if mode == "success":
+                    result = transaction.execute(
+                        journal, [minecraft_unit, dayz_unit],
+                        inspect=self._snapshot, apply=apply, rollback=rollback,
+                    )
+                    self.assertEqual(result["status"], "verified")
+                    self.assertEqual(
+                        (fixture / "installed/version").read_text(),
+                        "2.0.999-fixture",
+                    )
+                else:
+                    with self.assertRaisesRegex(
+                        transaction.TransactionSafetyError, "rollback completed"
+                    ):
+                        transaction.execute(
+                            journal, [minecraft_unit, dayz_unit],
+                            inspect=self._snapshot, apply=apply,
+                            rollback=rollback,
+                        )
+                    self.assertEqual(
+                        (fixture / "installed/version").read_text(),
+                        "2.0.998-fixture",
+                    )
+                    self.assertEqual(
+                        json.loads(
+                            (journal / "game-uptime-transaction.json").read_text()
+                        )["status"], "rolled_back",
+                    )
+                self.assertEqual(
+                    (fixture /
+                     "installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat"
+                     ).read_bytes(), b"saved-world-private-test",
+                )
+                self.assertEqual(
+                    (fixture / "installed/data/database.txt").read_text(),
+                    "db durable",
+                )
+                check_both()
+
+
 if __name__ == "__main__":
     unittest.main()
