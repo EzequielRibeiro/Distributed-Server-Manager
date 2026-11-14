@@ -517,3 +517,34 @@ um Agent daemon real. Da mesma forma, `sleep` e o stand-in UDP
 diagnostica e exclusivamente de laboratorio. O modo
 `live_no_drain_authorized=false` e o bloqueio de release
 permanecem obrigatorios.
+
+
+## Sincronizacao com main e roteamento real de heartbeat (14/11/2026)
+
+A PR foi sincronizada via merge commit com `main` depois que o
+GitHub apontou conflito em `agents/linux/runtime/agent.py`.
+A reconciliacao preserva conjuntamente a geolocalizacao do Agent
+(`observe_host_geolocation`), o recebimento persistente da
+`controller_location` e os campos de diagnostico
+`no_drain_compatibility_probe`/`no_drain_wire_diagnostic`.
+O teste estrutural `test_merged_agent_location_and_no_drain_diagnostics_coexist`
+verifica que as observacoes de geolocalizacao e a troca de contrato
+diagnostico sobrevivem a futuras atualizacoes da branch.
+
+O teste `test_actual_controller_part11_post_route_with_durable_agent_credential`,
+na suite `update_game_uptime_sqlite_http_integration_test.py`,
+executa o corpo real de `server_part11.integrated_post` (extraido
+da AST Python para nao importar nem inicializar o dashboard completo)
+como metodo `do_POST` em um listener descartavel `127.0.0.1`.
+O despacho autentica credenciais reais de
+`AgentPairingRepository` e atualiza o banco SQLite temporario.
+O teste inclui verificacao de nonce do Agent, HTTP 401 para segredo
+invalido e reinicio da rota HTTP reabrindo o mesmo banco de dados.
+A compatibilidade continua meramente diagnostica.
+
+**Limite importante:** a execucao da funcao de rota dentro de um
+handler minimo nao equivale a subir a aplicacao completa de
+Controller e sua cadeia de patching/middleware/instalacao,
+nem ao reinicio do processo Agent real. Nao autoriza qualquer
+acao de atualizacao em hosts de producao:
+`live_no_drain_authorized=false`, PR Draft, release bloqueado.
