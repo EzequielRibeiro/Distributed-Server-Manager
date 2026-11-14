@@ -122,7 +122,9 @@ async function testAvailableRegionsArePublicAndRecommended() {
         state_name: "São Paulo",
         availability: "available",
         recommended: true,
-        servers: [{ref: "srv-" + "a".repeat(24), label: "Vps", recommended: true}],
+        servers: [{ref: "srv-" + "a".repeat(24), label: "Vps", country_code: "BR",
+          state_name: "São Paulo", country_name: "Brasil", recommended: true,
+          latency: {kind: "estimated", value_ms: 18}}],
         latency: {value_ms: 18},
       }],
     }), {
@@ -140,12 +142,15 @@ async function testAvailableRegionsArePublicAndRecommended() {
   assert.equal(result.regions[0].country_name, "Brasil");
   assert.equal(result.regions[0].servers.length, 1);
   assert.equal(result.regions[0].servers[0].label, "Vps");
+  assert.equal(result.regions[0].servers[0].country_code, "BR");
+  assert.equal(result.regions[0].servers[0].state_name, "São Paulo");
+  assert.equal(result.regions[0].servers[0].latency_ms, 18);
   assert.equal(result.regions[0].servers[0].ref, "srv-" + "a".repeat(24));
   assert.equal(result.regions[0].state_code, "SP");
   assert.equal(result.regions[0].state_name, "São Paulo");
   assert.equal(result.regions[0].display_label, "🇧🇷 Brasil - São Paulo · ~18 ms · ★ Servidor recomendado");
   assert.equal(statusNode.dataset.state, "available");
-  assert.equal(statusNode.strong.textContent, "🇧🇷 Brasil - São Paulo · ~18 ms · ★ Servidor recomendado");
+  assert.equal(statusNode.strong.textContent, "1 servidor elegível. Escolha um Agent na lista de localização.");
   cleanupHarness();
 }
 
