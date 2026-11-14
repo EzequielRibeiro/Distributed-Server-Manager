@@ -217,3 +217,30 @@ preservados. Cada operação de arquivos usa as funcoes reais de
 A JVM Minecraft, o executavel DayZ, os adaptadores reais, a migracao
 de banco, o Controller completo e um modo `main()` sem drenagem
 continuam sem essa prova. `live_no_drain_authorized=false`.
+
+
+## Pré-visualização de unidade systemd com supervisor versionado
+
+`agents/linux/runtime/materializers/systemd.py` agora aceita
+`render_unit(spec, pinned_supervisor_preview=...)` **somente para
+gerar texto**, usando o materializador nativo e um supervisor previamente
+estagiado por SHA-256. Esse parâmetro não é lido de um campo da
+especificação da instância, nem utilizado por
+`SystemdMaterializer.apply()` ou `inspect()`.
+
+A validação da proposta exige nome `console-supervisor-<sha256>.py`,
+hash exato, arquivo regular sem symlink nem hardlinks adicionais,
+permissão sem escrita, diretório não gravável por outros usuários e
+caminho fora de `/opt/dsm` e `/opt/capivara-agent`.
+`tests/update_game_uptime_supervisor_materialization_test.py` cobre
+renderização, integridade, divergências e manutenção do comportamento
+legado.
+
+**Atenção:** isto **não instala ou altera** unidade systemd existente,
+não faz daemon-reload, não garante permissão de leitura para o usuário
+de serviço, não migra um processo em execução e não conecta o modo
+no-drain ao `update.sh`. A execução isolada com unidade real, a
+provisão permanente do diretório versionado, a compatibilidade de
+usuários/grupos e a manutenção das versões antigas até o último PID
+encerrar precisam ser verificadas antes de sequer considerar ativação.
+O update de produção ainda drena jogos.
