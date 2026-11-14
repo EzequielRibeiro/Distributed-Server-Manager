@@ -1842,6 +1842,10 @@ update_failed() {
         fi
     else
         echo
+        if [[ "${UPDATE_FILES_STARTED}" -eq 1 ]]; then
+            echo "ERRO CRÍTICO: arquivos alterados sem backup disponível para rollback." >&2
+            echo "CRITICAL: files changed but no rollback backup is available." >&2
+        fi
         if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
             restart_services || true
             restart_game_instances || true
