@@ -790,6 +790,7 @@
         if (!help?.parentNode) return null;
         const label = document.createElement("label");
         label.id = "runtime-server-choice";
+        label.className = "runtime-field";
         label.textContent = "Servidor específico (opcional)";
         select = document.createElement("select");
         select.id = "runtime-server-select";
@@ -834,7 +835,7 @@
         el.regionHelp.textContent = state.placementLoading
             ? "Verificando a compatibilidade do runtime com os servidores disponíveis."
             : state.regions.length
-                ? "A recomendação considera disponibilidade, compatibilidade do runtime e latência estimada. O Controller selecionará o Agent adequado."
+                ? "Escolha a região e, opcionalmente, um servidor elegível. No modo automático, o Controller selecionará o Agent adequado."
                 : "Nenhum servidor elegível está disponível para este runtime.";
         if (state.region && state.regions.some((region) => region.id === state.region.id)) {
             el.region.value = state.region.id;
