@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 [[ $# -eq 3 ]] || { echo "usage: fixture ROOT UPDATE_SCRIPT prepare|apply|rollback" >&2; exit 2; }
 ROOT="$1"; UPDATE_SCRIPT="$2"; MODE="$3"
-[[ "$MODE" =~ ^(prepare|apply|rollback)$ ]] || exit 2
+[[ "$MODE" =~ ^(prepare|apply|rollback|rollback_reload_failure|rollback_services_failure|rollback_games_failure|rollback_both_failure)$ ]] || exit 2
 [[ ! -L "$ROOT" && -d "$ROOT" ]] || { echo "invalid disposable workspace" >&2; exit 2; }
 ROOT="$(realpath -e -- "$ROOT")"
 case "$ROOT" in
@@ -34,13 +34,24 @@ mkdir -p "$SYSTEMD_DIR" "$BACKUP_DIR"
 # Guard all callbacks of the real rollback that would otherwise touch systemd
 # or a live database. File/data preservation functions remain unchanged.
 systemctl() {
-    if [[ "$1" == "daemon-reload" ]]; then return 0;fi
+    if [[ "$1" == "daemon-reload" ]]; then
+        [[ "$MODE" == rollback_reload_failure ]] && return 42
+        return 0
+    fi
     echo "unexpected systemctl command in fixture" >&2
     return 95
 }
 stop_services() { :; }
-restart_services() { :; }
-restart_game_instances() { :; }
+restart_services() {
+    printf 'services\n' >> "$ROOT/recovery-attempts"
+    [[ "$MODE" == rollback_services_failure || "$MODE" == rollback_both_failure ]] && return 43
+    return 0
+}
+restart_game_instances() {
+    printf 'games\n' >> "$ROOT/recovery-attempts"
+    [[ "$MODE" == rollback_games_failure || "$MODE" == rollback_both_failure ]] && return 44
+    return 0
+}
 restore_database_backup() { :; }
 
 [[ "$INSTALL_DIR" == "$ROOT/installed" && "$BACKUP_DIR" == "$ROOT/backups" ]] || exit 2
@@ -59,11 +70,19 @@ case "$MODE" in
         apply_update
         [[ "$(cat -- "$INSTALL_DIR/version")" == "2.0.999-fixture" ]]
         ;;
-    rollback)
+    rollback|rollback_reload_failure|rollback_services_failure|rollback_games_failure|rollback_both_failure)
         mapfile -d '' -t backups < <(find "$BACKUP_DIR" -maxdepth 1 -type f -name 'dsm-before-update-*.tar.gz' -print0)
         [[ "${#backups[@]}" -eq 1 ]] || { echo "missing or ambiguous snapshot" >&2; exit 2; }
         BACKUP_FILE="${backups[0]}"
-        rollback
+        if [[ "$MODE" == rollback_reload_failure ]]; then SYSTEMD_ENABLED=1; fi
+        if [[ "$MODE" == rollback ]]; then
+            rollback
+        else
+            if rollback; then echo 'UNSAFE: failed recovery reported success' >&2; exit 1; fi
+            [[ "$(cat -- "$INSTALL_DIR/version")" == "2.0.998-fixture" ]] || exit 2
+            [[ -s "$BACKUP_FILE" ]] || exit 2
+            exit 77  # Expected failure after restoring a disposable backup.
+        fi
         [[ "$(cat -- "$INSTALL_DIR/version")" == "2.0.998-fixture" ]]
         ;;
 esac

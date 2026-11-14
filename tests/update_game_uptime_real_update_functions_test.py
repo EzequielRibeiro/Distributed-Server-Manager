@@ -84,6 +84,36 @@ class RealUpdateFunctionsFixtureTest(unittest.TestCase):
         self.assertEqual((self.original/"runtime/hybrid-agent-state/backup-index/keep.txt").read_text(), "protected")
         self.assertFalse((self.workspace/"installed.update-preserved").exists())
 
+    def test_actual_rollback_reports_reload_and_partial_restart_failures(self):
+        scenarios = {
+            "rollback_reload_failure": ("CRITICAL: rollback systemd reload failed", None),
+            "rollback_services_failure": ("services=43, games=0", "services\ngames\n"),
+            "rollback_games_failure": ("services=0, games=44", "services\ngames\n"),
+            "rollback_both_failure": ("services=43, games=44", "services\ngames\n"),
+        }
+        for mode, (diagnostic, attempted) in scenarios.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="dsm928-rollback-gate-") as temp:
+                root = Path(temp)
+                create_tiny_release_fixture(root)
+                for step in ("prepare", "apply"):
+                    outcome = run_real_update_fns(root, step)
+                    self.assertEqual(outcome.returncode, 0, outcome.stderr[-850:])
+                result = subprocess.run(
+                    ("bash", str(FIXTURE), str(root), str(UPDATE), mode),
+                    text=True, capture_output=True, check=False, timeout=30,
+                )
+                self.assertEqual(result.returncode, 77, (result.stdout[-850:], result.stderr[-850:]))
+                self.assertIn(diagnostic, result.stderr)
+                self.assertEqual((root/"installed/version").read_text(), "2.0.998-fixture")
+                self.assertEqual((root/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(), b"saved-world-private-test")
+                self.assertEqual((root/"installed/data/database.txt").read_text(), "db durable")
+                self.assertEqual(len(list((root/"backups").glob("dsm-before-update-*.tar.gz"))), 1)
+                path = root / "recovery-attempts"
+                if attempted is None:
+                    self.assertFalse(path.exists(), "do not restart services after daemon reload failure")
+                else:
+                    self.assertEqual(path.read_text(), attempted)
+
     def test_fail_closed_without_marker(self):
         (self.workspace/"fixture-owner").unlink()
         run = run_real_update_fns(self.workspace, "prepare")

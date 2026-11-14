@@ -1998,9 +1998,27 @@ rollback() {
     echo
     echo "Recarregando Systemd..."
     echo "Reloading Systemd..."
-    systemctl daemon-reload 2>/dev/null || true
-    restart_services 2>/dev/null || true
-    restart_game_instances 2>/dev/null || true
+    local ROLLBACK_RELOAD_RC=0
+    local ROLLBACK_SERVICES_RC=0
+    local ROLLBACK_GAMES_RC=0
+    systemctl daemon-reload 2>/dev/null || ROLLBACK_RELOAD_RC=$?
+    # A failed daemon-reload on a live systemd host must not be followed by
+    # service starts against potentially stale unit definitions.
+    if [[ "${SYSTEMD_ENABLED}" -eq 1 && "${ROLLBACK_RELOAD_RC}" -ne 0 ]]; then
+        echo "CRITICAL: rollback systemd reload failed; manual recovery required." >&2
+        echo "Backup retained: ${BACKUP_FILE}" >&2
+        return 1
+    fi
+    # Attempt both recoveries, but never report successful rollback while
+    # either the Controller services or originally active games failed.
+    restart_services || ROLLBACK_SERVICES_RC=$?
+    restart_game_instances || ROLLBACK_GAMES_RC=$?
+    if [[ "${ROLLBACK_SERVICES_RC}" -ne 0 || "${ROLLBACK_GAMES_RC}" -ne 0 ]]; then
+        echo "CRITICAL: rollback restored files but service/game recovery incomplete; manual review required." >&2
+        echo "Rollback recovery exit codes: services=${ROLLBACK_SERVICES_RC}, games=${ROLLBACK_GAMES_RC}" >&2
+        echo "Backup retained: ${BACKUP_FILE}" >&2
+        return 1
+    fi
     # Remover staging incompleto | Remove incomplete staging
     rm -rf "${STAGING_DIR}"
     echo
