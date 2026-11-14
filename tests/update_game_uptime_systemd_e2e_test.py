@@ -1024,8 +1024,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         controller = ActualDispatcherSqliteHttpTests(
             "test_credentialed_sqlite_controller_survives_restart_and_new_nonce"
         )
-        controller.setUp()
+        # Register cleanup before setup, including in case DB/HTTP setup fails.
         self.addCleanup(controller.doCleanups)
+        controller.setUp()
 
         def check_authenticated_controller_agent_exchange():
             probe = build_probe(controller.agent_id)
@@ -1046,9 +1047,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
 
         def restart_controller_and_recheck():
             previous_probe = check_authenticated_controller_agent_exchange()
-            previous_address = controller.url
+            previous_server = controller.server
             controller._restart_controller_dispatcher()
-            self.assertNotEqual(previous_address, controller.url)
+            self.assertIsNot(previous_server, controller.server)
             latest_probe = build_probe(controller.agent_id)
             code, response = controller._request(
                 controller._payload(no_drain_compatibility_probe=latest_probe))
