@@ -1003,12 +1003,68 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         """Compose *real* fixture update functions and systemd swap/rollback.
 
         Runner only: actual SHA-pinned console_supervisor.py -> sleep process,
-        plus an ephemeral DayZ UDP stand-in. No JVM/DayZ binary, DSM systemd
-        units or production update.sh main() are used.
+        ephemeral DayZ UDP stand-in, and actual Controller heartbeat dispatcher,
+        SQLite-backed credentials and Agent wire probe over thin HTTP listener.
+        No full Controller daemon, JVM/DayZ binaries, DSM live unit or
+        production update.sh main() are used.
         """
         import hashlib
         import socket
+        import sqlite3
         import sys
+
+        # Real Controller auth/dispatcher/SQLite, carried over an ephemeral
+        # HTTP listener. The Agent executes its actual wire verification.
+        # This does not instantiate the production dashboard/server.py.
+        from update_game_uptime_sqlite_http_integration_test import (
+            ActualDispatcherSqliteHttpTests,
+        )
+        from game_uptime_agent_wire import build_probe, verify_offer
+
+        controller = ActualDispatcherSqliteHttpTests(
+            "test_credentialed_sqlite_controller_survives_restart_and_new_nonce"
+        )
+        controller.setUp()
+        self.addCleanup(controller.doCleanups)
+
+        def check_authenticated_controller_agent_exchange():
+            probe = build_probe(controller.agent_id)
+            code, response = controller._request(
+                controller._payload(no_drain_compatibility_probe=probe))
+            self.assertEqual(code, 200, response)
+            offer = response["no_drain_compatibility_offer"]
+            self.assertTrue(verify_offer(probe, offer)["wire_compatible"])
+            self.assertFalse(offer["live_no_drain_authorized"])
+            self.assertEqual(response["health_status"], "online")
+            with sqlite3.connect(controller.db_path) as db:
+                inventory = db.execute(
+                    "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                    (controller.agent_id,),
+                ).fetchone()[0]
+            self.assertEqual(inventory, 1)
+            return probe
+
+        def restart_controller_and_recheck():
+            previous_probe = check_authenticated_controller_agent_exchange()
+            previous_address = controller.url
+            controller._restart_controller_dispatcher()
+            self.assertNotEqual(previous_address, controller.url)
+            latest_probe = build_probe(controller.agent_id)
+            code, response = controller._request(
+                controller._payload(no_drain_compatibility_probe=latest_probe))
+            self.assertEqual(code, 200, response)
+            new_offer = response["no_drain_compatibility_offer"]
+            self.assertTrue(verify_offer(latest_probe, new_offer)["wire_compatible"])
+            self.assertFalse(verify_offer(previous_probe, new_offer)["wire_compatible"])
+            self.assertFalse(new_offer["live_no_drain_authorized"])
+            # Authentication is backed by the same persisted SQLite credentials.
+            unauthorized_code, unauthorized = controller._request(
+                controller._payload(no_drain_compatibility_probe=latest_probe),
+                secret="bad-fixture-secret",
+            )
+            self.assertEqual(unauthorized_code, 401, unauthorized)
+            self.assertNotIn("no_drain_compatibility_offer", unauthorized)
+            check_authenticated_controller_agent_exchange()
 
         def load(relative, name):
             loader = SourceFileLoader(name, str(ROOT / relative))
@@ -1143,6 +1199,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                             (release / "installed/data/database.txt").read_text(),
                             "db durable",
                         )
+                        check_authenticated_controller_agent_exchange()
 
                     def run_files(phase):
                         result = run_real_update_fns(release, phase)
@@ -1161,6 +1218,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                         self.assertEqual(receipt["status"], "applied")
                         self.assertFalse(receipt["live_no_drain_authorized"])
                         self.assertEqual(path.read_bytes(), new)
+                        restart_controller_and_recheck()
                         check_pids_and_responsiveness()
                         if mode == "failure_after_both_components":
                             raise RuntimeError("injected composite failure")
@@ -1178,6 +1236,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                                 operator_reviewed=True,
                             )
                             self.assertEqual(restored["status"], "restored")
+                            restart_controller_and_recheck()
                         elif status != "rolled_back":
                             raise RuntimeError("unsafe composite unit rollback state")
 
