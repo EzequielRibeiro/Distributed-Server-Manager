@@ -124,8 +124,8 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
                     {
                         "agent_id": "secret-agent-other", "agent_name": "Agent B",
                         "region_id": "br-sudeste", "country_code": "BR",
-                        "country_name": "Brasil", "state_name": "Paraná", "state_code": "PR",
-                        "latitude": -25.43, "longitude": -49.27,
+                        "country_name": "Brasil", "state_name": "Acre", "state_code": "AC",
+                        "latitude": -9.97, "longitude": -67.81,
                     },
                 ]
                 return [row for row in rows if region_id is None or row["region_id"] == region_id]
@@ -142,7 +142,7 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         agents = {server["label"]: server for server in region["servers"]}
         self.assertEqual(set(agents), {"Agent A", "Agent B"})
         self.assertEqual(agents["Agent A"]["state_name"], "São Paulo")
-        self.assertEqual(agents["Agent B"]["state_name"], "Paraná")
+        self.assertEqual(agents["Agent B"]["state_name"], "Acre")
         self.assertEqual(agents["Agent A"]["latency"]["kind"], "estimated")
         self.assertLess(agents["Agent A"]["latency"]["value_ms"], agents["Agent B"]["latency"]["value_ms"])
         serialized = json.dumps(payload)
