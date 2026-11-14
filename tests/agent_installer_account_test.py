@@ -85,7 +85,7 @@ printf '%s\n' "${{EVENTS[@]}}"
 
     def test_installer_invokes_account_reconciliation_and_checks_dependencies(self):
         self.assertIn(
-            "for cmd in python3 install systemctl getent groupadd useradd id; do",
+            "for cmd in python3 install systemctl getent groupadd useradd id setfacl; do",
             self.installer,
         )
         self.assertIn("ensure_agent_account\ninstall -d", self.installer)

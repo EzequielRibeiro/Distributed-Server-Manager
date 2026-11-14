@@ -6,6 +6,8 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from core.placement_requirements import requirements_for_instance
+from customer_server_choice import resolve_server_ref
+from location_repository import LocationRepository
 from customer_reference import resolve_customer_reference
 from placement_errors import PlacementUnavailable
 from placement_service import choose_agent_for_instance
@@ -140,6 +142,22 @@ def resolve_instance_placement(
     )
     preference = region_preference_for_creation(user, preference_payload)
     region_latency_ms = _region_latency(payload)
+    requested_server_ref = str(preference_payload.get("server_ref") or "").strip()
+    required_agent_id = None
+    if requested_server_ref:
+        # Customer selection never grants access to an arbitrary Agent.
+        # Resolve only in the customer's own Controller and selected region.
+        if not preference["region_id"]:
+            raise ValueError("Selecione uma região antes de escolher o servidor.")
+        candidates = LocationRepository(repository.backend).candidates(
+            controller_id, region_id=preference["region_id"]
+        )
+        required_agent_id = resolve_server_ref(
+            controller_id,
+            requested_server_ref,
+            candidates,
+            region_id=preference["region_id"],
+        )
 
     game_id = payload.get("game_id") or payload.get("game")
     runtime_id = payload.get("runtime_id") or payload.get("runtime")
@@ -158,6 +176,7 @@ def resolve_instance_placement(
         allow_cross_region=bool(preference["allow_cross_region"]),
         region_latency_ms=region_latency_ms,
         requirements=requirements,
+        required_agent_id=required_agent_id,
     )
 
     if not decision.get("agent_id"):
