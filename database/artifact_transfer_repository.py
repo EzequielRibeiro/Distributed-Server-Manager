@@ -81,6 +81,38 @@ class ArtifactTransferRepository:
   with self.session() as s:row=s.execute(f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}",(str(transfer_id),)).fetchone()
   if row is None:raise KeyError(transfer_id)
   return dict(row)
+ def list_completed_backup_imports(self,instance_id,limit=10):
+  """Find non-expired verified backup imports for an authorized instance.
+
+  The HTTP caller must separately authorize backup.restore on the instance.
+  Do not expose spool paths or other tenant's transfer metadata.
+  """
+  iid=self._token(instance_id,"instance_id")
+  count=max(1,min(int(limit),50))
+  ph=self.dialect.placeholder
+  now=datetime.now(timezone.utc)
+  with self.session() as session:
+   rows=session.execute(
+    f"SELECT * FROM artifact_transfers WHERE instance_id={ph} "
+    "AND direction='controller_to_agent' AND purpose='backup_import' "
+    "AND status='completed' ORDER BY created_at DESC LIMIT 200", (iid,)
+   ).fetchall()
+  valid=[]
+  for row in rows:
+   transfer=dict(row)
+   expires=transfer.get("expires_at")
+   if expires is not None:
+    try:
+     expiry=(expires if isinstance(expires,datetime) else
+             datetime.fromisoformat(str(expires).replace("Z","+00:00")))
+     if expiry.tzinfo is None:expiry=expiry.replace(tzinfo=timezone.utc)
+     if expiry<=now:continue
+    except (TypeError,ValueError):continue
+   if not str(transfer.get("destination_ref") or "").strip():continue
+   valid.append(transfer)
+   if len(valid)>=count:break
+  return valid
+
  def command_for_agent(self,agent_id):
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:
