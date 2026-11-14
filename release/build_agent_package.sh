@@ -55,10 +55,16 @@ for source in "${RUNTIME_SOURCES[@]}"; do
   copy "${source}" "agent/runtime/${relative}"
 done
 
-# The remote Server Pack observer imports two canonical, read-only core
-# contracts. Keep them in the runtime payload as well: legacy v2.0.59 updaters
-# only propagate agent/runtime/*.py (not repository core/ or agent/common/).
-for source in core/content_bundle.py core/minecraft_serverpack_physical_manifest.py; do
+# Linux runtime imports the canonical shared Core contracts directly. They
+# must be in agent/runtime, because installed Agents have no repository core/
+# directory and legacy updaters propagate only runtime/*.py. Omitting these
+# leaves *all* instance provisioning stuck at staged, including DayZ, because
+# provisioning_executor imports the Minecraft adapter at module load time.
+for source in \
+  core/content_bundle.py \
+  core/minecraft_serverpack_physical_manifest.py \
+  core/minecraft_staged_migration_safety.py \
+  core/minecraft_serverpack_migration_feature.py; do
   copy "${source}" "agent/runtime/${source##*/}"
 done
 
