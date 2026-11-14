@@ -655,5 +655,123 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 check_both()
 
 
+    def test_pinned_minecraft_supervisor_runs_as_unprivileged_systemd_user(self):
+        """Prove real service-user access to SHA-pinned code in a throwaway unit.
+
+        A transient dsm928-e2e unit uses User=nobody and runs a console
+        supervisor with /usr/bin/sleep as its child, NOT a Minecraft JVM.
+        No Capivara game unit or host systemd materializer is modified.
+        """
+        import hashlib
+        import pwd
+        import socket
+        import sys
+
+        try:
+            account = pwd.getpwnam("nobody")
+        except KeyError:
+            self.skipTest("disposable runner lacks nobody service account")
+        if account.pw_uid == os.geteuid():
+            self.skipTest("test requires distinct non-root service account")
+        runtime = ROOT / "agents/linux/runtime"
+        if str(runtime) not in sys.path:
+            sys.path.insert(0, str(runtime))
+        from materializers.base import MaterializerError
+        from materializers.systemd import render_unit
+
+        loader = SourceFileLoader(
+            "dsm928_unprivileged_supervisor_stage",
+            str(ROOT / "update-manager/game-uptime-supervisor-stage.py"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        stage = importlib.util.module_from_spec(spec)
+        loader.exec_module(stage)
+
+        source = runtime / "console_supervisor.py"
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        versions = self.workspace / "pinned-versions-unprivileged"
+        versions.mkdir(mode=0o755)
+        versions.chmod(0o755)
+        staged = stage.stage_supervisor(source, versions, expected_sha256=digest)
+        pinned = Path(staged["path"])
+        self.assertEqual(pinned.stat().st_mode & 0o777, 0o444)
+        pin = {"path": str(pinned), "sha256": digest}
+        runtime_spec = {
+            "instance_id": "fixture-minecraft-nobody",
+            "agent_id": "disposable-agent",
+            "runtime_id": "minecraft.java.neoforge",
+            "game_id": "minecraft",
+            "environment_id": "minecraft.java.neoforge",
+            "user": account.pw_name,
+            "working_directory": str(self.workspace),
+            "executable": "/usr/bin/sleep",
+            "arguments": ["180"],
+        }
+
+        # A 0700 ancestor, although readable as root, must not pass preflight.
+        with self.assertRaisesRegex(MaterializerError, "not traversable"):
+            render_unit(runtime_spec, pinned_supervisor_preview=pin)
+        self.workspace.chmod(0o711)
+        proposed = render_unit(runtime_spec, pinned_supervisor_preview=pin)
+        self.assertIn("User=" + account.pw_name, proposed)
+        self.assertIn('ExecStart="/usr/bin/python3" "' + str(pinned) + '"',
+                      proposed)
+        self.assertFalse(staged["live_no_drain_authorized"])
+
+        sock_dir = self.workspace / "nobody-console"
+        sock_dir.mkdir(mode=0o700)
+        os.chown(sock_dir, account.pw_uid, account.pw_gid)
+        sock = sock_dir / "console.sock"
+        unit = f"{self.prefix}-unprivileged-minecraft.service"
+        self._run(
+            "systemd-run", "--unit", unit[:-8], "--collect",
+            "--property=Type=simple", "--property=User=" + account.pw_name,
+            "--property=NoNewPrivileges=yes",
+            sys.executable, str(pinned),
+            "--socket", str(sock), "--", "/usr/bin/sleep", "180",
+        )
+        self.units.append(unit)
+
+        for _ in range(80):
+            identity = self._snapshot(unit)
+            if (identity["state"] == "active" and identity["pid"] > 1
+                    and identity["started"] > 0 and sock.is_socket()):
+                break
+            time.sleep(0.1)
+        else:
+            self.fail("non-root pinned supervisor failed to start/read staged file")
+
+        properties = self._run("systemctl", "show", unit, "-p", "User",
+                               "-p", "ExecStart")
+        self.assertIn("User=" + account.pw_name, properties.stdout)
+        self.assertIn(str(pinned), properties.stdout)
+        status = Path("/proc") / str(identity["pid"]) / "status"
+        uid_line = next(
+            line for line in status.read_text().splitlines()
+            if line.startswith("Uid:"))
+        self.assertEqual(int(uid_line.split()[1]), account.pw_uid)
+
+        def verify_running():
+            self.assertEqual(self._snapshot(unit), identity)
+            self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(),
+                             digest)
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(3)
+                client.connect(str(sock))
+                client.sendall(b"status\n")
+                self.assertEqual(client.recv(64), b"OK\n")
+
+        verify_running()
+        fixture = self.workspace / "unprivileged-pinned-updater-fixture"
+        create_tiny_release_fixture(fixture)
+        for phase in ("prepare", "apply", "rollback"):
+            result = run_real_update_fns(fixture, phase)
+            self.assertEqual(result.returncode, 0,
+                             (phase, result.stderr[-450:]))
+            verify_running()
+        self.assertEqual(
+            (fixture / "installed/version").read_text(),
+            "2.0.998-fixture")
+
+
 if __name__ == "__main__":
     unittest.main()
