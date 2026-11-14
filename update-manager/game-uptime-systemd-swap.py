@@ -96,13 +96,14 @@ def _fixture_bytes(content: bytes, name: str) -> None:
     # NOT a production Minecraft unit renderer or generic systemd executor.
     if len(commands) != 1 or not re.fullmatch(r"/usr/bin/sleep (?:1[2-9][0-9]|2[0-4][0-9])", commands[0]):
         raise DisposableSwapError("disposable unit ExecStart is not allowlisted")
-    if (lines.count("[Service]") != 1 or lines.count("[Unit]") != 1
-            or any(line.startswith(("ExecStartPre=", "ExecStop=", "ExecReload=",
-                                    "ExecStopPost=", "OnFailure=", "Requires=",
-                                    "Wants=", "EnvironmentFile=", "User=",
-                                    "Group=", "KillSignal=", "Restart="))
-                   for line in lines)):
-        raise DisposableSwapError("unsupported commands or service directives")
+    # An exact, seven-line allowlist prevents accidental invocation of
+    # systemd directives that could affect any other service or namespace.
+    if (len(lines) != 7 or lines[2] != "[Unit]"
+            or not lines[3].startswith("Description=DSM928 ")
+            or lines[4] != "[Service]" or lines[5] != "Type=simple"
+            or lines[6] != "ExecStart=" + commands[0]):
+        raise DisposableSwapError("unexpected disposable systemd directives")
+
 
 
 def _read_unit(path: Path, name: str) -> bytes:
