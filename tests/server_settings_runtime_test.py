@@ -33,6 +33,26 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    if not isinstance(settings.get('fields'),dict) or not settings['fields']:missing.append(runtime_id)
   self.assertEqual([],missing)
 
+ def test_dayz_dynamic_numeric_setting_constraints(self):
+  service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService)
+  ctx={"game_id":"dayz"}
+  allowed={"thirdPersonView":[0,1],"verifySignatures":[0,1,2],"vonCodecQuality":[0,20,30],"loginQueueConcurrentPlayers":[1,5],"loginQueueMaxPlayers":[1,500],"instanceId":[1]}
+  invalid={"thirdPersonView":[-1,2],"verifySignatures":[-1,3],"vonCodecQuality":[-1,31],"loginQueueConcurrentPlayers":[-1,0],"loginQueueMaxPlayers":[-1,0],"instanceId":[-1,0]}
+  for key,values in allowed.items():
+   for value in values:
+    with self.subTest(key=key,value=value):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
+  for key,values in invalid.items():
+   for value in values:
+    with self.subTest(key=key,value=value):
+     with self.assertRaises(ValueError):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
+  with self.assertRaises(ValueError):service._enforce_dayz_surface_constraint(ctx,{"key":"guaranteedUpdates","path":"serverDZ.cfg"},1)
+  for key in allowed:
+   for value in [True,1.5,"1"]:
+    with self.subTest(key=key,value=value):
+     with self.assertRaises(ValueError):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
+  service._enforce_dayz_surface_constraint(ctx,{"key":"unrelated","path":"serverDZ.cfg"},-1)
+  service._enforce_dayz_surface_constraint({"game_id":"minecraft"},{"key":"instanceId","path":"serverDZ.cfg"},-1)
+
  def test_permissions_and_contract_player_limit(self):
   self.assertIn('settings.read',INSTANCE_PERMISSIONS);self.assertIn('settings.write',INSTANCE_PERMISSIONS)
   self.assertIn('settings.read',PERMISSION_PRESETS['viewer']);self.assertNotIn('settings.write',PERMISSION_PRESETS['viewer'])
