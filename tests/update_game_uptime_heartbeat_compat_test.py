@@ -176,5 +176,66 @@ class AgentHeartbeatScopeTests(unittest.TestCase):
 
 
 
+    def test_merged_agent_location_and_no_drain_diagnostics_coexist(self):
+        """Protect main's GeoIP/location fields alongside the Draft PR probe.
+
+        This is a static regression test for integration, not proof that the
+        real Controller/Agent daemons survive a release or migration.
+        """
+        source = (ROOT / "agents/linux/runtime/agent.py").read_text()
+        syntax = ast.parse(source)
+        imports = {
+            alias.asname or alias.name for node in syntax.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        self.assertTrue({
+            "observe_host_geolocation", "build_no_drain_probe",
+            "verify_no_drain_offer",
+        }.issubset(imports))
+        functions = {
+            node.name: node for node in syntax.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertIn("_inventory", functions)
+        self.assertIn("heartbeat", functions)
+
+        inventory = functions["_inventory"]
+        heartbeat = functions["heartbeat"]
+        inventory_calls = [
+            node.func.id for node in ast.walk(inventory)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        self.assertEqual(inventory_calls.count("observe_public_ipv4"), 1)
+        self.assertIn("observe_host_geolocation", inventory_calls)
+        self.assertIn("build_no_drain_probe", inventory_calls)
+        inventory_keys = {
+            node.value for node in ast.walk(inventory)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        self.assertTrue({"geo_location_observation",
+                         "no_drain_compatibility_probe"}.issubset(inventory_keys))
+
+        heartbeat_calls = [
+            node.func.id for node in ast.walk(heartbeat)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        self.assertIn("verify_no_drain_offer", heartbeat_calls)
+        self.assertIn("_write_config", heartbeat_calls)
+        heartbeat_keys = {
+            node.value for node in ast.walk(heartbeat)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        self.assertTrue({
+            "controller_location", "no_drain_compatibility_offer",
+            "no_drain_compatibility_probe", "no_drain_wire_diagnostic",
+        }.issubset(heartbeat_keys))
+        # Reading the diagnostic must never become a command or implicit
+        # consent to stop/restart/drain the live game service.
+        self.assertFalse({
+            "stop_games", "start_games", "restart_games", "drain_games",
+        }.intersection(heartbeat_calls))
+
+
 if __name__ == "__main__":
     unittest.main()
