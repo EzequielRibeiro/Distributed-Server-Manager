@@ -26,7 +26,7 @@ class CustomerRuntimeAwarePlacementTest(unittest.TestCase):
         self.assertIn('el.submit.disabled = !state.placementReady', SELECTOR)
 
     def test_changed_assets_are_cache_busted(self):
-        self.assertIn('/customer-placement-client.js?v=4', HTML)
+        self.assertIn('/customer-placement-client.js?v=5', HTML)
         self.assertIn('/runtime-selector.js?v=16', HTML)
 
 
