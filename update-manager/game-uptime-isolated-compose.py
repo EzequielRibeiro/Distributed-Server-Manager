@@ -9,6 +9,7 @@ dsm928-e2e-* units. Separate durable component journals remain mandatory.
 from __future__ import annotations
 
 from importlib.machinery import SourceFileLoader
+import json
 import importlib.util
 from pathlib import Path
 import os
@@ -58,6 +59,57 @@ def _root(workspace: Path, units: list[str]) -> Path:
     return resolved
 
 
+def _compensate(*, rollback_unit, rollback_files, verify, restore_unit=True):
+    """Attempt both components, even when the first rollback fails."""
+    errors = []
+    callbacks = (
+        (("unit", rollback_unit),) if restore_unit else ()
+    ) + (("files", rollback_files), ("verification", verify))
+    for name, callback in callbacks:
+        try:
+            callback()
+        except Exception as exc:
+            errors.append((name, type(exc).__name__))
+    if errors:
+        raise CompositeSafetyError(
+            "incomplete disposable component rollback: "
+            + ", ".join(f"{name}={kind}" for name, kind in errors)
+        )
+
+
+def _inspect_unit_recovery(root: Path, units: list[str]) -> bool:
+    """Validate optional independently durable swap journal before recovery.
+
+    Missing unit journal means the unit component was not applied. A valid
+    terminal restored/rolled-back journal needs no repeated compensation.
+    """
+    path = root / "dsm928-unit-swap.json"
+    if not path.exists() and not path.is_symlink():
+        return False
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 8192:
+        raise CompositeSafetyError("unsafe disposable unit component journal")
+    try:
+        with path.open("r", encoding="utf-8") as stream:
+            raw = stream.read(8193)
+        if len(raw) > 8192:
+            raise ValueError("oversized component journal")
+        record = json.loads(raw)
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise CompositeSafetyError("unreadable disposable unit component journal") from exc
+    if (not isinstance(record, dict)
+            or record.get("kind") != "DSM928DisposableSystemdSwap"
+            or record.get("scope") != "disposable_only_not_production"
+            or record.get("live_no_drain_authorized") is not False
+            or record.get("unit") not in units):
+        raise CompositeSafetyError("unit component journal is not authorized for recovery")
+    status = record.get("status")
+    if status in {"restored", "rolled_back"}:
+        return False
+    if status in {"applied", "prepared"}:
+        return True
+    raise CompositeSafetyError("interrupted or unsafe unit component recovery state")
+
+
 def execute(
     workspace: Path,
     units: list[str],
@@ -99,23 +151,8 @@ def execute(
         verify()
 
     def rollback() -> None:
-        failures = []
-        # The unit callback MUST be safe when the unit swap was not reached.
-        # A failed component rollback never prevents the other compensation.
-        for name, action in (("unit", rollback_unit), ("files", rollback_files)):
-            try:
-                action()
-            except Exception as exc:
-                failures.append((name, type(exc).__name__))
-        try:
-            verify()
-        except Exception as exc:
-            failures.append(("verification", type(exc).__name__))
-        if failures:
-            raise CompositeSafetyError(
-                "incomplete disposable component rollback: "
-                + ", ".join(f"{name}={kind}" for name, kind in failures)
-            )
+        _compensate(rollback_unit=rollback_unit,
+                    rollback_files=rollback_files, verify=verify)
 
     result = _TRANSACTION.execute(
         journal, units, inspect=inspect, apply=apply, rollback=rollback,
@@ -126,6 +163,63 @@ def execute(
         "kind": "DSM928DisposableComposedUpgrade",
         "status": result["status"],
         "scope": "disposable_only_not_production",
+        "original_units": result["units"],
+        "live_no_drain_authorized": False,
+    }
+
+
+
+def recover_interrupted(
+    workspace: Path,
+    units: list[str],
+    *,
+    inspect: Callable[[str], Mapping],
+    rollback_files: Callable[[], None],
+    rollback_unit: Callable[[], None],
+    verify: Callable[[], None],
+    operator_reviewed: bool = False,
+) -> dict:
+    """Manual-only recovery of *both* components after abrupt interruption.
+
+    Only a private owner-marked /tmp fixture with a durable prepared/applied
+    transaction and an available file backup can be restored. Unit journal
+    must live at the same fixture root; external journals require separately
+    reviewed recovery and are intentionally unsupported by this prototype.
+    """
+    root = _root(workspace, units)
+    if operator_reviewed is not True:
+        raise CompositeSafetyError("explicit operator review is required")
+    if any(not callable(c) for c in
+           (inspect, rollback_files, rollback_unit, verify)):
+        raise CompositeSafetyError("every recovery callback must be callable")
+    journal = root / "dsm928-composite-journal"
+    if (journal.is_symlink() or not journal.is_dir()
+            or journal.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO)):
+        raise CompositeSafetyError("missing or unsafe composite transaction journal")
+    backups = root / "backups"
+    if backups.is_symlink() or not backups.is_dir():
+        raise CompositeSafetyError("missing disposable update backup")
+    artifacts = list(backups.glob("dsm-before-update-*.tar.gz"))
+    if (len(artifacts) != 1 or artifacts[0].is_symlink()
+            or not artifacts[0].is_file() or artifacts[0].stat().st_size == 0):
+        raise CompositeSafetyError("ambiguous or unsafe disposable file backup")
+    restore_unit = _inspect_unit_recovery(root, units)
+
+    def rollback() -> None:
+        _compensate(rollback_unit=rollback_unit,
+                    rollback_files=rollback_files,
+                    verify=verify, restore_unit=restore_unit)
+
+    result = _TRANSACTION.recover_interrupted(
+        journal, units, inspect=inspect, rollback=rollback,
+        operator_reviewed=True,
+    )
+    if result["status"] != "recovered_rollback" or result["live_no_drain_authorized"] is not False:
+        raise CompositeSafetyError("unverified disposable composite recovery")
+    return {
+        "kind": "DSM928DisposableComposedUpgrade",
+        "scope": "disposable_only_not_production",
+        "status": "recovered_rollback",
         "original_units": result["units"],
         "live_no_drain_authorized": False,
     }
