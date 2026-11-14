@@ -95,6 +95,13 @@
       state_name: item.state_name || "",
       city: item.city || "",
       availability: item.availability,
+      servers: Array.isArray(item.servers) ? item.servers
+        .filter(server => server && /^srv-[a-f0-9]{24}$/.test(String(server.ref || "")))
+        .map(server => ({
+          ref: String(server.ref),
+          label: String(server.label || "Servidor").slice(0, 128),
+          recommended: server.recommended === true,
+        })) : [],
       recommended: item.recommended === true,
       recommendation: item.recommendation || "",
       latency_ms: Number.isFinite(latency) ? latency : null,
