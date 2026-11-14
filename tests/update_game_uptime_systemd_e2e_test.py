@@ -856,5 +856,148 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                            capture_output=True, text=True, check=False)
 
 
+    def test_actual_pinned_minecraft_supervisor_unit_swap_retains_old_live_revision(self):
+        """Switch staged supervisor SHA in real disposable unit, no JVM/start.
+
+        The currently running pinned Python console supervisor retains its
+        original PID and /proc command line after daemon-reload. Unit files
+        are restored before teardown, and both exact versions stay staged.
+        """
+        import hashlib
+        import socket
+        import sys
+
+        stage_loader = SourceFileLoader(
+            "dsm928_pinned_stage_systemd_swap",
+            str(ROOT / "update-manager/game-uptime-supervisor-stage.py"))
+        stage_spec = importlib.util.spec_from_loader(
+            stage_loader.name, stage_loader)
+        stage = importlib.util.module_from_spec(stage_spec)
+        stage_loader.exec_module(stage)
+
+        swap_loader = SourceFileLoader(
+            "dsm928_pinned_systemd_swap_real_e2e",
+            str(ROOT / "update-manager/game-uptime-systemd-swap.py"))
+        swap_spec = importlib.util.spec_from_loader(
+            swap_loader.name, swap_loader)
+        swap = importlib.util.module_from_spec(swap_spec)
+        swap_loader.exec_module(swap)
+
+        journal = self.workspace / "pinned-real-file-swap"
+        journal.mkdir(mode=0o700)
+        versions = journal / "versions"
+        versions.mkdir(mode=0o700)
+        source = ROOT / "agents/linux/runtime/console_supervisor.py"
+        v2_source = journal / "candidate-console-supervisor.py"
+        v2_source.write_bytes(
+            source.read_bytes() + b"\n# DSM928 disposable next revision\n")
+        staged = []
+        for source_file in (source, v2_source):
+            digest = hashlib.sha256(source_file.read_bytes()).hexdigest()
+            result = stage.stage_supervisor(
+                source_file, versions, expected_sha256=digest)
+            staged.append(Path(result["path"]))
+        self.assertNotEqual(staged[0], staged[1])
+
+        sock = journal / "console.sock"
+        unit = f"{self.prefix}-pinned-unit-swap.service"
+        path = Path("/run/systemd/system") / unit
+        header = (
+            "# DSM928_DISPOSABLE_UNIT_V1\n"
+            f"# DSM928_UNIT={unit}\n"
+            "[Unit]\nDescription=DSM928 pinned supervisor test only\n"
+            "[Service]\nType=simple\n"
+        )
+        def content(supervisor):
+            return (header + "ExecStart=/usr/bin/python3 "
+                    + str(supervisor) + " --socket " + str(sock)
+                    + " -- /usr/bin/sleep 180\n").encode("utf-8")
+
+        old, new = content(staged[0]), content(staged[1])
+        self.assertFalse(path.exists())
+        self.assertFalse(path.is_symlink())
+        path.write_bytes(old)
+        path.chmod(0o644)
+        try:
+            self._run("systemctl", "daemon-reload")
+            self._run("systemctl", "start", unit)
+            self.units.append(unit)
+            for _ in range(70):
+                identity = self._snapshot(unit)
+                if (identity["state"] == "active" and identity["pid"] > 1
+                        and identity["started"] > 0 and sock.is_socket()):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("real pinned disposable supervisor did not start")
+
+            cmdline = (Path("/proc") / str(identity["pid"]) /
+                       "cmdline").read_bytes().split(b"\0")
+            self.assertIn(os.fsencode(staged[0]), cmdline)
+            self.assertNotIn(os.fsencode(staged[1]), cmdline)
+
+            def check_live():
+                self.assertEqual(self._snapshot(unit), identity)
+                self.assertTrue(all(p.is_file() for p in staged))
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                    client.settimeout(3)
+                    client.connect(str(sock))
+                    client.sendall(b"status\n")
+                    self.assertEqual(client.recv(64), b"OK\n")
+
+            check_live()
+            result = swap.swap_unit(
+                journal, unit, unit_dir=Path("/run/systemd/system"),
+                candidate=new,
+                expected_old_sha256=hashlib.sha256(old).hexdigest(),
+                inspect=self._snapshot,
+            )
+            self.assertEqual(result["status"], "applied")
+            self.assertFalse(result["live_no_drain_authorized"])
+            self.assertEqual(path.read_bytes(), new)
+            self.assertIn(str(staged[1]),
+                          self._run("systemctl", "cat", unit).stdout)
+            # The unit is configured for a new supervisor only on a future
+            # service start; the current old Python interpreter survives.
+            self.assertIn(os.fsencode(staged[0]),
+                          (Path("/proc") / str(identity["pid"]) /
+                           "cmdline").read_bytes().split(b"\0"))
+            check_live()
+
+            restored = swap.restore_unit(
+                journal, unit, unit_dir=Path("/run/systemd/system"),
+                inspect=self._snapshot, operator_reviewed=True,
+            )
+            self.assertEqual(restored["status"], "restored")
+            self.assertEqual(path.read_bytes(), old)
+            self.assertIn(str(staged[0]),
+                          self._run("systemctl", "cat", unit).stdout)
+            check_live()
+            self.assertEqual(
+                json.loads((journal / "dsm928-unit-swap.json").read_text())["status"],
+                "restored",
+            )
+            self.assertEqual(
+                hashlib.sha256(staged[0].read_bytes()).hexdigest(),
+                staged[0].name.removeprefix("console-supervisor-").removesuffix(".py"),
+            )
+            self.assertEqual(
+                hashlib.sha256(staged[1].read_bytes()).hexdigest(),
+                staged[1].name.removeprefix("console-supervisor-").removesuffix(".py"),
+            )
+        finally:
+            # Never leave this disposable pinned service/unit on the runner.
+            subprocess.run(
+                ("systemctl", "stop", unit), capture_output=True,
+                text=True, timeout=15, check=False,
+            )
+            if path.is_file() and not path.is_symlink():
+                path.unlink()
+            subprocess.run(
+                ("systemctl", "daemon-reload"), capture_output=True,
+                text=True, timeout=20, check=False,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
