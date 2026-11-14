@@ -479,3 +479,41 @@ reais de bancos, JVM Minecraft ou executável DayZ. A
 prova é de recuperação de uma fixture, não de atualização
 sem drenagem de servidores reais. Nenhum serviço de
 produção foi modificado. `live_no_drain_authorized=false`.
+
+
+## Integracao do dispatcher Controller/Agent no ensaio systemd isolado
+
+O E2E `test_integrated_disposable_updater_and_pinned_unit_swap_preserve_two_pids`
+executa agora, no mesmo ensaio do runner descartavel, o dispatcher real
+`agent_remote_http.dispatch_heartbeat`, autenticação real
+`AgentPairingRepository` e persistencia SQLite do Controller.
+A comunicacao utiliza um servidor HTTP fino em `127.0.0.1`, e o
+Agent utiliza `game_uptime_agent_wire.build_probe` e
+`verify_offer`, ambos reais, para validar o contrato e o nonce.
+
+Antes, durante e depois das operacoes sobre a fixture, o teste verifica
+heartbeats autenticados, inventario persistente do Agent no SQLite,
+`health_status=online` e `live_no_drain_authorized=false`.
+Apos a troca da unidade de supervisor de teste, o endpoint HTTP
+e o backend SQLite do Controller sao encerrados e reabertos no mesmo
+arquivo de banco. Novas credenciais autenticam corretamente,
+nonce antigo nao valida uma oferta nova e um segredo incorreto recebe
+HTTP 401 sem oferta de compatibilidade. O mesmo exercicio ocorre
+durante restauracao dos componentes em ambos os cenarios: sucesso e
+falha injetada apos aplicacao da fixture.
+
+Em paralelo, a unidade temporaria do supervisor Minecraft com filho
+`sleep` e a unidade temporaria DayZ UDP preservam PID/start stamp e
+continuam respondendo a sondagens. As funcoes de update de arquivo
+utilizam somente a fixture `/tmp`. O teste roda exclusivamente no
+CI opt-in com systemd e foi executado com resultado `ok`.
+
+**Limite importante:** reiniciar o listener temporario e reabrir o
+backend SQLite **nao e reiniciar o Controller DSM completo**, nem
+constitui migracao de banco real ou teste da rotina de heartbeat de
+um Agent daemon real. Da mesma forma, `sleep` e o stand-in UDP
+**nao sao os executaveis Minecraft/DayZ**. Nao existe
+`update.sh main()` no-drain integrado. A evidência é
+diagnostica e exclusivamente de laboratorio. O modo
+`live_no_drain_authorized=false` e o bloqueio de release
+permanecem obrigatorios.
