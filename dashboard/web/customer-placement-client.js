@@ -255,7 +255,7 @@
     const serverCount = regions.reduce((count, region) => count + region.servers.length, 0);
     setPlacementStatus(
       "available",
-      serverCount ? `${serverCount} servidor(es) elegível(is). Escolha um Agent na lista de localização.`
+      serverCount ? `${serverCount} ${serverCount === 1 ? "servidor elegível" : "servidores elegíveis"}. Escolha um Agent na lista de localização.`
         : "Regiões disponíveis. O Controller selecionará um Agent elegível."
     );
 
