@@ -10,7 +10,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
-from dayz_dlc_ownership import discover_dayz_dlc_paths, verified_dayz_dlc_paths
+from dayz_dlc_ownership import (
+    discover_dayz_dlc_paths, verified_dayz_dlc_paths,
+    verified_dayz_dlc_paths_from_steam_home,
+)
 from server_update_agent import _validate_dayz_staged_dlc, ServerUpdateError
 
 PRIVILEGED = ROOT / "agents/linux/privileged/materialize_instance.py"
@@ -114,6 +117,98 @@ def test_privileged_normalizer_corrects_existing_and_new(install):
     assert acl.call_args.args[0][:3] == ["setfacl", "-m", "u:capivara:rwX"]
     assert all((uid, gid, kw["follow_symlinks"]) == (995, 987, False) for _,uid,gid,kw in calls)
     assert not any("@mod" in path.parts or "custom" in path.parts for path,_,_,_ in calls)
+
+
+def test_ubuntu_steamcmd_home_cache_repairs_new_dayz_install(install):
+    """Ubuntu 26.04 SteamCMD uses ~/Steam/depotcache, not ~/.local/share/Steam."""
+    materializer = load_materializer()
+    materializer.STATE_DIR = install.parents[2]
+    steamhome = install.parents[3] / "steamhome"
+    legacy_cache = steamhome / ".local/share/Steam/depotcache"
+    ubuntu_cache = steamhome / "Steam/depotcache"
+    ubuntu_cache.mkdir(parents=True)
+    (legacy_cache / "223351_123456789.manifest").rename(
+        ubuntu_cache / "223351_123456789.manifest"
+    )
+    verified = verified_dayz_dlc_paths_from_steam_home(
+        install, steamhome, materializer.STATE_DIR
+    )
+    assert install / "nasdara/addons/nasdara.pbo" in verified
+    assert install / "sakhal/addons/sakhal.pbo" in verified
+
+    owner = types.SimpleNamespace(pw_uid=995)
+    group = types.SimpleNamespace(gr_gid=987)
+    steam_user = types.SimpleNamespace(pw_dir=str(steamhome), pw_name="capivara")
+    calls = []
+    spec = {"game_id": "dayz", "working_directory": str(install),
+            "user": "capivara-instance"}
+    with mock.patch.object(materializer, "_validate_runtime_user", return_value=owner), \
+         mock.patch.object(materializer.pwd, "getpwnam", return_value=steam_user), \
+         mock.patch.object(materializer.grp, "getgrnam", return_value=group), \
+         mock.patch.object(materializer.subprocess, "run", return_value=types.SimpleNamespace(returncode=0)) as acl, \
+         mock.patch.object(materializer.os, "chown", side_effect=lambda path, uid, gid, **kw: calls.append(Path(path))):
+        changed = materializer._normalize_dayz_dlc_ownership(spec)
+    assert changed == len(calls) >= 3
+    assert install / "nasdara/addons/nasdara.pbo" in calls
+    assert install / "sakhal/addons/sakhal.pbo" in calls
+    assert acl.call_count >= 1
+
+
+def test_verified_depots_union_both_supported_cache_layouts(install):
+    steamhome = install.parents[3] / "steamhome"
+    legacy = steamhome / ".local/share/Steam/depotcache"
+    ubuntu = steamhome / "Steam/depotcache"
+    ubuntu.mkdir(parents=True)
+    # Both layout directories may exist after an Agent upgrade.
+    (ubuntu / "223351_123456789.manifest").write_bytes(
+        (legacy / "223351_123456789.manifest").read_bytes()
+    )
+    paths = verified_dayz_dlc_paths_from_steam_home(
+        install, steamhome, install.parents[2]
+    )
+    assert len(paths) == len(set(paths))
+    assert install / "nasdara/addons/nasdara.pbo" in paths
+
+
+def test_missing_steam_depotcache_does_not_claim_successful_repair(install):
+    materializer = load_materializer()
+    materializer.STATE_DIR = install.parents[2]
+    steamhome = install.parents[3] / "steamhome"
+    (steamhome / ".local/share/Steam/depotcache/223351_123456789.manifest").unlink()
+    spec = {"game_id": "dayz", "working_directory": str(install),
+            "user": "capivara-instance"}
+    owner = types.SimpleNamespace(pw_uid=995)
+    group = types.SimpleNamespace(gr_gid=987)
+    steam_user = types.SimpleNamespace(pw_dir=str(steamhome), pw_name="capivara")
+    with mock.patch.object(materializer, "_validate_runtime_user", return_value=owner), \
+         mock.patch.object(materializer.pwd, "getpwnam", return_value=steam_user), \
+         mock.patch.object(materializer.grp, "getgrnam", return_value=group), \
+         mock.patch.object(materializer.os, "chown") as chown:
+        with pytest.raises(RuntimeError, match="without verified Steam depot manifests"):
+            materializer._normalize_dayz_dlc_ownership(spec)
+        chown.assert_not_called()
+
+
+def test_steamcmd_cache_symlink_is_rejected(install, tmp_path):
+    steamhome = install.parents[3] / "steamhome"
+    cache = steamhome / "Steam/depotcache"
+    cache.parent.mkdir(parents=True)
+    cache.symlink_to(tmp_path / "external-depotcache")
+    with pytest.raises(ValueError, match="unsafe DayZ Steam depotcache"):
+        verified_dayz_dlc_paths_from_steam_home(
+            install, steamhome, install.parents[2]
+        )
+
+
+def test_managed_steamcmd_cache_is_supported(install):
+    steamhome = install.parents[3] / "steamhome"
+    state = install.parents[2]
+    managed = state / "tools/steamcmd/depotcache"
+    managed.mkdir(parents=True)
+    original = steamhome / ".local/share/Steam/depotcache/223351_123456789.manifest"
+    original.rename(managed / original.name)
+    assert install / "future_dlc/addons/future_dlc.pbo" in \
+        verified_dayz_dlc_paths_from_steam_home(install, steamhome, state)
 
 
 def test_privileged_normalizer_ignores_non_dayz(install):
