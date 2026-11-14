@@ -548,3 +548,36 @@ Controller e sua cadeia de patching/middleware/instalacao,
 nem ao reinicio do processo Agent real. Nao autoriza qualquer
 acao de atualizacao em hosts de producao:
 `live_no_drain_authorized=false`, PR Draft, release bloqueado.
+
+
+## Heartbeat do Linux Agent real em dois processos Python isolados
+
+A suite `tests/update_game_uptime_agent_runtime_restart_test.py`
+inicia **dois interpretadores Python independentes** e importa o
+modulo real `agents/linux/runtime/agent.py`. Cada processo le a
+configuracao efetiva de teste por `CAPIVARA_AGENT_CONFIG` e executa
+`heartbeat()`, incluindo o transporte real `urllib` em `_post()`
+e a validacao `verify_no_drain_offer()`.
+
+O teste cria credenciais permanentes na base SQLite temporaria do
+Controller e comunica-se com a implementacao real
+`agent_remote_http.dispatch_heartbeat` via um HTTP loopback.
+Apos o primeiro heartbeat, reinicia o listener e reabre o banco:
+outro **processo Agent** usa as mesmas credenciais duraveis, confirma
+resposta `online` e `wire_compatible`, sem autorizar no-drain.
+Um terceiro caso exercita payload legado sem probe, e uma credencial
+invalida falha com 401. O diretorio de estado e a configuracao do
+Agent sao privados e temporarios; o teste impede que uma oferta de
+comando de jogo, update ou provisionamento produza efeitos reais.
+
+Para evitar inventariar host ou instancias do runner, apenas
+`_inventory()` e caminhos de ativacao de comandos foram bloqueados
+ou substituidos pela fixture. A funcao real `heartbeat()`, a
+importacao integral do modulo de runtime Linux Agent, seu cliente
+HTTP real e o verificador de compatibilidade **sao exercitados**.
+
+**Limites:** isto nao inicia `agent.run_forever()`, nao executa
+reconciliacao real, nao inicia o Controller completo, nao valida TLS
+de producao e nao migra banco de cliente. Os testes de jogos
+continuam com filho `sleep` e stand-in UDP em CI separado.
+`live_no_drain_authorized=false`; merge e release bloqueados.
