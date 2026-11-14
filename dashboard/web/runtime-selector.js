@@ -783,64 +783,68 @@
         return region.display_label || [region.name, region.country_code].filter(Boolean).join(" - ") || region.id || "Região";
     }
 
-    function ensureServerSelect() {
-        let select = $("runtime-server-select");
-        if (select) return select;
-        const help = $("runtime-region-help");
-        if (!help?.parentNode) return null;
-        const label = document.createElement("label");
-        label.id = "runtime-server-choice";
-        label.className = "runtime-field";
-        label.textContent = "Servidor específico (opcional)";
-        select = document.createElement("select");
-        select.id = "runtime-server-select";
-        label.appendChild(select);
-        help.parentNode.insertBefore(label, help);
-        select.addEventListener("change", () => {
-            state.serverRef = select.value || null;
-            if (state.serverRef) {
-                state.allowCrossRegion = false;
-                elements().regionFallback.checked = false;
-            }
-            updateSummary();
-        });
-        return select;
+    function countryFlag(code) {
+        const normalized = String(code || "").trim().toUpperCase();
+        return /^[A-Z]{2}$/.test(normalized)
+            ? [...normalized].map(letter => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("")
+            : "";
     }
 
-    function renderServerChoices() {
-        const select = ensureServerSelect();
-        if (!select) return;
-        const servers = Array.isArray(state.region?.servers) ? state.region.servers : [];
-        $("runtime-server-choice").hidden = !state.region || !servers.length || state.placementLoading;
-        select.replaceChildren(new Option("Automático (recomendado)", ""));
-        for (const server of servers) {
-            select.append(new Option(
-                server.label + (server.recommended ? " · recomendado" : ""), server.ref
-            ));
-        }
-        if (state.serverRef && servers.some(server => server.ref === state.serverRef)) {
-            select.value = state.serverRef;
-        } else {
-            state.serverRef = null;
-        }
-        select.disabled = state.placementLoading || !state.region;
+    function serverLocationLabel(region, server) {
+        const country = String(region.country_name || region.name || "").trim();
+        const countryName = country || region.country_code || "Localização";
+        const place = [countryFlag(region.country_code), countryName].filter(Boolean).join(" ");
+        const latency = Number.isFinite(Number(region.latency_ms))
+            && region.latency_ms !== null
+            ? `~${Math.round(Number(region.latency_ms))} ms`
+            : "latência indisponível";
+        // A recomendação é global, não uma indicação de melhor Agent em cada região.
+        const recommended = region.recommended === true && server.recommended === true;
+        return [place, latency, server.label, recommended ? "★ Recomendado" : ""]
+            .filter(Boolean).join(" · ");
     }
 
     function renderRegions() {
         const el = elements();
-        const placeholder = state.placementLoading ? "Verificando disponibilidade…" : "Selecione…";
+        const placeholder = state.placementLoading ? "Verificando servidores…" : "Selecione…";
         el.region.replaceChildren(new Option(placeholder, ""));
-        for (const region of state.regions) el.region.append(new Option(regionLabel(region), region.id));
+        const options = [];
+        for (const region of state.regions) {
+            for (const server of region.servers || []) {
+                options.push({
+                    region, server,
+                    label: serverLocationLabel(region, server),
+                    recommended: region.recommended === true && server.recommended === true,
+                });
+            }
+        }
+        options.sort((a, b) =>
+            Number(b.recommended) - Number(a.recommended)
+            || (Number(a.region.latency_ms ?? Infinity) - Number(b.region.latency_ms ?? Infinity))
+            || a.label.localeCompare(b.label, "pt-BR")
+        );
+        for (const item of options) {
+            el.region.append(new Option(item.label, item.server.ref));
+        }
+        // Backward-compatible fallback for older Controllers without server choices.
+        if (!options.length) {
+            for (const region of state.regions) {
+                el.region.append(new Option(regionLabel(region), region.id));
+            }
+        }
         el.region.disabled = state.placementLoading || state.regions.length === 0;
         el.regionHelp.textContent = state.placementLoading
-            ? "Verificando a compatibilidade do runtime com os servidores disponíveis."
-            : state.regions.length
-                ? "Escolha a região e, opcionalmente, um servidor elegível. No modo automático, o Controller selecionará o Agent adequado."
-                : "Nenhum servidor elegível está disponível para este runtime.";
-        if (state.region && state.regions.some((region) => region.id === state.region.id)) {
+            ? "Verificando a compatibilidade dos Agents com o jogo."
+            : options.length
+                ? "Cada opção identifica um Agent elegível. A latência exibida é uma estimativa geográfica, não um ping medido."
+                : state.regions.length
+                    ? "O Controller escolherá automaticamente o Agent disponível na região selecionada."
+                    : "Nenhum servidor elegível está disponível para este runtime.";
+        if (state.serverRef && options.some(item => item.server.ref === state.serverRef)) {
+            el.region.value = state.serverRef;
+        } else if (state.region && !options.length && state.regions.some(region => region.id === state.region.id)) {
             el.region.value = state.region.id;
         }
-        renderServerChoices();
     }
 
     function requiresMinecraftJavaEula(game, edition) {
@@ -869,7 +873,7 @@
         el.summaryBuild.textContent = state.build.label;
         const selectedServer = state.region?.servers?.find(server => server.ref === state.serverRef);
         el.summaryRegion.textContent = state.region
-            ? regionLabel(state.region) + (selectedServer ? " · " + selectedServer.label : "")
+            ? (selectedServer ? serverLocationLabel(state.region, selectedServer) : regionLabel(state.region))
             : "Automática";
         el.regionFallback.disabled = Boolean(selectedServer);
         el.summaryRegionFallback.textContent = state.allowCrossRegion ? "Sim" : "Não";
@@ -949,6 +953,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         state.allowCrossRegion = false;
         resetSelectionUI();
     }
@@ -959,9 +964,16 @@
         el.version?.addEventListener("change", () => selectVersion(el.version.value).catch((e) => showMessage(e.message)));
         el.build?.addEventListener("change", () => selectBuild(el.build.value));
         el.region?.addEventListener("change", () => {
-            state.region = state.regions.find((region) => region.id === el.region.value) || null;
-            state.serverRef = null;
-            renderServerChoices();
+            const selected = el.region.value;
+            const match = state.regions.flatMap(region =>
+                (region.servers || []).map(server => ({region, server}))
+            ).find(item => item.server.ref === selected);
+            state.region = match?.region || state.regions.find(region => region.id === selected) || null;
+            state.serverRef = match?.server.ref || null;
+            if (state.serverRef) {
+                state.allowCrossRegion = false;
+                el.regionFallback.checked = false;
+            }
             updateSummary();
         });
         el.regionFallback?.addEventListener("change", () => {
