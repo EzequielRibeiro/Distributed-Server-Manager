@@ -773,5 +773,88 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             "2.0.998-fixture")
 
 
+    def test_disposable_live_systemd_unit_file_swap_and_manual_restore_keep_pid(self):
+        """Actually replace a /run/systemd/system unit in a clean CI runner.
+
+        Only dsm928-e2e-* names with allowlisted /usr/bin/sleep commands
+        qualify. No Capivara instance unit or update.sh is touched.
+        """
+        import hashlib
+
+        loader = SourceFileLoader(
+            "dsm928_file_swap_disposable_only",
+            str(ROOT / "update-manager/game-uptime-systemd-swap.py"),
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        swap = importlib.util.module_from_spec(spec)
+        loader.exec_module(swap)
+        unit = f"{self.prefix}-file-swap.service"
+        path = Path("/run/systemd/system") / unit
+        marker = (
+            "# DSM928_DISPOSABLE_UNIT_V1\n"
+            f"# DSM928_UNIT={unit}\n"
+            "[Unit]\nDescription=DSM928 isolated sleep test\n"
+            "[Service]\nType=simple\n"
+        )
+        old = (marker + "ExecStart=/usr/bin/sleep 180\n").encode()
+        new = (marker + "ExecStart=/usr/bin/sleep 170\n").encode()
+        self.assertFalse(path.exists())
+        self.assertFalse(path.is_symlink())
+        journal = self.workspace / "real-systemd-unit-file-swap"
+        journal.mkdir(mode=0o700)
+        path.write_bytes(old)
+        path.chmod(0o644)
+
+        try:
+            self._run("systemctl", "daemon-reload")
+            self._run("systemctl", "start", unit)
+            self.units.append(unit)
+            for _ in range(50):
+                baseline = self._snapshot(unit)
+                if (baseline["state"] == "active" and baseline["pid"] > 1
+                        and baseline["started"] > 0):
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("disposable unit did not become active")
+
+            applied = swap.swap_unit(
+                journal, unit, unit_dir=Path("/run/systemd/system"),
+                candidate=new, expected_old_sha256=hashlib.sha256(old).hexdigest(),
+                inspect=self._snapshot,
+            )
+            self.assertEqual(applied["status"], "applied")
+            self.assertFalse(applied["live_no_drain_authorized"])
+            self.assertEqual(path.read_bytes(), new)
+            self.assertEqual(self._snapshot(unit), baseline)
+            self.assertEqual(
+                json.loads((journal / "dsm928-unit-swap.json").read_text())["status"],
+                "applied",
+            )
+            shown = self._run("systemctl", "cat", unit)
+            self.assertIn("ExecStart=/usr/bin/sleep 170", shown.stdout)
+            restored = swap.restore_unit(
+                journal, unit, unit_dir=Path("/run/systemd/system"),
+                inspect=self._snapshot, operator_reviewed=True,
+            )
+            self.assertEqual(restored["status"], "restored")
+            self.assertFalse(restored["live_no_drain_authorized"])
+            self.assertEqual(path.read_bytes(), old)
+            self.assertEqual(self._snapshot(unit), baseline)
+            with self.assertRaises(swap.DisposableSwapError):
+                swap.restore_unit(
+                    journal, unit, unit_dir=Path("/run/systemd/system"),
+                    inspect=self._snapshot, operator_reviewed=True,
+                )
+        finally:
+            # Mandatory teardown of *this exact* disposable service only.
+            subprocess.run(("systemctl", "stop", unit), timeout=15,
+                           capture_output=True, text=True, check=False)
+            if path.is_file() and not path.is_symlink():
+                path.unlink()
+            subprocess.run(("systemctl", "daemon-reload"), timeout=20,
+                           capture_output=True, text=True, check=False)
+
+
 if __name__ == "__main__":
     unittest.main()
