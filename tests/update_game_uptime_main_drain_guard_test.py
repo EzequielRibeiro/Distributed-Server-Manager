@@ -28,7 +28,12 @@ class MainUpdaterDrainSafetyTests(unittest.TestCase):
             "create_staging",
             "apply_update",
         ]
-        offsets = [body.index(step) for step in ordered]
+        offsets = []
+        cursor = 0
+        for step in ordered:
+            position = body.index(step, cursor)
+            offsets.append(position)
+            cursor = position + len(step)
         self.assertEqual(offsets, sorted(offsets))
         self.assertNotIn("live_no_drain_authorized=true", body)
 
