@@ -809,7 +809,6 @@
         return [
             [countryFlag(code), countryName].filter(Boolean).join(" "),
             stateName,
-            server.label,
             latencyText,
             recommended ? "(recomendado)" : "",
         ].filter(Boolean).join(" · ");
@@ -848,7 +847,7 @@
         el.regionHelp.textContent = state.placementLoading
             ? "Verificando a compatibilidade dos Agents com o jogo."
             : options.length
-                ? "Cada linha identifica um Agent elegível, país, estado e ping estimado. Não é uma medição real de rede."
+                ? "Cada opção indica país, estado e ping estimado do servidor. Não é uma medição real de rede."
                 : state.regions.length
                     ? "O Controller escolherá automaticamente o Agent disponível na região selecionada."
                     : "Nenhum servidor elegível está disponível para este runtime.";
