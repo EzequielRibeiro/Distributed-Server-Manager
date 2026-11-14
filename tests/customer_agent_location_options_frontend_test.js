@@ -77,10 +77,12 @@ const choices = select.options;
 assert.equal(choices.length, 4, "three eligible Agents must have three separate select options");
 assert.equal(choices[0].value, "");
 assert.equal(new Set(choices.slice(1).map(x => x.value)).size, 3);
-assert.match(choices[1].text, /🇧🇷 Brasil.*São Paulo.*Agent Horizon.*Ping estimado ~10 ms.*\(recomendado\)/);
-assert.match(choices[2].text, /🇧🇷 Brasil.*São Paulo.*Agent Secundário.*Ping estimado ~22 ms/);
-assert.match(choices[3].text, /🇺🇸 Estados Unidos.*Massachusetts.*Vps.*Ping estimado ~103 ms/);
+assert.match(choices[1].text, /🇧🇷 Brasil.*São Paulo.*Ping estimado ~10 ms.*\(recomendado\)/);
+assert.match(choices[2].text, /🇧🇷 Brasil.*São Paulo.*Ping estimado ~22 ms/);
+assert.match(choices[3].text, /🇺🇸 Estados Unidos.*Massachusetts.*Ping estimado ~103 ms/);
 assert.equal(choices.filter(item => item.text.includes("(recomendado)")).length, 1);
+assert.ok(choices.slice(1).every(item => !/(Agent Horizon|Agent Secundário|Vps)/.test(item.text)),
+  "Agent administrative names must never appear in customer location labels");
 assert.doesNotMatch(choices[3].text, /recomendado/);
 selector.installEvents();
 select.value = usRef;
