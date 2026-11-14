@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Materialize Capivara-owned systemd units from validated local runtime specs."""
 from __future__ import annotations
-import hashlib, os, re, stat, subprocess
+import hashlib, os, pwd, re, stat, subprocess
 from pathlib import Path
 from typing import Any,Callable
 from adapters.systemd import unit_for_instance
@@ -72,7 +72,36 @@ def _stop_signal(spec):
  signal=str(spec.get("stop_signal") or "SIGTERM").strip().upper()
  if signal not in {"SIGTERM","SIGINT"}:raise MaterializerError("unsupported systemd stop signal")
  return signal
-def _validated_preview_supervisor_path(pin):
+def _preview_readable_by_service_user(path, user):
+ """Check POSIX owner/group/mode for every ancestor and the pinned file.
+
+ This is a static preview, not a promise that Linux namespaces/ACLs will
+ behave identically; actual non-root systemd startup must still be exercised.
+ """
+ if not isinstance(user,str) or not user:
+  raise MaterializerError("invalid pinned supervisor service user")
+ try:
+  identity=pwd.getpwnam(user)
+  groups=set(os.getgrouplist(user,identity.pw_gid))
+ except (KeyError,OSError,ValueError) as exc:
+  raise MaterializerError("unknown pinned supervisor service user") from exc
+ def allowed(info, permission):
+  if identity.pw_uid==0:
+   return True
+  shift=6 if info.st_uid==identity.pw_uid else 3 if info.st_gid in groups else 0
+  return bool(info.st_mode & (permission<<shift))
+ for directory in (path.parent,*path.parent.parents):
+  try:
+   info=directory.lstat()
+  except OSError as exc:
+   raise MaterializerError("unreadable pinned supervisor ancestor") from exc
+  if not stat.S_ISDIR(info.st_mode) or not allowed(info,1):
+   raise MaterializerError("pinned supervisor not traversable by service user")
+ if not allowed(path.stat(),4):
+  raise MaterializerError("pinned supervisor not readable by service user")
+
+
+def _validated_preview_supervisor_path(pin, *, service_user):
  """Validate a staged content-addressed path solely for offline unit rendering.
 
  Never accept this value from an instance spec or daemon config. A caller must
@@ -108,6 +137,7 @@ def _validated_preview_supervisor_path(pin):
    raise MaterializerError("pinned supervisor digest mismatch")
  except OSError as exc:
   raise MaterializerError("unable to inspect pinned supervisor") from exc
+ _preview_readable_by_service_user(path,service_user)
  return path
 
 
@@ -119,7 +149,7 @@ def render_unit(spec, *, pinned_supervisor_preview=None):
  if pinned_supervisor_preview is not None and not native_console:
   raise MaterializerError("supervisor preview is only for Minecraft Java")
  if native_console:
-  supervisor=(_validated_preview_supervisor_path(pinned_supervisor_preview)
+  supervisor=(_validated_preview_supervisor_path(pinned_supervisor_preview, service_user=str(spec["user"]))
               if pinned_supervisor_preview is not None else
               Path(__file__).resolve().parents[1]/"console_supervisor.py")
   console_runtime=f"capivara-instance-console-{instance_id}"
