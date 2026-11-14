@@ -138,17 +138,34 @@ ensure_agent_account(){
 }
 
 install_runtime_dependencies(){
-  local machine
+  local machine steam_compatible=0
   machine="$(uname -m)"
-  [[ "${machine}" == "x86_64" || "${machine}" == "amd64" ]] || { log "Arquitetura ${machine}: dependências SteamCMD de 32 bits não são aplicáveis."; return 0; }
+  if [[ "${machine}" == "x86_64" || "${machine}" == "amd64" ]]; then
+    steam_compatible=1
+  else
+    log "Arquitetura ${machine}: dependências SteamCMD de 32 bits não são aplicáveis."
+  fi
   if command -v apt-get >/dev/null 2>&1; then
-    log "Validando dependências do Agent e compatibilidade SteamCMD..."
+    local -a packages=(ca-certificates acl)
+    if (( steam_compatible )); then packages+=(libc6-i386 lib32gcc-s1 lib32stdc++6); fi
+    log "Validando dependências ACL do Agent e compatibilidade SteamCMD..."
     DEBIAN_FRONTEND=noninteractive apt-get update
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates libc6-i386 lib32gcc-s1 lib32stdc++6
-  elif command -v dnf >/dev/null 2>&1; then dnf install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
-  elif command -v yum >/dev/null 2>&1; then yum install -y ca-certificates glibc.i686 libgcc.i686 libstdc++.i686
-  elif command -v zypper >/dev/null 2>&1; then zypper --non-interactive install ca-certificates glibc-32bit libgcc_s1-32bit libstdc++6-32bit
-  else log "Gerenciador de pacotes não reconhecido; dependências opcionais serão reportadas pelo diagnóstico do Agent."; fi
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
+  elif command -v dnf >/dev/null 2>&1; then
+    local -a packages=(ca-certificates acl)
+    if (( steam_compatible )); then packages+=(glibc.i686 libgcc.i686 libstdc++.i686); fi
+    dnf install -y "${packages[@]}"
+  elif command -v yum >/dev/null 2>&1; then
+    local -a packages=(ca-certificates acl)
+    if (( steam_compatible )); then packages+=(glibc.i686 libgcc.i686 libstdc++.i686); fi
+    yum install -y "${packages[@]}"
+  elif command -v zypper >/dev/null 2>&1; then
+    local -a packages=(ca-certificates acl)
+    if (( steam_compatible )); then packages+=(glibc-32bit libgcc_s1-32bit libstdc++6-32bit); fi
+    zypper --non-interactive install "${packages[@]}"
+  else
+    log "Gerenciador de pacotes não reconhecido; verificando dependências existentes."
+  fi
 }
 install_controller_ca(){
   [[ -n "${CONTROLLER_CA_FILE}" ]] || return 0
@@ -169,7 +186,7 @@ install_controller_ca(){
 }
 install_runtime_dependencies
 install_controller_ca
-for cmd in python3 install systemctl getent groupadd useradd id; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
+for cmd in python3 install systemctl getent groupadd useradd id setfacl; do command -v "$cmd" >/dev/null || fail "comando necessário ausente: $cmd"; done
 [[ -n "${PACKAGE_DIR}" ]] || PACKAGE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; PACKAGE_DIR="$(cd "${PACKAGE_DIR}" && pwd)"
 
 mapfile -t COMMON_FILES < <(
