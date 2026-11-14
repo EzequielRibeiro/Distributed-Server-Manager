@@ -89,8 +89,8 @@ assert.match(
 );
 assert.match(selector, /server_ref: state\.serverRef \|\| null/,
   "selected server must be passed to backend placement");
-assert.match(selector, /renderServerChoices\(\)/,
-  "region selector must offer eligible servers separately");
+assert.match(selector, /serverLocationLabel\(region, server\)/,
+  "region selector must show eligible Agents in location");
 
 const placementClientIndex = html.search(/\/customer-placement-client\.js\?v=\d+/);
 const runtimeSelectorIndex = html.search(/\/runtime-selector\.js\?v=\d+/);
