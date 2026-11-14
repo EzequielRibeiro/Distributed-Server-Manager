@@ -244,3 +244,34 @@ provisão permanente do diretório versionado, a compatibilidade de
 usuários/grupos e a manutenção das versões antigas até o último PID
 encerrar precisam ser verificadas antes de sequer considerar ativação.
 O update de produção ainda drena jogos.
+
+
+## Identidade Unix e leitura do supervisor no systemd descartavel
+
+A pré-visualização `render_unit(spec, pinned_supervisor_preview=...)`
+valida tambem o usuario systemd declarado no `spec["user"]`.
+O teste estático exige que a conta exista, que **cada diretório ancestral**
+possa ser atravessado e que o arquivo SHA-256 seja legivel pela propria
+identidade Unix, considerando UID, grupo primario e grupos suplementares.
+O teste falha fechado para usuário inexistente, `/tmp` temporário com
+permissão 0700 sem acesso por essa conta, arquivo não legível, symlink,
+arquivo alterado ou diretorio inseguro.
+
+O E2E `test_pinned_minecraft_supervisor_runs_as_unprivileged_systemd_user`
+sobe uma unidade `dsm928-e2e-*.service` temporária via `systemd-run`
+com `User=nobody` e `NoNewPrivileges=yes`, verificada em
+`/proc/<MainPID>/status`. O supervisor Python versionado real executa
+um filho **`sleep`**, com socket Unix próprio restrito ao usuário
+descartável. Antes e depois da aplicação e rollback de arquivos
+fictícios em `/tmp`, o teste verifica PID, timestamp e resposta do
+socket. O teste somente roda em runner Linux com root, opt-in e guarda
+que recusa instalação DSM ou unidades de jogo vivas.
+
+**Limites:** validação de bits POSIX não substitui checagens de ACL,
+SELinux/AppArmor, mount namespaces ou acessibilidade do diretório
+persistente de destino. O teste não utiliza o usuário real de clientes,
+nem substitui a unidade `capivara-instance-*.service`, nem executa uma
+JVM Minecraft. Ainda são necessárias provisão permanente root-owned,
+retencao de versoes antigas, rollback do pacote completo e validação
+operacional no updater. `live_no_drain_authorized=false`; release
+permanece bloqueado.
