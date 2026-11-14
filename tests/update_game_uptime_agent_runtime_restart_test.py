@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The actual Linux Agent imports/configuration/heartbeat/urllib protocol run.
 _CHILD = r'''
 import json
+from contextlib import ExitStack
 from pathlib import Path
 import sys
 from unittest.mock import patch
@@ -74,13 +75,17 @@ actions = (
     "apply_backup_commands", "apply_broadcast_commands",
     "apply_configuration_commands",
 )
-with patch.object(linux_agent, "_inventory", return_value=payload):
-    with patch.object(linux_agent, "acknowledge_runtime_events",
-                      side_effect=lambda _state, ids: None if ids == [] else forbid()):
-        with patch.object(linux_agent, "stage_update_request", side_effect=forbid):
-            with patch.object(linux_agent, "stage_provisioning_command", side_effect=forbid):
-                with patch.object(linux_agent, "handle_instance_command", side_effect=forbid):
-                    result = linux_agent.heartbeat(config)
+with ExitStack() as stack:
+    stack.enter_context(patch.object(linux_agent, "_inventory", return_value=payload))
+    for action in actions:
+        stack.enter_context(patch.object(linux_agent, action, side_effect=forbid))
+    # The real Controller may acknowledge an empty batch of telemetry events.
+    # Only that no-op is allowed; any nonempty ACK is unsafe in this fixture.
+    stack.enter_context(patch.object(
+        linux_agent, "acknowledge_runtime_events",
+        side_effect=lambda _state, ids: None if ids == [] else forbid(),
+    ))
+    result = linux_agent.heartbeat(config)
 
 diagnostic = result.get("no_drain_wire_diagnostic")
 if sys.argv[2] == "diagnostic":
