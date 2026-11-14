@@ -626,3 +626,26 @@ operacional em produção. Não há caminho de autorização no updater real.
 Ainda faltam negociação autenticada do release alvo, evidência de pinagem
 do processo real, transação integrada no `update.sh main()`, rollback de
 banco e homologação de continuidade Minecraft/DayZ em host isolado.
+
+## Ensaio com evidências do heartbeat e pinagem (14/11/2026)
+
+O módulo `update-manager/game-uptime-evidence-rehearsal.py` conecta
+o protocolo existente do heartbeat (`build_probe`,
+`assess_authenticated_probe`, `verify_offer`) ao verificador read-only
+do SHA-256 e do `ExecStart` de um supervisor pinado. O ensaio compara
+o PID e o start stamp declarados para a unidade simulada com a
+observação do supervisor **antes e depois** da transação composta;
+a gravação de journal e o preparo dos arquivos só ocorrem após a
+verificação inicial.
+
+O teste rejeita replay de nonce, identidade divergente, oferta com
+campos/ações inesperadas, unidade ou Agent fora do padrão descartável,
+caminho de supervisor fora do workspace privado, SHA adulterado e
+identidade do processo alterada.
+
+**Evidência ainda sintética:** a identidade autenticada é fornecida
+pela fixture, assim como a inspeção systemd. Nenhuma credencial real
+é utilizada, nenhum Agent/Controller real foi atualizado e não se
+estabeleceu prova autenticada de pinagem em produção. A saída é
+sempre `live_no_drain_authorized=false`. O código não é chamado
+por `update.sh main()` e não altera o gate de release.
