@@ -90,6 +90,7 @@ AUTO_YES=0
 ALLOW_SAME_VERSION=0
 ALLOW_DOWNGRADE=0
 NO_BACKUP=0
+NO_DRAIN_REPORT=0
 NEW_SRC=""
 BACKUP_FILE=""
 BACKUP_PART=""
@@ -129,6 +130,7 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
+  --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
 }
@@ -152,6 +154,9 @@ parse_arguments() {
                 ;;
             --no-backup)
                 NO_BACKUP=1
+                ;;
+            --no-drain-report)
+                NO_DRAIN_REPORT=1
                 ;;
             -h|--help)
                 print_usage
@@ -1764,6 +1769,22 @@ main() {
     echo "Iniciando atualização DSM..."
     echo "Starting DSM update..."
     parse_arguments "$@"
+    # This diagnostic must execute BEFORE root, logging, backup, daemon or
+    # filesystem changes. Always exit 2: a report is never update approval.
+    if [[ "${NO_DRAIN_REPORT}" -eq 1 ]]; then
+        local DIAGNOSTIC="${SCRIPT_DIR}/update-manager/game-uptime-preflight.py"
+        if [[ -z "${NEW_SRC}" || ! -d "${NEW_SRC}" || -L "${NEW_SRC}"
+              || ! -f "${DIAGNOSTIC}" || -L "${DIAGNOSTIC}" ]]; then
+            echo "No-drain report requires a safe target directory and trusted installed diagnostic." >&2
+            exit 2
+        fi
+        if ! PYTHONDONTWRITEBYTECODE=1 python3 "${DIAGNOSTIC}" "${INSTALL_DIR}" "${NEW_SRC}"; then
+            echo "No-drain diagnostic could not establish a safe inventory." >&2
+            exit 2
+        fi
+        echo "Diagnostic only: --no-drain remains blocked; update was not started." >&2
+        exit 2
+    fi
     # Ambiente | Environment
     require_root
     # O pacote instalado pode ser substituído durante esta execução. Nunca

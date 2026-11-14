@@ -581,3 +581,22 @@ reconciliacao real, nao inicia o Controller completo, nao valida TLS
 de producao e nao migra banco de cliente. Os testes de jogos
 continuam com filho `sleep` e stand-in UDP em CI separado.
 `live_no_drain_authorized=false`; merge e release bloqueados.
+
+
+## Diagnóstico read-only a partir do updater (14/11/2026)
+
+A opção `--no-drain-report /caminho/release-candidata` em `update.sh`
+executa apenas o `update-manager/game-uptime-preflight.py` **do checkout
+do updater** (nunca do pacote candidato), antes de exigir root, gerar logs,
+criar backups, interromper serviços ou substituir arquivos. Ela lê inventário
+systemd e compara árvores de arquivos, retornando JSON com a classificação,
+impacto, cobertura e motivos de bloqueio. O código de saída **2 é
+intencional**, mesmo para um relatório gerado com sucesso.
+
+Não é uma etapa de homologação real nem autoriza no-drain: a opção
+`--no-drain` segue rejeitada e `live_no_drain_authorized=false`.
+O relatório CLI padrão não obtém um contrato Controller/Agent autenticado
+nem evidencia automaticamente supervisor Minecraft versionado; essas
+verificações continuam bloqueantes para um upgrade sem drenagem.
+A análise pode envolver leitura extensa dos arquivos da instalação, mas
+não precisa e não deve executar o atualizador.
