@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import tempfile
 from typing import Callable, Mapping
 
@@ -30,6 +31,13 @@ def _workspace(parent: Path) -> Path:
     temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
     if resolved == temp_root or temp_root not in resolved.parents:
         raise TransactionSafetyError("disposable transaction must run inside a temporary sandbox")
+    # The fsynced rollback journal contains process identities and is trusted
+    # for manual crash recovery. Never accept group/other writable or readable
+    # journal directories, even when they are beneath /tmp. The disposable
+    # operator must own the directory, so other host users cannot replace it.
+    identity = resolved.stat()
+    if identity.st_uid != os.geteuid() or identity.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise TransactionSafetyError("disposable journal directory must be private and owned")
     return resolved
 
 
