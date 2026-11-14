@@ -151,6 +151,70 @@ printf 'REJECTED\n'
                 self.assertEqual(calls.read_text().splitlines(), expected_calls)
                 self.assertIn("[ERROR]", result.stderr)
 
+    def test_recovery_attempts_every_originally_active_service_and_game(self):
+        # A single failed unit must not prevent recovery of subsequent units.
+        cases = {
+            "service_first_failure": (
+                ["daemon-reload", "start dsm-dashboard.service",
+                 "start dsm-dashboard-worker.service"], 1),
+            "game_first_failure": (
+                ["daemon-reload", "start capivara-instance-test-dayz-001.service",
+                 "start capivara-instance-test-minecraft-002.service",
+                 "wait capivara-instance-test-minecraft-002.service"], 1),
+            "game_first_readiness_failure": (
+                ["daemon-reload", "start capivara-instance-test-dayz-001.service",
+                 "wait capivara-instance-test-dayz-001.service",
+                 "start capivara-instance-test-minecraft-002.service",
+                 "wait capivara-instance-test-minecraft-002.service"], 1),
+            "service_success": (
+                ["daemon-reload", "start dsm-dashboard.service",
+                 "start dsm-dashboard-worker.service"], 0),
+            "game_success": (
+                ["daemon-reload", "start capivara-instance-test-dayz-001.service",
+                 "wait capivara-instance-test-dayz-001.service",
+                 "start capivara-instance-test-minecraft-002.service",
+                 "wait capivara-instance-test-minecraft-002.service"], 0),
+        }
+        script = r"""
+source "$1"
+trap - ERR
+CASE="$2"
+CALLS="$3"
+SYSTEMD_ENABLED=1
+RESTORE_SERVICES=(dsm-dashboard.service dsm-dashboard-worker.service)
+ACTIVE_GAME_UNITS=(capivara-instance-test-dayz-001.service capivara-instance-test-minecraft-002.service)
+systemctl() {
+    printf '%s\n' "$*" >> "$CALLS"
+    if [[ "$CASE" == service_first_failure && "$*" == "start dsm-dashboard.service" ]]; then return 30; fi
+    if [[ "$CASE" == game_first_failure && "$*" == "start capivara-instance-test-dayz-001.service" ]]; then return 40; fi
+    return 0
+}
+wait_for_game_instance_active() {
+    printf 'wait %s\n' "$1" >> "$CALLS"
+    if [[ "$CASE" == game_first_readiness_failure && "$1" == capivara-instance-test-dayz-001.service ]]; then return 50; fi
+    return 0
+}
+RESULT=0
+if [[ "$CASE" == service_* ]]; then
+    restart_services || RESULT=$?
+else
+    restart_game_instances || RESULT=$?
+fi
+printf 'RECOVERY_RESULT=%s\n' "$RESULT"
+"""
+        for case, (expected_calls, expected_result) in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="dsm928-multi-recovery-") as temp:
+                record = Path(temp) / "calls"
+                completed = subprocess.run(
+                    ["bash", "-c", script, "test", str(ROOT / "update.sh"), case, str(record)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                self.assertEqual(record.read_text().splitlines(), expected_calls)
+                self.assertIn(f"RECOVERY_RESULT={expected_result}", completed.stdout)
+                if expected_result:
+                    self.assertIn("[ERROR]", completed.stderr)
+
     def test_successful_rollback_does_not_report_critical_error(self):
         with tempfile.TemporaryDirectory(prefix="dsm-rollback-test-") as temp:
             backup = Path(temp) / "pre-update.tar.gz"

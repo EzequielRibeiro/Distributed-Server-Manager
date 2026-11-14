@@ -871,12 +871,13 @@ stop_game_instances()
 restart_game_instances()
 {
     local UNIT
+    local RECOVERY_FAILED=0
 
     [[ "${#ACTIVE_GAME_UNITS[@]}" -gt 0 ]] || return 0
 
     echo
     echo "Restaurando instâncias que estavam ativas..."
-    echo "Restoring game instances that were active..."
+    echo "Restoring game instances..."
 
     systemctl daemon-reload || {
         echo "[ERROR] Game recovery daemon-reload failed." >&2
@@ -886,18 +887,23 @@ restart_game_instances()
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"
     do
         echo "Iniciando instância | Starting instance: ${UNIT}"
-        systemctl start "${UNIT}" || {
+        if ! systemctl start "${UNIT}"; then
             echo "[ERROR] Game recovery could not start ${UNIT}." >&2
-            return 1
-        }
-        wait_for_game_instance_active "${UNIT}" || {
+            RECOVERY_FAILED=1
+            continue
+        fi
+        if ! wait_for_game_instance_active "${UNIT}"; then
             echo "[ERROR] Game recovery readiness failed for ${UNIT}." >&2
-            return 1
-        }
+            RECOVERY_FAILED=1
+            continue
+        fi
         echo "[OK] ${UNIT} restaurado | restored."
     done
+    if [[ "${RECOVERY_FAILED}" -ne 0 ]]; then
+        echo "[ERROR] One or more previously active games could not be recovered." >&2
+        return 1
+    fi
 }
-
 
 # =============================================================
 # Parar serviços DSM | Stop DSM services
@@ -1361,6 +1367,7 @@ reconcile_hybrid_runtime_substrate() {
 # =============================================================
 restart_services() {
     local SERVICE_NAME
+    local RECOVERY_FAILED=0
 
     echo
     echo "Gerenciando serviços DSM..."
@@ -1390,12 +1397,17 @@ restart_services() {
     do
         echo
         echo "Iniciando serviço | Starting service: ${SERVICE_NAME}"
-        systemctl start "${SERVICE_NAME}" || {
+        if ! systemctl start "${SERVICE_NAME}"; then
             echo "[ERROR] Falha ao iniciar | Failed to start ${SERVICE_NAME}." >&2
-            return 1
-        }
+            RECOVERY_FAILED=1
+            continue
+        fi
         echo "[OK] ${SERVICE_NAME} iniciado | started."
     done
+    if [[ "${RECOVERY_FAILED}" -ne 0 ]]; then
+        echo "[ERROR] One or more previously active DSM services could not be recovered." >&2
+        return 1
+    fi
     echo
     echo "Processo de inicialização concluído."
     echo "Startup process completed."
