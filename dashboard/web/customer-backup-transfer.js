@@ -12,7 +12,27 @@ function statusLabel(value){return ({pending:"Pendente",running:"Em execução",
 const RECENT_OPERATION_WINDOW_MS=72*60*60*1000;
 function operationTimestamp(job){for(const raw of [job?.completed_at,job?.finished_at,job?.created_at,job?.updated_at,job?.started_at]){if(!raw)continue;const value=new Date(raw).getTime();if(Number.isFinite(value))return value}return null}
 function recentOperationalJobs(jobs,now=Date.now()){return (jobs||[]).filter(job=>{const status=String(job?.status||"").toLowerCase();if(status==="pending"||status==="running")return true;if(status!=="failed")return false;const timestamp=operationTimestamp(job);return timestamp!==null&&timestamp<=now&&now-timestamp<=RECENT_OPERATION_WINDOW_MS})}
-async function transferStatus(id,timeout=180000){const started=Date.now();while(Date.now()-started<timeout){const d=await json(`/api/customer/artifacts/status?transfer_id=${encodeURIComponent(id)}`);renderStatus(d);if(d.status==="completed")return d;if(["failed","cancelled","expired"].includes(d.status))throw new Error(d.last_error||`Transferência ${d.status}`);await wait(1000)}throw new Error("A transferência continua em processamento. Tente novamente em alguns instantes.")}
+function renderAgentDeliveryProgress(transfer){
+ if(transfer.direction!=="controller_to_agent"||transfer.purpose!=="backup_import")return;
+ const status=String(transfer.status||"").toLowerCase();
+ if(status==="queued")return uploadPhase("Backup recebido pelo Controller. Aguardando o Agent iniciar o download…");
+ if(status==="delivered")return uploadPhase("Tarefa enviada ao Agent. Aguardando início da transferência…");
+ if(status!=="transferring")return;
+ const wrap=document.getElementById("backup-transfer-progress-wrap");
+ const bar=document.getElementById("backup-transfer-progress");
+ const label=document.getElementById("backup-transfer-progress-label");
+ if(!wrap||!bar||!label)return;
+ const total=Number(transfer.size_bytes)||0;
+ const sent=Math.max(0,Math.min(total,Number(transfer.transferred_bytes)||0));
+ wrap.hidden=false;
+ if(!total){bar.removeAttribute("value");label.textContent="Controller → Agent: transferindo. Tamanho ainda indisponível.";return}
+ const percent=Math.floor(sent*100/total);
+ bar.value=percent;
+ label.textContent=sent>=total
+  ?"Controller → Agent: 100% transmitido pelo Controller. Aguardando validação do Agent…"
+  :"Controller → Agent: "+percent+"% · "+fmt(sent)+" / "+fmt(total)+" enviados pelo Controller";
+}
+async function transferStatus(id,timeout=180000){const started=Date.now();while(Date.now()-started<timeout){const d=await json(`/api/customer/artifacts/status?transfer_id=${encodeURIComponent(id)}`);renderStatus(d);renderAgentDeliveryProgress(d);if(d.status==="completed")return d;if(["failed","cancelled","expired"].includes(d.status))throw new Error(d.last_error||`Transferência ${d.status}`);await wait(1000)}throw new Error("A transferência continua em processamento. Tente novamente em alguns instantes.")}
 async function backupJobs(){return (await json(`${api}/backups?instance_id=${encodeURIComponent(iid)}`)).jobs||[]}
 function availableBackupJobs(jobs){const deleted=new Set((jobs||[]).filter(x=>x.action==="delete"&&x.status==="completed"&&x.backup_id).map(x=>String(x.backup_id)));const seen=new Set();return (jobs||[]).filter(x=>x.action==="create"&&x.status==="completed"&&x.backup_id&&!deleted.has(String(x.backup_id))).filter(x=>{const id=String(x.backup_id);if(seen.has(id))return false;seen.add(id);return true})}
 async function waitBackupJob(commandId,timeout=300000){const started=Date.now();while(Date.now()-started<timeout){const jobs=await backupJobs(),job=jobs.find(x=>String(x.command_id||x.job_id||"")===String(commandId||""));if(job){renderStatus({filename:`Backup ${job.backup_id||""}`.trim(),status:`${job.action||"operação"}: ${statusLabel(job.status)}`,size_bytes:job.size_bytes});if(["completed","failed"].includes(String(job.status||"").toLowerCase())){await renderBackupList(jobs);if(job.status==="failed")throw new Error(job.last_error||"A operação de backup falhou.");return job}}await wait(1000)}throw new Error("A operação continua em processamento. Consulte novamente em alguns instantes.")}

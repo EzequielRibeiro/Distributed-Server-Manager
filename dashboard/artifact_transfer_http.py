@@ -35,14 +35,24 @@ def install_artifact_transfer_http(legacy,authenticate):
   length=int(value)
   if length<0 or length>64*1024*1024*1024:raise ValueError("artifact exceeds 64 GiB transfer limit")
   return length
- def send_binary(self,path,item):
+ def send_binary(self,path,item,*,agent_id=None):
   size=path.stat().st_size;name=Path(str(item.get("filename") or path.name)).name
   self.send_response(200);self.send_header("Content-Type","application/octet-stream");self.send_header("Content-Length",str(size));self.send_header("Content-Disposition",f'attachment; filename="{name.replace(chr(34),"")}"');self.send_header("Cache-Control","no-store");self.end_headers()
+  streamed=0;last_report=0;progress_available=agent_id is not None
   with path.open("rb") as handle:
    while True:
     chunk=handle.read(1024*1024)
     if not chunk:break
-    self.wfile.write(chunk)
+    self.wfile.write(chunk);streamed+=len(chunk)
+    # Report only after writing bytes to the HTTP response. This is
+    # Controller-side transmission telemetry, not Agent verification.
+    if progress_available and (streamed-last_report>=4*1024*1024 or streamed==size):
+     try:repo().record_controller_delivery_progress(item["transfer_id"],agent_id,streamed)
+     except Exception as exc:
+      # Telemetry must not corrupt an otherwise valid backup download.
+      self.log_error("artifact progress unavailable: %s",str(exc)[:180])
+      progress_available=False
+     last_report=streamed
  def customer_transfer(user,transfer_id,permission):
   item=repo().get(transfer_id);iid=str(item.get("instance_id") or "")
   if not iid:raise PermissionError("transfer is not attached to an instance")
@@ -56,7 +66,8 @@ def install_artifact_transfer_http(legacy,authenticate):
    try:
     artifact,item=repo().controller_artifact(one(parsed,"transfer_id"))
     if str(item.get("agent_id"))!=str(identity.get("agent_id")) or item.get("direction")!="controller_to_agent":raise PermissionError("artifact transfer ownership mismatch")
-    return send_binary(self,artifact,item)
+    repo().mark_transferring(item["transfer_id"])
+    return send_binary(self,artifact,item,agent_id=identity["agent_id"])
    except PermissionError:return send(self,403,{"error":"forbidden"})
    except (KeyError,FileNotFoundError,ValueError):return send(self,404,{"error":"artifact_not_ready"})
   if path not in {CUSTOMER_STATUS,CUSTOMER_DOWNLOAD}:return previous_get(self)
