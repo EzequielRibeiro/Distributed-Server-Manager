@@ -46,6 +46,7 @@ from instance_runtime import get_instance as get_registered_instance
 from instance_telemetry import collect_instance_telemetry
 from network_inventory import collect_network_inventory
 from public_ip import observe_public_ipv4
+from host_geolocation import observe_host_geolocation
 from provisioning_client import clear_provisioning_result, read_provisioning_result, stage_provisioning_command
 from resource_profile_client import apply as apply_resource_profile
 from resource_profile_client import clear_result as clear_resource_result, read_result as read_resource_result
@@ -152,7 +153,10 @@ def _inventory(config):
     disk=shutil.disk_usage("/");version_path=Path(__file__).resolve().parents[1]/"VERSION"
     try:installed_version=version_path.read_text().strip()
     except OSError:installed_version=str(config.get("capivara_version","unknown"))
-    network=collect_network_inventory();network["public_ipv4_observation"]=observe_public_ipv4()
+    network=collect_network_inventory()
+    public_ipv4_observation=observe_public_ipv4()
+    network["public_ipv4_observation"]=public_ipv4_observation
+    network["geo_location_observation"]=observe_host_geolocation(public_ipv4_observation)
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":network,"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
     # Every inventory record is Agent-owned and supplies instance_id.
     # Keep malformed inventory entries fail-closed without blocking heartbeat.
@@ -255,6 +259,11 @@ def heartbeat(config):
     base=str(config["controller_url"]).rstrip("/")
     payload=_inventory(config)
     result=_post(base+"/api/agent/heartbeat",payload,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    # Controller coordinates are received independently of the Agent's own GeoIP.
+    received_controller_location=result.get("controller_location")
+    if isinstance(received_controller_location,dict) and config.get("controller_location")!=received_controller_location:
+        config["controller_location"]=dict(received_controller_location)
+        _write_config(config)
     if "serverpack_report_delivery" in payload:
         try:
             sent=payload["serverpack_report_delivery"]

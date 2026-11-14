@@ -169,9 +169,24 @@ def customer_placement_locations(
                         )
                     except PlacementUnavailable:
                         continue
+                agent_latitude = _number(candidate.get("latitude"))
+                agent_longitude = _number(candidate.get("longitude"))
                 servers.append({
                     "ref": public_server_ref(controller_id, candidate_id),
                     "label": str(candidate.get("agent_name") or f"Servidor {len(servers) + 1}").strip()[:128],
+                    "country_code": str(candidate.get("country_code") or region.get("country_code") or "").upper() or None,
+                    "country_name": str(candidate.get("country_name") or "").strip() or None,
+                    "state_code": str(candidate.get("state_code") or "").strip().upper() or None,
+                    "state_name": str(candidate.get("state_name") or "").strip() or None,
+                    "city": str(candidate.get("city") or "").strip() or None,
+                    "latency": {
+                        "kind": "estimated",
+                        "value_ms": _distance_latency_ms(
+                            client_latitude, client_longitude,
+                            agent_latitude if agent_latitude is not None else latitude,
+                            agent_longitude if agent_longitude is not None else longitude,
+                        ),
+                    },
                     "recommended": candidate_id == str(decision.get("agent_id") or ""),
                 })
             servers.sort(key=lambda item: (not item["recommended"], item["label"].casefold()))
