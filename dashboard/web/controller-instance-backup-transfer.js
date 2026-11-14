@@ -12,7 +12,39 @@ function statusLabel(value){return ({pending:"Pendente",running:"Em execução",
 const RECENT_OPERATION_WINDOW_MS=72*60*60*1000;
 function operationTimestamp(job){for(const raw of [job?.completed_at,job?.finished_at,job?.created_at,job?.updated_at,job?.started_at]){if(!raw)continue;const value=new Date(raw).getTime();if(Number.isFinite(value))return value}return null}
 function recentOperationalJobs(jobs,now=Date.now()){return (jobs||[]).filter(job=>{const status=String(job?.status||"").toLowerCase();if(status==="pending"||status==="running")return true;if(status!=="failed")return false;const timestamp=operationTimestamp(job);return timestamp!==null&&timestamp<=now&&now-timestamp<RECENT_OPERATION_WINDOW_MS})}
-async function transferStatus(id,timeout=180000){const started=Date.now();while(Date.now()-started<timeout){const d=await json(`/api/customer/artifacts/status?transfer_id=${encodeURIComponent(id)}`);renderStatus(d);if(d.status==="completed")return d;if(["failed","cancelled","expired"].includes(d.status))throw new Error(d.last_error||`Transferência ${d.status}`);await wait(1000)}throw new Error("A transferência continua em processamento. Tente novamente em alguns instantes.")}
+function renderAgentDeliveryProgress(transfer){
+ if(transfer.direction!=="controller_to_agent"||transfer.purpose!=="backup_import")return;
+ const status=String(transfer.status||"").toLowerCase();
+ if(status==="queued")return uploadPhase("Backup recebido pelo Controller. Aguardando o Agent iniciar o download…");
+ if(status==="delivered")return uploadPhase("Tarefa enviada ao Agent. Aguardando início da transferência…");
+ if(status!=="transferring")return;
+ const wrap=document.getElementById("backup-transfer-progress-wrap");
+ const bar=document.getElementById("backup-transfer-progress");
+ const label=document.getElementById("backup-transfer-progress-label");
+ if(!wrap||!bar||!label)return;
+ const total=Number(transfer.size_bytes)||0;
+ const sent=Math.max(0,Math.min(total,Number(transfer.transferred_bytes)||0));
+ wrap.hidden=false;
+ if(!total){bar.removeAttribute("value");label.textContent="Controller → Agent: transferindo. Tamanho ainda indisponível.";return}
+ const percent=Math.floor(sent*100/total);
+ bar.value=percent;
+ label.textContent=sent>=total
+  ?"Controller → Agent: 100% transmitido pelo Controller. Aguardando validação do Agent…"
+  :"Controller → Agent: "+percent+"% · "+fmt(sent)+" / "+fmt(total)+" enviados pelo Controller";
+}
+async function transferStatus(id,timeout=180000){const started=Date.now();while(Date.now()-started<timeout){const d=await json(`/api/customer/artifacts/status?transfer_id=${encodeURIComponent(id)}`);renderStatus(d);renderAgentDeliveryProgress(d);if(d.status==="completed")return d;if(["failed","cancelled","expired"].includes(d.status))throw new Error(d.last_error||`Transferência ${d.status}`);await wait(1000)}throw new Error("A transferência continua em processamento. Tente novamente em alguns instantes.")}
+async function recoverCompletedImports(){
+ if(!permissions.has("backup.restore")||uploadInProgress||pendingImportedTransfer)return;
+ const response=await json("/api/customer/artifacts/imports?instance_id="+encodeURIComponent(iid));
+ const restored=(response.imports||[]).find(x=>x.status==="completed"&&x.destination_ref);
+ if(!restored)return;
+ pendingImportedTransfer=restored;
+ const filename=document.getElementById("backup-transfer-file-name");
+ if(filename)filename.textContent="Backup já recebido: "+(restored.filename||"backup externo");
+ uploadPhase("Backup transferido e validado anteriormente. Pronto para restaurar sem reenviar.");
+ renderStatus({...restored,status:"recebido e validado; pronto para restaurar"});
+ updateImportControls();
+}
 async function backupJobs(){return (await json(`${api}/backups?instance_id=${encodeURIComponent(iid)}`)).jobs||[]}
 function availableBackupJobs(jobs){const deleted=new Set((jobs||[]).filter(x=>x.action==="delete"&&x.status==="completed"&&x.backup_id).map(x=>String(x.backup_id)));const seen=new Set();return (jobs||[]).filter(x=>x.action==="create"&&x.status==="completed"&&x.backup_id&&!deleted.has(String(x.backup_id))).filter(x=>{const id=String(x.backup_id);if(seen.has(id))return false;seen.add(id);return true})}
 async function waitBackupJob(commandId,timeout=300000){const started=Date.now();while(Date.now()-started<timeout){const jobs=await backupJobs(),job=jobs.find(x=>String(x.command_id||x.job_id||"")===String(commandId||""));if(job){renderStatus({filename:`Backup ${job.backup_id||""}`.trim(),status:`${job.action||"operação"}: ${statusLabel(job.status)}`,size_bytes:job.size_bytes});if(["completed","failed"].includes(String(job.status||"").toLowerCase())){await renderBackupList(jobs);if(job.status==="failed")throw new Error(job.last_error||"A operação de backup falhou.");return job}}await wait(1000)}throw new Error("A operação continua em processamento. Consulte novamente em alguns instantes.")}
@@ -101,6 +133,6 @@ async function createSafetyBackup(){if(!permissions.has("backup.create"))return;
 function install(){const view=document.getElementById("view-backups");if(!view||document.getElementById("backup-transfer-card"))return;const card=document.createElement("article");card.id="backup-transfer-card";card.className="card mt-14";card.innerHTML='<h2>Transferência e restauração de backup</h2><p class="muted">Para usar um backup externo, selecione o arquivo e envie primeiro. O envio apenas transfere e valida o backup; a restauração é uma etapa separada e substitui o estado atual da instância. Antes de restaurar, é recomendado gerar um backup de segurança.</p><div class="actions"><button id="backup-safety-create" class="btn">Criar backup de segurança</button><button id="backup-transfer-download" class="btn">Baixar backup mais recente</button><label class="btn">Selecionar arquivo<input id="backup-transfer-file" type="file" accept=".tar,.tar.gz,.tgz,application/gzip,application/x-tar" hidden></label><button id="backup-transfer-upload" class="btn primary" disabled>Enviar backup</button><button id="backup-transfer-restore-import" class="btn danger" hidden disabled>Restaurar backup</button></div><p id="backup-transfer-file-name" class="muted">Nenhum arquivo selecionado.</p><div id="backup-transfer-progress-wrap" hidden><progress id="backup-transfer-progress" class="progress" max="100" value="0" aria-label="Progresso do envio do backup"></progress><p id="backup-transfer-progress-label" class="muted" role="status" aria-live="polite"></p></div><p id="backup-transfer-status" class="muted" role="status" aria-live="polite">Nenhuma operação em andamento.</p>';view.append(card);document.getElementById("backup-transfer-file").addEventListener("change",e=>{pendingImportedTransfer=null;document.getElementById("backup-transfer-file-name").textContent=e.target.files?.[0]?.name||"Nenhum arquivo selecionado.";renderStatus({filename:"Backup externo",status:e.target.files?.[0]?"arquivo selecionado; pronto para enviar":"nenhum arquivo selecionado"});updateImportControls()});document.getElementById("backup-safety-create").onclick=createSafetyBackup;document.getElementById("backup-transfer-download").onclick=()=>exportBackup();document.getElementById("backup-transfer-upload").onclick=uploadBackup;document.getElementById("backup-transfer-restore-import").onclick=restoreImportedBackup;updateImportControls()}
 function applyPermissions(){const safety=document.getElementById("backup-safety-create"),download=document.getElementById("backup-transfer-download");if(safety)safety.disabled=!permissions.has("backup.create");if(download)download.disabled=!permissions.has("backup.download");updateImportControls()}
 async function refresh(){const view=document.getElementById("view-backups");if(!view||!view.classList.contains("active"))return;await renderBackupList()}
-async function start(){if(!iid)return;install();try{const d=await json(`${api}/permissions?instance_id=${encodeURIComponent(iid)}`);permissions=new Set(d.permissions||[])}catch(e){renderStatus({filename:"Permissões",status:e.message})}applyPermissions();await renderBackupList();refreshTimer=setInterval(()=>refresh().catch(()=>{}),3000);window.addEventListener("beforeunload",()=>clearInterval(refreshTimer),{once:true})}
+async function start(){if(!iid)return;install();try{const d=await json(`${api}/permissions?instance_id=${encodeURIComponent(iid)}`);permissions=new Set(d.permissions||[])}catch(e){renderStatus({filename:"Permissões",status:e.message})}applyPermissions();try{await recoverCompletedImports()}catch(e){renderStatus({filename:"Histórico de importações",status:e.message})}await renderBackupList();refreshTimer=setInterval(()=>refresh().catch(()=>{}),3000);window.addEventListener("beforeunload",()=>clearInterval(refreshTimer),{once:true})}
 if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",start);else start();
 })();

@@ -81,6 +81,38 @@ class ArtifactTransferRepository:
   with self.session() as s:row=s.execute(f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}",(str(transfer_id),)).fetchone()
   if row is None:raise KeyError(transfer_id)
   return dict(row)
+ def list_completed_backup_imports(self,instance_id,limit=10):
+  """Find non-expired verified backup imports for an authorized instance.
+
+  The HTTP caller must separately authorize backup.restore on the instance.
+  Do not expose spool paths or other tenant's transfer metadata.
+  """
+  iid=self._token(instance_id,"instance_id")
+  count=max(1,min(int(limit),50))
+  ph=self.dialect.placeholder
+  now=datetime.now(timezone.utc)
+  with self.session() as session:
+   rows=session.execute(
+    f"SELECT * FROM artifact_transfers WHERE instance_id={ph} "
+    "AND direction='controller_to_agent' AND purpose='backup_import' "
+    "AND status='completed' ORDER BY created_at DESC LIMIT 200", (iid,)
+   ).fetchall()
+  valid=[]
+  for row in rows:
+   transfer=dict(row)
+   expires=transfer.get("expires_at")
+   if expires is not None:
+    try:
+     expiry=(expires if isinstance(expires,datetime) else
+             datetime.fromisoformat(str(expires).replace("Z","+00:00")))
+     if expiry.tzinfo is None:expiry=expiry.replace(tzinfo=timezone.utc)
+     if expiry<=now:continue
+    except (TypeError,ValueError):continue
+   if not str(transfer.get("destination_ref") or "").strip():continue
+   valid.append(transfer)
+   if len(valid)>=count:break
+  return valid
+
  def command_for_agent(self,agent_id):
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:
@@ -102,6 +134,34 @@ class ArtifactTransferRepository:
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='transferring',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status IN ('queued','delivered','transferring')",(transfer_id,))
   return self.get(transfer_id)
+ def record_controller_delivery_progress(self,transfer_id,agent_id,bytes_sent):
+  """Store bytes streamed to an authenticated Agent, not an Agent checksum ACK.
+
+  Status remains transferring, even at 100%. Only apply_agent_result may
+  complete the transfer after the Agent verifies its downloaded artifact.
+  """
+  tid=self._token(transfer_id,"transfer_id")
+  amount=int(bytes_sent)
+  if amount<0 or amount>_MAX_ARTIFACT_BYTES:raise ValueError("invalid streamed byte count")
+  item=self.get(tid)
+  if str(item.get("agent_id"))!=str(agent_id) or item.get("direction")!="controller_to_agent":
+   raise PermissionError("artifact transfer ownership mismatch")
+  if str(item.get("status")) not in {"delivered","transferring"}:return item
+  size=item.get("size_bytes")
+  if size is None or amount>int(size):raise ValueError("streamed bytes exceed artifact size")
+  ph=self.dialect.placeholder
+  with self.session(transaction=True) as s:
+   s.execute(
+    f"UPDATE artifact_transfers SET transferred_bytes="
+    f"CASE WHEN transferred_bytes<{ph} THEN {ph} ELSE transferred_bytes END,"
+    f"updated_at={self.dialect.current_timestamp} "
+    f"WHERE transfer_id={ph} AND agent_id={ph} "
+    f"AND direction='controller_to_agent' AND status IN ('delivered','transferring') "
+    f"AND size_bytes>={ph}",
+    (amount,amount,tid,str(agent_id),amount),
+   )
+  return self.get(tid)
+
  def receive_from_agent(self,transfer_id,agent_id,source,content_length=None):
   item=self.get(transfer_id)
   if item["direction"]!="agent_to_controller" or str(item["agent_id"])!=str(agent_id):raise PermissionError("artifact transfer ownership mismatch")
@@ -156,7 +216,11 @@ class ArtifactTransferRepository:
    try:destination_ref=_validated_content_upload_destination(item,report)
    except ValueError as exc:status="failed";error=str(exc)[:1024];destination_ref=None
   ph=self.dialect.placeholder
-  with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
+  # Failure is not an Agent acknowledgement. Preserve the latest observed
+  # streamed byte count instead of incorrectly presenting 100% on failure.
+  transferred=(int(report.get("transferred_bytes") or item.get("size_bytes") or 0)
+               if status=="completed" else int(item.get("transferred_bytes") or 0))
+  with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,transferred,destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
  def _content_upload_is_referenced(self,s,transfer_id):
   ph=self.dialect.placeholder
