@@ -310,3 +310,38 @@ de controle de processos; faltam verificacao de execucao/cgroup do
 systemd no host efetivo, configuracao persistente do diretorio,
 integracao de troca/rollback no updater e homologacao com jogos reais.
 O release continua bloqueado e `live_no_drain_authorized=false`.
+
+
+## Transacao de arquivo systemd real, limitada a fixture em runner descartavel
+
+O modulo `update-manager/game-uptime-systemd-swap.py` e um
+**prototipo isolado**, nao um modo de atualizacao do DSM. Somente
+unidades `dsm928-e2e-*.service` marcadas com identificador exato e
+`ExecStart=/usr/bin/sleep` sao elegiveis. O conteudo fica limitado a
+sete linhas previamente permitidas. Nomes `capivara-instance-*`,
+`dsm-dashboard` e outras unidades reais sao recusados.
+
+Com o opt-in `CAPIVARA_DSM928_SYSTEMD_E2E=1`, root, um host sem DSM
+instalado nem instancias de jogo ativas, o runner de CI pode gravar
+**somente** a fixture com nome `dsm928-e2e-*` em
+`/run/systemd/system`. Nenhum host de producao e elegivel.
+Testes unitarios podem usar uma arvore privada em `/tmp` com
+`daemon-reload` inteiramente simulado.
+
+A troca exige hash SHA-256 exato da unidade original, preserva copia
+duravel de seus bytes e journal com fsync *antes* da substituicao
+atomica, executa `systemctl daemon-reload` e verifica novamente
+PID, timestamp monotônico e bytes da unidade. Se houver falha
+capturada, reverte a unidade e registra `rolled_back`. No sucesso,
+o operador deve solicitar expressamente `restore_unit(...,
+operator_reviewed=True)` para restaurar a copia antiga. Journal
+`prepared` apos queda abrupta pode ser revisado e restaurado;
+estados finais ou falha na propria recuperacao nao permitem replay.
+
+O E2E adiciona uma unidade `sleep` descartavel em
+`/run/systemd/system`, troca o arquivo enquanto o processo
+permanece ativo, confere o mesmo PID, restaura e remove a fixture.
+O resultado **nao** equivale a atualizar unit de Minecraft, DayZ,
+Controller ou Agent, nao substitui o adaptador/materializador de
+producao, nao valida jogos reais e nao executa `update.sh`
+sem drenagem. `live_no_drain_authorized=false` continua absoluto.
