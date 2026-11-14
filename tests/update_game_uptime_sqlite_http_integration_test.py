@@ -50,7 +50,7 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
         pairing = AgentPairingRepository(self.backend)
         token = pairing.issue_token(controller_id=str(controller["controller_id"]),
                                     created_by="disposable-test")
-        self.agent_id = "agent-928-sqlite"
+        self.agent_id = getattr(self, "fixture_agent_id", "agent-928-sqlite")
         self.fingerprint = "sha256:dsm928-isolated-agent"
         self.identity = pairing.enroll(
             pairing_token=token.token, agent_id=self.agent_id,

@@ -649,3 +649,22 @@ pela fixture, assim como a inspeção systemd. Nenhuma credencial real
 estabeleceu prova autenticada de pinagem em produção. A saída é
 sempre `live_no_drain_authorized=false`. O código não é chamado
 por `update.sh main()` e não altera o gate de release.
+
+## Integração HTTP autenticada do ensaio (14/11/2026)
+
+`tests/update_game_uptime_authenticated_http_transaction_test.py` combina
+uma fixture de pareamento real em SQLite com o dispatcher real
+`dispatch_heartbeat` sobre um listener HTTP efêmero (`127.0.0.1`).
+O Agent sintético apresenta credencial emitida e cadastrada no banco
+isolado; a resposta do Controller atravessa a API antes de ser entregue ao
+verificador de envelope, SHA-256 e PID do ensaio descartável. As provas
+negativas incluem credencial incorreta (401, sem offer), identidade do
+Agent divergente, resposta anterior após reiniciar o Controller com novo
+nonce e PID do supervisor diferente da observação prévia. A transação
+não cria snapshot se qualquer uma dessas condições falha.
+
+Este teste avança a autenticação do transporte: **não** autentica o
+Controller de produção, não verifica TLS real, nem prova a pinagem do
+supervisor nos cgroups do host. A leitura de systemd e os jogos continuam
+simulados. O recibo da fixture continua com
+`live_no_drain_authorized=false`, sem integração ao `update.sh main()`.
