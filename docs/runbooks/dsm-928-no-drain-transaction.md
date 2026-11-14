@@ -430,3 +430,52 @@ de banco e migracoes reais, dar suporte a crash/recovery do fluxo
 completo e revisar flags operacionais. Nenhuma chamada ao updater
 de producao e nenhuma alteracao em servidores reais foram efetuadas.
 `live_no_drain_authorized=false` permanece incondicional.
+
+
+## Recuperacao da transacao composta apos encerramento abrupto
+
+`update-manager/game-uptime-isolated-compose.py` agora oferece
+`recover_interrupted()`, **apenas para uma fixture autenticada em
+`/tmp`** com journal anterior em estado `prepared` ou `applied`.
+A recuperacao nunca roda automaticamente e exige
+`operator_reviewed=True` apos inspeção dos journals/arquivos.
+
+Antes de qualquer tentativa, a rotina verifica o marcador original
+da fixture, nomes estritamente `dsm928-e2e-*.service`, journal
+composto privado e único arquivo de backup não vazio do updater.
+Se existir journal de swap em `<fixture>/dsm928-unit-swap.json`,
+valida escopo, unidade e status. Um swap `prepared`/`applied`
+precisa ser restaurado; swap já `restored`/`rolled_back`
+não deve ser repetido. Journal de swap inválido, corrupto,
+`recovery_started` ou `manual_recovery_required` bloqueia
+a operação. O protótipo exige journal de unidade na própria
+fixture, não recupera journals externos nem unidades reais.
+
+Usa o protocolo de `game-uptime-transaction.recover_interrupted`
+para comparar o PID e o timestamp monotônico originais com os
+processos atuais, gravar `recovery_started` e depois tentar
+as duas compensações: restauração de unidade (quando aplicável)
+e rollback dos arquivos. O erro numa etapa não impede a tentativa
+da outra. Sucesso escreve `recovered_rollback` com fsync.
+Falha parcial escreve `manual_recovery_required` e bloqueia
+repetição automática ou nova tentativa pelo mesmo caminho.
+
+Em `tests/update_game_uptime_isolated_compose_test.py` foi
+executado **SIGKILL de um processo filho real** após a
+aplicação das funções reais de arquivo do updater em árvore
+fictícia e a troca de unidade em diretório privado com
+`daemon-reload` simulado. O teste comprova journal
+`prepared`, recusa de replay, recuperação revisada da
+unidade e dos arquivos, world e banco fictícios preservados.
+Também testa falha antes do swap, PID alterado, journal
+corrompido e recuperação parcialmente malsucedida.
+O ensaio systemd real anterior permanece separado deste
+teste de SIGKILL: não se afirma que o Linux systemd
+real tenha sido interrompido à força nesta etapa.
+
+**Restrições:** continua sem integração ao updater em modo
+`main()`, Controller/Agent em ciclo completo, migrações
+reais de bancos, JVM Minecraft ou executável DayZ. A
+prova é de recuperação de uma fixture, não de atualização
+sem drenagem de servidores reais. Nenhum serviço de
+produção foi modificado. `live_no_drain_authorized=false`.
