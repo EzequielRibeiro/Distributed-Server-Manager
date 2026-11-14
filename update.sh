@@ -1847,8 +1847,18 @@ update_failed() {
             echo "CRITICAL: files changed but no rollback backup is available." >&2
         fi
         if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
-            restart_services || true
-            restart_game_instances || true
+            # Services/games may have been stopped before the first file write.
+            # Attempt both recoveries even if one fails, but never hide a
+            # partial restart failure behind the original update error.
+            local SERVICE_RECOVERY_STATUS=0
+            local GAME_RECOVERY_STATUS=0
+            restart_services || SERVICE_RECOVERY_STATUS=$?
+            restart_game_instances || GAME_RECOVERY_STATUS=$?
+            if [[ "${SERVICE_RECOVERY_STATUS}" -ne 0 || "${GAME_RECOVERY_STATUS}" -ne 0 ]]; then
+                echo "ERRO CRÍTICO: recuperação de serviços/jogos incompleta; revisão manual necessária." >&2
+                echo "CRITICAL: pre-update service/game recovery incomplete; manual review required." >&2
+                echo "Recovery exit codes: services=${SERVICE_RECOVERY_STATUS}, games=${GAME_RECOVERY_STATUS}" >&2
+            fi
         fi
         echo "Rollback não executado."
         echo "Rollback not executed."
