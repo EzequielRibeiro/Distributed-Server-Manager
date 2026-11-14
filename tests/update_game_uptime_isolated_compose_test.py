@@ -9,6 +9,10 @@ import hashlib
 from importlib.machinery import SourceFileLoader
 import importlib.util
 import json
+import os
+import signal
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -216,6 +220,166 @@ class IsolatedCompositionTests(unittest.TestCase):
             self.run_composed()
         self.assertEqual(calls, [])
         self.assertEqual(self.installed.read_bytes(), self.old)
+
+
+    def recover(self, **overrides):
+        kw = dict(
+            inspect=self.inspect,
+            rollback_files=lambda: self.updater("rollback"),
+            rollback_unit=self.restore_unit,
+            verify=self.verify, operator_reviewed=True,
+        )
+        kw.update(overrides)
+        return compose.recover_interrupted(self.root, [UNIT, DAYZ], **kw)
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(signal, "SIGKILL"),
+                         "real SIGKILL requires POSIX")
+    def test_real_sigkill_after_both_components_needs_reviewed_dual_recovery(self):
+        """SIGKILL subprocess after a real fixture file apply and unit swap."""
+        script = r"""
+import hashlib, importlib.util, os, signal, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "tests"))
+from update_game_uptime_real_update_functions_test import run_real_update_fns
+root = Path(sys.argv[2])
+unit = "dsm928-e2e-minecraft-pinned.service"
+dayz = "dsm928-e2e-dayz-sim.service"
+def load(path,name):
+    loader=SourceFileLoader(name,str(Path(sys.argv[1])/path))
+    spec=importlib.util.spec_from_loader(loader.name,loader)
+    mod=importlib.util.module_from_spec(spec);loader.exec_module(mod)
+    return mod
+compose=load("update-manager/game-uptime-isolated-compose.py","dsm928_child_composite")
+swap=load("update-manager/game-uptime-systemd-swap.py","dsm928_child_swap")
+states={unit:{"unit":unit,"state":"active","pid":22001,"started":901},
+        dayz:{"unit":dayz,"state":"active","pid":22002,"started":902}}
+def upd(phase):
+    x=run_real_update_fns(root,phase)
+    if x.returncode:raise RuntimeError(x.stderr)
+def unit_apply():
+    old=(root/"units"/unit).read_bytes()
+    new=("# DSM928_DISPOSABLE_UNIT_V1\n# DSM928_UNIT="+unit+
+         "\n[Unit]\nDescription=DSM928 isolated unit transaction\n"
+         "[Service]\nType=simple\nExecStart=/usr/bin/sleep 170\n").encode()
+    swap.swap_unit(root,unit,unit_dir=root/"units",candidate=new,
+                   expected_old_sha256=hashlib.sha256(old).hexdigest(),
+                   inspect=lambda n:states[n],runner=lambda:True)
+    os.kill(os.getpid(),signal.SIGKILL)
+compose.execute(root,[unit,dayz],
+    inspect=lambda n:states[n],
+    prepare_files=lambda:upd("prepare"),
+    apply_files=lambda:upd("apply"),
+    rollback_files=lambda:upd("rollback"),
+    apply_unit=unit_apply,
+    rollback_unit=lambda:None,
+    verify=lambda:None)
+"""
+        child = subprocess.run(
+            [sys.executable, "-c", script, str(ROOT), str(self.root)],
+            check=False, capture_output=True, text=True, timeout=25,
+        )
+        self.assertEqual(child.returncode, -signal.SIGKILL, child.stderr[-1200:])
+        self.assertEqual(self.installed.read_bytes(), self.new)
+        self.assertEqual(
+            (self.root / "installed/version").read_text(), "2.0.999-fixture")
+        journal = self.root / "dsm928-composite-journal/game-uptime-transaction.json"
+        self.assertEqual(json.loads(journal.read_text())["status"], "prepared")
+        self.assertEqual(
+            json.loads((self.root / "dsm928-unit-swap.json").read_text())["status"],
+            "applied")
+        with self.assertRaisesRegex(compose.CompositeSafetyError, "operator review"):
+            self.recover(operator_reviewed=False)
+        with self.assertRaisesRegex(compose.CompositeSafetyError, "existing composite"):
+            self.run_composed()
+        self.assertEqual(self.installed.read_bytes(), self.new)
+        recovered = self.recover()
+        self.assertEqual(recovered["status"], "recovered_rollback")
+        self.assertFalse(recovered["live_no_drain_authorized"])
+        self.assertEqual(self.installed.read_bytes(), self.old)
+        self.assertEqual(
+            (self.root / "installed/version").read_text(), "2.0.998-fixture")
+        self.assertEqual(json.loads(journal.read_text())["status"],
+                         "recovered_rollback")
+        self.assertEqual(
+            json.loads((self.root / "dsm928-unit-swap.json").read_text())["status"],
+            "restored")
+        with self.assertRaisesRegex(compose._TRANSACTION.TransactionSafetyError,
+                                    "recoverable interruption"):
+            self.recover()
+
+    def test_crash_before_unit_component_recovers_only_file_fixture(self):
+        def abort_before_swap():
+            raise SystemExit(41)
+        with self.assertRaises(SystemExit):
+            self.run_composed(apply_unit=abort_before_swap)
+        self.assertFalse((self.root / "dsm928-unit-swap.json").exists())
+        outcome = self.recover()
+        self.assertEqual(outcome["status"], "recovered_rollback")
+        self.assertEqual(self.reloads, 0)
+        self.assertEqual(self.installed.read_bytes(), self.old)
+        self.assertEqual(
+            (self.root / "installed/version").read_text(), "2.0.998-fixture")
+
+    def test_changed_pid_prevents_any_composite_recovery_action(self):
+        def abort_after_swap():
+            self.swap_unit()
+            raise SystemExit(41)
+        with self.assertRaises(SystemExit):
+            self.run_composed(apply_unit=abort_after_swap)
+        self.states[UNIT]["pid"] += 1
+        calls = []
+        with self.assertRaisesRegex(compose._TRANSACTION.TransactionSafetyError,
+                                    "process identity changed"):
+            self.recover(
+                rollback_unit=lambda: calls.append("unit"),
+                rollback_files=lambda: calls.append("files"),
+            )
+        self.assertEqual(calls, [])
+        self.assertEqual(self.installed.read_bytes(), self.new)
+        self.assertEqual(
+            (self.root / "installed/version").read_text(), "2.0.999-fixture")
+
+    def test_corrupt_unit_journal_refuses_composite_recovery(self):
+        def abort_after_swap():
+            self.swap_unit()
+            raise SystemExit(41)
+        with self.assertRaises(SystemExit):
+            self.run_composed(apply_unit=abort_after_swap)
+        path = self.root / "dsm928-unit-swap.json"
+        path.write_text("{unreadable")
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "unreadable disposable unit"):
+            self.recover(
+                rollback_unit=lambda: self.fail("wrong component rollback"),
+                rollback_files=lambda: self.fail("wrong file rollback"),
+            )
+        self.assertEqual(self.installed.read_bytes(), self.new)
+        self.assertEqual(
+            (self.root / "installed/version").read_text(), "2.0.999-fixture")
+
+    def test_recovery_partial_failure_preserves_manual_gate(self):
+        def abort_after_swap():
+            self.swap_unit()
+            raise SystemExit(41)
+        with self.assertRaises(SystemExit):
+            self.run_composed(apply_unit=abort_after_swap)
+        with self.assertRaisesRegex(compose._TRANSACTION.TransactionSafetyError,
+                                    "manual review required"):
+            self.recover(
+                rollback_unit=lambda: (_ for _ in ()).throw(
+                    RuntimeError("unit rollback deliberately failed")),
+            )
+        self.assertEqual(
+            (self.root / "installed/version").read_text(), "2.0.998-fixture")
+        self.assertEqual(self.installed.read_bytes(), self.new)
+        journal = self.root / "dsm928-composite-journal/game-uptime-transaction.json"
+        self.assertEqual(json.loads(journal.read_text())["status"],
+                         "manual_recovery_required")
+        with self.assertRaisesRegex(compose._TRANSACTION.TransactionSafetyError,
+                                    "recoverable interruption"):
+            self.recover()
+
 
 
 if __name__ == "__main__":
