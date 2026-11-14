@@ -721,7 +721,9 @@ def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
     """
     if str(spec.get("game_id") or "").lower() != "dayz":
         return 0
-    from dayz_dlc_ownership import verified_dayz_dlc_paths
+    from dayz_dlc_ownership import (
+        discover_dayz_dlc_paths, verified_dayz_dlc_paths_from_steam_home,
+    )
     working = Path(str(spec.get("working_directory") or ""))
     trusted = (STATE_DIR / "game-data" / "dayz").resolve()
     if not working.is_absolute() or working.is_symlink():
@@ -739,9 +741,17 @@ def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
     control_user = pwd.getpwnam(
         str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent")
     )
-    depotcache = Path(control_user.pw_dir) / ".local/share/Steam/depotcache"
     try:
-        candidates = verified_dayz_dlc_paths(resolved, depotcache)
+        candidates = verified_dayz_dlc_paths_from_steam_home(
+            resolved, Path(control_user.pw_dir), STATE_DIR,
+        )
+        if not candidates and discover_dayz_dlc_paths(resolved):
+            # Never report a successful repair when DLCs are installed but
+            # no trusted SteamCMD depot manifests can authorize their files.
+            raise RuntimeError(
+                "DayZ DLC files found without verified Steam depot manifests; "
+                "check Agent Steam/depotcache and .local/share/Steam/depotcache"
+            )
     except (OSError, ValueError) as exc:
         raise RuntimeError("unsafe or inconsistent DayZ Steam depot provenance") from exc
     updated = 0
