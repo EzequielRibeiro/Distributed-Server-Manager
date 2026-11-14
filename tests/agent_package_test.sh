@@ -60,6 +60,19 @@ PY
   python3 -c 'import provisioning_executor' ) \
   || fail "packaged Linux provisioning executor has unresolved dependencies"
 
+# Real release regression: import the root-owned materializer from the
+# extracted Linux Agent package, without letting the repository source tree
+# satisfy imports. This caught the DayZ 002 failure at 99% where the runtime
+# incorrectly resolved agents/common as /opt/common on the installed host.
+(
+  cd "${TMP}"
+  CAPIVARA_AGENT_ROOT="${PACKAGE}/agent" PYTHONPATH="" \
+    python3 - "${PACKAGE}/agent/privileged/materialize_instance.py" <<'PY'
+import runpy, sys
+runpy.run_path(sys.argv[1], run_name="package_materializer_import_check")
+PY
+) || fail "packaged Linux privileged materializer cannot import its shared modules"
+
 # Prevent recurrence when runtime imports more canonical core/ modules:
 # the package must contain every direct Python import from core made by the
 # Linux runtime (whether the source file was added directly or as a shim).
