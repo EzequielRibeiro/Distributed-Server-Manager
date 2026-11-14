@@ -40,7 +40,7 @@ class ControllerLifecycleTests(unittest.TestCase):
                 self.assert_daemon = daemon
             def start(self):
                 calls.append("worker")
-                self.assertTrue(self.assert_daemon)
+                assert self.assert_daemon is True, "notification worker must be daemonized"
         namespace = {
             "validate_environment": validate,
             "print_banner": banner,
