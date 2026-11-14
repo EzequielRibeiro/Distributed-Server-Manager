@@ -999,5 +999,257 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             )
 
 
+    def test_integrated_disposable_updater_and_pinned_unit_swap_preserve_two_pids(self):
+        """Compose *real* fixture update functions and systemd swap/rollback.
+
+        Runner only: actual SHA-pinned console_supervisor.py -> sleep process,
+        plus an ephemeral DayZ UDP stand-in. No JVM/DayZ binary, DSM systemd
+        units or production update.sh main() are used.
+        """
+        import hashlib
+        import socket
+        import sys
+
+        def load(relative, name):
+            loader = SourceFileLoader(name, str(ROOT / relative))
+            spec = importlib.util.spec_from_loader(loader.name, loader)
+            module = importlib.util.module_from_spec(spec)
+            loader.exec_module(module)
+            return module
+
+        stage = load("update-manager/game-uptime-supervisor-stage.py",
+                     "dsm928_composed_real_stage")
+        swap = load("update-manager/game-uptime-systemd-swap.py",
+                    "dsm928_composed_real_swap")
+        compose = load("update-manager/game-uptime-isolated-compose.py",
+                       "dsm928_composed_real_orchestration")
+
+        dayz_script = self.workspace / "composed-dayz-udp.py"
+        dayz_script.write_text(
+            "import socket,sys\n"
+            "sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\n"
+            "sock.bind(('127.0.0.1',int(sys.argv[1])))\n"
+            "while True:\n"
+            " data,peer=sock.recvfrom(4096)\n"
+            " if data==b'dsm928-dayz-ping':sock.sendto(b'dsm928-dayz-pong',peer)\n",
+            encoding="utf-8",
+        )
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reserve:
+            reserve.bind(("127.0.0.1", 0))
+            port = reserve.getsockname()[1]
+        dayz_unit = f"{self.prefix}-composite-dayz.service"
+        self._run(
+            "systemd-run", "--unit", dayz_unit[:-8], "--collect",
+            "--property=Type=simple", sys.executable,
+            str(dayz_script), str(port),
+        )
+        self.units.append(dayz_unit)
+
+        def dayz_query():
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+                client.settimeout(1)
+                client.sendto(b"dsm928-dayz-ping", ("127.0.0.1", port))
+                return client.recvfrom(120)[0]
+
+        for _ in range(50):
+            dayz_before = self._snapshot(dayz_unit)
+            if (dayz_before["state"] == "active"
+                    and dayz_before["pid"] > 1
+                    and dayz_before["started"] > 0):
+                try:
+                    if dayz_query() == b"dsm928-dayz-pong":
+                        break
+                except (socket.timeout, OSError):
+                    pass
+            time.sleep(0.1)
+        else:
+            self.fail("disposable DayZ UDP stand-in did not become responsive")
+
+        for mode in ("success", "failure_after_both_components"):
+            with self.subTest(mode=mode):
+                release = self.workspace / ("composed-release-" + mode)
+                create_tiny_release_fixture(release)
+                journal = self.workspace / ("composed-unit-" + mode)
+                journal.mkdir(mode=0o700)
+                versions = journal / "versions"
+                versions.mkdir(mode=0o700)
+                source = ROOT / "agents/linux/runtime/console_supervisor.py"
+                new_source = journal / "next-console-supervisor.py"
+                new_source.write_bytes(
+                    source.read_bytes() + b"\n# isolated no-drain rehearsal next\n")
+                pinned = []
+                for file in (source, new_source):
+                    digest = hashlib.sha256(file.read_bytes()).hexdigest()
+                    staged = stage.stage_supervisor(
+                        file, versions, expected_sha256=digest)
+                    pinned.append(Path(staged["path"]))
+
+                minecraft_unit = f"{self.prefix}-composite-minecraft-{mode.replace('_','-')}.service"
+                path = Path("/run/systemd/system") / minecraft_unit
+                sock = journal / "console.sock"
+                header = (
+                    "# DSM928_DISPOSABLE_UNIT_V1\n"
+                    f"# DSM928_UNIT={minecraft_unit}\n"
+                    "[Unit]\nDescription=DSM928 composite pinned test\n"
+                    "[Service]\nType=simple\n"
+                )
+
+                def content(script):
+                    return (header + "ExecStart=/usr/bin/python3 "
+                            + str(script) + " --socket " + str(sock)
+                            + " -- /usr/bin/sleep 180\n").encode("utf-8")
+
+                old, new = content(pinned[0]), content(pinned[1])
+                self.assertFalse(path.exists())
+                self.assertFalse(path.is_symlink())
+                path.write_bytes(old)
+                path.chmod(0o644)
+                try:
+                    self._run("systemctl", "daemon-reload")
+                    self._run("systemctl", "start", minecraft_unit)
+                    self.units.append(minecraft_unit)
+                    for _ in range(70):
+                        minecraft_before = self._snapshot(minecraft_unit)
+                        if (minecraft_before["state"] == "active"
+                                and minecraft_before["pid"] > 1
+                                and minecraft_before["started"] > 0
+                                and sock.is_socket()):
+                            break
+                        time.sleep(0.1)
+                    else:
+                        self.fail("pinned console supervisor did not start")
+
+                    def check_pids_and_responsiveness():
+                        self._assert_unchanged(
+                            [minecraft_before, dayz_before])
+                        self.assertEqual(dayz_query(), b"dsm928-dayz-pong")
+                        self.assertTrue(all(p.is_file() for p in pinned))
+                        self.assertIn(
+                            os.fsencode(pinned[0]),
+                            (Path("/proc") / str(minecraft_before["pid"])
+                             / "cmdline").read_bytes().split(b"\0"),
+                        )
+                        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                            client.settimeout(3)
+                            client.connect(str(sock))
+                            client.sendall(b"status\n")
+                            self.assertEqual(client.recv(64), b"OK\n")
+                        self.assertEqual(
+                            (release / "installed/runtime/hybrid-instance-storage"
+                             / "minecraft005/world/level.dat").read_bytes(),
+                            b"saved-world-private-test",
+                        )
+                        self.assertEqual(
+                            (release / "installed/data/database.txt").read_text(),
+                            "db durable",
+                        )
+
+                    def run_files(phase):
+                        result = run_real_update_fns(release, phase)
+                        self.assertEqual(
+                            result.returncode, 0,
+                            (phase, result.stdout[-500:], result.stderr[-700:]),
+                        )
+
+                    def update_unit():
+                        receipt = swap.swap_unit(
+                            journal, minecraft_unit,
+                            unit_dir=Path("/run/systemd/system"), candidate=new,
+                            expected_old_sha256=hashlib.sha256(old).hexdigest(),
+                            inspect=self._snapshot,
+                        )
+                        self.assertEqual(receipt["status"], "applied")
+                        self.assertFalse(receipt["live_no_drain_authorized"])
+                        self.assertEqual(path.read_bytes(), new)
+                        check_pids_and_responsiveness()
+                        if mode == "failure_after_both_components":
+                            raise RuntimeError("injected composite failure")
+
+                    def restore_unit():
+                        receipt = journal / "dsm928-unit-swap.json"
+                        if not receipt.is_file():
+                            return
+                        status = json.loads(receipt.read_text())["status"]
+                        if status in ("applied", "prepared"):
+                            restored = swap.restore_unit(
+                                journal, minecraft_unit,
+                                unit_dir=Path("/run/systemd/system"),
+                                inspect=self._snapshot,
+                                operator_reviewed=True,
+                            )
+                            self.assertEqual(restored["status"], "restored")
+                        elif status != "rolled_back":
+                            raise RuntimeError("unsafe composite unit rollback state")
+
+                    check_pids_and_responsiveness()
+                    if mode == "success":
+                        result = compose.execute(
+                            release, [minecraft_unit, dayz_unit],
+                            inspect=self._snapshot,
+                            prepare_files=lambda: run_files("prepare"),
+                            apply_files=lambda: run_files("apply"),
+                            rollback_files=lambda: run_files("rollback"),
+                            apply_unit=update_unit, rollback_unit=restore_unit,
+                            verify=check_pids_and_responsiveness,
+                        )
+                        self.assertEqual(result["status"], "verified")
+                        self.assertFalse(result["live_no_drain_authorized"])
+                        self.assertEqual(
+                            (release / "installed/version").read_text(),
+                            "2.0.999-fixture",
+                        )
+                        self.assertEqual(path.read_bytes(), new)
+                        # Cleanup success fixture via explicit, reviewed restore.
+                        restore_unit()
+                        run_files("rollback")
+                        self.assertEqual(path.read_bytes(), old)
+                    else:
+                        with self.assertRaisesRegex(
+                            transaction.TransactionSafetyError,
+                            "rollback completed",
+                        ):
+                            compose.execute(
+                                release, [minecraft_unit, dayz_unit],
+                                inspect=self._snapshot,
+                                prepare_files=lambda: run_files("prepare"),
+                                apply_files=lambda: run_files("apply"),
+                                rollback_files=lambda: run_files("rollback"),
+                                apply_unit=update_unit, rollback_unit=restore_unit,
+                                verify=check_pids_and_responsiveness,
+                            )
+                        self.assertEqual(path.read_bytes(), old)
+                        self.assertEqual(
+                            json.loads(
+                                (release / "dsm928-composite-journal"
+                                 / "game-uptime-transaction.json").read_text()
+                            )["status"],
+                            "rolled_back",
+                        )
+                    self.assertEqual(
+                        (release / "installed/version").read_text(),
+                        "2.0.998-fixture",
+                    )
+                    check_pids_and_responsiveness()
+                    self.assertEqual(
+                        json.loads(
+                            (journal / "dsm928-unit-swap.json").read_text()
+                        )["status"], "restored",
+                    )
+                finally:
+                    # Only this exact temporary CI-only unit is ever stopped.
+                    subprocess.run(
+                        ("systemctl", "stop", minecraft_unit),
+                        capture_output=True, text=True, timeout=15,
+                        check=False,
+                    )
+                    if path.is_file() and not path.is_symlink():
+                        path.unlink()
+                    subprocess.run(
+                        ("systemctl", "daemon-reload"),
+                        capture_output=True, text=True, timeout=20,
+                        check=False,
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
