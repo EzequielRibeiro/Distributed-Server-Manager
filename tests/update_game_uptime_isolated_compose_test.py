@@ -135,6 +135,99 @@ class IsolatedCompositionTests(unittest.TestCase):
             verify=self.verify,
         )
 
+    def run_gated(self, *, controller=None, agent=None, pinned=True):
+        contract = {"protocol": "v1", "schema": "22",
+                    "controller_api": "v2", "agent_api": "v2"}
+        return compose.execute_with_compatibility_gate(
+            self.root, [UNIT, DAYZ],
+            controller_contract=contract if controller is None else controller,
+            agent_contract=contract if agent is None else agent,
+            supervisor_pinned_preview=pinned,
+            inspect=self.inspect,
+            prepare_files=lambda: self.updater("prepare"),
+            apply_files=lambda: self.updater("apply"),
+            rollback_files=lambda: self.updater("rollback"),
+            apply_unit=self.swap_unit,
+            rollback_unit=self.restore_unit,
+            verify=self.verify,
+        )
+
+    def set_fixture_supervisors(self, *, installed="stable", candidate="stable"):
+        relative = "agents/linux/runtime/console_supervisor.py"
+        for base, source in ((self.root/"installed", installed),
+                             (self.root/"new-payload", candidate)):
+            if source is None:
+                continue
+            path = base / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(source)
+        return relative
+
+    def test_composite_gate_accepts_explicit_matching_synthetic_contract(self):
+        self.set_fixture_supervisors()
+        receipt = self.run_gated()
+        self.assertEqual(receipt["status"], "verified")
+        self.assertEqual(receipt["compatibility_source"], "synthetic_disposable_fixture")
+        self.assertTrue(receipt["controller_agent_contract_compatible"])
+        self.assertFalse(receipt["live_no_drain_authorized"])
+        self.assertEqual(self.states[UNIT]["pid"], 22001)
+        self.assertEqual(self.states[DAYZ]["pid"], 22002)
+        self.assertEqual(self.installed.read_bytes(), self.new)
+        self.restore_unit()
+        self.updater("rollback")
+
+    def test_composite_gate_blocks_mismatch_before_any_update_or_snapshot(self):
+        self.set_fixture_supervisors()
+        wrong = {"protocol": "v1", "schema": "23",
+                 "controller_api": "v2", "agent_api": "v2"}
+        with self.assertRaisesRegex(compose.CompositeSafetyError, "schema_mismatch"):
+            self.run_gated(agent=wrong)
+        self.assertFalse((self.root/"backups").exists())
+        self.assertFalse((self.root/"dsm928-composite-journal").exists())
+        self.assertEqual(self.installed.read_bytes(), self.old)
+
+    def test_composite_gate_allows_changed_supervisor_only_with_pinned_preview(self):
+        self.set_fixture_supervisors(installed="old", candidate="new")
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "minecraft_live_supervisor_replaceable"):
+            self.run_gated(pinned=False)
+        self.assertFalse((self.root/"backups").exists())
+        receipt = self.run_gated(pinned=True)
+        self.assertEqual(receipt["status"], "verified")
+        self.assertFalse(receipt["live_no_drain_authorized"])
+        self.restore_unit()
+        self.updater("rollback")
+        self.assertEqual(self.installed.read_bytes(), self.old)
+
+    def test_composite_gate_rejects_unpinned_even_with_matching_bytes(self):
+        self.set_fixture_supervisors()
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "supervisor_lifecycle_not_isolated"):
+            self.run_gated(pinned=False)
+        self.assertFalse((self.root/"backups").exists())
+
+    def test_composite_gate_rejects_missing_or_unverifiable_supervisor(self):
+        self.set_fixture_supervisors(candidate=None)
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "minecraft_supervisor_unverifiable"):
+            self.run_gated()
+        self.assertFalse((self.root/"backups").exists())
+
+    def test_composite_gate_rejects_missing_contract_before_callbacks(self):
+        self.set_fixture_supervisors()
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "controller_agent_.*mismatch"):
+            self.run_gated(controller={})
+        self.assertFalse((self.root/"backups").exists())
+
+    def test_composite_gate_requires_disposable_owner_marker(self):
+        self.set_fixture_supervisors()
+        (self.root/"fixture-owner").unlink()
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "ownership marker"):
+            self.run_gated()
+        self.assertFalse((self.root/"backups").exists())
+
     def test_success_composes_real_updater_functions_and_fake_reload(self):
         receipt = self.run_composed()
         self.assertEqual(receipt["status"], "verified")

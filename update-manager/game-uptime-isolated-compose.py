@@ -169,6 +169,67 @@ def execute(
 
 
 
+def execute_with_compatibility_gate(
+    workspace: Path,
+    units: list[str],
+    *,
+    controller_contract: Mapping | None,
+    agent_contract: Mapping | None,
+    supervisor_pinned_preview: bool,
+    inspect: Callable[[str], Mapping],
+    prepare_files: Callable[[], None],
+    apply_files: Callable[[], None],
+    rollback_files: Callable[[], None],
+    apply_unit: Callable[[], None],
+    rollback_unit: Callable[[], None],
+    verify: Callable[[], None],
+) -> dict:
+    """Conservatively connect diagnostic compatibility to disposable execution.
+
+    The contracts and pinned preview are test inputs, not authenticated
+    production evidence. Even a passing assessment is NEVER release approval.
+    """
+    root = _root(workspace, units)
+    compatibility_loader = SourceFileLoader(
+        "dsm928_composite_compatibility",
+        str(Path(__file__).with_name("game-uptime-compatibility.py")),
+    )
+    compatibility_spec = importlib.util.spec_from_loader(
+        compatibility_loader.name, compatibility_loader,
+    )
+    compatibility = importlib.util.module_from_spec(compatibility_spec)
+    compatibility_loader.exec_module(compatibility)
+    assessment = compatibility.assess(
+        root / "installed", root / "new-payload",
+        controller_contract, agent_contract,
+        minecraft_active=True,
+        supervisor_pinned=supervisor_pinned_preview is True,
+    )
+    if (
+        assessment.get("live_no_drain_authorized") is not False
+        or assessment.get("compatible_for_further_rehearsal") is not True
+        or assessment.get("blockers")
+    ):
+        raise CompositeSafetyError(
+            "disposable compatibility gate blocked: "
+            + ", ".join(assessment.get("blockers") or ["invalid_diagnostic"])
+        )
+    result = execute(
+        root, units, inspect=inspect,
+        prepare_files=prepare_files, apply_files=apply_files,
+        rollback_files=rollback_files, apply_unit=apply_unit,
+        rollback_unit=rollback_unit, verify=verify,
+    )
+    # A synthetic successful contract match is only permission to run a
+    # disposable rehearsal. It MUST NOT be promoted to production approval.
+    return {
+        **result,
+        "compatibility_source": "synthetic_disposable_fixture",
+        "controller_agent_contract_compatible": True,
+        "live_no_drain_authorized": False,
+    }
+
+
 def recover_interrupted(
     workspace: Path,
     units: list[str],

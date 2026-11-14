@@ -600,3 +600,29 @@ nem evidencia automaticamente supervisor Minecraft versionado; essas
 verificações continuam bloqueantes para um upgrade sem drenagem.
 A análise pode envolver leitura extensa dos arquivos da instalação, mas
 não precisa e não deve executar o atualizador.
+
+
+## Gate de compatibilidade no ensaio composto descartável
+
+`game-uptime-isolated-compose.py` agora expõe
+`execute_with_compatibility_gate(...)`, um ponto de entrada que valida
+**antes de qualquer backup ou apply** um contrato sintético
+Controller/Agent com `game-uptime-compatibility.assess()`, o código
+de `console_supervisor.py` no pacote instalado e no candidato e a
+afirmação de pinagem de supervisor da fixture. Contratos incompatíveis,
+sem campos obrigatórios, supervisor ausente ou não pinado são rejeitados
+sem criar journal nem modificar a instalação de ensaio.
+
+Os testes verificam a falha sem efeitos colaterais e o sucesso com
+composição real dos callbacks de atualização, troca de unidade simulada
+e rollback, incluindo candidato que altera o código do supervisor mas
+preserva a versão antiga em execução no ensaio. O comprovante identifica
+`compatibility_source=synthetic_disposable_fixture` e sempre retorna
+`live_no_drain_authorized=false`.
+
+**Limite:** o booleano de pinagem e os contratos são entradas de fixture,
+**não** prova autenticada de negociação Controller/Agent nem pinagem
+operacional em produção. Não há caminho de autorização no updater real.
+Ainda faltam negociação autenticada do release alvo, evidência de pinagem
+do processo real, transação integrada no `update.sh main()`, rollback de
+banco e homologação de continuidade Minecraft/DayZ em host isolado.
