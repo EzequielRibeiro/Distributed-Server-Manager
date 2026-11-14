@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Materialize Capivara-owned systemd units from validated local runtime specs."""
 from __future__ import annotations
-import os,subprocess
+import hashlib, os, re, stat, subprocess
 from pathlib import Path
 from typing import Any,Callable
 from adapters.systemd import unit_for_instance
@@ -72,13 +72,56 @@ def _stop_signal(spec):
  signal=str(spec.get("stop_signal") or "SIGTERM").strip().upper()
  if signal not in {"SIGTERM","SIGINT"}:raise MaterializerError("unsupported systemd stop signal")
  return signal
-def render_unit(spec):
+def _validated_preview_supervisor_path(pin):
+ """Validate a staged content-addressed path solely for offline unit rendering.
+
+ Never accept this value from an instance spec or daemon config. A caller must
+ deliberately pass it as a keyword argument to render_unit() in a fixture.
+ """
+ if not isinstance(pin, dict) or set(pin) != {"path", "sha256"}:
+  raise MaterializerError("supervisor preview requires exact pinned path and SHA-256")
+ digest=pin.get("sha256")
+ raw=pin.get("path")
+ if not isinstance(digest,str) or not re.fullmatch(r"[a-f0-9]{64}",digest):
+  raise MaterializerError("invalid pinned supervisor SHA-256")
+ if not isinstance(raw,str) or not raw.startswith("/") or any(c in raw for c in ("\x00","\r","\n"," ","\t",'"',";")):
+  raise MaterializerError("invalid pinned supervisor path")
+ path=Path(raw)
+ if str(path)!=raw or ".." in path.parts or path.name!="console-supervisor-"+digest+".py":
+  raise MaterializerError("pinned supervisor filename or canonical path mismatch")
+ if raw.startswith(("/opt/dsm/","/opt/capivara-agent/")):
+  raise MaterializerError("pinned supervisor must be outside replaceable DSM trees")
+ try:
+  parent=path.parent
+  if parent.is_symlink() or not parent.is_dir() or parent.stat().st_mode & 0o022:
+   raise MaterializerError("unsafe pinned supervisor directory")
+  if parent.stat().st_uid != os.geteuid():
+   raise MaterializerError("pinned supervisor directory owner mismatch")
+  if path.is_symlink() or not path.is_file():
+   raise MaterializerError("pinned supervisor missing or symlinked")
+  info=path.stat()
+  if (not stat.S_ISREG(info.st_mode) or info.st_nlink!=1
+      or info.st_size>1024*1024 or info.st_size==0
+      or info.st_mode & 0o222):
+   raise MaterializerError("pinned supervisor must be non-writable single-link regular file")
+  if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+   raise MaterializerError("pinned supervisor digest mismatch")
+ except OSError as exc:
+  raise MaterializerError("unable to inspect pinned supervisor") from exc
+ return path
+
+
+def render_unit(spec, *, pinned_supervisor_preview=None):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,default_state_path,private_state_path=_private_state(spec);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
  game_id=str(spec.get("game_id") or "").strip().lower()
  environment_id=str(spec.get("environment_id") or "").strip().lower()
  native_console=(game_id=="minecraft" and environment_id.startswith("minecraft.java."))
+ if pinned_supervisor_preview is not None and not native_console:
+  raise MaterializerError("supervisor preview is only for Minecraft Java")
  if native_console:
-  supervisor=Path(__file__).resolve().parents[1]/"console_supervisor.py"
+  supervisor=(_validated_preview_supervisor_path(pinned_supervisor_preview)
+              if pinned_supervisor_preview is not None else
+              Path(__file__).resolve().parents[1]/"console_supervisor.py")
   console_runtime=f"capivara-instance-console-{instance_id}"
   console_socket=f"/run/{console_runtime}/console.sock"
   argv=["/usr/bin/python3",str(supervisor),"--socket",console_socket,"--",*argv]
