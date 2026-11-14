@@ -878,13 +878,22 @@ restart_game_instances()
     echo "Restaurando instâncias que estavam ativas..."
     echo "Restoring game instances that were active..."
 
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        echo "[ERROR] Game recovery daemon-reload failed." >&2
+        return 1
+    }
 
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"
     do
         echo "Iniciando instância | Starting instance: ${UNIT}"
-        systemctl start "${UNIT}"
-        wait_for_game_instance_active "${UNIT}"
+        systemctl start "${UNIT}" || {
+            echo "[ERROR] Game recovery could not start ${UNIT}." >&2
+            return 1
+        }
+        wait_for_game_instance_active "${UNIT}" || {
+            echo "[ERROR] Game recovery readiness failed for ${UNIT}." >&2
+            return 1
+        }
         echo "[OK] ${UNIT} restaurado | restored."
     done
 }
@@ -1373,7 +1382,10 @@ restart_services() {
         return 0
     fi
 
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        echo "[ERROR] Controller service recovery daemon-reload failed." >&2
+        return 1
+    }
     for SERVICE_NAME in "${RESTORE_SERVICES[@]}"
     do
         echo

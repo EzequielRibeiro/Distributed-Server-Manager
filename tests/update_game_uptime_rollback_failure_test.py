@@ -103,6 +103,54 @@ update_failed 999
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("SHOULD_NOT_START", result.stdout + result.stderr)
 
+    def test_real_restart_helpers_propagate_errors_inside_conditional_recovery(self):
+        cases = {
+            "service_reload": ["daemon-reload"],
+            "service_start": ["daemon-reload", "start dsm-dashboard.service"],
+            "game_reload": ["daemon-reload"],
+            "game_start": ["daemon-reload", "start capivara-instance-test-dayz-001.service"],
+            "game_wait": ["daemon-reload", "start capivara-instance-test-dayz-001.service", "wait"],
+        }
+        # Calling functions as an `if` condition disables Bash's implicit
+        # errexit in nested function bodies. Check explicit error propagation.
+        script = r"""
+source "$1"
+trap - ERR
+CASE="$2"
+CALLS="$3"
+SYSTEMD_ENABLED=1
+RESTORE_SERVICES=(dsm-dashboard.service)
+ACTIVE_GAME_UNITS=(capivara-instance-test-dayz-001.service)
+systemctl() {
+  printf '%s\n' "$*" >> "$CALLS"
+  if [[ "$1" == daemon-reload && "$CASE" == *reload ]]; then return 18; fi
+  if [[ "$1" == start && "$CASE" == *start ]]; then return 19; fi
+  return 0
+}
+wait_for_game_instance_active() {
+  printf 'wait\n' >> "$CALLS"
+  if [[ "$CASE" == game_wait ]]; then return 20; fi
+  return 0
+}
+if [[ "$CASE" == service_* ]]; then
+  if restart_services; then exit 90; fi
+else
+  if restart_game_instances; then exit 91; fi
+fi
+printf 'REJECTED\n'
+"""
+        for case, expected_calls in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory(prefix="dsm928-restart-guards-") as temp:
+                calls = Path(temp) / "calls"
+                result = subprocess.run(
+                    ["bash", "-c", script, "test", str(ROOT / "update.sh"), case, str(calls)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("REJECTED", result.stdout)
+                self.assertEqual(calls.read_text().splitlines(), expected_calls)
+                self.assertIn("[ERROR]", result.stderr)
+
     def test_successful_rollback_does_not_report_critical_error(self):
         with tempfile.TemporaryDirectory(prefix="dsm-rollback-test-") as temp:
             backup = Path(temp) / "pre-update.tar.gz"
