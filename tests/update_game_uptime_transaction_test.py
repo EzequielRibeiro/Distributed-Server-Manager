@@ -131,6 +131,37 @@ class DisposableUptimeTransactionTest(unittest.TestCase):
         self.assertEqual(self.apply_count, 0)
         self.assertFalse((self.root/"game-uptime-transaction.json").exists())
 
+    def test_public_or_foreign_journal_directory_is_rejected_before_apply(self):
+        # The fixture is disposable; restoring 0700 prevents cleanup hazards.
+        for permissions in (0o755, 0o770, 0o711, 0o733):
+            with self.subTest(permissions=oct(permissions)):
+                self.root.chmod(permissions)
+                try:
+                    with self.assertRaisesRegex(tx.TransactionSafetyError, "private and owned"):
+                        self.run_tx()
+                    self.assertEqual(self.apply_count, 0)
+                    self.assertEqual(self.undo_count, 0)
+                    self.assertFalse((self.root/"game-uptime-transaction.json").exists())
+                finally:
+                    self.root.chmod(0o700)
+
+    def test_public_journal_directory_denies_manual_recovery_before_rollback(self):
+        def abruptly_exit():
+            self.apply()
+            raise SystemExit(5)
+        with self.assertRaises(SystemExit):
+            self.run_tx(apply=abruptly_exit)
+        self.root.chmod(0o755)
+        try:
+            with self.assertRaisesRegex(tx.TransactionSafetyError, "private and owned"):
+                tx.recover_interrupted(self.root, self.units,
+                                       inspect=self.inspect, rollback=self.rollback,
+                                       operator_reviewed=True)
+            self.assertEqual(self.undo_count, 0)
+            self.assertEqual(self.journal()["status"], "prepared")
+        finally:
+            self.root.chmod(0o700)
+
     def test_existing_symlink_journal_refuses_without_mutation(self):
         journal = self.root/"game-uptime-transaction.json"
         journal.symlink_to(self.root/"does-not-exist")
