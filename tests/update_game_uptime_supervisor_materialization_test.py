@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import os
+import pwd
 from pathlib import Path
 import sys
 import tempfile
@@ -50,7 +51,7 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             "runtime_id": "minecraft.java.neoforge",
             "game_id": "minecraft",
             "environment_id": "minecraft.java.neoforge",
-            "user": "disposable-instance-user",
+            "user": pwd.getpwuid(os.geteuid()).pw_name,
             "working_directory": str(self.root / "instance-runtime"),
             "executable": "/usr/bin/java",
             "arguments": ["-jar", "server.jar", "nogui"],
@@ -116,6 +117,36 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             with self.subTest(pin=value):
                 with self.assertRaises(MaterializerError):
                     render_unit(self.instance, pinned_supervisor_preview=value)
+
+
+    def test_preview_checks_actual_unprivileged_service_user_traversal(self):
+        try:
+            other = pwd.getpwnam("nobody")
+        except KeyError:
+            self.skipTest("nobody system account unavailable")
+        if other.pw_uid == os.geteuid():
+            self.skipTest("running with same uid as nobody")
+        user_spec = {**self.instance, "user": "nobody"}
+        with self.assertRaisesRegex(MaterializerError, "not traversable"):
+            render_unit(user_spec, pinned_supervisor_preview=self.pin)
+        self.root.chmod(0o711)
+        self.versions.chmod(0o755)
+        rendered = render_unit(user_spec, pinned_supervisor_preview=self.pin)
+        self.assertIn("User=nobody", rendered)
+        self.assertIn(self.pin["path"], rendered)
+        self.versions.chmod(0o700)
+        with self.assertRaisesRegex(MaterializerError, "not traversable"):
+            render_unit(user_spec, pinned_supervisor_preview=self.pin)
+        self.versions.chmod(0o755)
+        Path(self.pin["path"]).chmod(0o400)
+        with self.assertRaises(MaterializerError):
+            render_unit(user_spec, pinned_supervisor_preview=self.pin)
+
+    def test_preview_rejects_unknown_systemd_user(self):
+        candidate = {**self.instance, "user": "dsm928-definitely-absent-no-such-user"}
+        with self.assertRaisesRegex(MaterializerError, "unknown pinned supervisor service user"):
+            render_unit(candidate, pinned_supervisor_preview=self.pin)
+
 
 
 if __name__ == "__main__":
