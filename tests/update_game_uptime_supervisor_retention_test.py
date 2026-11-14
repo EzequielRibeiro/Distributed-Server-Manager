@@ -67,14 +67,16 @@ class PinnedRetentionTests(unittest.TestCase):
             "supervisor_path": self.pins[0]["path"],
         }]
 
-    def plan(self, *, installed_units=None, running_units=None,
-             expected_units=None):
+    _DEFAULT = object()
+
+    def plan(self, *, installed_units=_DEFAULT, running_units=_DEFAULT,
+             expected_units=_DEFAULT):
         return retention.retention_plan(
             self.versions,
-            installed_units={self.unit: self.next_unit} if installed_units is None
+            installed_units={self.unit: self.next_unit} if installed_units is self._DEFAULT
             else installed_units,
-            running_units=self.active if running_units is None else running_units,
-            expected_units=[self.unit] if expected_units is None else expected_units,
+            running_units=self.active if running_units is self._DEFAULT else running_units,
+            expected_units=[self.unit] if expected_units is self._DEFAULT else expected_units,
         )
 
     def test_preserves_old_running_and_new_installed_and_never_deletes(self):
@@ -128,6 +130,7 @@ class PinnedRetentionTests(unittest.TestCase):
         victim = Path(self.pins[0]["path"])
         victim.chmod(0o644)
         victim.write_bytes(b"corrupted")
+        victim.chmod(0o444)
         result = self.plan()
         self.assertIn("corrupt_versioned_supervisor_file", result["blockers"])
         self.assertFalse(result["automatic_deletion_allowed"])
