@@ -32,6 +32,7 @@
         placementReady: false,
         regions: [],
         region: null,
+        serverRef: null,
         allowCrossRegion: false,
         creating: false,
     };
@@ -315,6 +316,7 @@
         state.placementAbortController = controller;
         const generation = ++state.placementRequestGeneration;
         const previousRegionId = state.region?.id || null;
+        const previousServerRef = state.serverRef;
         const isCurrentRequest = () => (
             generation === state.placementRequestGeneration
             && String(state.runtime?.id || "").trim() === runtimeId
@@ -324,6 +326,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         renderRegions();
         updateSummary();
 
@@ -338,6 +341,8 @@
             state.region = previousRegionId
                 ? state.regions.find((region) => region.id === previousRegionId) || null
                 : null;
+            state.serverRef = state.region?.servers?.some(server => server.ref === previousServerRef)
+                ? previousServerRef : null;
             state.placementLoading = false;
             state.placementReady = state.regions.length > 0;
             renderRegions();
@@ -398,6 +403,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         state.allowCrossRegion = false;
 
         const el = elements();
@@ -539,6 +545,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         renderRegions();
         renderEditions();
         renderDistributions();
@@ -594,6 +601,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         renderRegions();
         renderDistributions();
         elements().buildStep.hidden = true;
@@ -775,6 +783,49 @@
         return region.display_label || [region.name, region.country_code].filter(Boolean).join(" - ") || region.id || "Região";
     }
 
+    function ensureServerSelect() {
+        let select = $("runtime-server-select");
+        if (select) return select;
+        const help = $("runtime-region-help");
+        if (!help?.parentNode) return null;
+        const label = document.createElement("label");
+        label.id = "runtime-server-choice";
+        label.className = "runtime-field";
+        label.textContent = "Servidor específico (opcional)";
+        select = document.createElement("select");
+        select.id = "runtime-server-select";
+        label.appendChild(select);
+        help.parentNode.insertBefore(label, help);
+        select.addEventListener("change", () => {
+            state.serverRef = select.value || null;
+            if (state.serverRef) {
+                state.allowCrossRegion = false;
+                elements().regionFallback.checked = false;
+            }
+            updateSummary();
+        });
+        return select;
+    }
+
+    function renderServerChoices() {
+        const select = ensureServerSelect();
+        if (!select) return;
+        const servers = Array.isArray(state.region?.servers) ? state.region.servers : [];
+        $("runtime-server-choice").hidden = !state.region || !servers.length || state.placementLoading;
+        select.replaceChildren(new Option("Automático (recomendado)", ""));
+        for (const server of servers) {
+            select.append(new Option(
+                server.label + (server.recommended ? " · recomendado" : ""), server.ref
+            ));
+        }
+        if (state.serverRef && servers.some(server => server.ref === state.serverRef)) {
+            select.value = state.serverRef;
+        } else {
+            state.serverRef = null;
+        }
+        select.disabled = state.placementLoading || !state.region;
+    }
+
     function renderRegions() {
         const el = elements();
         const placeholder = state.placementLoading ? "Verificando disponibilidade…" : "Selecione…";
@@ -784,11 +835,12 @@
         el.regionHelp.textContent = state.placementLoading
             ? "Verificando a compatibilidade do runtime com os servidores disponíveis."
             : state.regions.length
-                ? "A recomendação considera disponibilidade, compatibilidade do runtime e latência estimada. O Controller selecionará o Agent adequado."
+                ? "Escolha a região e, opcionalmente, um servidor elegível. No modo automático, o Controller selecionará o Agent adequado."
                 : "Nenhum servidor elegível está disponível para este runtime.";
         if (state.region && state.regions.some((region) => region.id === state.region.id)) {
             el.region.value = state.region.id;
         }
+        renderServerChoices();
     }
 
     function requiresMinecraftJavaEula(game, edition) {
@@ -815,7 +867,11 @@
         el.summaryRuntime.textContent = distributionLabel({id: state.distribution}, state.runtime);
         el.summaryVersion.textContent = state.version.label;
         el.summaryBuild.textContent = state.build.label;
-        el.summaryRegion.textContent = state.region ? regionLabel(state.region) : "Automática";
+        const selectedServer = state.region?.servers?.find(server => server.ref === state.serverRef);
+        el.summaryRegion.textContent = state.region
+            ? regionLabel(state.region) + (selectedServer ? " · " + selectedServer.label : "")
+            : "Automática";
+        el.regionFallback.disabled = Boolean(selectedServer);
         el.summaryRegionFallback.textContent = state.allowCrossRegion ? "Sim" : "Não";
         el.submit.disabled = !state.placementReady;
     }
@@ -840,7 +896,11 @@
                 version: state.version.value,
                 build: state.build.value,
             },
-            placement: {region_id: state.region?.id || null, allow_cross_region: state.allowCrossRegion},
+            placement: {
+                region_id: state.region?.id || null,
+                allow_cross_region: state.allowCrossRegion,
+                server_ref: state.serverRef || null,
+            },
         };
     }
 
@@ -900,6 +960,8 @@
         el.build?.addEventListener("change", () => selectBuild(el.build.value));
         el.region?.addEventListener("change", () => {
             state.region = state.regions.find((region) => region.id === el.region.value) || null;
+            state.serverRef = null;
+            renderServerChoices();
             updateSummary();
         });
         el.regionFallback?.addEventListener("change", () => {

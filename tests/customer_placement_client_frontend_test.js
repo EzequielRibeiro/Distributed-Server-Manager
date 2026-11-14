@@ -122,6 +122,7 @@ async function testAvailableRegionsArePublicAndRecommended() {
         state_name: "São Paulo",
         availability: "available",
         recommended: true,
+        servers: [{ref: "srv-" + "a".repeat(24), label: "Vps", recommended: true}],
         latency: {value_ms: 18},
       }],
     }), {
@@ -137,6 +138,9 @@ async function testAvailableRegionsArePublicAndRecommended() {
   assert.equal(result.regions[0].latency_ms, 18);
   assert.equal(result.regions[0].city, "Limeira");
   assert.equal(result.regions[0].country_name, "Brasil");
+  assert.equal(result.regions[0].servers.length, 1);
+  assert.equal(result.regions[0].servers[0].label, "Vps");
+  assert.equal(result.regions[0].servers[0].ref, "srv-" + "a".repeat(24));
   assert.equal(result.regions[0].state_code, "SP");
   assert.equal(result.regions[0].state_name, "São Paulo");
   assert.equal(result.regions[0].display_label, "🇧🇷 Brasil - São Paulo · ~18 ms · ★ Servidor recomendado");

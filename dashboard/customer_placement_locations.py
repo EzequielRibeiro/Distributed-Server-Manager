@@ -10,6 +10,7 @@ from typing import Any
 from core.catalog_resource_profile_policy import resolve_catalog_resource_profile
 from core.effective_resource_policy import normalize_resource_policy
 from core.placement_requirements import requirements_for_instance
+from customer_server_choice import public_server_ref
 from customer_reference import resolve_customer_reference
 from location_repository import LocationRepository
 from placement_errors import PlacementUnavailable
@@ -145,7 +146,38 @@ def customer_placement_locations(
             score = -1.0
             selected_candidate = {}
 
+        # Optional host choice remains customer-safe: only active, eligible
+        # candidates of this Controller/region are exposed, with opaque refs.
+        # Re-evaluate at creation time rather than trusting this discovery.
+        servers = []
+        if available and contract_id and runtime_id:
+            for candidate in all_candidates:
+                if str(candidate.get("region_id") or "") != region_id:
+                    continue
+                candidate_id = str(candidate.get("agent_id") or "")
+                if not candidate_id:
+                    continue
+                if candidate_id != str(decision.get("agent_id") or ""):
+                    try:
+                        choose_agent_for_instance(
+                            backend,
+                            controller_id=controller_id,
+                            preferred_region_id=region_id,
+                            allow_cross_region=False,
+                            requirements=requirements,
+                            required_agent_id=candidate_id,
+                        )
+                    except PlacementUnavailable:
+                        continue
+                servers.append({
+                    "ref": public_server_ref(controller_id, candidate_id),
+                    "label": str(candidate.get("agent_name") or f"Servidor {len(servers) + 1}").strip()[:128],
+                    "recommended": candidate_id == str(decision.get("agent_id") or ""),
+                })
+            servers.sort(key=lambda item: (not item["recommended"], item["label"].casefold()))
+
         locations.append({
+            "servers": servers,
             "location_id": "region:" + region_id,
             "region_id": region_id,
             "name": str(region.get("name") or region_id),
@@ -181,6 +213,7 @@ def customer_placement_locations(
         "locations": locations,
         "latency_kind": "estimated",
         "selection_scope": "region",
+        "server_selection": "optional",
     }
 
 
