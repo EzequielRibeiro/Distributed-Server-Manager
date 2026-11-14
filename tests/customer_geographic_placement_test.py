@@ -111,6 +111,44 @@ class CustomerGeographicPlacementTest(unittest.TestCase):
         for secret in ("secret-agent-sp", "secret-agent-us", "secret-node-sp", "secret-node-us", "10.0.0.10", "10.0.0.20", "secret-fingerprint", "secret-dc-sp", "secret-dc-us"):
             self.assertNotIn(secret, serialized)
 
+    def test_agents_in_same_region_keep_individual_geography_and_latency(self):
+        class _MultipleAgentsRepository(_Repository):
+            def candidates(self, _controller_id, region_id=None):
+                rows = [
+                    {
+                        "agent_id": "secret-agent-sp", "agent_name": "Agent A",
+                        "region_id": "br-sudeste", "country_code": "BR",
+                        "country_name": "Brasil", "state_name": "São Paulo", "state_code": "SP",
+                        "latitude": -23.55, "longitude": -46.63,
+                    },
+                    {
+                        "agent_id": "secret-agent-other", "agent_name": "Agent B",
+                        "region_id": "br-sudeste", "country_code": "BR",
+                        "country_name": "Brasil", "state_name": "Paraná", "state_code": "PR",
+                        "latitude": -25.43, "longitude": -49.27,
+                    },
+                ]
+                return [row for row in rows if region_id is None or row["region_id"] == region_id]
+
+        with patch("customer_placement_locations.LocationRepository", _MultipleAgentsRepository), \
+             patch("customer_placement_locations.requirements_for_instance", return_value=PlacementRequirements()), \
+             patch("customer_placement_locations.choose_agent_for_instance", side_effect=_decision):
+            payload = customer_placement_locations(
+                {"role": "customer", "scope_id": "CLI-000042"}, object(),
+                game_id="dayz", runtime_id="dayz.stable", contract_id="contract-1",
+                client_latitude=-23.55, client_longitude=-46.63,
+            )
+        region = next(x for x in payload["locations"] if x["region_id"] == "br-sudeste")
+        agents = {server["label"]: server for server in region["servers"]}
+        self.assertEqual(set(agents), {"Agent A", "Agent B"})
+        self.assertEqual(agents["Agent A"]["state_name"], "São Paulo")
+        self.assertEqual(agents["Agent B"]["state_name"], "Paraná")
+        self.assertEqual(agents["Agent A"]["latency"]["kind"], "estimated")
+        self.assertLess(agents["Agent A"]["latency"]["value_ms"], agents["Agent B"]["latency"]["value_ms"])
+        serialized = json.dumps(payload)
+        for secret in ("secret-agent-sp", "secret-agent-other"):
+            self.assertNotIn(secret, serialized)
+
     def test_contract_profile_is_expanded_before_placement_discovery(self):
         with patch("customer_placement_locations.LocationRepository", _ProfileRepository), \
              patch("customer_placement_locations.resolve_catalog_resource_profile", return_value=("low", {"id": "low", "name": "Low", "cpu_cores": 2, "memory_mb": 4096, "storage_mb": 20480}, {})), \
