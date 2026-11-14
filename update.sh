@@ -146,6 +146,10 @@ parse_arguments() {
             --allow-downgrade)
                 ALLOW_DOWNGRADE=1
                 ;;
+            --no-drain)
+                echo "No-drain update is not yet homologated; refusing to update." >&2
+                return 2
+                ;;
             --no-backup)
                 NO_BACKUP=1
                 ;;
