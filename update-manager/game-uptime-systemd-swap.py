@@ -81,7 +81,45 @@ def _unit_path(workspace: Path, name: str, *, unit_dir: Path, runner) -> Path:
     return resolved / name
 
 
-def _fixture_bytes(content: bytes, name: str) -> None:
+def _pinned_sleep_fixture(command: str, workspace: Path | None) -> bool:
+    """Only SHA-pinned real console_supervisor.py wrapping inert sleep.
+
+    For isolation, both the content-addressed Python file and the socket path
+    must be strictly beneath the current disposable private /tmp journal.
+    This is an E2E-only expansion, not a generic Python ExecStart escape hatch.
+    """
+    if workspace is None:
+        return False
+    match = re.fullmatch(
+        r"/usr/bin/python3 (?P<path>/[^ \t\n\r\"';\\]+) "
+        r"--socket (?P<socket>/[^ \t\n\r\"';\\]+) -- "
+        r"/usr/bin/sleep (?:1[2-9][0-9]|2[0-4][0-9])",
+        command,
+    )
+    if not match:
+        return False
+    versions = workspace / "versions"
+    filename = Path(match.group("path"))
+    name_match = re.fullmatch(r"console-supervisor-([a-f0-9]{64})\.py", filename.name)
+    if (not name_match or filename.parent != versions
+            or match.group("socket") != str(workspace / "console.sock")):
+        return False
+    if (versions.is_symlink() or not versions.is_dir()
+            or versions.stat().st_uid != os.geteuid()
+            or versions.stat().st_mode & 0o022):
+        return False
+    if filename.is_symlink() or not filename.is_file():
+        return False
+    info = filename.stat()
+    if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+            or info.st_uid != os.geteuid()
+            or info.st_mode & 0o222 or info.st_size == 0
+            or info.st_size > 1024 * 1024):
+        return False
+    return _sha(filename.read_bytes()) == name_match.group(1)
+
+
+def _fixture_bytes(content: bytes, name: str, *, workspace: Path | None = None) -> None:
     if not isinstance(content, bytes) or not (80 <= len(content) <= _MAX):
         raise DisposableSwapError("unit fixture is absent or oversized")
     try:
@@ -92,9 +130,12 @@ def _fixture_bytes(content: bytes, name: str) -> None:
             or lines[1] != "# DSM928_UNIT=" + name):
         raise DisposableSwapError("unit is not marked as the exact disposable fixture")
     commands = [line[10:] for line in lines if line.startswith("ExecStart=")]
-    # The fixture may only run a benign, bounded sleep; this is intentionally
-    # NOT a production Minecraft unit renderer or generic systemd executor.
-    if len(commands) != 1 or not re.fullmatch(r"/usr/bin/sleep (?:1[2-9][0-9]|2[0-4][0-9])", commands[0]):
+    # Either bounded inert sleep, or the genuine SHA-pinned Python supervisor
+    # wrapping exactly that sleep child. No other executables or arguments.
+    if (len(commands) != 1 or not (
+            re.fullmatch(r"/usr/bin/sleep (?:1[2-9][0-9]|2[0-4][0-9])", commands[0])
+            or _pinned_sleep_fixture(commands[0], workspace)
+    )):
         raise DisposableSwapError("disposable unit ExecStart is not allowlisted")
     # An exact, seven-line allowlist prevents accidental invocation of
     # systemd directives that could affect any other service or namespace.
@@ -106,14 +147,14 @@ def _fixture_bytes(content: bytes, name: str) -> None:
 
 
 
-def _read_unit(path: Path, name: str) -> bytes:
+def _read_unit(path: Path, name: str, *, workspace: Path | None = None) -> bytes:
     if path.is_symlink() or not path.is_file():
         raise DisposableSwapError("existing unit missing or symlinked")
     st = path.stat()
     if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1 or st.st_size > _MAX:
         raise DisposableSwapError("unsafe existing unit file")
     data = path.read_bytes()
-    _fixture_bytes(data, name)
+    _fixture_bytes(data, name, workspace=workspace)
     return data
 
 
@@ -213,8 +254,8 @@ def swap_unit(workspace: Path, name: str, *, unit_dir: Path,
     if (journal_file.exists() or journal_file.is_symlink()
             or backup_file.exists() or backup_file.is_symlink()):
         raise DisposableSwapError("existing unit transaction requires manual review")
-    old = _read_unit(path, name)
-    _fixture_bytes(candidate, name)
+    old = _read_unit(path, name, workspace=root)
+    _fixture_bytes(candidate, name, workspace=root)
     if _sha(old) != expected_old_sha256 or old == candidate:
         raise DisposableSwapError("stale unit baseline or identical candidate")
     before = _snapshot(name, inspect)
@@ -230,11 +271,11 @@ def swap_unit(workspace: Path, name: str, *, unit_dir: Path,
     }
     _journal(root, record)
     try:
-        if _read_unit(path, name) != old or _snapshot(name, inspect) != before:
+        if _read_unit(path, name, workspace=root) != old or _snapshot(name, inspect) != before:
             raise DisposableSwapError("concurrent unit or process change")
         _atomic_write(path, candidate)
         _reload(runner)
-        if _read_unit(path, name) != candidate or _snapshot(name, inspect) != before:
+        if _read_unit(path, name, workspace=root) != candidate or _snapshot(name, inspect) != before:
             raise DisposableSwapError("unit swap changed running process or file")
         record["status"] = "applied"
         _journal(root, record)
@@ -242,14 +283,14 @@ def swap_unit(workspace: Path, name: str, *, unit_dir: Path,
                 "original_identity": before, "live_no_drain_authorized": False}
     except Exception as exc:
         try:
-            current = _read_unit(path, name)
+            current = _read_unit(path, name, workspace=root)
             if current not in (old, candidate) or _snapshot(name, inspect) != before:
                 raise DisposableSwapError("cannot safely compensate unexpected unit or process")
             record["status"] = "rollback_started"
             _journal(root, record)
             _atomic_write(path, old)
             _reload(runner)
-            if _read_unit(path, name) != old or _snapshot(name, inspect) != before:
+            if _read_unit(path, name, workspace=root) != old or _snapshot(name, inspect) != before:
                 raise DisposableSwapError("rollback verification failed")
             record["status"] = "rolled_back"
             _journal(root, record)
@@ -275,10 +316,10 @@ def restore_unit(workspace: Path, name: str, *, unit_dir: Path,
     if backup.is_symlink() or not backup.is_file() or backup.stat().st_size > _MAX:
         raise DisposableSwapError("missing or unsafe unit backup")
     old = backup.read_bytes()
-    _fixture_bytes(old, name)
+    _fixture_bytes(old, name, workspace=root)
     if _sha(old) != record.get("old_sha256"):
         raise DisposableSwapError("backup digest mismatch")
-    current = _read_unit(path, name)
+    current = _read_unit(path, name, workspace=root)
     if _sha(current) not in {record.get("old_sha256"), record.get("new_sha256")}:
         raise DisposableSwapError("unit changed since swap; refuse recovery")
     if _snapshot(name, inspect) != record.get("original_identity"):
@@ -288,7 +329,7 @@ def restore_unit(workspace: Path, name: str, *, unit_dir: Path,
     try:
         _atomic_write(path, old)
         _reload(runner)
-        if _read_unit(path, name) != old or _snapshot(name, inspect) != record["original_identity"]:
+        if _read_unit(path, name, workspace=root) != old or _snapshot(name, inspect) != record["original_identity"]:
             raise DisposableSwapError("unit or process changed during recovery")
         record["status"] = "restored"
         _journal(root, record)
