@@ -16,9 +16,15 @@ from pathlib import Path
 from typing import Any
 import sys
 
-COMMON_DIR = Path(__file__).resolve().parent.parent.parent / "common"
-if str(COMMON_DIR) not in sys.path:
-    sys.path.insert(0, str(COMMON_DIR))
+# The repository stores shared modules at agents/common, whereas the
+# installed Linux Agent uses <root>/common alongside <root>/runtime. Importing
+# only the source-tree path breaks the privileged materializer at startup.
+_RUNTIME_FILE = Path(__file__).resolve()
+for COMMON_DIR in (_RUNTIME_FILE.parents[1] / "common", _RUNTIME_FILE.parents[2] / "common"):
+    if (COMMON_DIR / "dayz_community_missions.py").is_file():
+        if str(COMMON_DIR) not in sys.path:
+            sys.path.insert(0, str(COMMON_DIR))
+        break
 from dayz_community_missions import discover_community_missions
 
 _MAX_KEYS = 512
