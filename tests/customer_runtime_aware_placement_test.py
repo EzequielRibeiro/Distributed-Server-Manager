@@ -27,7 +27,7 @@ class CustomerRuntimeAwarePlacementTest(unittest.TestCase):
 
     def test_changed_assets_are_cache_busted(self):
         self.assertIn('/customer-placement-client.js?v=4', HTML)
-        self.assertIn('/runtime-selector.js?v=15', HTML)
+        self.assertIn('/runtime-selector.js?v=16', HTML)
 
 
 if __name__ == "__main__":
