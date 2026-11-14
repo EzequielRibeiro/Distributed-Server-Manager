@@ -15,6 +15,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIME = ROOT / "agents/linux/runtime"
@@ -22,7 +23,7 @@ if str(RUNTIME) not in sys.path:
     sys.path.insert(0, str(RUNTIME))
 
 from materializers.base import MaterializerError
-from materializers.systemd import render_unit
+from materializers.systemd import render_unit, SystemdMaterializer, unit_path_for_spec
 
 loader = SourceFileLoader(
     "dsm928_supervisor_stage_materializer_preview",
@@ -147,6 +148,66 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
         with self.assertRaisesRegex(MaterializerError, "unknown pinned supervisor service user"):
             render_unit(candidate, pinned_supervisor_preview=self.pin)
 
+
+
+    def test_materializer_transition_plan_does_not_write_or_reload_systemd(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            original = render_unit(self.instance)
+            installed.write_text(original, encoding="utf-8")
+            before = installed.read_bytes()
+            digest = hashlib.sha256(before).hexdigest()
+            materializer = SystemdMaterializer(
+                runner=lambda *_args: self.fail("read-only transition attempted systemctl"))
+            proposed = materializer.plan_pinned_transition(
+                self.instance, pinned_supervisor_preview=self.pin,
+                expected_installed_sha256=digest)
+            self.assertEqual(proposed["installed_unit_sha256"], digest)
+            self.assertTrue(proposed["change_proposed"])
+            self.assertTrue(proposed["old_unit_snapshot_required"])
+            self.assertTrue(proposed["retain_all_earlier_supervisor_versions"])
+            self.assertFalse(proposed["unit_write_permitted"])
+            self.assertFalse(proposed["live_no_drain_authorized"])
+            self.assertEqual(installed.read_bytes(), before)
+            # An explicit disposable write of the preview is NOT an authorized
+            # production workflow, but reinspection must be idempotent.
+            generated = render_unit(self.instance, pinned_supervisor_preview=self.pin)
+            installed.write_text(generated, encoding="utf-8")
+            new_digest = hashlib.sha256(installed.read_bytes()).hexdigest()
+            again = materializer.plan_pinned_transition(
+                self.instance, pinned_supervisor_preview=self.pin,
+                expected_installed_sha256=new_digest)
+            self.assertFalse(again["change_proposed"])
+            self.assertFalse(again["unit_write_permitted"])
+
+    def test_materializer_transition_rejects_stale_foreign_and_symlink_unit(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            original = render_unit(self.instance)
+            installed.write_text(original, encoding="utf-8")
+            digest = hashlib.sha256(installed.read_bytes()).hexdigest()
+            mat = SystemdMaterializer(
+                runner=lambda *_args: self.fail("must never invoke systemctl"))
+            with self.assertRaisesRegex(MaterializerError, "changed since baseline"):
+                mat.plan_pinned_transition(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256="0"*64)
+            installed.write_text("[Service]\nExecStart=/bin/false\n")
+            foreign_digest = hashlib.sha256(installed.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(MaterializerError, "unowned"):
+                mat.plan_pinned_transition(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256=foreign_digest)
+            installed.unlink()
+            installed.symlink_to(self.source)
+            with self.assertRaisesRegex(MaterializerError, "missing or unsafe"):
+                mat.plan_pinned_transition(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256=digest)
 
 
 if __name__ == "__main__":
