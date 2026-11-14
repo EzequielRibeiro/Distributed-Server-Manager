@@ -791,8 +791,12 @@
     }
 
     function serverLocationLabel(region, server) {
-        const country = String(region.country_name || region.name || "").trim();
-        const countryName = country || region.country_code || "Localização";
+        let localizedCountry = "";
+        try {
+            localizedCountry = new Intl.DisplayNames(["pt-BR"], {type: "region"})
+                .of(String(region.country_code || "").toUpperCase()) || "";
+        } catch (_error) { /* display fallback below */ }
+        const countryName = localizedCountry || region.country_name || region.name || region.country_code || "Localização";
         const place = [countryFlag(region.country_code), countryName].filter(Boolean).join(" ");
         const latency = Number.isFinite(Number(region.latency_ms))
             && region.latency_ms !== null
