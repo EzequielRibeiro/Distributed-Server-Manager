@@ -150,7 +150,7 @@ async function testAvailableRegionsArePublicAndRecommended() {
   assert.equal(result.regions[0].state_name, "São Paulo");
   assert.equal(result.regions[0].display_label, "🇧🇷 Brasil - São Paulo · ~18 ms · ★ Servidor recomendado");
   assert.equal(statusNode.dataset.state, "available");
-  assert.equal(statusNode.strong.textContent, "1 servidor elegível. Escolha um Agent na lista de localização.");
+  assert.equal(statusNode.strong.textContent, "1 servidor elegível. Escolha uma localização na lista.");
   cleanupHarness();
 }
 
