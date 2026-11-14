@@ -211,3 +211,35 @@ def verified_dayz_dlc_paths(root: Path, depotcache: Path) -> list[Path]:
             if path.exists():
                 selected.add(path)
     return sorted(selected)
+
+def verified_dayz_dlc_paths_from_steam_home(
+    root: Path, steam_home: Path, agent_state: Path
+) -> list[Path]:
+    """Verify DLC provenance across supported SteamCMD layouts.
+
+    SteamCMD may place its depotcache directly in ~/Steam (observed on
+    Ubuntu 26.04) or under ~/.local/share/Steam. Managed SteamCMD may
+    also keep its cache alongside the executable in Agent tools.
+    These fixed locations are confined to the Agent account/state;
+    no arbitrary filesystem search or untrusted config is permitted.
+    """
+    home = Path(steam_home)
+    state = Path(agent_state)
+    if not home.is_absolute() or not state.is_absolute():
+        raise ValueError("SteamCMD cache roots must be absolute")
+    caches = (
+        home / "Steam" / "depotcache",
+        home / ".local" / "share" / "Steam" / "depotcache",
+        state / "tools" / "steamcmd" / "depotcache",
+    )
+    selected: set[Path] = set()
+    for cache in caches:
+        if not cache.exists() and not cache.is_symlink():
+            continue
+        # A missing cache is normal on new installations; an unexpected
+        # symlink is not. Avoid accepting manifest content from outside
+        # the Agent's trusted SteamCMD directories.
+        if cache.is_symlink() or not cache.is_dir():
+            raise ValueError("unsafe DayZ Steam depotcache location")
+        selected.update(verified_dayz_dlc_paths(root, cache))
+    return sorted(selected)
