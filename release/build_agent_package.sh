@@ -64,7 +64,8 @@ for source in \
   core/content_bundle.py \
   core/minecraft_serverpack_physical_manifest.py \
   core/minecraft_staged_migration_safety.py \
-  core/minecraft_serverpack_migration_feature.py; do
+  core/minecraft_serverpack_migration_feature.py \
+  core/minecraft_serverpack_pending_commit.py; do
   copy "${source}" "agent/runtime/${source##*/}"
 done
 
