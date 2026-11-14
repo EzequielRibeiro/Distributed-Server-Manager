@@ -791,21 +791,28 @@
     }
 
     function serverLocationLabel(region, server) {
-        let localizedCountry = "";
+        const code = String(server.country_code || region.country_code || "").trim().toUpperCase();
+        let countryName = "";
         try {
-            localizedCountry = new Intl.DisplayNames(["pt-BR"], {type: "region"})
-                .of(String(region.country_code || "").toUpperCase()) || "";
-        } catch (_error) { /* display fallback below */ }
-        const countryName = localizedCountry || region.country_name || region.name || region.country_code || "Localização";
-        const place = [countryFlag(region.country_code), countryName].filter(Boolean).join(" ");
-        const latency = Number.isFinite(Number(region.latency_ms))
-            && region.latency_ms !== null
-            ? `~${Math.round(Number(region.latency_ms))} ms`
-            : "latência indisponível";
-        // A recomendação é global, não uma indicação de melhor Agent em cada região.
+            if (/^[A-Z]{2}$/.test(code)) {
+                countryName = new Intl.DisplayNames(["pt-BR"], {type: "region"}).of(code) || "";
+            }
+        } catch (_error) { /* Use the reported name below. */ }
+        countryName = countryName || server.country_name || region.country_name || region.name || code || "Localização";
+        const stateName = String(server.state_name || server.state_code || region.state_name || region.state_code || "").trim();
+        const latency = server.latency_ms ?? region.latency_ms;
+        const latencyText = latency !== null && latency !== undefined && Number.isFinite(Number(latency))
+            ? `Ping estimado ~${Math.round(Number(latency))} ms`
+            : "Ping indisponível";
+        // Only the best Agent in the globally recommended region has this badge.
         const recommended = region.recommended === true && server.recommended === true;
-        return [place, latency, server.label, recommended ? "★ Recomendado" : ""]
-            .filter(Boolean).join(" · ");
+        return [
+            [countryFlag(code), countryName].filter(Boolean).join(" "),
+            stateName,
+            server.label,
+            latencyText,
+            recommended ? "(recomendado)" : "",
+        ].filter(Boolean).join(" · ");
     }
 
     function renderRegions() {
@@ -824,7 +831,8 @@
         }
         options.sort((a, b) =>
             Number(b.recommended) - Number(a.recommended)
-            || (Number(a.region.latency_ms ?? Infinity) - Number(b.region.latency_ms ?? Infinity))
+            || (Number(a.server.latency_ms ?? a.region.latency_ms ?? Infinity)
+                - Number(b.server.latency_ms ?? b.region.latency_ms ?? Infinity))
             || a.label.localeCompare(b.label, "pt-BR")
         );
         for (const item of options) {
@@ -840,7 +848,7 @@
         el.regionHelp.textContent = state.placementLoading
             ? "Verificando a compatibilidade dos Agents com o jogo."
             : options.length
-                ? "Cada opção identifica um Agent elegível. A latência exibida é uma estimativa geográfica, não um ping medido."
+                ? "Cada linha identifica um Agent elegível, país, estado e ping estimado. Não é uma medição real de rede."
                 : state.regions.length
                     ? "O Controller escolherá automaticamente o Agent disponível na região selecionada."
                     : "Nenhum servidor elegível está disponível para este runtime.";
