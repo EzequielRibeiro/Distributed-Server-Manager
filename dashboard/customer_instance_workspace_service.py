@@ -206,6 +206,17 @@ class CustomerInstanceWorkspaceService:
    candidate=PurePosixPath(str(value).replace("\\","/"))
    if candidate.is_absolute() or ".." in candidate.parts:raise ValueError("server setting path must stay relative")
   return value
+ def _enforce_dayz_surface_constraint(self,context,field,value):
+  if str(context.get("game_id") or "").lower()!="dayz" or str(field.get("path") or "")!="serverDZ.cfg":return
+  key=str(field.get("key") or "")
+  allowed={"thirdPersonView":(0,1),"verifySignatures":(0,1,2)}
+  minimum={"vonCodecQuality":0,"loginQueueConcurrentPlayers":1,"loginQueueMaxPlayers":1,"instanceId":1}
+  if key=="guaranteedUpdates":raise ValueError("guaranteedUpdates is fixed and cannot be edited")
+  if key not in allowed and key not in minimum:return
+  if isinstance(value,bool) or not isinstance(value,int):raise ValueError("DayZ setting must be an integer: "+key)
+  if key in allowed and value not in allowed[key]:raise ValueError("invalid DayZ setting value: "+key)
+  if key in minimum and value<minimum[key]:raise ValueError("DayZ setting below minimum: "+key)
+  if key=="vonCodecQuality" and value>30:raise ValueError("DayZ setting above maximum: "+key)
  def _validate_server_setting_relationships(self,fields,dynamic):
   by_key={}
   for field_id,value in (dynamic or {}).items():
@@ -239,7 +250,10 @@ class CustomerInstanceWorkspaceService:
     if not field:raise PermissionError("unknown server setting")
     if not bool(field.get("editable")):raise PermissionError("server setting is managed by Capivara")
     if bool(field.get("secret")) and raw in {None,""}:continue
+    if str(context.get("game_id") or "").lower()=="dayz" and str(field.get("path") or "")=="serverDZ.cfg" and str(field.get("key") or "") in {"thirdPersonView","verifySignatures","vonCodecQuality","loginQueueConcurrentPlayers","loginQueueMaxPlayers","instanceId"}:
+     if type(raw) is not int:raise ValueError("DayZ setting must be a strict integer: "+str(field.get("key")))
     value=self._surface_value(field,raw,player_limit)
+    self._enforce_dayz_surface_constraint(context,field,value)
     logical_id=str(field.get("logical_id") or "").strip()
     if bool(field.get("secret")):
      if not logical_id:raise PermissionError("dynamic secret server settings require a catalog declaration")

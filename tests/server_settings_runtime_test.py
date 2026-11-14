@@ -33,6 +33,26 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    if not isinstance(settings.get('fields'),dict) or not settings['fields']:missing.append(runtime_id)
   self.assertEqual([],missing)
 
+ def test_dayz_dynamic_numeric_setting_constraints(self):
+  service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService)
+  ctx={"game_id":"dayz"}
+  allowed={"thirdPersonView":[0,1],"verifySignatures":[0,1,2],"vonCodecQuality":[0,20,30],"loginQueueConcurrentPlayers":[1,5],"loginQueueMaxPlayers":[1,500],"instanceId":[1]}
+  invalid={"thirdPersonView":[-1,2],"verifySignatures":[-1,3],"vonCodecQuality":[-1,31],"loginQueueConcurrentPlayers":[-1,0],"loginQueueMaxPlayers":[-1,0],"instanceId":[-1,0]}
+  for key,values in allowed.items():
+   for value in values:
+    with self.subTest(key=key,value=value):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
+  for key,values in invalid.items():
+   for value in values:
+    with self.subTest(key=key,value=value):
+     with self.assertRaises(ValueError):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
+  with self.assertRaises(ValueError):service._enforce_dayz_surface_constraint(ctx,{"key":"guaranteedUpdates","path":"serverDZ.cfg"},1)
+  for key in allowed:
+   for value in [True,1.5,"1"]:
+    with self.subTest(key=key,value=value):
+     with self.assertRaises(ValueError):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
+  service._enforce_dayz_surface_constraint(ctx,{"key":"unrelated","path":"serverDZ.cfg"},-1)
+  service._enforce_dayz_surface_constraint({"game_id":"minecraft"},{"key":"instanceId","path":"serverDZ.cfg"},-1)
+
  def test_permissions_and_contract_player_limit(self):
   self.assertIn('settings.read',INSTANCE_PERMISSIONS);self.assertIn('settings.write',INSTANCE_PERMISSIONS)
   self.assertIn('settings.read',PERMISSION_PRESETS['viewer']);self.assertNotIn('settings.write',PERMISSION_PRESETS['viewer'])
@@ -256,6 +276,26 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
   with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo):
    with self.assertRaises(ValueError):service.save_server_settings({'username':'owner'},'instance-1',{'known-players':33},'surface-1')
    with self.assertRaises(PermissionError):service.save_server_settings({'username':'owner'},'instance-1',{'managed-port':24003},'surface-1')
+
+ def test_dayz_dynamic_rejected_values_never_persist(self):
+  dayz=declaration('dayz.stable');writes=[];state={'value':{'runtime_id':'dayz.stable','settings':{},'dynamic_values':{},'declaration':dayz}}
+  surface={'fields':[{'id':key,'key':key,'path':'serverDZ.cfg','type':'integer','editable':True,'secret':False} for key in ('thirdPersonView','verifySignatures','vonCodecQuality','guaranteedUpdates','loginQueueConcurrentPlayers','loginQueueMaxPlayers','instanceId')]}
+  class ConfigRepo:
+   def __init__(self,backend):pass
+   def initialize(self):pass
+   def get(self,**kwargs):return state
+   def put(self,raw,updated_by=None):
+    writes.append(raw['value']);state['value']=raw['value'];return {'configuration':{'revision':len(writes)+1,'checksum':'test'},'changed':True}
+  service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService);service.root=ROOT;service.backend=object();service.require=lambda user,iid,perm:{'game_id':'dayz','runtime_id':'dayz.stable'};service.repo=type('Repo',(),{'workspace_policy':lambda self,iid:{}})();service._resolved_resource_policy=lambda context,policy:{'player_limit':32};service.files=type('Files',(),{'snapshot':lambda self,cid:{'command_id':cid,'instance_id':'instance-1','action':'settings_surface','status':'completed','result':surface}})()
+  invalid=[('thirdPersonView',-1),('thirdPersonView',2),('verifySignatures',3),('vonCodecQuality',31),('loginQueueConcurrentPlayers',0),('loginQueueMaxPlayers',-1),('instanceId',0),('guaranteedUpdates',1),('thirdPersonView',1.5),('verifySignatures','2'),('instanceId',True)]
+  with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo):
+   for key,value in invalid:
+    with self.subTest(key=key,value=value):
+     with self.assertRaises((ValueError,PermissionError)):service.save_server_settings({'username':'owner'},'instance-1',{key:value},'surface-1')
+     self.assertEqual([],writes)
+     self.assertEqual({},state['value']['dynamic_values'])
+   result=service.save_server_settings({'username':'owner'},'instance-1',{'verifySignatures':2,'vonCodecQuality':20},'surface-1')
+  self.assertTrue(result['changed']);self.assertEqual(1,len(writes));self.assertEqual({'verifySignatures':2,'vonCodecQuality':20},state['value']['dynamic_values'])
 
  def test_workspace_secret_remove_persists_tombstone_until_replacement(self):
   dayz=declaration('dayz.stable');captured=[]
