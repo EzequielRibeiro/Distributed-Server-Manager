@@ -196,6 +196,43 @@ def _owned_content(content,spec):
 class SystemdMaterializer(InstanceRuntimeMaterializer):
  name="systemd"
  def __init__(self,runner=None):self.runner=runner or _default_runner
+ def plan_pinned_transition(self, spec, *, pinned_supervisor_preview,
+                            expected_installed_sha256):
+  """Read-only owned-unit transition plan with stale-unit rollback protection.
+
+  No daemon-reload, no disk writes and no opt-in for live materialization.
+  Original unit bytes must be captured and preserved outside this method
+  before a future privileged updater could ever implement atomic switching.
+  """
+  if not isinstance(expected_installed_sha256,str) or not re.fullmatch(r"[a-f0-9]{64}",expected_installed_sha256):
+   raise MaterializerError("expected installed systemd unit digest required")
+  path=unit_path_for_spec(spec)
+  if path.is_symlink() or not path.is_file():
+   raise MaterializerError("installed systemd unit missing or unsafe")
+  try:
+   if path.stat().st_size>65536:
+    raise MaterializerError("installed systemd unit exceeds safe preview size")
+   original=path.read_bytes()
+   old_digest=hashlib.sha256(original).hexdigest()
+   if old_digest!=expected_installed_sha256:
+    raise MaterializerError("installed systemd unit changed since baseline")
+   text=original.decode("utf-8")
+  except (OSError,UnicodeError) as exc:
+   raise MaterializerError("cannot read installed unit for transition plan") from exc
+  if not _owned_content(text,spec):
+   raise MaterializerError("unowned systemd unit cannot be transitioned")
+  # Validation of service user access, SHA, and path is delegated to
+  # the already fail-closed offline renderer.
+  candidate=render_unit(spec,pinned_supervisor_preview=pinned_supervisor_preview)
+  return {"kind":"Capivara928PinnedUnitTransitionPlan",
+          "unit":path.name,"installed_unit_sha256":old_digest,
+          "candidate_unit_sha256":hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
+          "change_proposed":text!=candidate,
+          "old_unit_snapshot_required":True,
+          "retain_all_earlier_supervisor_versions":True,
+          "reinspect_active_process_identity_before_and_after":True,
+          "mode":"read_only","unit_write_permitted":False,
+          "live_no_drain_authorized":False}
  def inspect(self,spec):
   path=unit_path_for_spec(spec)
   try:content=path.read_text(encoding="utf-8")
