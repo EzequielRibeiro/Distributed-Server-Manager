@@ -57,5 +57,33 @@ class ControllerLifecycleTests(unittest.TestCase):
         server.server_close.assert_called_once_with()
 
 
+    def test_real_run_closes_server_on_unexpected_serve_error(self):
+        source = (ROOT / "dashboard/server.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        run_node = next(node for node in tree.body
+                        if isinstance(node, ast.FunctionDef) and node.name == "run")
+        module = ast.Module(body=[run_node], type_ignores=[])
+        ast.fix_missing_locations(module)
+        server = Mock()
+        server.serve_forever.side_effect = RuntimeError("disposable listener failure")
+        class Worker:
+            def __init__(self, target, daemon):
+                assert daemon is True
+            def start(self):
+                pass
+        namespace = {
+            "validate_environment": lambda: None,
+            "print_banner": lambda: None,
+            "DashboardServer": lambda address: server,
+            "HOST": "127.0.0.1", "PORT": 0,
+            "threading": type("Threads", (), {"Thread": Worker}),
+            "notification_worker": lambda: None,
+        }
+        exec(compile(module, "dashboard/server.py", "exec"), namespace)
+        with self.assertRaisesRegex(RuntimeError, "disposable listener failure"):
+            namespace["run"]()
+        server.server_close.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()
