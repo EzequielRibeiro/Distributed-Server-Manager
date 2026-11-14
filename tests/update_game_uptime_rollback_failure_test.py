@@ -32,6 +32,24 @@ update_failed 999
             self.assertIn(str(backup), result.stderr)
             self.assertTrue(backup.exists(), "Recovery backup must not be removed")
 
+    def test_missing_backup_after_file_replacement_is_critical(self):
+        script = """
+source "$1"
+trap - ERR
+collect_failure_diagnostics() { :; }
+cleanup_partial_backup() { :; }
+UPDATE_TRANSACTION_STARTED=1
+UPDATE_FILES_STARTED=1
+BACKUP_FILE="/tmp/dsm928-definitely-missing-backup"
+update_failed 999
+"""
+        result = subprocess.run(
+            ["bash", "-c", script, "test", str(ROOT / "update.sh")],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("CRITICAL: files changed but no rollback backup is available", result.stderr)
+
     def test_successful_rollback_does_not_report_critical_error(self):
         with tempfile.TemporaryDirectory(prefix="dsm-rollback-test-") as temp:
             backup = Path(temp) / "pre-update.tar.gz"
