@@ -30,6 +30,18 @@ def unit_content(name: str, seconds: int = 180) -> bytes:
     ).encode("utf-8")
 
 
+
+
+def pinned_unit_content(name: str, pinned: Path, socket_path: Path) -> bytes:
+    return (
+        f"# DSM928_DISPOSABLE_UNIT_V1\n"
+        f"# DSM928_UNIT={name}\n"
+        "[Unit]\nDescription=DSM928 pinned supervisor test only\n"
+        "[Service]\nType=simple\n"
+        f"ExecStart=/usr/bin/python3 {pinned} --socket {socket_path}"
+        " -- /usr/bin/sleep 180\n"
+    ).encode("utf-8")
+
 class DisposableSystemdUnitSwapTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="dsm928-unit-swap-")
@@ -186,6 +198,85 @@ class DisposableSystemdUnitSwapTests(unittest.TestCase):
         self.assertEqual(self.record()["status"], "manual_recovery_required")
         with self.assertRaisesRegex(swap.DisposableSwapError, "not a recoverable"):
             self.restore()
+
+
+    def test_pinned_real_supervisor_files_swap_and_restore_in_private_fixture(self):
+        """Two actual staged console_supervisor.py revisions, no child launch."""
+        stage_loader = SourceFileLoader(
+            "dsm928_pinned_stage_swap_fixture",
+            str(ROOT / "update-manager/game-uptime-supervisor-stage.py"),
+        )
+        stage_spec = importlib.util.spec_from_loader(stage_loader.name, stage_loader)
+        stage = importlib.util.module_from_spec(stage_spec)
+        stage_loader.exec_module(stage)
+        source = ROOT / "agents/linux/runtime/console_supervisor.py"
+        updated = self.root / "candidate-console-supervisor.py"
+        updated.write_bytes(source.read_bytes() + b"\n# disposable DSM928 alternate revision\n")
+        versions = self.root / "versions"
+        versions.mkdir(mode=0o700)
+        paths = []
+        for script in (source, updated):
+            sha = hashlib.sha256(script.read_bytes()).hexdigest()
+            record = stage.stage_supervisor(script, versions, expected_sha256=sha)
+            paths.append(Path(record["path"]))
+        self.assertNotEqual(*paths)
+        self.old = pinned_unit_content(
+            self.unit, paths[0], self.root / "console.sock")
+        self.new = pinned_unit_content(
+            self.unit, paths[1], self.root / "console.sock")
+        self.file.write_bytes(self.old)
+        self.assertEqual(self.apply()["status"], "applied")
+        self.assertEqual(self.file.read_bytes(), self.new)
+        self.assertEqual(self.reloads, 1)
+        self.assertTrue(all(p.exists() for p in paths))
+        self.assertEqual(self.restore()["status"], "restored")
+        self.assertEqual(self.file.read_bytes(), self.old)
+        self.assertEqual(self.reloads, 2)
+        self.assertTrue(all(p.exists() for p in paths))
+
+    def test_pinned_fixture_rejects_modified_script_and_nonprivate_paths(self):
+        stage_loader = SourceFileLoader(
+            "dsm928_pinned_stage_swap_refusal",
+            str(ROOT / "update-manager/game-uptime-supervisor-stage.py"),
+        )
+        stage_spec = importlib.util.spec_from_loader(stage_loader.name, stage_loader)
+        stage = importlib.util.module_from_spec(stage_spec)
+        stage_loader.exec_module(stage)
+        versions = self.root / "versions"
+        versions.mkdir(mode=0o700)
+        source = ROOT / "agents/linux/runtime/console_supervisor.py"
+        sha = hashlib.sha256(source.read_bytes()).hexdigest()
+        staged = stage.stage_supervisor(source, versions, expected_sha256=sha)
+        pinned = Path(staged["path"])
+        old = self.old
+        cases = [
+            pinned_unit_content(self.unit, pinned, self.root / "wrong.sock"),
+            pinned_unit_content(self.unit, pinned, Path("/tmp/foreign.sock")),
+            pinned_unit_content(self.unit,
+                                Path("/opt/dsm/runtime/console_supervisor.py"),
+                                self.root / "console.sock"),
+        ]
+        for candidate in cases:
+            with self.subTest(candidate=candidate):
+                with self.assertRaisesRegex(swap.DisposableSwapError, "not allowlisted"):
+                    swap.swap_unit(
+                        self.journal, self.unit, unit_dir=self.units,
+                        candidate=candidate,
+                        expected_old_sha256=hashlib.sha256(old).hexdigest(),
+                        inspect=self.inspect, runner=self.reload,
+                    )
+        pinned.chmod(0o644)
+        pinned.write_bytes(b"altered code")
+        pinned.chmod(0o444)
+        bad = pinned_unit_content(self.unit, pinned, self.root / "console.sock")
+        with self.assertRaisesRegex(swap.DisposableSwapError, "not allowlisted"):
+            swap.swap_unit(
+                self.journal, self.unit, unit_dir=self.units, candidate=bad,
+                expected_old_sha256=hashlib.sha256(old).hexdigest(),
+                inspect=self.inspect, runner=self.reload,
+            )
+        self.assertEqual(self.reloads, 0)
+        self.assertFalse((self.root / "dsm928-unit-swap.json").exists())
 
 
 if __name__ == "__main__":
