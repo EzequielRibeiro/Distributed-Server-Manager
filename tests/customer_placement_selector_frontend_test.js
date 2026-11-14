@@ -54,7 +54,7 @@ assert.doesNotMatch(
 );
 assert.match(
   html,
-  /customer-placement-client\.js\?v=4/,
+  /customer-placement-client\.js\?v=5/,
   "customer page must load the explicit placement client"
 );
 assert.match(
