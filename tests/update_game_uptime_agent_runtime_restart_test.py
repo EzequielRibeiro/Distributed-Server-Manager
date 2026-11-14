@@ -75,7 +75,8 @@ actions = (
     "apply_configuration_commands",
 )
 with patch.object(linux_agent, "_inventory", return_value=payload):
-    with patch.object(linux_agent, "acknowledge_runtime_events", side_effect=forbid):
+    with patch.object(linux_agent, "acknowledge_runtime_events",
+                      side_effect=lambda _state, ids: None if ids == [] else forbid()):
         with patch.object(linux_agent, "stage_update_request", side_effect=forbid):
             with patch.object(linux_agent, "stage_provisioning_command", side_effect=forbid):
                 with patch.object(linux_agent, "handle_instance_command", side_effect=forbid):
