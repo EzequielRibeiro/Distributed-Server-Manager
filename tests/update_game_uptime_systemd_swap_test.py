@@ -37,8 +37,9 @@ class DisposableSystemdUnitSwapTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.units = self.root / "units"
         self.units.mkdir()
-        self.journal = self.root / "journal"
-        self.journal.mkdir(mode=0o700)
+        # The fake unit directory must be a child of the same private sandbox
+        # that owns the transaction journal; never accept sibling roots.
+        self.journal = self.root
         self.unit = "dsm928-e2e-swap-fixture.service"
         self.file = self.units / self.unit
         self.old = unit_content(self.unit, 180)
