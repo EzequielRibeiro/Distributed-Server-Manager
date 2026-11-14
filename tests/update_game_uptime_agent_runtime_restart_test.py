@@ -75,10 +75,23 @@ actions = (
     "apply_backup_commands", "apply_broadcast_commands",
     "apply_configuration_commands",
 )
+def allow_only_empty_command_list(*args, **kwargs):
+    if not kwargs and args and args[-1] == []:
+        return None
+    return forbid()
+
 with ExitStack() as stack:
     stack.enter_context(patch.object(linux_agent, "_inventory", return_value=payload))
+    benign_list_handlers = {
+        "apply_configuration_commands", "apply_content_commands",
+        "apply_backup_commands", "apply_broadcast_commands",
+    }
     for action in actions:
-        stack.enter_context(patch.object(linux_agent, action, side_effect=forbid))
+        stack.enter_context(patch.object(
+            linux_agent, action,
+            side_effect=(allow_only_empty_command_list
+                         if action in benign_list_handlers else forbid),
+        ))
     # The real Controller may acknowledge an empty batch of telemetry events.
     # Only that no-op is allowed; any nonempty ACK is unsafe in this fixture.
     stack.enter_context(patch.object(
