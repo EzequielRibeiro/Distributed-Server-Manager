@@ -345,3 +345,44 @@ O resultado **nao** equivale a atualizar unit de Minecraft, DayZ,
 Controller ou Agent, nao substitui o adaptador/materializador de
 producao, nao valida jogos reais e nao executa `update.sh`
 sem drenagem. `live_no_drain_authorized=false` continua absoluto.
+
+
+## Ensaio com supervisor Minecraft real versionado e troca systemd reversivel
+
+O modulo de **ensaio descartavel** `game-uptime-systemd-swap.py`
+tambem aceita, em sua allowlist de 7 linhas de unit, uma unica
+forma especifica de `ExecStart`: o Python do sistema executando o
+`console_supervisor.py` autentico identificado por SHA-256, dentro
+de `<journal>/versions/console-supervisor-<sha>.py`, apontando
+exatamente para `<journal>/console.sock` e rodando **apenas**
+`/usr/bin/sleep` com tempo limitado como processo filho.
+O arquivo e o diretorio versionado devem ser regulares, com ownership
+do usuario do teste, sem permissao de escrita para terceiros,
+sem symlinks, com nome e hash conferidos. Uma copia adulterada,
+caminho de socket alternativo, caminho substituivel do DSM ou
+comando arbitrario bloqueia a transacao antes da escrita de unidade.
+
+O teste de unidade `test_pinned_real_supervisor_files_swap_and_restore_in_private_fixture`
+estagia a versao original do supervisor e uma segunda revisao
+descartavel com comentario inofensivo, ambas por SHA-256, e
+verifica a aplicacao e o retorno para a versao antiga.
+O ensaio com systemd real, em runner CI root descartavel,
+`test_actual_pinned_minecraft_supervisor_unit_swap_retains_old_live_revision`,
+inicia a unidade temporaria `dsm928-e2e-*.service` com a revisao
+original, coleta PID e start stamp, consulta seu socket, substitui a
+unidade instalada pelo caminho da segunda revisao com
+`systemctl daemon-reload` e comprova que o processo em execucao
+continua usando **a revisao original**. Depois restaura o arquivo
+de unidade e confirma que ambas as revisoes SHA continuam
+disponiveis. A fixture systemd e removida ao final.
+
+A alteracao da unidade nao migra o processo em execucao para
+um supervisor novo, apenas define qual arquivo seria utilizado
+em uma **futura** inicializacao. Essa observacao evita confundir
+continuidade atual com migracao de processo.
+
+**Fora do escopo:** nao existe autorizacao para usar esta rotina
+em nomes de unidades Capivara, no materializador de producao,
+no Controller ou Agent do host real. Nao ha JVM Minecraft nem DayZ
+neste ensaio; nao se exercita o update do DSM sem drenagem.
+`live_no_drain_authorized=false`; PR continua Draft.
