@@ -196,3 +196,24 @@ DayZ ativo e Minecraft 005 inativo em uma verificacao. A parada do
 Minecraft foi registrada pelo systemd as 20:08 (America/Sao_Paulo),
 sem causa de comando identificada nesta auditoria. Essa observacao
 **nao** e uma homologacao multi-jogo de atualizacao no-drain.
+
+
+## Ensaio multi-jogo descartavel com verificacao de responsividade
+
+O teste opt-in `test_minecraft_supervisor_and_dayz_udp_standin_survive_apply_and_rollback`
+na suite systemd cria dois servicos temporarios `dsm928-e2e-*.service`:
+um `console_supervisor.py` real carregado da copia de SHA-256 imutavel
+por politica, com filho `/usr/bin/sleep` **em vez de Minecraft Java**;
+e um processo Python UDP de consulta-resposta **em vez do servidor DayZ**.
+
+Confere em ambos os servicos o PID e timestamp monotono do inicio,
+socket Unix do supervisor e consulta UDP responsiva, antes e depois da
+aplicacao dos arquivos ficticios. Exercita tanto sucesso quanto falha
+injetada apos o apply, e confirma rollback, mundo e banco ficticios
+preservados. Cada operação de arquivos usa as funcoes reais de
+`update.sh` executadas em instalacao descartavel em `/tmp`.
+
+**Resultado positivo nao representa homologacao de Minecraft/DayZ reais.**
+A JVM Minecraft, o executavel DayZ, os adaptadores reais, a migracao
+de banco, o Controller completo e um modo `main()` sem drenagem
+continuam sem essa prova. `live_no_drain_authorized=false`.
