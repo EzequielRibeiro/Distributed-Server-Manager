@@ -250,6 +250,8 @@ class CustomerInstanceWorkspaceService:
     if not field:raise PermissionError("unknown server setting")
     if not bool(field.get("editable")):raise PermissionError("server setting is managed by Capivara")
     if bool(field.get("secret")) and raw in {None,""}:continue
+    if str(context.get("game_id") or "").lower()=="dayz" and str(field.get("path") or "")=="serverDZ.cfg" and str(field.get("key") or "") in {"thirdPersonView","verifySignatures","vonCodecQuality","loginQueueConcurrentPlayers","loginQueueMaxPlayers","instanceId"}:
+     if type(raw) is not int:raise ValueError("DayZ setting must be a strict integer: "+str(field.get("key")))
     value=self._surface_value(field,raw,player_limit)
     self._enforce_dayz_surface_constraint(context,field,value)
     logical_id=str(field.get("logical_id") or "").strip()
