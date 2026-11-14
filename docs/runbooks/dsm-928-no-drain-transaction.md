@@ -386,3 +386,47 @@ em nomes de unidades Capivara, no materializador de producao,
 no Controller ou Agent do host real. Nao ha JVM Minecraft nem DayZ
 neste ensaio; nao se exercita o update do DSM sem drenagem.
 `live_no_drain_authorized=false`; PR continua Draft.
+
+
+## Composicao isolada: atualizador de arquivos + supervisor pinado + rollback
+
+O modulo `update-manager/game-uptime-isolated-compose.py` compoe
+**apenas em uma fixture previamente identificada dentro de /tmp** a
+preparacao do backup, a aplicacao das funcoes reais de arquivos do
+`update.sh` (via harness descartavel), a troca de uma unidade
+`dsm928-e2e-*.service` e a verificacao de continuidade de processos.
+Ele utiliza o journal duravel de `game-uptime-transaction.py` e
+exige inventario de unidades isoladas, sem aceitar nomes Capivara de
+producao. Nao invoca o `update.sh main()`.
+
+A composicao registra `prepared` antes da aplicacao e valida PIDs e
+start stamps durante a transacao. Quando uma falha capturada ocorre,
+tenta **ambas** as compensacoes: primeiro a restauracao da unidade e
+depois o rollback dos arquivos, verificando novamente os processos e
+marcando `rolled_back` em sucesso. Se alguma compensacao falhar,
+deixa `manual_recovery_required` e bloqueia replay automatico.
+Uma interrupcao abrupta do processo requer revisao operacional dos
+journals de ambos os componentes. O estado `verified` de uma aplicacao
+bem-sucedida nao implica autorizacao para producao.
+
+Os testes unitarios `tests/update_game_uptime_isolated_compose_test.py`
+cobrem: sucesso, falha apos troca da unidade, falha antes da troca,
+rollback parcial, erro de saude e recusa de inventario invalido.
+
+O E2E opt-in `test_integrated_disposable_updater_and_pinned_unit_swap_preserve_two_pids`
+instala em um runner isolado duas unidades de teste: um supervisor
+Minecraft **Python real identificado por SHA-256** cujo filho e
+`/usr/bin/sleep`, e um substituto UDP para DayZ. Testa os cenarios
+de aplicacao bem-sucedida e falha injetada apos o update de arquivos
+e a troca systemd. Valida em ambos os casos o mesmo PID/start stamp,
+o socket do supervisor, a consulta UDP, o mundo e banco ficticios, as
+versoes antigas e o journal. No cenario de sucesso, a unidade e o
+produto de fixture sao restaurados explicitamente antes do teardown.
+
+**Pendencias para liberar no-drain real:** integrar o plano
+Controller/Agent ao atualizador, provar uma atualizacao real sem
+interromper Minecraft/DayZ e sem troca de seus PIDs, exercitar rollback
+de banco e migracoes reais, dar suporte a crash/recovery do fluxo
+completo e revisar flags operacionais. Nenhuma chamada ao updater
+de producao e nenhuma alteracao em servidores reais foram efetuadas.
+`live_no_drain_authorized=false` permanece incondicional.
