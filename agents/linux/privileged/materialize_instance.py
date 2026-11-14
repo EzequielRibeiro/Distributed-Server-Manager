@@ -765,6 +765,49 @@ def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
     return updated
 
 
+def _ensure_dayz_runtime_root_acl(spec: dict[str, Any]) -> bool:
+    """Allow DayZ's writable-root probe on verified Agent-managed content.
+
+    The DayZ binary checks W_OK in the installation directory before it loads
+    scripts/1_Core. Grant runtime access to the root only, not recursively to
+    PBOs or game files; keep SteamCMD ownership under the Agent.
+    """
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        return False
+    user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
+    if user != _DEFAULT_RUNTIME_USER:
+        return False  # Never grant spec-supplied identities shared-content write access.
+
+    working = Path(str(spec.get("working_directory") or ""))
+    if not working.is_absolute() or working.is_symlink():
+        raise RuntimeError("DayZ managed installation must be an absolute non-symlink directory")
+    trusted = (STATE_DIR / "game-data" / "dayz").resolve()
+    resolved = working.resolve(strict=True)
+    try:
+        relative = resolved.relative_to(trusted)
+    except ValueError:
+        return False  # User-managed DayZ installations are not modified.
+    if len(relative.parts) != 1 or not resolved.is_dir():
+        raise RuntimeError("DayZ managed installation is not an expected game-data root")
+
+    agent = pwd.getpwnam("capivara-agent")
+    group = grp.getgrnam(_AGENT_GROUP)
+    metadata = resolved.stat()
+    if metadata.st_uid != agent.pw_uid or metadata.st_gid != group.gr_gid:
+        raise RuntimeError("DayZ game-data root is not owned by the SteamCMD Agent")
+    _validate_runtime_user(user)
+    try:
+        result = subprocess.run(
+            ["setfacl", "-m", f"u:{user}:rwx", str(resolved)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ACL tools unavailable: install the acl package on the Agent") from exc
+    if result.returncode:
+        raise RuntimeError(f"cannot grant DayZ runtime root ACL: {result.stderr.strip()[:300]}")
+    return True
+
+
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
@@ -1108,6 +1151,7 @@ def run(instance_id: str) -> dict[str, Any]:
         _serverpack_require_inactive(instance_id)
     if action == "apply":
         _ensure_runtime_identity(spec, config)
+        _ensure_dayz_runtime_root_acl(spec)
         _normalize_dayz_dlc_ownership(spec)
         working_file_copies = _sync_working_file_copies(spec)
         dayz_mod_aliases = _sync_dayz_mod_aliases(spec)
@@ -1129,8 +1173,10 @@ def run(instance_id: str) -> dict[str, Any]:
     elif action == "repair-dayz-dlc-ownership":
         if str(spec.get("game_id") or "").lower() != "dayz":
             raise RuntimeError("DayZ DLC repair requires a DayZ instance")
+        root_acl_checked = _ensure_dayz_runtime_root_acl(spec)
         updated = _normalize_dayz_dlc_ownership(spec)
-        operation = {"action": action, "changed": updated > 0, "updated_paths": updated}
+        operation = {"action": action, "changed": updated > 0, "updated_paths": updated,
+                     "runtime_root_acl_checked": root_acl_checked}
     elif action == "sync-minecraft-content":
         installed = materializer.inspect(spec)
         if not installed.get("exists") or not installed.get("owned"):
