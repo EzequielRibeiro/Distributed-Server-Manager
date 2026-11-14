@@ -79,7 +79,7 @@ for (const [game, edition, expected] of cases) {
         self.assertIn("#minecraft-runtime-notice[hidden]{display:none!important}",
                       (WEB / "create-server-wizard.css").read_text())
         for marker in (
-            '/runtime-selector.js?v=15',
+            '/runtime-selector.js?v=16',
             '/create-server-wizard.js?v=5',
         ):
             self.assertIn(marker, html)
