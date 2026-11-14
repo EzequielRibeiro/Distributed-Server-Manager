@@ -7,6 +7,7 @@ migrate a production database, alter systemd or grant no-drain permission.
 """
 from __future__ import annotations
 
+import ast
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,9 +15,11 @@ import sqlite3
 import sys
 import tempfile
 import threading
+from types import SimpleNamespace
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
 for directory in (ROOT, ROOT / "dashboard", ROOT / "database",
@@ -200,6 +203,119 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
         self.assertEqual(code, 200, legacy)
         self.assertEqual(legacy["health_status"], "online")
         self.assertNotIn("no_drain_compatibility_offer", legacy)
+
+
+    def test_actual_controller_part11_post_route_with_durable_agent_credential(self):
+        """Run the actual legacy.DashboardHandler integration function.
+
+        Compiles the precise integrated_post function from server_part11.py
+        into an isolated HTTP handler so importing the full dashboard app
+        cannot start services or mutate global daemon handlers in the runner.
+        DB auth and dispatch remain real. This is still *not* a full daemon.
+        """
+        self._stop_http()
+        path = ROOT / "dashboard/server_part11.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        route = next(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "integrated_post"
+        )
+        route_code = compile(
+            ast.Module(body=[route], type_ignores=[]), str(path), "exec"
+        )
+        fixture = self
+        namespace = {
+            "urlparse": urlparse,
+            "CONSOLE_PUSH_PATH": "/api/agent/console/push",
+            "ENROLL_PATH": "/api/agent/enroll",
+            "HEARTBEAT_PATH": "/api/agent/heartbeat",
+            "UNINSTALL_RESULT_PATH": "/api/agent/uninstall/result",
+            "_previous_post": lambda handler: handler.send_error(404),
+            "legacy": SimpleNamespace(
+                DATABASE_FILE=self.db_path,
+                dashboard_repository=lambda _path: SimpleNamespace(
+                    backend=fixture.backend),
+            ),
+            "dispatch_heartbeat": dispatch_heartbeat,
+            "dispatch_enroll": lambda *_args, **_kw: self.fail(
+                "unexpected controller enrollment"),
+            "dispatch_uninstall_result": lambda *_args, **_kw: self.fail(
+                "unexpected uninstall result"),
+        }
+        exec(route_code, namespace)
+        actual_post = namespace["integrated_post"]
+
+        class ActualRouteHandler(BaseHTTPRequestHandler):
+            do_POST = actual_post
+
+            def log_message(self, *_args):
+                pass
+
+            def read_json_body(self):
+                size = int(self.headers.get("Content-Length", "-1"))
+                if not 0 <= size <= 8192:
+                    raise ValueError("invalid payload size")
+                try:
+                    return json.loads(self.rfile.read(size))
+                except (ValueError, UnicodeDecodeError) as exc:
+                    raise ValueError("invalid payload") from exc
+
+            def send_json(self, status, payload):
+                body = json.dumps(payload, sort_keys=True).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+        def start_actual_route():
+            self.server = ThreadingHTTPServer(("127.0.0.1", 0), ActualRouteHandler)
+            self.server.daemon_threads = True
+            self.thread = threading.Thread(
+                target=self.server.serve_forever, daemon=True)
+            self.thread.start()
+            self.url = "http://127.0.0.1:%d/api/agent/heartbeat" % self.server.server_port
+
+        start_actual_route()
+        first = build_probe(self.agent_id)
+        code, body = self._request(
+            self._payload(no_drain_compatibility_probe=first))
+        self.assertEqual(code, 200, body)
+        self.assertTrue(verify_offer(
+            first, body["no_drain_compatibility_offer"])["wire_compatible"])
+        self.assertFalse(body["no_drain_compatibility_offer"]["live_no_drain_authorized"])
+        self.assertEqual(body["health_status"], "online")
+
+        # Authentication must be enforced by the real dispatcher even when
+        # requests entered through the actual integrated_post route.
+        bad_status, rejected = self._request(
+            self._payload(no_drain_compatibility_probe=first),
+            secret="bad-credential",
+        )
+        self.assertEqual(bad_status, 401, rejected)
+        self.assertNotIn("no_drain_compatibility_offer", rejected)
+
+        self._stop_http()
+        self.backend.close()
+        self.backend = create_backend(
+            DatabaseConfig(driver="sqlite", database=str(self.db_path)))
+        start_actual_route()
+        second = build_probe(self.agent_id)
+        self.assertNotEqual(first["request_id"], second["request_id"])
+        code, body = self._request(
+            self._payload(no_drain_compatibility_probe=second))
+        self.assertEqual(code, 200, body)
+        self.assertTrue(verify_offer(
+            second, body["no_drain_compatibility_offer"])["wire_compatible"])
+        self.assertFalse(verify_offer(
+            first, body["no_drain_compatibility_offer"])["wire_compatible"])
+        self.assertFalse(body["no_drain_compatibility_offer"]["live_no_drain_authorized"])
+        with sqlite3.connect(self.db_path) as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                (self.agent_id,)
+            ).fetchone()[0]
+        self.assertEqual(count, 1)
 
 
 if __name__ == "__main__":
