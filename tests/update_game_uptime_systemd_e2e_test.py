@@ -1205,7 +1205,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                         self.assertEqual(path.read_bytes(), old)
                     else:
                         with self.assertRaisesRegex(
-                            transaction.TransactionSafetyError,
+                            compose._TRANSACTION.TransactionSafetyError,
                             "rollback completed",
                         ):
                             compose.execute(
