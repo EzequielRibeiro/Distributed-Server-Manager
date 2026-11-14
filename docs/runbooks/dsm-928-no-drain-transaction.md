@@ -275,3 +275,38 @@ JVM Minecraft. Ainda são necessárias provisão permanente root-owned,
 retencao de versoes antigas, rollback do pacote completo e validação
 operacional no updater. `live_no_drain_authorized=false`; release
 permanece bloqueado.
+
+
+## Retencao de supervisores e plano reversivel de unidade (somente leitura)
+
+O modulo `update-manager/game-uptime-supervisor-retention.py` registra
+referencias explicitas do `ExecStart` das unidades instaladas e dos
+processos em execucao (unidade, PID, timestamp monotônico e caminho do
+supervisor informado pelo observador). Exige inventario completo, nomes
+de unidades validos, arquivos versionados regulares com hash correto
+e sem permissao de escrita. Uma divergencia impede classificar as
+versoes nao referenciadas.
+
+Quando o processo ativo ainda utiliza SHA antigo e a unidade instalada
+ja aponta para o SHA novo, **ambos permanecem protegidos**. Todas as
+versoes validas continuam preservadas, inclusive as aparentemente nao
+referenciadas. A lista `manual_review_only_unreferenced_versions`
+serve apenas para investigacao. **Nao existe exclusao automatica**:
+`automatic_deletion_allowed=false` em todos os retornos.
+
+O metodo `SystemdMaterializer.plan_pinned_transition()` adiciona uma
+ponte com o materializador nativo: valida um arquivo de unidade existente
+de propriedade Capivara, exige o SHA-256 do baseline fornecido pelo
+operador, confere o usuario/permissoes do supervisor pinado e calcula
+o SHA-256 da unidade proposta. Recusa baseline defasado, unidades
+estranhas e symlink. **Nao grava nenhum arquivo nem chama systemctl.**
+A unidade anterior precisa ser preservada fora do metodo e todas as
+identidades de processo precisam ser rechecadas antes e depois de
+qualquer futura substituicao. Isso nao implementa a substituicao
+transacional e tampouco sua reversao real.
+
+Limites: as referencias informadas pelo chamador nao sao prova suficiente
+de controle de processos; faltam verificacao de execucao/cgroup do
+systemd no host efetivo, configuracao persistente do diretorio,
+integracao de troca/rollback no updater e homologacao com jogos reais.
+O release continua bloqueado e `live_no_drain_authorized=false`.
