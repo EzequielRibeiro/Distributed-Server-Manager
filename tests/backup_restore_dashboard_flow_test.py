@@ -52,6 +52,20 @@ class BackupRestoreDashboardFlowTest(unittest.TestCase):
         self.assertIn('/api/customer/artifacts/restore-import', restore)
         self.assertIn('confirm(restoreWarning', restore)
 
+    def test_backup_upload_reports_real_browser_transfer_progress(self):
+        for filename in ("customer-backup-transfer.js", "controller-instance-backup-transfer.js"):
+            js = (ROOT / "dashboard/web" / filename).read_text(encoding="utf-8")
+            self.assertIn("new XMLHttpRequest()", js)
+            self.assertIn("xhr.upload.onprogress", js)
+            self.assertIn("event.lengthComputable", js)
+            self.assertIn("event.loaded", js)
+            self.assertIn("file.size", js)
+            self.assertIn("backup-transfer-progress-label", js)
+            self.assertIn("uploadInProgress", js)
+            self.assertIn("Aguardando validação no Agent", js)
+            self.assertIn("Pronto para restaurar", js)
+            self.assertNotIn('fetch(`/api/customer/artifacts/upload?', js)
+
     def test_customer_and_admin_share_permission_guarded_backend(self):
         service = (ROOT / "dashboard/customer_instance_workspace_service.py").read_text(encoding="utf-8")
         http = (ROOT / "dashboard/customer_instance_workspace_http.py").read_text(encoding="utf-8")
