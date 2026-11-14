@@ -90,6 +90,7 @@ AUTO_YES=0
 ALLOW_SAME_VERSION=0
 ALLOW_DOWNGRADE=0
 NO_BACKUP=0
+NO_DRAIN_REPORT=0
 NEW_SRC=""
 BACKUP_FILE=""
 BACKUP_PART=""
@@ -129,6 +130,7 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
+  --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
 }
@@ -146,8 +148,15 @@ parse_arguments() {
             --allow-downgrade)
                 ALLOW_DOWNGRADE=1
                 ;;
+            --no-drain)
+                echo "No-drain update is not yet homologated; refusing to update." >&2
+                exit 2
+                ;;
             --no-backup)
                 NO_BACKUP=1
+                ;;
+            --no-drain-report)
+                NO_DRAIN_REPORT=1
                 ;;
             -h|--help)
                 print_usage
@@ -867,24 +876,39 @@ stop_game_instances()
 restart_game_instances()
 {
     local UNIT
+    local RECOVERY_FAILED=0
 
     [[ "${#ACTIVE_GAME_UNITS[@]}" -gt 0 ]] || return 0
 
     echo
     echo "Restaurando instâncias que estavam ativas..."
-    echo "Restoring game instances that were active..."
+    echo "Restoring game instances..."
 
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        echo "[ERROR] Game recovery daemon-reload failed." >&2
+        return 1
+    }
 
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"
     do
         echo "Iniciando instância | Starting instance: ${UNIT}"
-        systemctl start "${UNIT}"
-        wait_for_game_instance_active "${UNIT}"
+        if ! systemctl start "${UNIT}"; then
+            echo "[ERROR] Game recovery could not start ${UNIT}." >&2
+            RECOVERY_FAILED=1
+            continue
+        fi
+        if ! wait_for_game_instance_active "${UNIT}"; then
+            echo "[ERROR] Game recovery readiness failed for ${UNIT}." >&2
+            RECOVERY_FAILED=1
+            continue
+        fi
         echo "[OK] ${UNIT} restaurado | restored."
     done
+    if [[ "${RECOVERY_FAILED}" -ne 0 ]]; then
+        echo "[ERROR] One or more previously active games could not be recovered." >&2
+        return 1
+    fi
 }
-
 
 # =============================================================
 # Parar serviços DSM | Stop DSM services
@@ -1348,6 +1372,7 @@ reconcile_hybrid_runtime_substrate() {
 # =============================================================
 restart_services() {
     local SERVICE_NAME
+    local RECOVERY_FAILED=0
 
     echo
     echo "Gerenciando serviços DSM..."
@@ -1369,17 +1394,25 @@ restart_services() {
         return 0
     fi
 
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        echo "[ERROR] Controller service recovery daemon-reload failed." >&2
+        return 1
+    }
     for SERVICE_NAME in "${RESTORE_SERVICES[@]}"
     do
         echo
         echo "Iniciando serviço | Starting service: ${SERVICE_NAME}"
-        systemctl start "${SERVICE_NAME}" || {
+        if ! systemctl start "${SERVICE_NAME}"; then
             echo "[ERROR] Falha ao iniciar | Failed to start ${SERVICE_NAME}." >&2
-            return 1
-        }
+            RECOVERY_FAILED=1
+            continue
+        fi
         echo "[OK] ${SERVICE_NAME} iniciado | started."
     done
+    if [[ "${RECOVERY_FAILED}" -ne 0 ]]; then
+        echo "[ERROR] One or more previously active DSM services could not be recovered." >&2
+        return 1
+    fi
     echo
     echo "Processo de inicialização concluído."
     echo "Startup process completed."
@@ -1736,6 +1769,22 @@ main() {
     echo "Iniciando atualização DSM..."
     echo "Starting DSM update..."
     parse_arguments "$@"
+    # This diagnostic must execute BEFORE root, logging, backup, daemon or
+    # filesystem changes. Always exit 2: a report is never update approval.
+    if [[ "${NO_DRAIN_REPORT}" -eq 1 ]]; then
+        local DIAGNOSTIC="${SCRIPT_DIR}/update-manager/game-uptime-preflight.py"
+        if [[ -z "${NEW_SRC}" || ! -d "${NEW_SRC}" || -L "${NEW_SRC}"
+              || ! -f "${DIAGNOSTIC}" || -L "${DIAGNOSTIC}" ]]; then
+            echo "No-drain report requires a safe target directory and trusted installed diagnostic." >&2
+            exit 2
+        fi
+        if ! PYTHONDONTWRITEBYTECODE=1 python3 "${DIAGNOSTIC}" "${INSTALL_DIR}" "${NEW_SRC}"; then
+            echo "No-drain diagnostic could not establish a safe inventory." >&2
+            exit 2
+        fi
+        echo "Diagnostic only: --no-drain remains blocked; update was not started." >&2
+        exit 2
+    fi
     # Ambiente | Environment
     require_root
     # O pacote instalado pode ser substituído durante esta execução. Nunca
@@ -1831,12 +1880,30 @@ update_failed() {
     # Só executa rollback se existir backup | Only run rollback if backup exists
     if [[ "${UPDATE_FILES_STARTED}" -eq 1 && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]
     then
-        rollback
+        if ! rollback; then
+            echo "ERRO CRÍTICO: rollback automático falhou; intervenção manual necessária." >&2
+            echo "CRITICAL: automatic rollback failed; manual recovery required." >&2
+            echo "Backup preservado | Backup retained: ${BACKUP_FILE}" >&2
+        fi
     else
         echo
+        if [[ "${UPDATE_FILES_STARTED}" -eq 1 ]]; then
+            echo "ERRO CRÍTICO: arquivos alterados sem backup disponível para rollback." >&2
+            echo "CRITICAL: files changed but no rollback backup is available." >&2
+        fi
         if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
-            restart_services || true
-            restart_game_instances || true
+            # Services/games may have been stopped before the first file write.
+            # Attempt both recoveries even if one fails, but never hide a
+            # partial restart failure behind the original update error.
+            local SERVICE_RECOVERY_STATUS=0
+            local GAME_RECOVERY_STATUS=0
+            restart_services || SERVICE_RECOVERY_STATUS=$?
+            restart_game_instances || GAME_RECOVERY_STATUS=$?
+            if [[ "${SERVICE_RECOVERY_STATUS}" -ne 0 || "${GAME_RECOVERY_STATUS}" -ne 0 ]]; then
+                echo "ERRO CRÍTICO: recuperação de serviços/jogos incompleta; revisão manual necessária." >&2
+                echo "CRITICAL: pre-update service/game recovery incomplete; manual review required." >&2
+                echo "Recovery exit codes: services=${SERVICE_RECOVERY_STATUS}, games=${GAME_RECOVERY_STATUS}" >&2
+            fi
         fi
         echo "Rollback não executado."
         echo "Rollback not executed."
@@ -1976,9 +2043,27 @@ rollback() {
     echo
     echo "Recarregando Systemd..."
     echo "Reloading Systemd..."
-    systemctl daemon-reload 2>/dev/null || true
-    restart_services 2>/dev/null || true
-    restart_game_instances 2>/dev/null || true
+    local ROLLBACK_RELOAD_RC=0
+    local ROLLBACK_SERVICES_RC=0
+    local ROLLBACK_GAMES_RC=0
+    systemctl daemon-reload 2>/dev/null || ROLLBACK_RELOAD_RC=$?
+    # A failed daemon-reload on a live systemd host must not be followed by
+    # service starts against potentially stale unit definitions.
+    if [[ "${SYSTEMD_ENABLED}" -eq 1 && "${ROLLBACK_RELOAD_RC}" -ne 0 ]]; then
+        echo "CRITICAL: rollback systemd reload failed; manual recovery required." >&2
+        echo "Backup retained: ${BACKUP_FILE}" >&2
+        return 1
+    fi
+    # Attempt both recoveries, but never report successful rollback while
+    # either the Controller services or originally active games failed.
+    restart_services || ROLLBACK_SERVICES_RC=$?
+    restart_game_instances || ROLLBACK_GAMES_RC=$?
+    if [[ "${ROLLBACK_SERVICES_RC}" -ne 0 || "${ROLLBACK_GAMES_RC}" -ne 0 ]]; then
+        echo "CRITICAL: rollback restored files but service/game recovery incomplete; manual review required." >&2
+        echo "Rollback recovery exit codes: services=${ROLLBACK_SERVICES_RC}, games=${ROLLBACK_GAMES_RC}" >&2
+        echo "Backup retained: ${BACKUP_FILE}" >&2
+        return 1
+    fi
     # Remover staging incompleto | Remove incomplete staging
     rm -rf "${STAGING_DIR}"
     echo

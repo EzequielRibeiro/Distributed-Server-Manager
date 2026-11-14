@@ -256,16 +256,24 @@ main()
     preflight_validate_preserved_data
     preflight_validate_disk
     preflight_validate_process_and_database_guard
-    # Diagnostic only. This does not authorize non-draining updates.
-    if [[ -f "${TARGET_ROOT}/update-manager/game-uptime-plan.py" ]]; then
-        printf 'PRECHECK GAME UPTIME: diagnostic read-only impact classification\n'
-        python3 "${TARGET_ROOT}/update-manager/game-uptime-plan.py" "${INSTALL_ROOT}" "${TARGET_ROOT}" \
-            || printf 'PRECHECK GAME UPTIME: fail-closed; managed instance drain remains required\n'
-    fi
-    if [[ -f "${TARGET_ROOT}/update-manager/game-uptime-report.py" ]]; then
-        printf 'PRECHECK GAME UPTIME: read-only managed process identity report\n'
-        python3 "${TARGET_ROOT}/update-manager/game-uptime-report.py" \
-            || printf 'PRECHECK GAME UPTIME: process identity inspection failed; maintenance still required\n'
+    # Read-only per-unit report. A diagnostic error cannot authorize a no-drain
+    # update: the actual update.sh still drains all managed game instances.
+    # The legacy report remains as a compatibility fallback for older packages.
+    if [[ -f "${TARGET_ROOT}/update-manager/game-uptime-preflight.py" ]]; then
+        printf 'PRECHECK GAME UPTIME: read-only per-instance planned action report\n'
+        python3 "${TARGET_ROOT}/update-manager/game-uptime-preflight.py" "${INSTALL_ROOT}" "${TARGET_ROOT}" \
+            || printf 'PRECHECK GAME UPTIME: impact not verified; instance drain remains mandatory\n'
+    else
+        if [[ -f "${TARGET_ROOT}/update-manager/game-uptime-plan.py" ]]; then
+            printf 'PRECHECK GAME UPTIME: diagnostic read-only impact classification\n'
+            python3 "${TARGET_ROOT}/update-manager/game-uptime-plan.py" "${INSTALL_ROOT}" "${TARGET_ROOT}" \
+                || printf 'PRECHECK GAME UPTIME: fail-closed; managed instance drain remains required\n'
+        fi
+        if [[ -f "${TARGET_ROOT}/update-manager/game-uptime-report.py" ]]; then
+            printf 'PRECHECK GAME UPTIME: read-only managed process identity report\n'
+            python3 "${TARGET_ROOT}/update-manager/game-uptime-report.py" \
+                || printf 'PRECHECK GAME UPTIME: process identity inspection failed; maintenance still required\n'
+        fi
     fi
     printf 'UPDATE PREFLIGHT READY: nenhuma alteração foi aplicada em %s\n' "${INSTALL_ROOT}"
 }

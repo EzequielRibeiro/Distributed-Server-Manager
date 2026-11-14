@@ -1,0 +1,241 @@
+"""#928 authenticated, read-only Agent/Controller compatibility exchange.
+
+All fixtures mock heartbeat persistence and credentials. No live DSM services,
+updates, database or game processes are touched.
+"""
+from __future__ import annotations
+import ast
+import importlib.util
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+from contextlib import ExitStack
+import sys
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+for directory in (ROOT, ROOT/"dashboard", ROOT/"database", ROOT/"core"):
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
+
+
+def _load(name, path):
+    loader = SourceFileLoader(name, str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+agent_wire = _load("dsm928_agent_wire", ROOT/"agents/linux/runtime/game_uptime_agent_wire.py")
+controller_wire = _load("dsm928_controller_wire", ROOT/"dashboard/game_uptime_heartbeat_compat.py")
+from agent_remote_http import dispatch_heartbeat
+
+
+class WireContractTests(unittest.TestCase):
+    def test_same_readonly_contract_both_ends(self):
+        self.assertEqual(agent_wire.WIRE_CONTRACT, controller_wire.WIRE_CONTRACT)
+        probe = agent_wire.build_probe("agent-A")
+        offer = controller_wire.assess_authenticated_probe(
+            probe, authenticated_agent_id="agent-A")
+        result = agent_wire.verify_offer(probe, offer)
+        self.assertTrue(result["wire_compatible"])
+        self.assertFalse(result["live_no_drain_authorized"])
+        self.assertFalse(offer["live_no_drain_authorized"])
+
+    def test_spoofed_identity_rejected(self):
+        probe = agent_wire.build_probe("agent-imposter")
+        offer = controller_wire.assess_authenticated_probe(
+            probe, authenticated_agent_id="agent-trusted")
+        self.assertEqual(offer["status"], "blocked")
+        self.assertFalse(agent_wire.verify_offer(probe, offer)["wire_compatible"])
+        self.assertEqual(offer["agent_id"], "agent-trusted")
+
+    def test_mismatched_schema_rejected(self):
+        probe = agent_wire.build_probe("agent-trusted")
+        probe["contract"]["schema"] = "2"
+        offer = controller_wire.assess_authenticated_probe(
+            probe, authenticated_agent_id="agent-trusted")
+        self.assertEqual(offer["status"], "blocked")
+        self.assertFalse(agent_wire.verify_offer(probe, offer)["wire_compatible"])
+
+    def test_replayed_nonce_rejected(self):
+        probe = agent_wire.build_probe("agent-trusted")
+        offer = controller_wire.assess_authenticated_probe(
+            probe, authenticated_agent_id="agent-trusted")
+        fresh = agent_wire.build_probe("agent-trusted")
+        self.assertNotEqual(fresh["request_id"], probe["request_id"])
+        self.assertFalse(agent_wire.verify_offer(fresh, offer)["wire_compatible"])
+
+    def test_unknown_or_malicious_offer_never_authorizes(self):
+        probe = agent_wire.build_probe("agent-trusted")
+        self.assertFalse(agent_wire.verify_offer(probe, None)["wire_compatible"])
+        offer = controller_wire.assess_authenticated_probe(
+            probe, authenticated_agent_id="agent-trusted")
+        offer["live_no_drain_authorized"] = True
+        self.assertFalse(agent_wire.verify_offer(probe, offer)["wire_compatible"])
+
+    def test_missing_nonce_fails_closed(self):
+        probe = agent_wire.build_probe("agent-trusted")
+        probe["request_id"] = "invalid"
+        offer = controller_wire.assess_authenticated_probe(
+            probe, authenticated_agent_id="agent-trusted")
+        self.assertEqual(offer["status"], "blocked")
+        self.assertFalse(agent_wire.verify_offer(probe, offer)["wire_compatible"])
+
+
+class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        for name in (
+            "_attach_uninstall_state", "_attach_update_state",
+            "_attach_provisioning_state", "_attach_game_data_state",
+            "_attach_instance_state", "_attach_doctor_state",
+            "_reconcile_link_incident", "_attach_backup_clone_state",
+        ):
+            self.stack.enter_context(patch("agent_remote_http." + name))
+        self.auth = self.stack.enter_context(patch("agent_remote_http.AgentPairingRepository"))
+        self.auth.return_value.authenticate.return_value = {
+            "agent_id": "trusted-agent", "status": "active"}
+        self.stack.enter_context(patch("agent_remote_http.record_agent_heartbeat",
+                     return_value={"agent_id": "trusted-agent", "health_status": "online"}))
+        self.stack.enter_context(patch("agent_remote_http.validated_heartbeat_recovery_claims",
+                                       return_value=[]))
+        self.stack.enter_context(patch(
+            "minecraft_recovery_heartbeat_claims.owned_instance_ids_for_agent",
+            return_value=set()))
+        self.headers = {
+            "X-Capivara-Agent-Credential": "test-credential",
+            "X-Capivara-Agent-Secret": "test-secret",
+            "X-Capivara-Agent-Fingerprint": "test-fingerprint",
+        }
+
+    def post(self, payload):
+        return dispatch_heartbeat(payload, headers=self.headers, backend=object())
+
+    def test_authenticated_roundtrip_and_bounded_no_draining(self):
+        probe = agent_wire.build_probe("trusted-agent")
+        status, data = self.post({"agent_id": "payload-spoof",
+                                  "no_drain_compatibility_probe": probe})
+        self.assertEqual(status, 200)
+        offer = data["no_drain_compatibility_offer"]
+        self.assertEqual(offer["agent_id"], "trusted-agent")
+        self.assertEqual(offer["status"], "wire_compatible")
+        self.assertTrue(agent_wire.verify_offer(probe, offer)["wire_compatible"])
+        self.assertFalse(offer["live_no_drain_authorized"])
+        self.assertNotIn("game_commands", offer)
+        self.assertNotIn("update", offer)
+
+    def test_spoofed_probe_identity_blocked_after_auth(self):
+        probe = agent_wire.build_probe("imposter-agent")
+        status, data = self.post({"no_drain_compatibility_probe": probe})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["no_drain_compatibility_offer"]["status"], "blocked")
+        self.assertEqual(data["no_drain_compatibility_offer"]["agent_id"], "trusted-agent")
+
+    def test_absent_probe_preserves_old_heartbeat(self):
+        status, data = self.post({"agent_id": "trusted-agent"})
+        self.assertEqual(status, 200)
+        self.assertEqual(data["health_status"], "online")
+        self.assertNotIn("no_drain_compatibility_offer", data)
+
+    def test_invalid_auth_never_receives_offer(self):
+        from agent_pairing_repository import AgentCredentialInvalid
+        self.auth.return_value.authenticate.side_effect = AgentCredentialInvalid("bad")
+        probe = agent_wire.build_probe("trusted-agent")
+        status, data = self.post({"no_drain_compatibility_probe": probe})
+        self.assertEqual(status, 401)
+        self.assertNotIn("no_drain_compatibility_offer", data)
+
+
+
+class AgentHeartbeatScopeTests(unittest.TestCase):
+    def test_serverpack_observation_globals_belong_to_heartbeat(self):
+        """Protect the unrelated Server Pack observation path during PR sync."""
+        source = (ROOT / "agents/linux/runtime/agent.py").read_text()
+        functions = {
+            node.name: node for node in ast.parse(source).body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertIn("heartbeat", functions)
+        self.assertIn("enroll", functions)
+        heartbeat_globals = {
+            name for node in functions["heartbeat"].body
+            if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        enroll_globals = {
+            name for node in functions["enroll"].body
+            if isinstance(node, ast.Global)
+            for name in node.names
+        }
+        required = {"_SERVERPACK_OBSERVATION_PENDING", "_SERVERPACK_LAST_SCANNED"}
+        self.assertTrue(required.issubset(heartbeat_globals))
+        self.assertFalse(required.intersection(enroll_globals))
+
+
+
+    def test_merged_agent_location_and_no_drain_diagnostics_coexist(self):
+        """Protect main's GeoIP/location fields alongside the Draft PR probe.
+
+        This is a static regression test for integration, not proof that the
+        real Controller/Agent daemons survive a release or migration.
+        """
+        source = (ROOT / "agents/linux/runtime/agent.py").read_text()
+        syntax = ast.parse(source)
+        imports = {
+            alias.asname or alias.name for node in syntax.body
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        }
+        self.assertTrue({
+            "observe_host_geolocation", "build_no_drain_probe",
+            "verify_no_drain_offer",
+        }.issubset(imports))
+        functions = {
+            node.name: node for node in syntax.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertIn("_inventory", functions)
+        self.assertIn("heartbeat", functions)
+
+        inventory = functions["_inventory"]
+        heartbeat = functions["heartbeat"]
+        inventory_calls = [
+            node.func.id for node in ast.walk(inventory)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        self.assertEqual(inventory_calls.count("observe_public_ipv4"), 1)
+        self.assertIn("observe_host_geolocation", inventory_calls)
+        self.assertIn("build_no_drain_probe", inventory_calls)
+        inventory_keys = {
+            node.value for node in ast.walk(inventory)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        self.assertTrue({"geo_location_observation",
+                         "no_drain_compatibility_probe"}.issubset(inventory_keys))
+
+        heartbeat_calls = [
+            node.func.id for node in ast.walk(heartbeat)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        ]
+        self.assertIn("verify_no_drain_offer", heartbeat_calls)
+        self.assertIn("_write_config", heartbeat_calls)
+        heartbeat_keys = {
+            node.value for node in ast.walk(heartbeat)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+        }
+        self.assertTrue({
+            "controller_location", "no_drain_compatibility_offer",
+            "no_drain_compatibility_probe", "no_drain_wire_diagnostic",
+        }.issubset(heartbeat_keys))
+        # Reading the diagnostic must never become a command or implicit
+        # consent to stop/restart/drain the live game service.
+        self.assertFalse({
+            "stop_games", "start_games", "restart_games", "drain_games",
+        }.intersection(heartbeat_calls))
+
+
+if __name__ == "__main__":
+    unittest.main()
