@@ -1835,7 +1835,11 @@ update_failed() {
     # Só executa rollback se existir backup | Only run rollback if backup exists
     if [[ "${UPDATE_FILES_STARTED}" -eq 1 && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]
     then
-        rollback
+        if ! rollback; then
+            echo "ERRO CRÍTICO: rollback automático falhou; intervenção manual necessária." >&2
+            echo "CRITICAL: automatic rollback failed; manual recovery required." >&2
+            echo "Backup preservado | Backup retained: ${BACKUP_FILE}" >&2
+        fi
     else
         echo
         if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
