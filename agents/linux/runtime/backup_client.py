@@ -363,6 +363,24 @@ def _restore_direct(config, command):
     was_running = status(config, instance_id).get("observed_state") == "running"
     # Validate before stopping the game or moving any live files.
     _validate_archive_payload(artifact)
+    # Verify manifest compatibility before any lifecycle mutation.
+    with tarfile.open(artifact, "r:*") as archive:
+        manifest_member = next((m for m in archive if m.name == MANIFEST_NAME), None)
+        if manifest_member is None or not manifest_member.isfile():
+            raise ValueError("backup manifest is missing")
+        handle = archive.extractfile(manifest_member)
+        if handle is None:
+            raise ValueError("backup manifest is unreadable")
+        try:
+            manifest = json.loads(handle.read().decode("utf-8"))
+        except Exception as exc:
+            raise ValueError("backup manifest is invalid") from exc
+        if not isinstance(manifest, dict) or (
+            manifest.get("kind") != "CapivaraInstanceBackup"
+            or manifest.get("backup_format") != "capivara-instance"
+        ):
+            raise ValueError("unsupported backup manifest")
+        _validate_manifest(record, manifest)
     if was_running:
         lifecycle(config, instance_id, "stop")
 
