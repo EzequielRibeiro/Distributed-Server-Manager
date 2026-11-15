@@ -250,6 +250,10 @@ def _create(config, command):
     policy = dict(command.get("policy") or {})
     consistency = str(policy.get("consistency") or "live")
     was_running = False
+    # All non-mutating preflights must succeed before stopping a live game.
+    instance_dir = BACKUP_ROOT / _safe(instance_id)
+    _retained_backup_capacity(instance_dir, policy)
+    selected_paths = _selected(root, policy)
 
     if consistency == "quiesced":
         raise RuntimeError(
@@ -264,13 +268,11 @@ def _create(config, command):
 
     try:
         backup_id = str(uuid.uuid4())
-        instance_dir = BACKUP_ROOT / _safe(instance_id)
         suffix = (
             ".tar.gz"
             if str(policy.get("compression") or "gzip") == "gzip"
             else ".tar"
         )
-        _retained_backup_capacity(instance_dir, policy)
         path = instance_dir / f"{backup_id}{suffix}"
         manifest = _manifest(record, backup_id)
         if path.exists():
@@ -278,7 +280,7 @@ def _create(config, command):
         try:
             _create_archive(
                 root,
-                _selected(root, policy),
+                selected_paths,
                 path,
                 str(policy.get("compression") or "gzip"),
                 manifest,
