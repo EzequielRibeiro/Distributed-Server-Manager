@@ -349,15 +349,14 @@ def _restore_direct(config, command):
     instance_id = str(command["instance_id"])
     record, root = _owned(config, instance_id)
     artifact = _artifact(instance_id, str(command.get("backup_id") or ""))
-    # Validate before stopping the game or moving any live files.
-    _validate_archive_payload(artifact)
-    was_running = status(config, instance_id).get("observed_state") == "running"
-
     previous = root.with_name(root.name + ".c5-previous")
     if previous.exists():
         raise RuntimeError(
             f"refusing restore: pre-existing recovery directory {previous}"
         )
+    was_running = status(config, instance_id).get("observed_state") == "running"
+    # Validate before stopping the game or moving any live files.
+    _validate_archive_payload(artifact)
     if was_running:
         lifecycle(config, instance_id, "stop")
 
