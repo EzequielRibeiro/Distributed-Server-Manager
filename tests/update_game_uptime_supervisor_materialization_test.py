@@ -203,6 +203,15 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
                         expected_installed_sha256=digest, process_identity_observer=lambda: (123, 456))
             self.assertEqual(installed.read_bytes(), original)
 
+    def test_disposable_transition_rejects_non_tmp_directory(self):
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": "/etc/systemd/user"}):
+            mat = SystemdMaterializer(runner=lambda *_: self.fail("no systemctl"))
+            with self.assertRaisesRegex(MaterializerError, "disposable"):
+                mat.apply_pinned_transition_disposable(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256="0" * 64,
+                    process_identity_observer=lambda: (123, 456))
+
     def test_disposable_transition_rolls_back_on_pid_identity_drift(self):
         unit_dir = self.root / "sandbox-units"
         unit_dir.mkdir()
