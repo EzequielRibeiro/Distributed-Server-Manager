@@ -109,7 +109,10 @@ def _selected(root, policy):
             for pattern in excludes
         )
 
-    return [path for path in candidates if not excluded(path)]
+    selected = [path for path in candidates if not excluded(path)]
+    if not selected:
+        raise ValueError("backup selection contains no paths")
+    return selected
 
 
 def _manifest(record, backup_id):
@@ -147,6 +150,31 @@ def _create_archive(root, paths, destination, compression, manifest):
             )
 
 
+def _validate_archive_payload(archive_path):
+    """Fail closed if an archive has no regular instance files.
+
+    Also fully reads file payloads so truncated gzip/tar data cannot be
+    mistaken for a verified backup. Never extracts anything.
+    """
+    found = False
+    with tarfile.open(archive_path, "r:*") as archive:
+        for member in archive:
+            if member.name == MANIFEST_NAME:
+                continue
+            if member.issym() or member.islnk() or member.isdev():
+                raise ValueError("backup contains links or devices")
+            if not member.isfile():
+                continue
+            found = True
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError("backup contains unreadable file")
+            while stream.read(1024 * 1024):
+                pass
+    if not found:
+        raise ValueError("backup contains no instance files")
+
+
 def _safe_extract(archive_path, destination):
     manifest = None
     with tarfile.open(archive_path, "r:*") as archive:
@@ -165,6 +193,9 @@ def _safe_extract(archive_path, destination):
                     except Exception as exc:
                         raise ValueError("backup manifest is invalid") from exc
         archive.extractall(base, members=members, filter="data")
+
+    if not any(p.is_file() for p in destination.rglob("*") if p.name != MANIFEST_NAME):
+        raise ValueError("restore archive contains no instance files")
 
     if manifest is not None and (
         manifest.get("kind") != "CapivaraInstanceBackup"
@@ -248,6 +279,7 @@ def _create(config, command):
                 str(policy.get("compression") or "gzip"),
                 manifest,
             )
+            _validate_archive_payload(path)
             size = path.stat().st_size
             sha256 = _digest(path)
         except Exception:
@@ -256,8 +288,8 @@ def _create(config, command):
             path.unlink(missing_ok=True)
             raise
         manifest["files_checksum"] = sha256
-        if not policy.get("keep_single_operational") and not policy.get("retention_days"):
-            _retention(instance_dir, int(policy.get("retention_count") or 7))
+        # Retention is deliberately disabled until an explicit, separately
+        # approved non-destructive policy is implemented. Never prune here.
         return {
             "backup_id": backup_id,
             "artifact_path": str(path),
@@ -317,6 +349,8 @@ def _restore_direct(config, command):
     instance_id = str(command["instance_id"])
     record, root = _owned(config, instance_id)
     artifact = _artifact(instance_id, str(command.get("backup_id") or ""))
+    # Validate before stopping the game or moving any live files.
+    _validate_archive_payload(artifact)
     was_running = status(config, instance_id).get("observed_state") == "running"
 
     previous = root.with_name(root.name + ".c5-previous")
