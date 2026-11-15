@@ -47,7 +47,7 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("communityFormDirty",dayz_js)
   self.assertIn('if(communityFormDirty&&document.getElementById("dayz-community-map-id"))return',dayz_js)
   self.assertIn("markCommunityDirty",dayz_js)
-  def test_namalsk_preset_honors_content_entitlements(self):
+ def test_namalsk_preset_honors_content_entitlements(self):
   source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
   self.assertIn('"Preencher Namalsk (oficial)"',source)
   self.assertIn('"dayz-map:namalsk"',source)
