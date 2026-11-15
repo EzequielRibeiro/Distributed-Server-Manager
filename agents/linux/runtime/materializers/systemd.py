@@ -245,6 +245,43 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
           "reinspect_active_process_identity_before_and_after":True,
           "mode":"read_only","unit_write_permitted":False,
           "live_no_drain_authorized":False}
+ def apply_pinned_transition_disposable(self, spec, *, pinned_supervisor_preview,
+                                    expected_installed_sha256):
+  """Atomic fixture-only unit switch; never authorized for production."""
+  directory=_unit_dir()
+  if not os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR") or directory.resolve()==Path("/etc/systemd/system"):
+   raise MaterializerError("pinned transition requires explicit disposable systemd directory")
+  plan=self.plan_pinned_transition(spec,pinned_supervisor_preview=pinned_supervisor_preview,
+                                   expected_installed_sha256=expected_installed_sha256)
+  path=unit_path_for_spec(spec)
+  old=path.read_bytes()
+  candidate=render_unit(spec,pinned_supervisor_preview=pinned_supervisor_preview).encode("utf-8")
+  if not plan["change_proposed"]:
+   return {"changed":False,"live_no_drain_authorized":False}
+  def replace(content):
+   import tempfile
+   fd,tmp=tempfile.mkstemp(prefix=".capivara-unit-",dir=directory)
+   try:
+    with os.fdopen(fd,"wb") as writer:
+     writer.write(content);writer.flush();os.fsync(writer.fileno())
+    os.chmod(tmp,0o644)
+    os.replace(tmp,path)
+   finally:
+    if os.path.exists(tmp):os.unlink(tmp)
+  if hashlib.sha256(path.read_bytes()).hexdigest()!=expected_installed_sha256:
+   raise MaterializerError("installed systemd unit changed before replacement")
+  try:
+   replace(candidate)
+   self._reload()
+  except Exception as exc:
+   try:
+    replace(old)
+    self._reload()
+   except Exception as rollback_exc:
+    raise MaterializerError("pinned transition failed and rollback failed") from rollback_exc
+   raise MaterializerError("pinned transition failed; previous unit restored") from exc
+  return {"changed":True,"live_no_drain_authorized":False,
+          "active_process_identity_verified":False}
  def inspect(self,spec):
   path=unit_path_for_spec(spec)
   try:content=path.read_text(encoding="utf-8")
