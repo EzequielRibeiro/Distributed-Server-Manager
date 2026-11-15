@@ -209,7 +209,7 @@ class CustomerInstanceWorkspaceService:
  def _enforce_dayz_surface_constraint(self,context,field,value):
   if str(context.get("game_id") or "").lower()!="dayz" or str(field.get("path") or "")!="serverDZ.cfg":return
   key=str(field.get("key") or "")
-  allowed={"thirdPersonView":(0,1),"verifySignatures":(0,1,2)}
+  allowed={"thirdPersonView":(0,1,2),"verifySignatures":(0,1,2)}
   minimum={"vonCodecQuality":0,"loginQueueConcurrentPlayers":1,"loginQueueMaxPlayers":1,"instanceId":1}
   if key=="guaranteedUpdates":raise ValueError("guaranteedUpdates is fixed and cannot be edited")
   if key not in allowed and key not in minimum:return
