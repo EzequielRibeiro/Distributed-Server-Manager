@@ -143,5 +143,28 @@ class BackupArchiveGuards(unittest.TestCase):
                 backup._validate_archive_payload(archive)
 
 
+    def test_stopped_backup_empty_selection_never_stops_game(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            (root / "server.cfg").write_text("ok")
+            with (
+                patch.object(backup, "_owned", return_value=({"instance_id": "test"}, root)),
+                patch.object(backup, "lifecycle") as lifecycle,
+                patch.object(backup, "status") as status,
+                patch.object(backup, "BACKUP_ROOT", Path(temp) / "backups"),
+            ):
+                with self.assertRaisesRegex(ValueError, "no paths"):
+                    backup._create(
+                        {"agent_id": "test"},
+                        {"instance_id": "test", "policy": {
+                            "mode": "full", "consistency": "stopped",
+                            "include_paths": ["nonexistent"],
+                        }},
+                    )
+                lifecycle.assert_not_called()
+                status.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
