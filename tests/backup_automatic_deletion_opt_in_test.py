@@ -48,6 +48,7 @@ class AutomaticDeletionOptInTest(unittest.TestCase):
         repository = object.__new__(BackupRepository)
         pending = [
             {"command_id": "old-command", "action": "delete", "reason": "age_retention", "instance_id": "instance", "backup_id": "old"},
+            {"command_id": "legacy-command", "action": "delete", "reason": None, "instance_id": "instance", "backup_id": "legacy"},
             {"command_id": "manual-command", "action": "delete", "reason": "manual", "instance_id": "instance", "backup_id": "manual"},
         ]
         with (
