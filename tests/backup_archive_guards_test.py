@@ -131,5 +131,17 @@ class BackupArchiveGuards(unittest.TestCase):
                 systemctl.assert_not_called()
 
 
+    def test_archive_traversal_rejected_during_preflight(self):
+        with tempfile.TemporaryDirectory() as temp:
+            archive = Path(temp) / "traversal.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                payload = b"bad"
+                info = tarfile.TarInfo("../outside.txt")
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+            with self.assertRaisesRegex(ValueError, "unsafe path"):
+                backup._validate_archive_payload(archive)
+
+
 if __name__ == "__main__":
     unittest.main()
