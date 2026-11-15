@@ -39,6 +39,7 @@ class FakeElement {
     node.parentNode = this;
   }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
+  querySelector() { return null; }
   addEventListener(name, handler) { this.listeners[name] = handler; }
   dispatch(name) { this.listeners[name]?.(); }
   remove() {
