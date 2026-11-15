@@ -21,6 +21,20 @@ class BackupArchiveGuards(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "no paths"):
                 backup._selected(root, {"mode": "full", "include_paths": ["missing"]})
 
+    def test_agent_rejects_queued_retention_delete_without_opt_in(self):
+        with (
+            patch.dict(backup.os.environ, {}, clear=True),
+            patch.object(backup, "_owned") as owned,
+            patch.object(backup, "_artifact") as artifact,
+        ):
+            with self.assertRaisesRegex(ValueError, "automatic backup deletion is disabled"):
+                backup._delete(
+                    {"agent_id": "test"},
+                    {"instance_id": "instance", "backup_id": "old", "reason": "age_retention"},
+                )
+            owned.assert_not_called()
+            artifact.assert_not_called()
+
     def test_manifest_only_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "empty.tar.gz"
