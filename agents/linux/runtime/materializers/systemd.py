@@ -268,7 +268,8 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
     os.replace(tmp,path)
    finally:
     if os.path.exists(tmp):os.unlink(tmp)
-  if hashlib.sha256(path.read_bytes()).hexdigest()!=expected_installed_sha256:
+  if (path.is_symlink() or not path.is_file() or path.stat().st_nlink!=1 or
+      hashlib.sha256(path.read_bytes()).hexdigest()!=expected_installed_sha256):
    raise MaterializerError("installed systemd unit changed before replacement")
   try:
    replace(candidate)
