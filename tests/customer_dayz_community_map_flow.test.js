@@ -68,7 +68,7 @@ function fixture({permissions = ["content.install", "instance.restart", "setting
                   mods = true, workshop = true, upload = true} = {}) {
   const nav = new FakeElement("nav"), main = new FakeElement("main"), toast = new FakeElement("div");
   toast.id = "toast";
-  const posted = [];
+  const posted = [], uploaded = [];
   const overview = {
     instance: {id: "test-dayz-001", game_id: "dayz"},
     permissions,
@@ -87,8 +87,14 @@ function fixture({permissions = ["content.install", "instance.restart", "setting
     createTextNode(text) { const n = new FakeElement("#text"); n.textContent = text; return n; },
   };
   const fetch = async (url, options = {}) => {
+    if (url.includes("/content/upload/status?")) {
+      return {ok: true, status: 200, json: async () => ({transfer: {status: "completed"}})};
+    }
     if (options.method === "POST") {
       posted.push({url, body: JSON.parse(options.body)});
+      if (url === "/api/customer/instance/workspace/content/upload") {
+        return {ok: true, status: 202, json: async () => ({transfer: {transfer_id: "transfer-test"}})};
+      }
       return {ok: true, status: 202, json: async () => ({operation: {operation_id: "queued"}})};
     }
     return {ok: true, status: 200, json: async () => ({
@@ -96,15 +102,25 @@ function fixture({permissions = ["content.install", "instance.restart", "setting
       operations: [],
     })};
   };
+  class FakeXMLHttpRequest {
+    open(method, url) { this.method = method; this.url = url; }
+    setRequestHeader() {}
+    send(file) {
+      uploaded.push({method: this.method, url: this.url, file});
+      this.status = 200;
+      this.responseText = "{}";
+      this.onload();
+    }
+  }
   const context = {
     window: {CapivaraCustomerInstanceOverview: overview, addEventListener() {}},
     document, location: {search: "?instance_id=test-dayz-001"},
-    URLSearchParams, Option: FakeOption, fetch,
-    setInterval() {}, setTimeout() {}, clearTimeout() {},
+    URLSearchParams, Option: FakeOption, fetch, XMLHttpRequest: FakeXMLHttpRequest,
+    setInterval() {}, setTimeout(callback, delay) { if (delay === 500) queueMicrotask(callback); }, clearTimeout() {},
     confirm() { throw Error("Map switch must require a separate explicit confirmation"); },
   };
   vm.runInNewContext(script, context, {filename: "customer-dayz.js"});
-  return {document, posted, node: id => document.getElementById(id), toastText: () => toast.textContent};
+  return {document, posted, uploaded, node: id => document.getElementById(id), toastText: () => toast.textContent};
 }
 async function loaded(f) {
   for (let i = 0; i < 10 && !f.node("dayz-community-map-name"); i++) await new Promise(resolve => setImmediate(resolve));
@@ -159,6 +175,35 @@ async function testSingleMissionFromHttps() {
   assert.equal(f.posted[0].body.source.url, "https://example.org/map.zip");
   assert.equal(f.posted[0].body.mission_path, "Mission Files/hardcore.example");
 }
+async function testDirectUploadFinalizesWithoutRestart() {
+  const f = fixture();
+  await loaded(f);
+  const name = f.node("dayz-community-map-name");
+  const provider = f.node("dayz-community-map-provider");
+  const archive = f.node("dayz-community-map-file");
+  const workshop = f.node("dayz-community-map-workshop");
+  const button = f.node("dayz-community-map-mission-help").parentNode.children.find(c => c.textContent === "Adicionar / reparar mapa");
+  name.value = "Mapa Genérico";
+  provider.value = "upload"; provider.onchange();
+  archive.files = [{name: "community-map.zip"}]; archive.dispatch("change");
+  workshop.value = "1234 5678"; workshop.dispatch("input");
+  await button.onclick();
+  assert.equal(f.uploaded.length, 1, "Archive bytes must be sent to Agent transfer");
+  assert.equal(f.uploaded[0].method, "PUT");
+  assert.equal(f.uploaded[0].url, "/api/customer/instance/workspace/content/upload?transfer_id=transfer-test");
+  assert.equal(f.uploaded[0].file.name, "community-map.zip");
+  assert.equal(f.posted.length, 2, "Upload creates transfer and finalizes, with no mission switch");
+  assert.equal(f.posted[0].url, "/api/customer/instance/workspace/content/upload");
+  assert.equal(f.posted[1].url, "/api/customer/instance/dayz/community-map/upload-finalize");
+  const final = f.posted[1].body;
+  assert.equal(final.instance_id, "test-dayz-001");
+  assert.equal(final.transfer_id, "transfer-test");
+  assert.equal(final.content_id, "dayz-map:mapa-generico");
+  assert.equal(final.name, "Mapa Genérico");
+  assert.equal(final.mission_path, "");
+  assert.deepEqual(Array.from(final.workshop_items), ["1234", "5678"]);
+  assert.ok(f.posted.every(p => p.body.action !== "change_mission"));
+}
 async function testEffectiveContractGates() {
   const denied = fixture({permissions: ["instance.restart", "settings.write"]});
   await loaded(denied);
@@ -191,6 +236,7 @@ async function testEffectiveContractGates() {
 (async () => {
   await testAllMissionsFromGithub();
   await testSingleMissionFromHttps();
+  await testDirectUploadFinalizesWithoutRestart();
   await testEffectiveContractGates();
-  console.log("PASS generic DayZ map form: GitHub/all missions, HTTPS/specific mission, entitlements, no restart");
+  console.log("PASS generic DayZ map form: GitHub, HTTPS, upload/finalize, entitlements, no restart");
 })().catch(error => { console.error(error); process.exitCode = 1; });
