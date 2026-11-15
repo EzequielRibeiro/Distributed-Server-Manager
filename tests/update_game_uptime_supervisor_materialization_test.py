@@ -200,8 +200,30 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
                 with self.assertRaisesRegex(MaterializerError, "changed before replacement"):
                     mat.apply_pinned_transition_disposable(
                         self.instance, pinned_supervisor_preview=self.pin,
-                        expected_installed_sha256=digest)
+                        expected_installed_sha256=digest, process_identity_observer=lambda: (123, 456))
             self.assertEqual(installed.read_bytes(), original)
+
+    def test_disposable_transition_rolls_back_on_pid_identity_drift(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            original = render_unit(self.instance).encode()
+            installed.write_bytes(original)
+            digest = hashlib.sha256(original).hexdigest()
+            observations = iter([(123, 456), (124, 789)])
+            reloads = []
+            def runner(*_):
+                reloads.append(True)
+                return (0, "", "")
+            mat = SystemdMaterializer(runner=runner)
+            with self.assertRaisesRegex(MaterializerError, "restored"):
+                mat.apply_pinned_transition_disposable(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256=digest,
+                    process_identity_observer=lambda: next(observations))
+            self.assertEqual(installed.read_bytes(), original)
+            self.assertEqual(len(reloads), 2)
 
     def test_disposable_transition_rejects_symlink_unit_directory(self):
         unit_dir = self.root / "sandbox-units"
@@ -237,7 +259,7 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             mat = SystemdMaterializer(runner=lambda *_: (0, "", ""))
             result = mat.apply_pinned_transition_disposable(
                 self.instance, pinned_supervisor_preview=self.pin,
-                expected_installed_sha256=digest)
+                expected_installed_sha256=digest, process_identity_observer=lambda: (123, 456))
             self.assertTrue(result["changed"])
             self.assertFalse(result["live_no_drain_authorized"])
             self.assertIn(self.pin["path"], installed.read_text())
