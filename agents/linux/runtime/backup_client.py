@@ -165,7 +165,7 @@ def _validate_archive_payload(archive_path):
                 raise ValueError("backup contains links or devices")
             # Check path traversal before stopping an instance, not during extraction.
             parts = Path(member.name).parts
-            if member.name.startswith("/") or ".." in parts or not parts:
+            if member.name.startswith("/") or ".." in parts or (not parts and member.name != "."):
                 raise ValueError("backup contains unsafe path")
             if not member.isfile():
                 continue
