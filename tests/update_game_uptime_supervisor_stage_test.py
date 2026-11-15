@@ -66,6 +66,16 @@ class SupervisorStageTests(unittest.TestCase):
         self.assertTrue(stage.stage_supervisor(
             self.src, self.versions, expected_sha256=self.sha)["already_present"])
 
+    def test_install_tree_version_directory_rejected(self):
+        from unittest import mock
+        install = self.root / "replaceable-install"
+        inside = install / "runtime" / "supervisor-versions"
+        inside.mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"DSM_INSTALL_DIR": str(install)}):
+            with self.assertRaisesRegex(stage.SupervisorIsolationError, "replaceable"):
+                stage.stage_supervisor(self.src, inside, expected_sha256=self.sha)
+        self.assertEqual(list(inside.iterdir()), [])
+
     def test_corrupt_existing_file_rejected(self):
         (self.versions/("console-supervisor-"+self.sha+".py")).write_bytes(b"wrong")
         with self.assertRaises(stage.SupervisorIsolationError):
