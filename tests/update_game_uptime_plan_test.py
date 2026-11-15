@@ -70,6 +70,20 @@ class UptimeImpactTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symlink"):
             plan.analyze(self.installed, self.target)
 
+    def test_excluded_runtime_tree_is_pruned_before_scanning(self):
+        # Even unreadable/broken links inside preserved game state are not
+        # release payload; do not inspect them or descend into the tree.
+        for root in (self.installed, self.target):
+            for relative in ("runtime/hybrid-agent-state/private",
+                             "runtime/artifact-transfers/job", "runtime/state/private"):
+                preserved = root / relative
+                preserved.mkdir(parents=True)
+                (preserved / "broken").symlink_to("/nonexistent-private-state")
+                (preserved / "world.bin").write_bytes(b"state")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["changed_count"], 0)
+        self.assertFalse(state["live_no_drain_authorized"])
+
     def test_symlink_fails_closed(self):
         (self.target/"unsafe").symlink_to(self.installed)
         with self.assertRaises(ValueError):
