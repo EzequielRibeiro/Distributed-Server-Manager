@@ -31,12 +31,14 @@ class MainPathRehearsalTest(unittest.TestCase):
         (self.root/"new-payload/version").write_text("2.0.999")
         self.installed = self.root/"installed"
         self.world = self.installed/"runtime/hybrid-instance-storage/minecraft005/world/level.dat"
+        self.upload = self.installed/"runtime/artifact-transfers/job-001/upload.part"
 
     def test_actual_main_path_success_preserves_world_and_checks_guard_order(self):
         outcome = main_rehearsal(self.root)
         self.assertEqual(outcome.returncode, 0, outcome.stderr[-2500:] + outcome.stdout[-1500:])
         self.assertEqual((self.installed/"version").read_text().strip(), "2.0.999")
         self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+        self.assertEqual(self.upload.read_bytes(), b"in-flight-upload-private-test")
         self.assertEqual((self.installed/"data/database.txt").read_text(), "db durable")
         self.assertEqual((self.installed/"runtime/hybrid-agent-state/backup-index/keep.txt").read_text(),"protected")
         self.assertEqual((self.installed/"config/dsm.conf").read_text().splitlines()[0], 'DSM_VERSION="2.0.999"')
@@ -56,6 +58,7 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.assertNotEqual(outcome.returncode, 0, outcome.stdout[-2500:] + outcome.stderr[-1800:])
         self.assertEqual((self.installed/"version").read_text().strip(), "2.0.998")
         self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+        self.assertEqual(self.upload.read_bytes(), b"in-flight-upload-private-test")
         self.assertEqual((self.installed/"data/database.txt").read_text(), "db durable")
         self.assertEqual((self.installed/"runtime/hybrid-agent-state/backup-index/keep.txt").read_text(),"protected")
         steps=(self.root/"steps").read_text().splitlines()
