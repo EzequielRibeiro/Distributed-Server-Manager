@@ -5,6 +5,7 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agents" / "linux" / "runtime"))
 import backup_client as backup
@@ -52,6 +53,30 @@ class BackupArchiveGuards(unittest.TestCase):
             path.write_bytes(data[: max(1, len(data) // 2)])
             with self.assertRaises((tarfile.TarError, EOFError, OSError)):
                 backup._validate_archive_payload(path)
+
+
+    def test_privileged_restore_rejects_empty_before_systemd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            archive = Path(temp) / "empty.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                payload = b'{"kind":"CapivaraInstanceBackup","backup_format":"capivara-instance"}'
+                info = tarfile.TarInfo(backup.MANIFEST_NAME)
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+            with (
+                patch.object(backup, "_owned", return_value=({}, root)),
+                patch.object(backup, "_artifact", return_value=archive),
+                patch.object(backup.subprocess, "run") as systemctl,
+            ):
+                with self.assertRaisesRegex(ValueError, "no instance files"):
+                    backup._restore_via_privileged_helper(
+                        {"agent_id": "test"},
+                        {"command_id": "test", "instance_id": "test", "backup_id": "test"},
+                        "capivara-restore@{command_id}.service",
+                    )
+                systemctl.assert_not_called()
 
 
 if __name__ == "__main__":
