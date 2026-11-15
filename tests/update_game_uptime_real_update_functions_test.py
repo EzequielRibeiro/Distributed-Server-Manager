@@ -33,6 +33,8 @@ def create_tiny_release_fixture(workspace: Path) -> None:
     (installed / "runtime/hybrid-instance-storage/minecraft005/world/level.dat").write_bytes(b"saved-world-private-test")
     (installed / "runtime/hybrid-agent-state/backup-index").mkdir(parents=True)
     (installed / "runtime/hybrid-agent-state/backup-index/keep.txt").write_text("protected")
+    (installed / "runtime/artifact-transfers/job-001").mkdir(parents=True)
+    (installed / "runtime/artifact-transfers/job-001/upload.part").write_bytes(b"in-flight-upload-private-test")
     (installed / "instances").mkdir()
     (installed / "instances/clients.json").write_text("durable")
     (installed / "game-data").mkdir()
@@ -75,6 +77,7 @@ class RealUpdateFunctionsFixtureTest(unittest.TestCase):
         self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
         self.assertEqual((self.original/"data/database.txt").read_text(), "db durable")
         self.assertEqual((self.original/"runtime/hybrid-agent-state/backup-index/keep.txt").read_text(), "protected")
+        self.assertEqual((self.original/"runtime/artifact-transfers/job-001/upload.part").read_bytes(), b"in-flight-upload-private-test")
         self.command("rollback")
         self.assertEqual((self.original/"version").read_text(), "2.0.998-fixture")
         self.assertEqual((self.original/"dashboard/web/presentation.js").read_text(),
