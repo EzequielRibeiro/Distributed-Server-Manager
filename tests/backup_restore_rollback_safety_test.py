@@ -51,6 +51,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_owned", return_value=({}, root)),
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", return_value=None),
                 patch.object(backup_client.os, "replace", side_effect=replace),
             ):
@@ -77,6 +78,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "running"}),
                 patch.object(backup_client, "lifecycle", side_effect=lifecycle),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", return_value=None),
             ):
                 with self.assertRaisesRegex(RuntimeError, "restart recovery failed"):
@@ -145,6 +147,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_owned", return_value=({}, root)),
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", return_value=None),
                 patch.object(backup_client.shutil, "rmtree", side_effect=remove),
                 patch.object(backup_client, "_digest", return_value="test"),
@@ -172,6 +175,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "running"}),
                 patch.object(backup_client, "lifecycle", side_effect=lifecycle),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", side_effect=ValueError("damaged archive")),
             ):
                 with self.assertRaisesRegex(ValueError, "damaged archive"):
