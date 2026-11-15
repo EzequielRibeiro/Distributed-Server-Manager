@@ -203,6 +203,18 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
                         expected_installed_sha256=digest)
             self.assertEqual(installed.read_bytes(), original)
 
+    def test_disposable_transition_rejects_symlink_unit_directory(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        alias = self.root / "sandbox-units-alias"
+        alias.symlink_to(unit_dir, target_is_directory=True)
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(alias)}):
+            mat = SystemdMaterializer(runner=lambda *_: self.fail("no systemctl"))
+            with self.assertRaisesRegex(MaterializerError, "disposable"):
+                mat.apply_pinned_transition_disposable(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256="0" * 64)
+
     def test_disposable_transition_and_reload_failure_rollback(self):
         unit_dir = self.root / "sandbox-units"
         unit_dir.mkdir()
