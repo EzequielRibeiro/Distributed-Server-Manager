@@ -5,6 +5,8 @@ Does not rewrite units or grant live update permission.
 """
 from __future__ import annotations
 import hashlib
+import os
+import stat
 from pathlib import Path
 import re
 import shlex
@@ -25,6 +27,17 @@ def verify_pinned_supervisor(unit: str, *, versions_dir: Path, expected_sha256: 
     expected = versions_dir / ("console-supervisor-" + expected_sha256 + ".py")
     if expected.is_symlink() or not expected.is_file():
         raise SupervisorUnitError("missing or unsafe versioned supervisor")
+    # A digest alone does not pin the executable: mutable files or hardlinks
+    # can be replaced after inspection while the unit still names this path.
+    directory = versions_dir.stat()
+    info = expected.stat()
+    if (directory.st_uid != os.geteuid() or directory.st_mode & 0o022 or
+            not stat.S_ISDIR(directory.st_mode)):
+        raise SupervisorUnitError("unsafe version directory ownership or permissions")
+    if (info.st_uid != os.geteuid() or not stat.S_ISREG(info.st_mode) or
+            info.st_nlink != 1 or info.st_mode & 0o222 or
+            info.st_size <= 0 or info.st_size > 1024 * 1024):
+        raise SupervisorUnitError("unsafe mutable or linked supervisor")
     if hashlib.sha256(expected.read_bytes()).hexdigest() != expected_sha256:
         raise SupervisorUnitError("supervisor hash mismatch")
     try:
