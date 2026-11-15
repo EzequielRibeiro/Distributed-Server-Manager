@@ -104,6 +104,8 @@ PRESERVED_TREES=(
     "game-data"
     "runtime/hybrid-agent-state"
     "runtime/hybrid-instance-storage"
+    # In-flight artifact uploads must survive the atomic release swap.
+    "runtime/artifact-transfers"
 )
 ACTIVE_SERVICES=()
 STOP_SERVICES=()
