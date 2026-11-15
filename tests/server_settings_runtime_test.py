@@ -208,10 +208,11 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    self.assertFalse(by_key['steamQueryPort']['editable']);self.assertTrue(by_key['steamQueryPort']['managed'])
    self.assertFalse(by_key['template']['editable']);self.assertTrue(by_key['template']['managed']);self.assertEqual('regular.namalsk',by_key['template']['value'])
    self.assertEqual(2,by_key['verifySignatures']['value']);self.assertTrue(by_key['verifySignatures']['editable'])
-   dynamic=normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1,by_key['disable3rdPerson']['id']:1})
+   self.assertNotIn('disable3rdPerson',by_key)
+   dynamic=normalize_dynamic_values(spec,{by_key['verifySignatures']['id']:1})
    updated=dict(spec);updated['server_settings_dynamic_values']=dynamic
    self.assertEqual(['serverDZ.cfg'],materialize_dynamic_values(updated));text=cfg.read_text()
-   self.assertIn('verifySignatures = 1;',text);self.assertIn('disable3rdPerson = 1;',text)
+   self.assertIn('verifySignatures = 1;',text);self.assertIn('disable3rdPerson = 0;',text)
    with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{by_key['steamQueryPort']['id']:24003})
    with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{by_key['template']['id']:'dayzOffline.chernarusplus'})
    with self.assertRaises(PermissionError):normalize_dynamic_values(spec,{'cfg-forged':1})
