@@ -249,7 +249,8 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
                                     expected_installed_sha256):
   """Atomic fixture-only unit switch; never authorized for production."""
   directory=_unit_dir()
-  if not os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR") or directory.resolve()==Path("/etc/systemd/system"):
+  if (not os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR") or not directory.is_absolute() or
+      directory.is_symlink() or directory.resolve()==Path("/etc/systemd/system")):
    raise MaterializerError("pinned transition requires explicit disposable systemd directory")
   plan=self.plan_pinned_transition(spec,pinned_supervisor_preview=pinned_supervisor_preview,
                                    expected_installed_sha256=expected_installed_sha256)
@@ -269,7 +270,8 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
    finally:
     if os.path.exists(tmp):os.unlink(tmp)
   if (path.is_symlink() or not path.is_file() or path.stat().st_nlink!=1 or
-      hashlib.sha256(path.read_bytes()).hexdigest()!=expected_installed_sha256):
+      hashlib.sha256(old).hexdigest()!=expected_installed_sha256 or
+      path.read_bytes()!=old):
    raise MaterializerError("installed systemd unit changed before replacement")
   try:
    replace(candidate)
