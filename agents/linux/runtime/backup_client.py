@@ -432,6 +432,24 @@ def _restore_via_privileged_helper(config, command, unit_template):
     backup_id = _safe(command.get("backup_id"))
     agent_id = _safe(config.get("agent_id"))
 
+    # Fail before dispatching systemd: never stop a game for an empty backup.
+    record, _root = _owned(config, instance_id)
+    artifact = _artifact(instance_id, backup_id)
+    _validate_archive_payload(artifact)
+    with tarfile.open(artifact, "r:*") as archive:
+        manifest_member = next((m for m in archive if m.name == MANIFEST_NAME), None)
+        if manifest_member is not None:
+            handle = archive.extractfile(manifest_member)
+            if handle is None:
+                raise ValueError("backup manifest is unreadable")
+            try:
+                manifest = json.loads(handle.read().decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ValueError("backup manifest is invalid") from exc
+            if manifest.get("kind") != "CapivaraInstanceBackup" or manifest.get("backup_format") != "capivara-instance":
+                raise ValueError("unsupported backup manifest")
+            _validate_manifest(record, manifest)
+
     request_path = PRIVILEGED_RESTORE_ROOT / f"{command_id}.request.json"
     result_path = PRIVILEGED_RESTORE_ROOT / f"{command_id}.result.json"
     try:
