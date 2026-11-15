@@ -104,11 +104,11 @@ function fixture({permissions = ["content.install", "instance.restart", "setting
     confirm() { throw Error("Map switch must require a separate explicit confirmation"); },
   };
   vm.runInNewContext(script, context, {filename: "customer-dayz.js"});
-  return {document, posted, node: id => document.getElementById(id)};
+  return {document, posted, node: id => document.getElementById(id), toastText: () => toast.textContent};
 }
 async function loaded(f) {
-  for (let i = 0; i < 5 && !f.node("dayz-community-map-name"); i++) await Promise.resolve();
-  assert.ok(f.node("dayz-community-map-name"), "DayZ community map form must render");
+  for (let i = 0; i < 10 && !f.node("dayz-community-map-name"); i++) await new Promise(resolve => setImmediate(resolve));
+  assert.ok(f.node("dayz-community-map-name"), "DayZ community map form must render: " + f.toastText());
 }
 async function testAllMissionsFromGithub() {
   const f = fixture();
