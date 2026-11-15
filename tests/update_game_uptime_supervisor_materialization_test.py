@@ -286,7 +286,7 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             with self.assertRaisesRegex(MaterializerError, "restored"):
                 mat.apply_pinned_transition_disposable(
                     self.instance, pinned_supervisor_preview=self.pin,
-                    expected_installed_sha256=digest)
+                    expected_installed_sha256=digest, process_identity_observer=lambda: (123, 456))
             self.assertEqual(installed.read_bytes(), original)
             self.assertEqual(len(calls), 2)
             mat = SystemdMaterializer(runner=lambda *_: (0, "", ""))
