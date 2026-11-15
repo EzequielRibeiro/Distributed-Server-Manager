@@ -103,5 +103,33 @@ class BackupArchiveGuards(unittest.TestCase):
                 systemctl.assert_not_called()
 
 
+    def test_privileged_restore_rejects_incompatible_game_before_systemd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            archive = Path(temp) / "wrong-game.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                manifest = b'{"kind":"CapivaraInstanceBackup","backup_format":"capivara-instance","game_id":"minecraft"}'
+                info = tarfile.TarInfo(backup.MANIFEST_NAME)
+                info.size = len(manifest)
+                tar.addfile(info, io.BytesIO(manifest))
+                payload = b"world data"
+                info = tarfile.TarInfo("world.dat")
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+            with (
+                patch.object(backup, "_owned", return_value=({"game_id": "dayz"}, root)),
+                patch.object(backup, "_artifact", return_value=archive),
+                patch.object(backup.subprocess, "run") as systemctl,
+            ):
+                with self.assertRaisesRegex(ValueError, "incompatible"):
+                    backup._restore_via_privileged_helper(
+                        {"agent_id": "test"},
+                        {"command_id": "test", "instance_id": "test", "backup_id": "test"},
+                        "capivara-restore@{command_id}.service",
+                    )
+                systemctl.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
