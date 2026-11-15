@@ -75,7 +75,7 @@ class UptimeImpactTest(unittest.TestCase):
         # release payload; do not inspect them or descend into the tree.
         for root in (self.installed, self.target):
             for relative in ("runtime/hybrid-agent-state/private",
-                             "runtime/artifact-transfers/job", "runtime/state/private"):
+                             "runtime/state/private"):
                 preserved = root / relative
                 preserved.mkdir(parents=True)
                 (preserved / "broken").symlink_to("/nonexistent-private-state")
@@ -83,6 +83,14 @@ class UptimeImpactTest(unittest.TestCase):
         state = plan.analyze(self.installed, self.target)
         self.assertEqual(state["changed_count"], 0)
         self.assertFalse(state["live_no_drain_authorized"])
+
+    def test_unpreserved_artifact_transfers_fail_closed_without_hashing(self):
+        for root in (self.installed, self.target):
+            transfer = root / "runtime/artifact-transfers/job"
+            transfer.mkdir(parents=True)
+            (transfer / "payload").write_bytes(b"in-flight-transfer")
+        with self.assertRaisesRegex(ValueError, "not preserved by update.sh"):
+            plan.analyze(self.installed, self.target)
 
     def test_symlink_fails_closed(self):
         (self.target/"unsafe").symlink_to(self.installed)
