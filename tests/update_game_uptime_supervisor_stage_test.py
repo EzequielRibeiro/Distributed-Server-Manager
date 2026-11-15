@@ -36,6 +36,13 @@ class SupervisorStageTests(unittest.TestCase):
         second = stage.stage_supervisor(self.src, self.versions, expected_sha256=self.sha)
         self.assertTrue(second["already_present"])
 
+    def test_empty_supervisor_rejected(self):
+        self.src.write_bytes(b"")
+        empty_sha = hashlib.sha256(b"").hexdigest()
+        with self.assertRaisesRegex(stage.SupervisorIsolationError, "invalid size"):
+            stage.stage_supervisor(self.src, self.versions, expected_sha256=empty_sha)
+        self.assertEqual(list(self.versions.iterdir()), [])
+
     def test_digest_mismatch_leaves_no_file(self):
         with self.assertRaises(stage.SupervisorIsolationError):
             stage.stage_supervisor(self.src, self.versions, expected_sha256="0"*64)
