@@ -47,8 +47,8 @@ class AutomaticDeletionOptInTest(unittest.TestCase):
     def test_queued_retention_delete_is_not_sent_without_opt_in(self):
         repository = object.__new__(BackupRepository)
         pending = [
-            {"action": "delete", "reason": "age_retention", "instance_id": "instance", "backup_id": "old"},
-            {"action": "delete", "reason": "manual", "instance_id": "instance", "backup_id": "manual"},
+            {"command_id": "old-command", "action": "delete", "reason": "age_retention", "instance_id": "instance", "backup_id": "old"},
+            {"command_id": "manual-command", "action": "delete", "reason": "manual", "instance_id": "instance", "backup_id": "manual"},
         ]
         with (
             patch.dict(os.environ, {}, clear=True),
