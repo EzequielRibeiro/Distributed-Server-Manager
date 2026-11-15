@@ -35,6 +35,34 @@ class BackupArchiveGuards(unittest.TestCase):
             owned.assert_not_called()
             artifact.assert_not_called()
 
+    def test_legacy_delete_without_reason_is_blocked(self):
+        with patch.dict(backup.os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "automatic backup deletion is disabled"):
+                backup._delete({"agent_id": "test"}, {"instance_id": "test", "backup_id": "old"})
+
+    def test_privileged_restore_rejects_manifest_list_before_systemd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            archive = Path(temp) / "list-manifest.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                for name, payload in ((backup.MANIFEST_NAME, b'[]'), ("world.dat", b"payload")):
+                    info = tarfile.TarInfo(name)
+                    info.size = len(payload)
+                    tar.addfile(info, io.BytesIO(payload))
+            with (
+                patch.object(backup, "_owned", return_value=({}, root)),
+                patch.object(backup, "_artifact", return_value=archive),
+                patch.object(backup.subprocess, "run") as systemctl,
+            ):
+                with self.assertRaisesRegex(ValueError, "unsupported backup manifest"):
+                    backup._restore_via_privileged_helper(
+                        {"agent_id": "test"},
+                        {"command_id": "test", "instance_id": "test", "backup_id": "test"},
+                        "capivara-restore@{command_id}.service",
+                    )
+                systemctl.assert_not_called()
+
     def test_manifest_only_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "empty.tar.gz"
