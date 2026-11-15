@@ -53,6 +53,23 @@ class UptimeImpactTest(unittest.TestCase):
         state=plan.analyze(self.installed,self.target)
         self.assertEqual(state["changed_count"],0)
 
+    def test_steamcmd_runtime_home_is_excluded_but_other_symlinks_block(self):
+        # Production-like SteamCMD layout: .steam/steam points at .local/share/Steam.
+        for root in (self.installed, self.target):
+            steam = root / ".steam"
+            steam.mkdir()
+            (steam / "steam").symlink_to(root / ".local/share/Steam")
+            cache = root / ".local/share/Steam/appcache"
+            cache.mkdir(parents=True)
+            (cache / "state.bin").write_bytes(b"cache")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["changed_count"], 0)
+        self.assertFalse(state["live_no_drain_authorized"])
+        (self.target / "agents").mkdir()
+        (self.target / "agents/unsafe").symlink_to(self.installed)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            plan.analyze(self.installed, self.target)
+
     def test_symlink_fails_closed(self):
         (self.target/"unsafe").symlink_to(self.installed)
         with self.assertRaises(ValueError):
