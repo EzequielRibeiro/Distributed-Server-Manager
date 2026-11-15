@@ -183,6 +183,18 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     self.assertEqual([],materialize_dynamic_values(obsolete))
     self.assertEqual(result,cfg.read_text(encoding='utf-8'))
 
+ def test_dayz_legacy_perspective_hidden_from_all_maps(self):
+  for mission in ("regular.namalsk","dayzOffline.chernarusplus","dayzOffline.enoch","dayzOffline.sakhal"):
+   with self.subTest(mission=mission),tempfile.TemporaryDirectory() as td:
+    cfg=Path(td)/"serverDZ.cfg"
+    cfg.write_text(f'template = "{mission}";\nthirdPersonView = 0;\ndisable3rdPerson = 1;\n',encoding="utf-8")
+    spec={"game_id":"dayz","environment_id":"dayz.stable","configuration_root":td,"catalog_server_settings":declaration("dayz.stable")}
+    surface=observed_surface(spec)
+    keys=[field["key"] for field in surface["fields"]]
+    self.assertIn("thirdPersonView",keys)
+    self.assertNotIn("disable3rdPerson",keys)
+    self.assertIn("disable3rdPerson",cfg.read_text(encoding="utf-8"))
+
  def test_observed_dayz_surface_reads_real_parameters_and_protects_platform_fields(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td);cfg=root/'serverDZ.cfg'
