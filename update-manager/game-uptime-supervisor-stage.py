@@ -40,6 +40,13 @@ def stage_supervisor(source: Path, versions: Path, *, expected_sha256: str) -> d
     """
     if not _SHA.fullmatch(expected_sha256):
         raise SupervisorIsolationError("invalid expected digest")
+    # The pinned directory must not be inside the replaceable DSM install.
+    # Refuse an explicit install root, including symlink/relative aliases.
+    install_root = os.environ.get("DSM_INSTALL_DIR", "/opt/dsm")
+    installed = Path(install_root).resolve(strict=False)
+    destination_root = versions.resolve(strict=False)
+    if destination_root == installed or installed in destination_root.parents:
+        raise SupervisorIsolationError("version directory inside replaceable installation")
     if versions.is_symlink() or not versions.is_dir():
         raise SupervisorIsolationError("unsafe versions directory")
     parent = versions.stat()
