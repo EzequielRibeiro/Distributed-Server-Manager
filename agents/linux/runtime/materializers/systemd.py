@@ -250,7 +250,8 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   """Atomic fixture-only unit switch; never authorized for production."""
   directory=_unit_dir()
   if (not os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR") or not directory.is_absolute() or
-      directory.is_symlink() or directory.resolve()==Path("/etc/systemd/system")):
+      directory.is_symlink() or not directory.is_dir() or
+      not directory.resolve().is_relative_to(Path("/tmp"))):
    raise MaterializerError("pinned transition requires explicit disposable systemd directory")
   if process_identity_observer is None or not callable(process_identity_observer):
    raise MaterializerError("disposable transition requires process identity observer")
@@ -263,7 +264,9 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   old=path.read_bytes()
   candidate=render_unit(spec,pinned_supervisor_preview=pinned_supervisor_preview).encode("utf-8")
   if not plan["change_proposed"]:
-   return {"changed":False,"live_no_drain_authorized":False}
+   if process_identity_observer()!=identity_before:
+    raise MaterializerError("active process identity changed during no-op transition")
+   return {"changed":False,"live_no_drain_authorized":False,"active_process_identity_verified":True}
   def replace(content):
    import tempfile
    fd,tmp=tempfile.mkstemp(prefix=".capivara-unit-",dir=directory)
