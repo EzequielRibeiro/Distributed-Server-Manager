@@ -489,7 +489,7 @@ class BackupRepository:
         for job in reversed(self.list_jobs(agent_id=agent_id,status="pending",limit=100)):
             # Old queued retention jobs must not bypass the new opt-in gate.
             if (str(job.get("action") or "").lower() == "delete"
-                    and str(job.get("reason") or "").lower() in {"age_retention", "operational_retention"}
+                    and str(job.get("reason") or "").strip().lower() != "manual"
                     and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
                 continue
             policy=dict(self.get_policy(job["instance_id"]) or {})
