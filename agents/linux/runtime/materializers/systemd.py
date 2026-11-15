@@ -210,9 +210,16 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   if path.is_symlink() or not path.is_file():
    raise MaterializerError("installed systemd unit missing or unsafe")
   try:
-   if path.stat().st_size>65536:
-    raise MaterializerError("installed systemd unit exceeds safe preview size")
+   before_stat=path.lstat()
+   if (not stat.S_ISREG(before_stat.st_mode) or before_stat.st_nlink!=1 or
+       before_stat.st_size==0 or before_stat.st_size>65536):
+    raise MaterializerError("installed systemd unit is not a safe regular file")
    original=path.read_bytes()
+   after_stat=path.lstat()
+   if (before_stat.st_dev!=after_stat.st_dev or before_stat.st_ino!=after_stat.st_ino or
+       before_stat.st_size!=after_stat.st_size or before_stat.st_mtime_ns!=after_stat.st_mtime_ns or
+       before_stat.st_ctime_ns!=after_stat.st_ctime_ns):
+    raise MaterializerError("installed systemd unit changed during inspection")
    old_digest=hashlib.sha256(original).hexdigest()
    if old_digest!=expected_installed_sha256:
     raise MaterializerError("installed systemd unit changed since baseline")
