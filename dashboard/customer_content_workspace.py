@@ -381,6 +381,9 @@ class CustomerContentWorkspaceService:
    if text.startswith("steam-workshop:"):text=text.split(":",1)[1]
    if not text.isdigit() or len(text)>20:raise ValueError("invalid Steam Workshop item")
    if text not in workshop_ids:workshop_ids.append(text)
+  # Contract checks apply to reused Workshop items as well as newly installed ones.
+  # Do not reattach content that is forbidden by the current effective policy.
+  if workshop_ids and not policy.workshop_allowed:raise PermissionError("workshop content is not allowed by this contract")
   dependencies=[];item_index={};existing_items={}
   for index,published_id in enumerate(workshop_ids):
    content_id=f"steam-workshop:{published_id}";existing=self.content.get(instance_id,content_id)
