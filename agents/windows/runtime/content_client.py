@@ -217,6 +217,12 @@ def _remove(config,cmd):
 def _source_metadata(cmd:dict[str,Any])->dict[str,Any]:
  artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {};package=str(artifact.get("package_id") or cmd.get("package_id") or "").strip();filename=str(artifact.get("filename") or "").strip()
  meta={"provider":str(cmd.get("provider") or artifact.get("provider") or "").strip().lower(),"content_type":str(cmd.get("content_type") or "other").strip().lower(),"package_id":package or None,"game_id":str(cmd.get("game_id") or "").strip().lower() or None,"target":str(cmd.get("target") or "").strip() or None,"artifact_filename":filename or None}
+ if meta["game_id"]=="dayz" and meta["content_type"]=="map":
+  metadata=cmd.get("metadata") if isinstance(cmd.get("metadata"),dict) else {}
+  community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
+  meta["community_map"]={key:str(community.get(key) or "").strip() for key in ("name","mission_path") if str(community.get(key) or "").strip()}
+  raw_dependencies=cmd.get("dependencies") if isinstance(cmd.get("dependencies"),list) else []
+  meta["dependencies"]=list(dict.fromkeys(str(value).strip() for value in raw_dependencies if str(value or "").strip()))
  if artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True:
   meta["source_sha256"]=str(artifact.get("sha256") or "").strip().lower()
   meta["source_size_bytes"]=artifact.get("size_bytes")
@@ -286,23 +292,24 @@ def _apply(config,cmd):
  except ContentRollbackError as exc:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"rollback_failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rollback_failed","security_state":"unscanned","security_policy_version":1,"operational_retry_after_epoch":time.time()+_operational_retry_seconds(exc),**source_meta}
  except ContentActivationError as exc:
   if previous.get("status")=="applied" and int(previous.get("applied_revision") or 0)>0 and str(previous.get("applied_checksum") or ""):
-   restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target","artifact_filename")}
+   restored_meta={key:(previous.get(key) if previous.get(key) is not None else source_meta.get(key)) for key in ("provider","content_type","package_id","game_id","target","artifact_filename","community_map","dependencies")}
    report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":int(previous.get("applied_revision")),"desired_checksum":checksum,"applied_checksum":str(previous.get("applied_checksum")),"status":"rolled_back","installed_version":previous.get("installed_version"),"managed_path":previous.get("managed_path"),"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":str(previous.get("security_state") or "clean"),"security_policy_version":int(previous.get("security_policy_version") or 1),**restored_meta}
   else:report={"instance_id":iid,"content_id":cid,"desired_revision":revision,"applied_revision":None,"desired_checksum":checksum,"applied_checksum":None,"status":"failed","installed_version":None,"managed_path":None,"last_error":str(exc)[:2000],"readiness":"rolled_back","security_state":"unscanned","security_policy_version":1,"operational_retry_after_epoch":time.time()+_operational_retry_seconds(exc),**source_meta}
  except Exception as exc:
   artifact=cmd.get("artifact") if isinstance(cmd.get("artifact"),dict) else {}
   official=artifact.get("serverpack_v1") is True or artifact.get("serverpack_child_v1") is True
+  retain_dayz_map=source_meta.get("game_id")=="dayz" and source_meta.get("content_type")=="map"
   has_previous=(previous.get("status") in {"applied","rolled_back"}
                 and int(previous.get("applied_revision") or 0)>0
                 and bool(previous.get("applied_checksum"))
                 and bool(previous.get("installed_version"))
                 and _managed_path_current(config,cmd,previous.get("managed_path")))
-  if official and has_previous:
+  if (official or retain_dayz_map) and has_previous:
    # A rejected Server Pack update must never discard the last known-good
    # installed revision and its original attestation. Signal Controller to
    # rollback the desired bundle revision rather than orphaning live files.
    preserved={key:previous.get(key) for key in ("provider","content_type","package_id",
-              "game_id","target","source_sha256","source_size_bytes")}
+              "game_id","target","source_sha256","source_size_bytes","artifact_filename","community_map","dependencies")}
    same_revision=(int(previous["applied_revision"])==revision
                   and str(previous["applied_checksum"])==checksum)
    report={"instance_id":iid,"content_id":cid,"desired_revision":revision,
