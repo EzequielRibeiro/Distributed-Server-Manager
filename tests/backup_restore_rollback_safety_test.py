@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import io
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -13,6 +15,17 @@ import backup_client
 
 
 class RestoreRollbackSafetyTest(unittest.TestCase):
+    @staticmethod
+    def _valid_archive(path):
+        with tarfile.open(path, "w") as archive:
+            for name, payload in (
+                (backup_client.MANIFEST_NAME, b'{"kind":"CapivaraInstanceBackup","backup_format":"capivara-instance"}'),
+                ("world.dat", b"restored"),
+            ):
+                entry = tarfile.TarInfo(name)
+                entry.size = len(payload)
+                archive.addfile(entry, io.BytesIO(payload))
+
     def test_preexisting_previous_is_preserved_without_stopping(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "instance"
@@ -38,6 +51,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             root = Path(temp) / "instance"
             root.mkdir()
             (root / "world.dat").write_text("original")
+            self._valid_archive(Path(temp) / "backup.tar")
             original_replace = backup_client.os.replace
             calls = []
 
@@ -51,6 +65,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_owned", return_value=({}, root)),
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", return_value=None),
                 patch.object(backup_client.os, "replace", side_effect=replace),
             ):
@@ -65,6 +80,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             root = Path(temp) / "instance"
             root.mkdir()
             (root / "world.dat").write_text("original")
+            self._valid_archive(Path(temp) / "backup.tar")
             starts = []
 
             def lifecycle(_config, _instance, action):
@@ -77,6 +93,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "running"}),
                 patch.object(backup_client, "lifecycle", side_effect=lifecycle),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", return_value=None),
             ):
                 with self.assertRaisesRegex(RuntimeError, "restart recovery failed"):
@@ -133,7 +150,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             root.mkdir()
             (root / "world.dat").write_text("original")
             previous = Path(temp) / "instance.c5-previous"
-            (Path(temp) / "backup.tar").write_bytes(b"test-backup")
+            self._valid_archive(Path(temp) / "backup.tar")
             rmtree = backup_client.shutil.rmtree
 
             def remove(path, *args, **kwargs):
@@ -145,6 +162,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_owned", return_value=({}, root)),
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", return_value=None),
                 patch.object(backup_client.shutil, "rmtree", side_effect=remove),
                 patch.object(backup_client, "_digest", return_value="test"),
@@ -164,6 +182,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             root.mkdir()
             sentinel = root / "world.dat"
             sentinel.write_text("original")
+            self._valid_archive(Path(temp) / "backup.tar")
             actions = []
             def lifecycle(_config, _instance, action):
                 actions.append(action)
@@ -172,6 +191,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
                 patch.object(backup_client, "_artifact", return_value=Path(temp) / "backup.tar"),
                 patch.object(backup_client, "status", return_value={"observed_state": "running"}),
                 patch.object(backup_client, "lifecycle", side_effect=lifecycle),
+                patch.object(backup_client, "_validate_archive_payload"),
                 patch.object(backup_client, "_safe_extract", side_effect=ValueError("damaged archive")),
             ):
                 with self.assertRaisesRegex(ValueError, "damaged archive"):

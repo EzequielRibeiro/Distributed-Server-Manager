@@ -109,7 +109,10 @@ def _selected(root, policy):
             for pattern in excludes
         )
 
-    return [path for path in candidates if not excluded(path)]
+    selected = [path for path in candidates if not excluded(path)]
+    if not selected:
+        raise ValueError("backup selection contains no paths")
+    return selected
 
 
 def _manifest(record, backup_id):
@@ -147,6 +150,35 @@ def _create_archive(root, paths, destination, compression, manifest):
             )
 
 
+def _validate_archive_payload(archive_path):
+    """Fail closed if an archive has no regular instance files.
+
+    Also fully reads file payloads so truncated gzip/tar data cannot be
+    mistaken for a verified backup. Never extracts anything.
+    """
+    found = False
+    with tarfile.open(archive_path, "r:*") as archive:
+        for member in archive:
+            if member.name == MANIFEST_NAME:
+                continue
+            if member.issym() or member.islnk() or member.isdev():
+                raise ValueError("backup contains links or devices")
+            # Check path traversal before stopping an instance, not during extraction.
+            parts = Path(member.name).parts
+            if member.name.startswith("/") or ".." in parts or (not parts and member.name != "."):
+                raise ValueError("backup contains unsafe path")
+            if not member.isfile():
+                continue
+            found = True
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError("backup contains unreadable file")
+            while stream.read(1024 * 1024):
+                pass
+    if not found:
+        raise ValueError("backup contains no instance files")
+
+
 def _safe_extract(archive_path, destination):
     manifest = None
     with tarfile.open(archive_path, "r:*") as archive:
@@ -165,6 +197,9 @@ def _safe_extract(archive_path, destination):
                     except Exception as exc:
                         raise ValueError("backup manifest is invalid") from exc
         archive.extractall(base, members=members, filter="data")
+
+    if not any(p.is_file() for p in destination.rglob("*") if p.name != MANIFEST_NAME):
+        raise ValueError("restore archive contains no instance files")
 
     if manifest is not None and (
         manifest.get("kind") != "CapivaraInstanceBackup"
@@ -215,6 +250,10 @@ def _create(config, command):
     policy = dict(command.get("policy") or {})
     consistency = str(policy.get("consistency") or "live")
     was_running = False
+    # All non-mutating preflights must succeed before stopping a live game.
+    instance_dir = BACKUP_ROOT / _safe(instance_id)
+    _retained_backup_capacity(instance_dir, policy)
+    selected_paths = _selected(root, policy)
 
     if consistency == "quiesced":
         raise RuntimeError(
@@ -229,13 +268,11 @@ def _create(config, command):
 
     try:
         backup_id = str(uuid.uuid4())
-        instance_dir = BACKUP_ROOT / _safe(instance_id)
         suffix = (
             ".tar.gz"
             if str(policy.get("compression") or "gzip") == "gzip"
             else ".tar"
         )
-        _retained_backup_capacity(instance_dir, policy)
         path = instance_dir / f"{backup_id}{suffix}"
         manifest = _manifest(record, backup_id)
         if path.exists():
@@ -243,11 +280,12 @@ def _create(config, command):
         try:
             _create_archive(
                 root,
-                _selected(root, policy),
+                selected_paths,
                 path,
                 str(policy.get("compression") or "gzip"),
                 manifest,
             )
+            _validate_archive_payload(path)
             size = path.stat().st_size
             sha256 = _digest(path)
         except Exception:
@@ -256,8 +294,8 @@ def _create(config, command):
             path.unlink(missing_ok=True)
             raise
         manifest["files_checksum"] = sha256
-        if not policy.get("keep_single_operational") and not policy.get("retention_days"):
-            _retention(instance_dir, int(policy.get("retention_count") or 7))
+        # Retention is deliberately disabled until an explicit, separately
+        # approved non-destructive policy is implemented. Never prune here.
         return {
             "backup_id": backup_id,
             "artifact_path": str(path),
@@ -317,13 +355,32 @@ def _restore_direct(config, command):
     instance_id = str(command["instance_id"])
     record, root = _owned(config, instance_id)
     artifact = _artifact(instance_id, str(command.get("backup_id") or ""))
-    was_running = status(config, instance_id).get("observed_state") == "running"
-
     previous = root.with_name(root.name + ".c5-previous")
     if previous.exists():
         raise RuntimeError(
             f"refusing restore: pre-existing recovery directory {previous}"
         )
+    was_running = status(config, instance_id).get("observed_state") == "running"
+    # Validate before stopping the game or moving any live files.
+    _validate_archive_payload(artifact)
+    # Verify manifest compatibility before any lifecycle mutation.
+    with tarfile.open(artifact, "r:*") as archive:
+        manifest_member = next((m for m in archive if m.name == MANIFEST_NAME), None)
+        if manifest_member is None or not manifest_member.isfile():
+            raise ValueError("backup manifest is missing")
+        handle = archive.extractfile(manifest_member)
+        if handle is None:
+            raise ValueError("backup manifest is unreadable")
+        try:
+            manifest = json.loads(handle.read().decode("utf-8"))
+        except Exception as exc:
+            raise ValueError("backup manifest is invalid") from exc
+        if not isinstance(manifest, dict) or (
+            manifest.get("kind") != "CapivaraInstanceBackup"
+            or manifest.get("backup_format") != "capivara-instance"
+        ):
+            raise ValueError("unsupported backup manifest")
+        _validate_manifest(record, manifest)
     if was_running:
         lifecycle(config, instance_id, "stop")
 
@@ -398,6 +455,26 @@ def _restore_via_privileged_helper(config, command, unit_template):
     instance_id = _safe(command.get("instance_id"))
     backup_id = _safe(command.get("backup_id"))
     agent_id = _safe(config.get("agent_id"))
+
+    # Fail before dispatching systemd: never stop a game for an empty backup.
+    record, _root = _owned(config, instance_id)
+    artifact = _artifact(instance_id, backup_id)
+    _validate_archive_payload(artifact)
+    with tarfile.open(artifact, "r:*") as archive:
+        manifest_member = next((m for m in archive if m.name == MANIFEST_NAME), None)
+        if manifest_member is None or not manifest_member.isfile():
+            raise ValueError("backup manifest is missing")
+        if manifest_member is not None:
+            handle = archive.extractfile(manifest_member)
+            if handle is None:
+                raise ValueError("backup manifest is unreadable")
+            try:
+                manifest = json.loads(handle.read().decode("utf-8"))
+            except (ValueError, UnicodeDecodeError) as exc:
+                raise ValueError("backup manifest is invalid") from exc
+            if not isinstance(manifest, dict) or manifest.get("kind") != "CapivaraInstanceBackup" or manifest.get("backup_format") != "capivara-instance":
+                raise ValueError("unsupported backup manifest")
+            _validate_manifest(record, manifest)
 
     request_path = PRIVILEGED_RESTORE_ROOT / f"{command_id}.request.json"
     result_path = PRIVILEGED_RESTORE_ROOT / f"{command_id}.result.json"
@@ -487,6 +564,11 @@ def _restore(config, command):
 
 
 def _delete(config, command):
+    # Defense in depth for retention commands already delivered to the Agent.
+    # Manual deletions are intentionally separate from automatic retention.
+    if (str(command.get("reason") or "").strip().lower() != "manual"
+            and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
+        raise ValueError("automatic backup deletion is disabled")
     instance_id = str(command["instance_id"])
     _owned(config, instance_id)
     backup_id = str(command.get("backup_id") or "")
