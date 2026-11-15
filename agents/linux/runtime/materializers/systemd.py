@@ -224,6 +224,11 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   # Validation of service user access, SHA, and path is delegated to
   # the already fail-closed offline renderer.
   candidate=render_unit(spec,pinned_supervisor_preview=pinned_supervisor_preview)
+  legacy=render_unit(spec)
+  # An ownership marker alone cannot authorize replacing a drifted service.
+  # The baseline must match a known generated unit, not merely carry labels.
+  if text not in (legacy,candidate):
+   raise MaterializerError("installed unit differs from known generated baseline")
   return {"kind":"Capivara928PinnedUnitTransitionPlan",
           "unit":path.name,"installed_unit_sha256":old_digest,
           "candidate_unit_sha256":hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
