@@ -49,7 +49,12 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("markCommunityDirty",dayz_js)
  def test_namalsk_preset_honors_content_entitlements(self):
   source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
-  self.assertIn('"Preencher Namalsk (oficial)"',source)
+  self.assertIn('"Preencher Namalsk (Regular + Hardcore)"',source)
+  self.assertIn('"Preencher Namalsk Hardcore"',source)
+  self.assertIn('namalskHardcorePreset.onclick=()=>fillNamalsk(true)',source)
+  self.assertIn('namalskPreset.onclick=()=>fillNamalsk(false)',source)
+  self.assertIn('mapSelection=preferHardcore?"hardcore.namalsk":null',source)
+  self.assertIn('namalskPreset,namalskHardcorePreset,installGate,installMap',source)
   self.assertIn('"dayz-map:namalsk"',source)
   self.assertIn('"SumrakDZN/Namalsk-Server"',source)
   self.assertIn(r'"2289456201\n2289461232"',source)
