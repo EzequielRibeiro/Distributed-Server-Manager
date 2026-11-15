@@ -472,7 +472,7 @@ def _restore_via_privileged_helper(config, command, unit_template):
                 manifest = json.loads(handle.read().decode("utf-8"))
             except (ValueError, UnicodeDecodeError) as exc:
                 raise ValueError("backup manifest is invalid") from exc
-            if manifest.get("kind") != "CapivaraInstanceBackup" or manifest.get("backup_format") != "capivara-instance":
+            if not isinstance(manifest, dict) or manifest.get("kind") != "CapivaraInstanceBackup" or manifest.get("backup_format") != "capivara-instance":
                 raise ValueError("unsupported backup manifest")
             _validate_manifest(record, manifest)
 
@@ -566,7 +566,7 @@ def _restore(config, command):
 def _delete(config, command):
     # Defense in depth for retention commands already delivered to the Agent.
     # Manual deletions are intentionally separate from automatic retention.
-    if (str(command.get("reason") or "").lower() in {"age_retention", "operational_retention"}
+    if (str(command.get("reason") or "").strip().lower() != "manual"
             and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
         raise ValueError("automatic backup deletion is disabled")
     instance_id = str(command["instance_id"])
