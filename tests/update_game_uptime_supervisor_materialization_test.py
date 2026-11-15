@@ -182,6 +182,20 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             self.assertFalse(again["change_proposed"])
             self.assertFalse(again["unit_write_permitted"])
 
+    def test_transition_rejects_hardlinked_unit(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            installed.write_text(render_unit(self.instance), encoding="utf-8")
+            os.link(installed, unit_dir / "alias.service")
+            digest = hashlib.sha256(installed.read_bytes()).hexdigest()
+            mat = SystemdMaterializer(runner=lambda *_: self.fail("no systemctl"))
+            with self.assertRaisesRegex(MaterializerError, "safe regular file"):
+                mat.plan_pinned_transition(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256=digest)
+
     def test_transition_rejects_owned_but_drifted_execstart(self):
         unit_dir = self.root / "sandbox-units"
         unit_dir.mkdir()
