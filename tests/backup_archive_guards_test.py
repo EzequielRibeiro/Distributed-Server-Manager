@@ -79,5 +79,29 @@ class BackupArchiveGuards(unittest.TestCase):
                 systemctl.assert_not_called()
 
 
+    def test_privileged_restore_rejects_missing_manifest_before_systemd(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            archive = Path(temp) / "missing-manifest.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                payload = b"world data"
+                info = tarfile.TarInfo("world.dat")
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+            with (
+                patch.object(backup, "_owned", return_value=({}, root)),
+                patch.object(backup, "_artifact", return_value=archive),
+                patch.object(backup.subprocess, "run") as systemctl,
+            ):
+                with self.assertRaisesRegex(ValueError, "manifest is missing"):
+                    backup._restore_via_privileged_helper(
+                        {"agent_id": "test"},
+                        {"command_id": "test", "instance_id": "test", "backup_id": "test"},
+                        "capivara-restore@{command_id}.service",
+                    )
+                systemctl.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
