@@ -2,6 +2,7 @@
 """Temporary-filesystem end-to-end DayZ community map integration without a live game process."""
 from __future__ import annotations
 
+import importlib.util
 import sys
 import tempfile
 import unittest
@@ -107,6 +108,36 @@ class GenericCommunityMapAgentFlowTest(unittest.TestCase):
         ids = [m["id"] for m in discover_missions(projected)["missions"]]
         self.assertIn("hardcore.example", ids)
         self.assertNotIn("regular.example", ids)
+
+    def _windows_projector(self):
+        """Load the Windows Agent's actual map projection module, not the Linux import."""
+        source = ROOT / "agents" / "windows" / "runtime" / "content_activation_dayz.py"
+        spec = importlib.util.spec_from_file_location("isolated_windows_dayz_projection_test", source)
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_windows_and_linux_map_projection_are_equivalent(self):
+        self._mission("regular.example")
+        self._mission("hardcore.example")
+        entries = self._snapshot()["entries"]
+        linux = project_runtime_spec(self.base_record, self._snapshot())["content_dayz_community_missions"]
+        windows = self._windows_projector().project_dayz_community_maps(self.base_record, entries)
+        self.assertEqual(windows, linux)
+        self.assertEqual(current_mission(self.base_record), "dayzOffline.chernarusplus")
+        self.assertFalse((self.state / "mpmissions" / "regular.example").exists())
+        self.assertFalse((self.state / "mpmissions" / "hardcore.example").exists())
+
+    def test_windows_and_linux_specific_variant_selection_are_equivalent(self):
+        self._mission("regular.example")
+        self._mission("hardcore.example")
+        snapshot = self._snapshot("Missions/hardcore.example")
+        linux = project_runtime_spec(self.base_record, snapshot)["content_dayz_community_missions"]
+        windows = self._windows_projector().project_dayz_community_maps(self.base_record, snapshot["entries"])
+        self.assertEqual(windows, linux)
+        self.assertEqual([m["id"] for m in windows], ["hardcore.example"])
 
     def test_unassigning_map_removes_prepared_community_missions(self):
         self._mission("regular.example")
