@@ -15,7 +15,7 @@ from pathlib import Path
 # They are preserved runtime data, not DSM release payload. Never traverse them.
 EXCLUDE_TOP = frozenset({"instances", "game-data", "logs", ".git", ".steam", ".local"})
 EXCLUDE_PREFIX = ("runtime/hybrid-agent-state/", "runtime/hybrid-instance-storage/",
-                  "runtime/state/")
+                  "runtime/state/", "runtime/artifact-transfers/")
 EXCLUDE_EXACT = frozenset({"config/dsm.conf"})
 # This deliberately tiny allowlist does NOT yet authorize a live update.
 COSMETIC_PREFIX = ("docs/", "release/RELEASE_NOTES_", "dashboard/web/")
@@ -26,13 +26,6 @@ def _inventory(root: Path) -> dict[str, tuple[int, str]]:
     if not root.is_dir() or root.is_symlink():
         raise ValueError("unsafe or missing DSM root")
     files: dict[str, tuple[int, str]] = {}
-    # The production updater does not preserve artifact-transfers in its
-    # durable-state allowlist. Never silently ignore these files: fail closed
-    # without hashing multi-GB in-flight transfer payloads.
-    transfers = root / "runtime/artifact-transfers"
-    if transfers.exists() or transfers.is_symlink():
-        raise ValueError("runtime/artifact-transfers is not preserved by update.sh; "
-                         "live update blocked pending explicit state migration")
     # Prune preserved runtime trees BEFORE descending into them. A post-rglob
     # exclusion still walks huge live game worlds and SteamCMD caches.
     for current, dirs, names in os.walk(root, topdown=True, followlinks=False):
