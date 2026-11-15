@@ -182,6 +182,27 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             self.assertFalse(again["change_proposed"])
             self.assertFalse(again["unit_write_permitted"])
 
+    def test_disposable_transition_rejects_hardlink_created_after_plan(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            original = render_unit(self.instance).encode()
+            installed.write_bytes(original)
+            digest = hashlib.sha256(original).hexdigest()
+            mat = SystemdMaterializer(runner=lambda *_: self.fail("no systemctl"))
+            real_plan = mat.plan_pinned_transition
+            def raced_plan(*args, **kwargs):
+                plan = real_plan(*args, **kwargs)
+                os.link(installed, unit_dir / "alias.service")
+                return plan
+            with mock.patch.object(mat, "plan_pinned_transition", side_effect=raced_plan):
+                with self.assertRaisesRegex(MaterializerError, "changed before replacement"):
+                    mat.apply_pinned_transition_disposable(
+                        self.instance, pinned_supervisor_preview=self.pin,
+                        expected_installed_sha256=digest)
+            self.assertEqual(installed.read_bytes(), original)
+
     def test_disposable_transition_and_reload_failure_rollback(self):
         unit_dir = self.root / "sandbox-units"
         unit_dir.mkdir()
