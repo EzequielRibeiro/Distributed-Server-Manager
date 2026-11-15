@@ -105,6 +105,7 @@ class UpdatePreflightTest(unittest.TestCase):
         digest = hashlib.sha256(b"pinned fixture").hexdigest()
         pinned = versions / ("console-supervisor-" + digest + ".py")
         pinned.write_bytes(b"pinned fixture")
+        pinned.chmod(0o444)
         def observed(unit):
             if "minecraft" not in unit:
                 return {"main_pid": 12345, "start_stamp": 666}
@@ -134,6 +135,7 @@ class UpdatePreflightTest(unittest.TestCase):
         digest = hashlib.sha256(b"supervisor").hexdigest()
         path = versions / ("console-supervisor-" + digest + ".py")
         path.write_bytes(b"supervisor")
+        path.chmod(0o444)
         for root in (self.installed, self.target):
             source = root / module.compatibility.SUPERVISOR_RELATIVE
             source.parent.mkdir(parents=True, exist_ok=True)
