@@ -166,5 +166,31 @@ class BackupArchiveGuards(unittest.TestCase):
                 status.assert_not_called()
 
 
+    def test_direct_restore_missing_manifest_never_stops_game(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            (root / "server.cfg").write_text("existing")
+            archive = Path(temp) / "missing-manifest.tar.gz"
+            with tarfile.open(archive, "w:gz") as tar:
+                payload = b"world data"
+                info = tarfile.TarInfo("world.dat")
+                info.size = len(payload)
+                tar.addfile(info, io.BytesIO(payload))
+            with (
+                patch.object(backup, "_owned", return_value=({}, root)),
+                patch.object(backup, "_artifact", return_value=archive),
+                patch.object(backup, "status", return_value={"observed_state": "running"}),
+                patch.object(backup, "lifecycle") as lifecycle,
+            ):
+                with self.assertRaisesRegex(ValueError, "manifest is missing"):
+                    backup._restore_direct(
+                        {"agent_id": "test"},
+                        {"instance_id": "test", "backup_id": "test"},
+                    )
+                lifecycle.assert_not_called()
+                self.assertEqual((root / "server.cfg").read_text(), "existing")
+
+
 if __name__ == "__main__":
     unittest.main()
