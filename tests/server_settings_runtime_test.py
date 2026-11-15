@@ -36,8 +36,8 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
  def test_dayz_dynamic_numeric_setting_constraints(self):
   service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService)
   ctx={"game_id":"dayz"}
-  allowed={"thirdPersonView":[0,1],"verifySignatures":[0,1,2],"vonCodecQuality":[0,20,30],"loginQueueConcurrentPlayers":[1,5],"loginQueueMaxPlayers":[1,500],"instanceId":[1]}
-  invalid={"thirdPersonView":[-1,2],"verifySignatures":[-1,3],"vonCodecQuality":[-1,31],"loginQueueConcurrentPlayers":[-1,0],"loginQueueMaxPlayers":[-1,0],"instanceId":[-1,0]}
+  allowed={"thirdPersonView":[0,1,2],"verifySignatures":[0,1,2],"vonCodecQuality":[0,20,30],"loginQueueConcurrentPlayers":[1,5],"loginQueueMaxPlayers":[1,500],"instanceId":[1]}
+  invalid={"thirdPersonView":[-1,3],"verifySignatures":[-1,3],"vonCodecQuality":[-1,31],"loginQueueConcurrentPlayers":[-1,0],"loginQueueMaxPlayers":[-1,0],"instanceId":[-1,0]}
   for key,values in allowed.items():
    for value in values:
     with self.subTest(key=key,value=value):service._enforce_dayz_surface_constraint(ctx,{"key":key,"path":"serverDZ.cfg"},value)
@@ -287,7 +287,7 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
    def put(self,raw,updated_by=None):
     writes.append(raw['value']);state['value']=raw['value'];return {'configuration':{'revision':len(writes)+1,'checksum':'test'},'changed':True}
   service=workspace_service.CustomerInstanceWorkspaceService.__new__(workspace_service.CustomerInstanceWorkspaceService);service.root=ROOT;service.backend=object();service.require=lambda user,iid,perm:{'game_id':'dayz','runtime_id':'dayz.stable'};service.repo=type('Repo',(),{'workspace_policy':lambda self,iid:{}})();service._resolved_resource_policy=lambda context,policy:{'player_limit':32};service.files=type('Files',(),{'snapshot':lambda self,cid:{'command_id':cid,'instance_id':'instance-1','action':'settings_surface','status':'completed','result':surface}})()
-  invalid=[('thirdPersonView',-1),('thirdPersonView',2),('verifySignatures',3),('vonCodecQuality',31),('loginQueueConcurrentPlayers',0),('loginQueueMaxPlayers',-1),('instanceId',0),('guaranteedUpdates',1),('thirdPersonView',1.5),('verifySignatures','2'),('instanceId',True)]
+  invalid=[('thirdPersonView',-1),('thirdPersonView',3),('verifySignatures',3),('vonCodecQuality',31),('loginQueueConcurrentPlayers',0),('loginQueueMaxPlayers',-1),('instanceId',0),('guaranteedUpdates',1),('thirdPersonView',1.5),('verifySignatures','2'),('instanceId',True)]
   with patch.object(workspace_service,'runtime_workspace_capabilities',return_value={'server_settings':dayz}),patch.object(workspace_service,'ConfigurationRepository',ConfigRepo):
    for key,value in invalid:
     with self.subTest(key=key,value=value):
