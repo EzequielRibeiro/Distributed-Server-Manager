@@ -10,7 +10,9 @@ import hashlib
 import json
 from pathlib import Path
 
-EXCLUDE_TOP = frozenset({"instances", "game-data", "logs", ".git"})
+# SteamCMD creates user-home caches under the installed tree on some hosts.
+# They are preserved runtime data, not DSM release payload. Never traverse them.
+EXCLUDE_TOP = frozenset({"instances", "game-data", "logs", ".git", ".steam", ".local"})
 EXCLUDE_PREFIX = ("runtime/hybrid-agent-state/", "runtime/hybrid-instance-storage/")
 EXCLUDE_EXACT = frozenset({"config/dsm.conf"})
 # This deliberately tiny allowlist does NOT yet authorize a live update.
