@@ -47,6 +47,19 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("communityFormDirty",dayz_js)
   self.assertIn('if(communityFormDirty&&document.getElementById("dayz-community-map-id"))return',dayz_js)
   self.assertIn("markCommunityDirty",dayz_js)
+  def test_namalsk_preset_honors_content_entitlements(self):
+  source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
+  self.assertIn('"Preencher Namalsk (oficial)"',source)
+  self.assertIn('"dayz-map:namalsk"',source)
+  self.assertIn('"SumrakDZN/Namalsk-Server"',source)
+  self.assertIn(r'"2289456201\n2289461232"',source)
+  self.assertIn('missionPathInput.value=""',source)
+  self.assertIn('contentPermissions.has("content.install")',source)
+  self.assertIn('contentPolicy.mods_allowed',source)
+  self.assertIn('contentPolicy.workshop_allowed',source)
+  self.assertIn('contentPolicy.external_upload_allowed',source)
+  self.assertIn('installMap.disabled=!allowed||mapInstallBusy',source)
+  self.assertNotIn('installMap.disabled=!editable',source)
  def test_dayz_api_supports_map_and_scheduled_wipe(self):
   source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
   for token in ('"refresh_maps"','"change_mission"','"wipe"','"cancel"',"scheduled_at"):
