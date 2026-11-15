@@ -58,7 +58,10 @@ def stage_supervisor(source: Path, versions: Path, *, expected_sha256: str) -> d
     if dest.is_symlink():
         raise SupervisorIsolationError("destination symlink")
     if dest.exists():
-        _regular(dest)
+        dest_stat = _regular(dest)
+        if (dest_stat.st_uid != os.geteuid() or dest_stat.st_mode & 0o222 or
+                dest_stat.st_size == 0 or dest_stat.st_size > 1024 * 1024):
+            raise SupervisorIsolationError("existing version is mutable or unsafe")
         if hashlib.sha256(dest.read_bytes()).hexdigest() != expected_sha256:
             raise SupervisorIsolationError("existing version is corrupt")
         return {"path": str(dest), "sha256": expected_sha256, "already_present": True,
