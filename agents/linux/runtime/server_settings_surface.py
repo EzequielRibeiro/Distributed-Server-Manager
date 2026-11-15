@@ -351,6 +351,9 @@ def observed_surface(spec:dict[str,Any])->dict[str,Any]:
   logical=str(item.get("logical_id") or "").strip()
   if logical:last_logical[logical]=index
  fields=[item for index,item in enumerate(fields) if not item.get("logical_id") or last_logical.get(str(item.get("logical_id")))==index]
+ # DayZ perspective is global: never expose the obsolete toggle as a second customer control.
+ if str(spec.get("game_id") or "").lower()=="dayz" or str(spec.get("environment_id") or "").lower().startswith("dayz"):
+  fields=[item for item in fields if not (str(item.get("path") or "").lower()=="serverdz.cfg" and str(item.get("key") or "").lower()=="disable3rdperson")]
  # Fallback for launch/command settings that have no configuration file.
  decl=spec.get("catalog_server_settings") if isinstance(spec.get("catalog_server_settings"),dict) else {}
  args=list(spec.get("arguments") or [])
