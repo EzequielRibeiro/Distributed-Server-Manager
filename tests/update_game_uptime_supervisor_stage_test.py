@@ -57,6 +57,15 @@ class SupervisorStageTests(unittest.TestCase):
         with self.assertRaises(stage.SupervisorIsolationError):
             stage.stage_supervisor(self.src, self.versions, expected_sha256=self.sha)
 
+    def test_matching_existing_version_must_remain_immutable(self):
+        destination = self.versions / ("console-supervisor-" + self.sha + ".py")
+        destination.write_bytes(self.src.read_bytes())
+        with self.assertRaisesRegex(stage.SupervisorIsolationError, "mutable"):
+            stage.stage_supervisor(self.src, self.versions, expected_sha256=self.sha)
+        destination.chmod(0o444)
+        self.assertTrue(stage.stage_supervisor(
+            self.src, self.versions, expected_sha256=self.sha)["already_present"])
+
     def test_corrupt_existing_file_rejected(self):
         (self.versions/("console-supervisor-"+self.sha+".py")).write_bytes(b"wrong")
         with self.assertRaises(stage.SupervisorIsolationError):
