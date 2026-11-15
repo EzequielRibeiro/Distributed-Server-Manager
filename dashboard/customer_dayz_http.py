@@ -166,7 +166,7 @@ def install_customer_dayz_http(legacy,authenticate):
                 community_meta={"name":str(body.get("name") or body.get("content_id") or "")[:191]}
                 if mission_path:community_meta["mission_path"]=mission_path
                 finalize_body={"instance_id":instance_id,"transfer_id":str(body.get("transfer_id") or ""),"content_id":str(body.get("content_id") or ""),"activation_order":int(prepared["activation_order"]),"metadata":{"display_name":community_meta["name"],"community_map":community_meta}}
-                result=upload.finalize_dayz_community_map(user,finalize_body["transfer_id"],finalize_body,prepared["items"])
+                result=upload.finalize_dayz_community_map(user,finalize_body["transfer_id"],finalize_body,prepared["items"],dependency_content_ids=prepared["dependencies"])
                 return send(self,202,{"community_map":result,"view":view(user,instance_id)})
             workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
             action=str(body.get("action") or "").strip().lower();actor=str(user.get("username") or user.get("id") or "customer")

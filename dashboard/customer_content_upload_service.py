@@ -559,12 +559,15 @@ class CustomerContentUploadService:
    return result
   return self.content.put(payload,requested_by=actor,**self._customer_guard_options())
 
- def finalize_dayz_community_map(self,user,transfer_id,body:Mapping[str,Any],dependency_assignments):
+ def finalize_dayz_community_map(self,user,transfer_id,body:Mapping[str,Any],dependency_assignments,dependency_content_ids=None):
   item=self._transfer(user,transfer_id)
   try:
    if not isinstance(body,Mapping):raise ValueError("content payload must be an object")
    payload=dict(body);payload["content_type"]="map";payload["activation_state"]="disabled"
-   payload["dependencies"]=[str(value.get("content_id") or "").strip() for value in (dependency_assignments or []) if isinstance(value,Mapping) and str(value.get("content_id") or "").strip()]
+   # The full validated dependency set includes Workshop items already installed.
+   # Only new items belong in extra_assignments, but all must remain linked to this map.
+   resolved_ids=dependency_content_ids if dependency_content_ids is not None else [value.get("content_id") for value in (dependency_assignments or []) if isinstance(value,Mapping)]
+   payload["dependencies"]=list(dict.fromkeys(str(value).strip() for value in resolved_ids if str(value or "").strip()))
    return self._finalize(user,transfer_id,payload,extra_assignments=dependency_assignments)
   except Exception as exc:
    if str(item.get("status") or "").lower()=="completed":
