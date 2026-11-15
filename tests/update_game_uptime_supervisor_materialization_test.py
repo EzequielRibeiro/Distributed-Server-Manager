@@ -203,6 +203,30 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
                         expected_installed_sha256=digest, process_identity_observer=lambda: (123, 456))
             self.assertEqual(installed.read_bytes(), original)
 
+    def test_disposable_transition_preserves_real_child_process_identity(self):
+        import subprocess
+        import time
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True)
+        self.addCleanup(lambda: (child.terminate(), child.wait(timeout=5)) if child.poll() is None else None)
+        def identity():
+            self.assertIsNone(child.poll())
+            return (child.pid, Path(f"/proc/{child.pid}/stat").read_text().split()[21])
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            original = render_unit(self.instance).encode()
+            installed.write_bytes(original)
+            digest = hashlib.sha256(original).hexdigest()
+            mat = SystemdMaterializer(runner=lambda *_: (0, "", ""))
+            before = identity()
+            result = mat.apply_pinned_transition_disposable(
+                self.instance, pinned_supervisor_preview=self.pin,
+                expected_installed_sha256=digest, process_identity_observer=identity)
+            self.assertEqual(before, identity())
+            self.assertTrue(result["active_process_identity_verified"])
+            self.assertFalse(result["live_no_drain_authorized"])
+
     def test_disposable_transition_rejects_non_tmp_directory(self):
         with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": "/etc/systemd/user"}):
             mat = SystemdMaterializer(runner=lambda *_: self.fail("no systemctl"))
