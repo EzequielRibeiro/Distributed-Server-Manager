@@ -182,6 +182,33 @@ class PreviewPinnedMaterializerTests(unittest.TestCase):
             self.assertFalse(again["change_proposed"])
             self.assertFalse(again["unit_write_permitted"])
 
+    def test_disposable_transition_and_reload_failure_rollback(self):
+        unit_dir = self.root / "sandbox-units"
+        unit_dir.mkdir()
+        with mock.patch.dict(os.environ, {"CAPIVARA_INSTANCE_SYSTEMD_DIR": str(unit_dir)}):
+            installed = unit_path_for_spec(self.instance)
+            original = render_unit(self.instance).encode()
+            installed.write_bytes(original)
+            digest = hashlib.sha256(original).hexdigest()
+            calls = []
+            def failing_runner(*_):
+                calls.append(1)
+                return (1, "", "reload failed") if len(calls) == 1 else (0, "", "")
+            mat = SystemdMaterializer(runner=failing_runner)
+            with self.assertRaisesRegex(MaterializerError, "restored"):
+                mat.apply_pinned_transition_disposable(
+                    self.instance, pinned_supervisor_preview=self.pin,
+                    expected_installed_sha256=digest)
+            self.assertEqual(installed.read_bytes(), original)
+            self.assertEqual(len(calls), 2)
+            mat = SystemdMaterializer(runner=lambda *_: (0, "", ""))
+            result = mat.apply_pinned_transition_disposable(
+                self.instance, pinned_supervisor_preview=self.pin,
+                expected_installed_sha256=digest)
+            self.assertTrue(result["changed"])
+            self.assertFalse(result["live_no_drain_authorized"])
+            self.assertIn(self.pin["path"], installed.read_text())
+
     def test_transition_rejects_hardlinked_unit(self):
         unit_dir = self.root / "sandbox-units"
         unit_dir.mkdir()
