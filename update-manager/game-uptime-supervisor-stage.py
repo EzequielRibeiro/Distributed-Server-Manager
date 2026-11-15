@@ -53,12 +53,15 @@ def stage_supervisor(source: Path, versions: Path, *, expected_sha256: str) -> d
     if parent.st_uid != os.geteuid() or (parent.st_mode & 0o022):
         raise SupervisorIsolationError("versions directory writable by other users")
     src_stat = _regular(source)
-    if src_stat.st_size > 1024 * 1024:
-        raise SupervisorIsolationError("supervisor exceeds bounded size")
+    if src_stat.st_size == 0 or src_stat.st_size > 1024 * 1024:
+        raise SupervisorIsolationError("supervisor has invalid size")
     data = source.read_bytes()
     if hashlib.sha256(data).hexdigest() != expected_sha256:
         raise SupervisorIsolationError("source digest mismatch")
-    if _regular(source).st_ino != src_stat.st_ino:
+    after = _regular(source)
+    if (after.st_dev != src_stat.st_dev or after.st_ino != src_stat.st_ino or
+            after.st_size != src_stat.st_size or after.st_mtime_ns != src_stat.st_mtime_ns or
+            after.st_ctime_ns != src_stat.st_ctime_ns):
         raise SupervisorIsolationError("source changed during read")
     name = "console-supervisor-" + expected_sha256 + ".py"
     dest = versions / name
