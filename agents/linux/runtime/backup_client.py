@@ -438,6 +438,8 @@ def _restore_via_privileged_helper(config, command, unit_template):
     _validate_archive_payload(artifact)
     with tarfile.open(artifact, "r:*") as archive:
         manifest_member = next((m for m in archive if m.name == MANIFEST_NAME), None)
+        if manifest_member is None or not manifest_member.isfile():
+            raise ValueError("backup manifest is missing")
         if manifest_member is not None:
             handle = archive.extractfile(manifest_member)
             if handle is None:
