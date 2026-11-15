@@ -159,6 +159,15 @@ class ServerSettingsRuntimeTest(unittest.TestCase):
     migrated,changed=game_runtime.migrate_runtime_spec(config,old)
    self.assertTrue(changed);self.assertEqual(15,migrated['profile_version']);self.assertEqual(declaration('dayz.stable'),migrated['catalog_server_settings']);self.assertEqual({'server_name':'Migrated DayZ','max_players':32},migrated['server_settings_values'])
 
+ def test_dayz_customer_surface_uses_actual_config_key(self):
+  backend=(ROOT/'dashboard/customer_instance_workspace_service.py').read_text(encoding='utf-8')
+  frontend=(ROOT/'dashboard/web/customer-instance-v2.js').read_text(encoding='utf-8')
+  self.assertIn('allowed={"disable3rdPerson":(0,1)',backend)
+  self.assertIn('"disable3rdPerson","verifySignatures"',backend)
+  self.assertIn('dayzSettingConstraints={disable3rdPerson:{allowed:[0,1]}',frontend)
+  self.assertNotIn('thirdPersonView',backend)
+  self.assertNotIn('thirdPersonView',frontend)
+
  def test_dayz_perspective_mode_migrates_to_single_authoritative_flag(self):
   dayz=declaration('dayz.stable')
   self.assertEqual([0,1,2],dayz['fields']['perspective_mode']['allowed'])
