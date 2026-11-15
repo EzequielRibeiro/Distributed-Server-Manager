@@ -446,6 +446,10 @@ class BackupRepository:
         Never delete unmanaged/orphan archives and never delete the most recent
         completed backup. Agent delete operations are idempotent.
         """
+        # Preserve all existing backups by default. Automatic deletion requires
+        # an explicit operator opt-in independent of retention schedule flags.
+        if os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1":
+            return []
         schedule = self._workspace_schedule(instance_id)
         if not schedule or not bool(schedule.get("keep_single_operational")):
             return []
