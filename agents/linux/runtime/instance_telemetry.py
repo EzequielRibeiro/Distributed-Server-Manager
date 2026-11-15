@@ -497,16 +497,37 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         except Exception:
             health = "unknown"
 
-        # Measure the customer-manageable tree first. Hybrid prepares files_root
-        # for capivara-agent group access, while the parent instance_state_root may
-        # intentionally remain traversal-restricted (notably Minecraft Bedrock).
-        storage_root = record.get("files_root") or record.get("instance_state_root") or record.get("path")
+        # Prefer the instance-owned state tree: files_root can contain only
+        # customer-editable files and omit logs, profiles and other owned data.
+        # Never add both roots (files_root may be nested under state_root).
+        # Shared game installations outside state_root are not customer usage.
+        state_root = record.get("instance_state_root")
+        files_root = record.get("files_root")
+        state_usage = _storage_used(state_root) if state_root else None
+        files_usage = _storage_used(files_root) if files_root else None
+        if state_usage is not None:
+            storage_used = state_usage
+            if files_usage is not None and files_root:
+                try:
+                    state_path = Path(str(state_root)).resolve()
+                    files_path = Path(str(files_root)).resolve()
+                    files_path.relative_to(state_path)
+                except ValueError:
+                    # Separate customer-owned trees cannot be safely combined
+                    # without an explicit ownership contract.
+                    storage_used = None
+        elif state_root:
+            # A restricted or unreadable state tree must not silently report
+            # the smaller customer-editable tree as the full instance usage.
+            storage_used = None
+        else:
+            storage_used = files_usage if files_root else _storage_used(record.get("path"))
         results.append({
             "instance_id": instance_id,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
-            "storage_used_bytes": _storage_used(storage_root),
+            "storage_used_bytes": storage_used,
             "network_rx_bytes": rx,
             "network_tx_bytes": tx,
             "players_online": game.get("players_online"),
