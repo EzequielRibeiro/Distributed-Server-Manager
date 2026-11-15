@@ -21,6 +21,7 @@ class PinnedSupervisorUnitTests(unittest.TestCase):
         self.sha = hashlib.sha256(b"safe supervisor").hexdigest()
         self.path = self.root/("console-supervisor-"+self.sha+".py")
         self.path.write_bytes(b"safe supervisor")
+        self.path.chmod(0o444)
         self.unit = "capivara-instance-minecraft-005.service"
         self.obs = {"main_pid": 555, "start_stamp": 987654,
                     "exec": "path=/usr/bin/python3 ; argv[]=/usr/bin/python3 "+str(self.path)+" --socket /tmp/isolated.sock -- /usr/bin/sleep 30 ; ignore_errors=no ;",
@@ -49,6 +50,7 @@ class PinnedSupervisorUnitTests(unittest.TestCase):
         with self.assertRaises(mod.SupervisorUnitError): self.verify()
 
     def test_bad_hash_rejected(self):
+        self.path.chmod(0o644)
         self.path.write_bytes(b"tampered")
         with self.assertRaises(mod.SupervisorUnitError): self.verify()
 
@@ -56,6 +58,23 @@ class PinnedSupervisorUnitTests(unittest.TestCase):
         self.path.unlink()
         self.path.symlink_to(self.root/"elsewhere")
         with self.assertRaises(mod.SupervisorUnitError): self.verify()
+
+    def test_writable_supervisor_rejected_even_with_matching_hash(self):
+        self.path.chmod(0o644)
+        with self.assertRaisesRegex(mod.SupervisorUnitError, "mutable"):
+            self.verify()
+
+    def test_writable_versions_directory_rejected(self):
+        self.root.chmod(0o777)
+        self.addCleanup(self.root.chmod, 0o700)
+        with self.assertRaisesRegex(mod.SupervisorUnitError, "directory"):
+            self.verify()
+
+    def test_hardlinked_supervisor_rejected(self):
+        import os
+        os.link(self.path, self.root / "alternate")
+        with self.assertRaisesRegex(mod.SupervisorUnitError, "linked"):
+            self.verify()
 
     def test_unknown_exec_format_rejected(self):
         self.obs["exec"] = "/usr/bin/python3 "+str(self.path)
