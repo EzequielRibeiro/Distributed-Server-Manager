@@ -158,12 +158,22 @@ def run(mode:str)->dict:
         'mode':mode,
         'status':'tests_passed' if passed else 'tests_failed',
         'coverage':coverage,
-        # Passing tests does not authorize release. Environment-gated skips,
-        # untested restored-world boot and deferred 14d retention are distinct
-        # operational acceptance gates, never inferred from green pytest.
-        'environment_test_coverage_complete':passed and coverage['status']=='complete',
+        # This measures only the tests SELECTED by quick/full, not all
+        # environment-gated E2E cases or a real private-world restore boot.
+        'selected_suite_coverage_complete':passed and coverage['status']=='complete',
+        # A clean quick/full pytest run never establishes environment acceptance.
+        # The real restored-world boot + 14-day backup capacity are not part of
+        # this script and must be attested in a separately authorized workflow.
+        'environment_test_coverage_complete':False,
         'restored_private_world_boot_verified':False,
         'backup_14_day_capacity_verified':False,
+        'acceptance_status':'blocked',
+        'acceptance_blockers':(
+            (['full_suite_not_executed'] if mode=='quick' else [])+
+            (['selected_suite_skipped_tests'] if coverage['status']=='partial' else [])+
+            ['restored_private_world_boot_not_verified',
+             'backup_14_day_capacity_not_verified']
+        ),
         'release_authorized':False,
         'steps':results,
     }

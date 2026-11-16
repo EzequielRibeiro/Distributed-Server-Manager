@@ -61,7 +61,11 @@ class ReleaseGateTest(unittest.TestCase):
         self.assertEqual(result['status'],'tests_passed')
         self.assertEqual(result['coverage']['status'],'complete')
         self.assertEqual(result['coverage']['passed'],2)
-        self.assertTrue(result['environment_test_coverage_complete'])
+        self.assertTrue(result['selected_suite_coverage_complete'])
+        self.assertFalse(result['environment_test_coverage_complete'])
+        self.assertEqual(result['acceptance_status'],'blocked')
+        self.assertIn('restored_private_world_boot_not_verified',result['acceptance_blockers'])
+        self.assertIn('backup_14_day_capacity_not_verified',result['acceptance_blockers'])
         self.assertFalse(result['restored_private_world_boot_verified'])
         self.assertFalse(result['backup_14_day_capacity_verified'])
         self.assertFalse(result['release_authorized'])
@@ -80,7 +84,19 @@ class ReleaseGateTest(unittest.TestCase):
         self.assertEqual(result['coverage']['skipped'],1)
         self.assertEqual(result['coverage']['passed'],1)
         self.assertIn('boot',result['coverage']['skipped_cases'][0]['test'])
+        self.assertIn('selected_suite_skipped_tests',result['acceptance_blockers'])
+        self.assertFalse(result['selected_suite_coverage_complete'])
         self.assertFalse(result['environment_test_coverage_complete'])
+        self.assertFalse(result['release_authorized'])
+
+    def test_quick_green_is_not_environment_acceptance(self):
+        xml='<testsuite><testcase classname="unit" name="pass"/></testsuite>'
+        with patch.object(module.subprocess,'run',side_effect=self._mock_run_with_junit(xml)):
+            result=module.run('quick')
+        self.assertEqual(result['status'],'tests_passed')
+        self.assertTrue(result['selected_suite_coverage_complete'])
+        self.assertFalse(result['environment_test_coverage_complete'])
+        self.assertIn('full_suite_not_executed',result['acceptance_blockers'])
         self.assertFalse(result['release_authorized'])
 
     def test_missing_or_malformed_pytest_report_fails_closed(self):
