@@ -1790,6 +1790,15 @@ main() {
         echo "Diagnostic only: --no-drain remains blocked; update was not started." >&2
         exit 2
     fi
+    # #928: Explicit integration boundary for the future no-drain transaction.
+    # The preflight above is read-only and MUST NOT fall through to this
+    # destructive/draining updater. A live transaction must implement durable
+    # rollback and PID/start-time verification before this boundary changes.
+    # Keep normal updates on the existing draining path.
+    if [[ "${NO_DRAIN_REPORT}" -ne 0 ]]; then
+        echo "Invalid no-drain transaction state; refusing update." >&2
+        exit 2
+    fi
     # Ambiente | Environment
     require_root
     # O pacote instalado pode ser substituído durante esta execução. Nunca
