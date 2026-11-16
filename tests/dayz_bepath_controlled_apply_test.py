@@ -1,5 +1,9 @@
 """#984: a saved customer preference needs explicit, stopped-only Agent application."""
 import sys
+import os
+import json
+import importlib.util
+import types
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,7 +21,7 @@ class DayZBEPathControlledApplyTest(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(prefix='dsm984-')
         self.addCleanup(self.temp.cleanup)
         root=Path(self.temp.name)
-        self.private=root/'instance-private'
+        self.private=root/'dayz-984'
         self.private.mkdir()
         profile=DayZRuntimeProfile()
         instance={'instance_id':'dayz-984','agent_id':'agent-984'}
@@ -75,7 +79,7 @@ class DayZBEPathControlledApplyTest(unittest.TestCase):
 
     def test_running_server_is_never_restarted_or_materialized(self):
         with mock.patch.object(operation,'status',return_value={'observed_state':'running'}),\
-             mock.patch.object(operation.privileged_materialization,'materialize') as materialize,\
+             mock.patch.object(operation.privileged_materialization,'apply_dayz_battleye') as materialize,\
              mock.patch.object(operation,'lifecycle') as lifecycle:
             with self.assertRaises(RuntimeError):
                 operation._apply_battleye_directory(self.config,self.record,self.iid,
@@ -85,7 +89,7 @@ class DayZBEPathControlledApplyTest(unittest.TestCase):
 
     def test_stopped_server_is_materialized_once_without_restart(self):
         with mock.patch.object(operation,'status',return_value={'observed_state':'stopped'}),\
-             mock.patch.object(operation.privileged_materialization,'materialize') as materialize,\
+             mock.patch.object(operation.privileged_materialization,'apply_dayz_battleye') as materialize,\
              mock.patch.object(operation,'lifecycle') as lifecycle:
             result=operation._apply_battleye_directory(self.config,self.record,self.iid,
                                                         {'battleye_directory':'private/be'})
@@ -96,23 +100,66 @@ class DayZBEPathControlledApplyTest(unittest.TestCase):
             self.assertEqual(materialize.call_args.args[1]['instance_id'],self.iid)
             lifecycle.assert_not_called()
 
-    def test_failed_materialization_rolls_back_original_spec(self):
+    def test_agent_failure_does_not_retry_privileged_write(self):
         with mock.patch.object(operation,'status',return_value={'observed_state':'stopped'}),\
-             mock.patch.object(operation.privileged_materialization,'materialize',
-                               side_effect=[RuntimeError('simulate failure'),{'ok':True}]) as materialize:
-            with self.assertRaisesRegex(RuntimeError,'previous runtime restored'):
+             mock.patch.object(operation.privileged_materialization,'apply_dayz_battleye',
+                               side_effect=RuntimeError('root helper handles rollback')) as materialize:
+            with self.assertRaisesRegex(RuntimeError,'root helper handles rollback'):
                 operation._apply_battleye_directory(self.config,self.record,self.iid,
                                                      {'battleye_directory':'clean'})
-            self.assertEqual(materialize.call_count,2)
-            self.assertEqual(materialize.call_args_list[-1].args[1],self.record)
+            self.assertEqual(materialize.call_count,1)
 
-    def test_idempotent_apply_skips_privileged_write(self):
+    def test_privileged_narrow_apply_updates_only_private_spec_and_unit(self):
+        module_path=ROOT/'agents/linux/privileged/materialize_instance.py'
+        spec=importlib.util.spec_from_file_location('dsm984_privileged_test',module_path)
+        helper=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        state=Path(self.temp.name)/'agent-state'
+        instances=state/'instances'
+        instances.mkdir(parents=True)
+        old_path=instances/(self.iid+'.json')
+        old_path.write_text(json.dumps(self.record))
+        old_path.chmod(0o600)
+        helper.STATE_DIR=state
+        target=operation._prepare_battleye_spec(self.record,'private/be')
+        materializer=mock.Mock()
+        materializer.inspect.return_value={"exists":True,"owned":True,"matches":True}
+        materializer.apply.return_value={"changed":True}
+        stopped=types.SimpleNamespace(returncode=0,stdout="LoadState=loaded\nActiveState=inactive\nMainPID=0\n")
+        owner=types.SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+        with mock.patch.object(helper,'_instance_storage_root',return_value=Path(self.temp.name)),\
+             mock.patch.object(helper,'_validate_runtime_user',return_value=owner),\
+             mock.patch.object(helper.subprocess,'run',return_value=stopped),\
+             mock.patch.object(helper.os,'chown'):
+            result=helper._apply_dayz_battleye_private(target,self.config,materializer)
+        self.assertTrue(result['runtime_spec_persisted'])
+        self.assertEqual(materializer.apply.call_count,1)
+        self.assertEqual(json.loads(old_path.read_text())['battleye_directory'],'private/be')
+        self.assertTrue((self.private/'private/be').is_dir())
+        self.assertFalse((self.private/'shared-game-data').exists())
+
+    def test_privileged_narrow_apply_refuses_live_unit(self):
+        module_path=ROOT/'agents/linux/privileged/materialize_instance.py'
+        spec=importlib.util.spec_from_file_location('dsm984_privileged_live_test',module_path)
+        helper=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        materializer=mock.Mock()
+        running=types.SimpleNamespace(returncode=0,stdout="LoadState=loaded\nActiveState=active\nMainPID=12345\n")
+        with mock.patch.object(helper.subprocess,'run',return_value=running):
+            with self.assertRaisesRegex(RuntimeError,'requires a stopped'):
+                helper._apply_dayz_battleye_private(self.record,self.config,materializer)
+        materializer.apply.assert_not_called()
+
+    def test_idempotent_apply_verifies_installed_unit(self):
         with mock.patch.object(operation,'status',return_value={'observed_state':'stopped'}),\
-             mock.patch.object(operation.privileged_materialization,'materialize') as materialize:
+             mock.patch.object(operation.privileged_materialization,'apply_dayz_battleye',
+                               return_value={'changed':False}) as materialize:
             result=operation._apply_battleye_directory(self.config,self.record,self.iid,
                                                         {'battleye_directory':'battleye'})
             self.assertFalse(result['changed'])
-            materialize.assert_not_called()
+            self.assertTrue(result['applied'])
+            materialize.assert_called_once()
+
 
 if __name__=='__main__':
     unittest.main()
