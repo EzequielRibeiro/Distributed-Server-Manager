@@ -79,6 +79,12 @@ O gate `scripts/minecraft_serverpack_release_gate.py` registra os casos
 `coverage.status=partial`, inspecionar `coverage.skipped_cases`; os casos
 que exigem opt-in, runner CI, artefato privado ou unidade systemd descartavel
 **nao estao homologados**, mesmo se `status=tests_passed`.
+O campo `selected_suite_coverage_complete` se refere **somente aos casos
+selecionados naquele modo**. Mesmo quando for `true`, o campo
+`environment_test_coverage_complete` permanece `false`, e
+`acceptance_status=blocked` com `acceptance_blockers` ate a apresentacao
+de evidencias externas reais de boot/retencao; o modo `quick` inclui
+`full_suite_not_executed`.
 Se o XML JUnit estiver ausente ou invalido, o gate retorna
 `status=tests_failed` (fail-closed). O campo `release_authorized`
 permanece `false` em todas as condicoes.
