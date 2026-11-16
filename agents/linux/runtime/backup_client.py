@@ -249,6 +249,9 @@ def _retained_backup_capacity(instance_dir, policy):
 def _create(config, command):
     """Serialize creates per instance to keep quota snapshots authoritative."""
     instance_id = _safe(command["instance_id"])
+    # Non-mutating checks must run before creating even a lock file.
+    record, root = _owned(config, instance_id)
+    _selected(root, dict(command.get("policy") or {}))
     locks = STATE_ROOT / "backup-create-locks"
     locks.mkdir(parents=True, exist_ok=True)
     lock_path = locks / f"{instance_id}.lock"
