@@ -761,6 +761,7 @@ capture_no_drain_process_identities() {
     NO_DRAIN_START_SNAPSHOT=()
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"; do
         [[ "${UNIT}" == capivara-instance-*.service ]] || return 1
+        [[ ! -v 'NO_DRAIN_PID_SNAPSHOT[$UNIT]' ]] || return 1
         ACTIVE="$(systemctl show "${UNIT}" --property=ActiveState --value)" || return 1
         PID="$(systemctl show "${UNIT}" --property=MainPID --value)" || return 1
         START="$(systemctl show "${UNIT}" --property=ExecMainStartTimestampMonotonic --value)" || return 1
@@ -775,6 +776,7 @@ verify_no_drain_process_identities() {
     local UNIT PID START ACTIVE
     [[ "${#ACTIVE_GAME_UNITS[@]}" -eq "${#NO_DRAIN_PID_SNAPSHOT[@]}" ]] || return 1
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"; do
+        [[ "${UNIT}" == capivara-instance-*.service ]] || return 1
         [[ -n "${NO_DRAIN_PID_SNAPSHOT[${UNIT}]:-}" && -n "${NO_DRAIN_START_SNAPSHOT[${UNIT}]:-}" ]] || return 1
         ACTIVE="$(systemctl show "${UNIT}" --property=ActiveState --value)" || return 1
         PID="$(systemctl show "${UNIT}" --property=MainPID --value)" || return 1
