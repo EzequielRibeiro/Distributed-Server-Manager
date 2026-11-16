@@ -859,6 +859,18 @@ run_no_drain_disposable_transaction() {
         echo "No-drain shell transaction refused: durable transaction journal missing." >&2
         return 2
     }
+    # #928 stage 7: a synthetic contract is not an operational compatibility
+    # proof. Require an explicit, non-mutating compatibility callback and
+    # refuse to apply if it is missing or returns a nonzero status.
+    declare -F verify_no_drain_disposable_compatibility >/dev/null || {
+        echo "No-drain transaction refused: compatibility verifier missing." >&2
+        return 2
+    }
+    verify_no_drain_disposable_compatibility || {
+        echo "No-drain transaction refused: incompatible controller/agent/supervisor." >&2
+        return 2
+    }
+    verify_no_drain_process_identities || return 2
     if "${APPLY_CALLBACK}" && verify_no_drain_process_identities; then
         return 0
     fi
