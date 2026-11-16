@@ -128,7 +128,103 @@ def audit_dayz_dlc_roots(
     }
 
 
+
+def audit_dayz_manifest_provenance(
+    root: Path, steam_home: Path, agent_state: Path, *,
+    runtime_user: str = "capivara-instance", expected_uid: int | None = None,
+) -> dict[str, Any]:
+    """Read-only comparison of installed PBO metadata against Steam depot manifests.
+
+    A positive ownership check is never proof of engine loading. No filesystem
+    permissions are changed, and unverified files are not repair candidates.
+    """
+    structural = audit_dayz_dlc_roots(
+        root, runtime_user=runtime_user, expected_uid=expected_uid
+    )
+    result: dict[str, Any] = {
+        "kind": "DayZManifestProvenanceAudit",
+        "read_only": True,
+        "engine_load_verified": False,
+        "status": "unverified",
+        "reason": None,
+        "verified_package_count": 0,
+        "unverified_package_count": 0,
+        "roots": [],
+    }
+    if structural["status"] not in {"ok", "warning"}:
+        result.update(status=structural["status"], reason=structural.get("reason"))
+        return result
+    try:
+        from .dayz_dlc_ownership import verified_dayz_dlc_paths_from_steam_home
+    except ImportError:
+        from dayz_dlc_ownership import verified_dayz_dlc_paths_from_steam_home
+    try:
+        verified = verified_dayz_dlc_paths_from_steam_home(
+            Path(root), Path(steam_home), Path(agent_state)
+        )
+    except (ValueError, OSError):
+        result.update(status="unsafe", reason="steam_manifest_untrusted_or_unavailable")
+        return result
+
+    verified_by_root: dict[str, set[str]] = {}
+    for path in verified:
+        path = Path(path)
+        if path.suffix.lower() not in {".pbo", ".ebo"}:
+            continue
+        try:
+            relative = path.relative_to(root)
+        except ValueError:
+            result.update(status="unsafe", reason="manifest_path_outside_root")
+            return result
+        if len(relative.parts) != 3 or relative.parts[1].lower() != "addons":
+            continue
+        verified_by_root.setdefault(relative.parts[0], set()).add(relative.parts[2])
+
+    if not verified_by_root:
+        result["reason"] = "no_installed_steam_manifest_proof"
+        return result
+
+    for finding in structural["roots"]:
+        name = finding["directory"]
+        official = verified_by_root.get(name, set())
+        if not official:
+            # A custom addon directory is not official DLC merely because it
+            # has the same structure. Never propose ownership changes to it.
+            continue
+        addon_root = Path(root) / name / "addons"
+        try:
+            observed = {
+                path.name for path in addon_root.iterdir()
+                if path.suffix.lower() in {".pbo", ".ebo"} and path.is_file()
+                and not path.is_symlink()
+            }
+        except OSError:
+            result.update(status="unknown", reason="cannot_inspect_verified_dlc")
+            return result
+        result["verified_package_count"] += len(official & observed)
+        result["unverified_package_count"] += len(observed - official)
+        result["roots"].append({
+            "directory": name,
+            "verified_packages": len(official & observed),
+            "unverified_packages": len(observed - official),
+            "owner_mismatch_count": finding["package_owner_mismatch_count"],
+            "owner_matches_runner": finding["owner_matches_runner"],
+            "addons_owner_matches_runner": finding["addons_owner_matches_runner"],
+        })
+    if not result["roots"]:
+        result["reason"] = "manifest_evidence_does_not_match_installed_dlc"
+        return result
+    has_mismatch = any(
+        not r["owner_matches_runner"] or not r["addons_owner_matches_runner"]
+        or r["owner_mismatch_count"] or r["unverified_packages"]
+        for r in result["roots"]
+    )
+    result["status"] = "warning" if has_mismatch else "ok"
+    result["reason"] = "ownership_or_provenance_review_required" if has_mismatch else None
+    return result
+
+
 __all__ = [
     "KNOWN_DAYZ_DLC_ROOTS", "MAX_ADDON_ENTRIES", "MAX_DLC_ROOTS",
-    "MAX_TOP_LEVEL_ENTRIES", "audit_dayz_dlc_roots",
+    "MAX_TOP_LEVEL_ENTRIES", "audit_dayz_dlc_roots", "audit_dayz_manifest_provenance",
 ]
