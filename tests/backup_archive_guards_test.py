@@ -35,6 +35,23 @@ class BackupArchiveGuards(unittest.TestCase):
             owned.assert_not_called()
             artifact.assert_not_called()
 
+    def test_explicit_customer_delete_keeps_authorized_manual_semantics(self):
+        # The Controller's customer workspace uses reason="customer".
+        # This fixture tests an already-absent file: no real backup is removed.
+        with (
+            patch.dict(backup.os.environ, {}, clear=True),
+            patch.object(backup, "_owned", return_value=({}, Path("."))),
+            patch.object(backup, "_artifact", side_effect=FileNotFoundError),
+        ):
+            result = backup._delete(
+                {"agent_id": "test"}, {
+                    "instance_id": "test",
+                    "backup_id": "already-absent",
+                    "reason": "customer",
+                },
+            )
+        self.assertTrue(result["already_absent"])
+
     def test_legacy_delete_without_reason_is_blocked(self):
         with patch.dict(backup.os.environ, {}, clear=True):
             with self.assertRaisesRegex(ValueError, "automatic backup deletion is disabled"):

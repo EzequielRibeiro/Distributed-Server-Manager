@@ -211,16 +211,6 @@ def _safe_extract(archive_path, destination):
     return manifest
 
 
-def _retention(instance_dir, keep):
-    archives = sorted(
-        [path for path in instance_dir.glob("*.tar*") if path.is_file()],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for old in archives[max(1, int(keep)) :]:
-        old.unlink(missing_ok=True)
-
-
 def _retained_backup_capacity(instance_dir, policy):
     """Conservative headroom guard for explicitly enabled age retention.
 
@@ -620,7 +610,7 @@ def _restore(config, command):
 def _delete(config, command):
     # Defense in depth for retention commands already delivered to the Agent.
     # Manual deletions are intentionally separate from automatic retention.
-    if (str(command.get("reason") or "").strip().lower() != "manual"
+    if (str(command.get("reason") or "").strip().lower() not in {"manual", "customer"}
             and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
         raise ValueError("automatic backup deletion is disabled")
     instance_id = str(command["instance_id"])

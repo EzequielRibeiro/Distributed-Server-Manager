@@ -63,9 +63,6 @@ def _safe_extract(archive,dest):
   tar.extractall(base,members=members,filter="data")
  if manifest is not None and (manifest.get("kind")!="CapivaraInstanceBackup" or manifest.get("backup_format")!="capivara-instance"):raise ValueError("unsupported backup manifest")
  return manifest
-def _retention(instance_dir,keep):
- archives=sorted([p for p in instance_dir.glob("*.tar*") if p.is_file()],key=lambda p:p.stat().st_mtime,reverse=True)
- for old in archives[max(1,int(keep)):]:old.unlink(missing_ok=True)
 def _retained_backup_capacity(instance_dir,policy):
  if "retention_days" not in policy:return
  days=policy["retention_days"]
@@ -95,7 +92,7 @@ def _create(config,cmd):
    path.unlink(missing_ok=True)
    raise
   manifest["files_checksum"]=sha
-  if not policy.get("keep_single_operational") and not policy.get("retention_days"):_retention(idir,int(policy.get("retention_count") or 7))
+  # Retention never deletes existing files during creation. All historical archives stay preserved.
   return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha,"manifest":manifest}
  finally:
   if cons=="stopped" and was_running:lifecycle(config,iid,"start")
@@ -135,6 +132,11 @@ def _restore(config,cmd):
  finally:shutil.rmtree(stage,ignore_errors=True)
  return {"backup_id":str(cmd.get("backup_id")),"artifact_path":str(artifact),"size_bytes":artifact.stat().st_size,"sha256":_digest(artifact)}
 def _delete(config,cmd):
+ # Scheduled/legacy deletes are disabled unless explicitly opted in.
+ # Explicit customer/manual deletion keeps the existing permission workflow.
+ if (str(cmd.get("reason") or "").strip().lower() not in {"manual", "customer"}
+     and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION","").strip()!="1"):
+  raise ValueError("automatic backup deletion is disabled")
  iid=str(cmd["instance_id"]);_owned(config,iid);bid=str(cmd.get("backup_id") or "")
  try:artifact=_artifact(iid,bid)
  except FileNotFoundError:return {"backup_id":bid,"artifact_path":None,"already_absent":True}

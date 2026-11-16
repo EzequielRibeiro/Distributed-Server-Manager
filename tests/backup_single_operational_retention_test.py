@@ -13,6 +13,13 @@ from backup_repository import BackupRepository
 
 class SingleOperationalRetentionTest(unittest.TestCase):
     def setUp(self):
+        # The positive cleanup-path tests require the explicit opt-in gate.
+        # Production/default behavior is separately covered as non-destructive.
+        enabled = patch.dict(os.environ, {
+            "DSM_BACKUP_ALLOW_AUTOMATIC_DELETION": "1",
+        })
+        enabled.start()
+        self.addCleanup(enabled.stop)
         self.repo = object.__new__(BackupRepository)
         self.repo._workspace_schedule = Mock(return_value={"keep_single_operational": True})
         self.repo.request = Mock(side_effect=lambda *args, **kwargs: {"backup_id": kwargs.get("backup_id")})
@@ -152,11 +159,16 @@ class SingleOperationalRetentionTest(unittest.TestCase):
             "kind": "CapivaraBackupPolicy", "retention_count": 7,
             "mode": "full", "compression": "gzip",
         })
-        with patch.dict(os.environ, {
-            "DSM_BACKUP_RETENTION_DAYS": "14",
-            "DSM_BACKUP_RETENTION_INSTANCE_IDS": "instance",
-        }):
-            commands = self.repo.commands_for_agent("agent-test")
+        self.repo.backend = object()  # command fixture, never a real database
+        with patch("instance_workspace_repository.InstanceWorkspaceRepository") as workspace:
+            workspace.return_value.workspace_policy.return_value = {
+                "storage_limit_bytes": 4 * 1024 ** 3
+            }
+            with patch.dict(os.environ, {
+                "DSM_BACKUP_RETENTION_DAYS": "14",
+                "DSM_BACKUP_RETENTION_INSTANCE_IDS": "instance",
+            }):
+                commands = self.repo.commands_for_agent("agent-test")
         self.assertEqual(1, len(commands))
         self.assertEqual(14, commands[0]["policy"]["retention_days"])
         self.assertTrue(commands[0]["policy"]["keep_single_operational"])
@@ -181,7 +193,8 @@ class SingleOperationalRetentionTest(unittest.TestCase):
         windows = (ROOT / "agents/windows/runtime/backup_client.py").read_text()
         for platform, code in (("linux", linux), ("windows", windows)):
             with self.subTest(platform=platform):
-                self.assertIn('not policy.get("keep_single_operational")', code)
+                self.assertNotIn("def _retention(", code)
+                self.assertNotIn("_retention(idir,", code)
 
 
 if __name__ == "__main__":
