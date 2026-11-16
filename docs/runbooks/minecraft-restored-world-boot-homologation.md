@@ -17,11 +17,15 @@ disponibilidade de memoria e disco, carga do host, socket TCP local e systemd.
 nao garantia de que o jogo funcionara.
 
 ```sh
+# Substitua pelo ID de um backup atual, conferido no Controller e no Agent.
+# Nao utilize automaticamente o ID historico de outro dia.
+BACKUP_ID="<backup-id-verificado>"
+BACKUP_ROOT="/opt/dsm/runtime/hybrid-agent-state/backups"
 python3 scripts/minecraft_restored_world_boot_preflight.py \
-  --archive /opt/dsm/runtime/hybrid-agent-state/backups/cli-000001-minecraft-005/87fea2fa-1ff5-44b5-8f74-8c819ff86072.tar.gz \
+  --archive "$BACKUP_ROOT/cli-000001-minecraft-005/$BACKUP_ID.tar.gz" \
   --sandbox-parent /tmp \
   --instance-id cli-000001-minecraft-005 \
-  --backup-id 87fea2fa-1ff5-44b5-8f74-8c819ff86072 \
+  --backup-id "$BACKUP_ID" \
   --port 25596
 ```
 
@@ -57,3 +61,28 @@ O preflight de recursos **nao cria a unit, nao executa o jogo e nao
 substitui a homologacao posterior**. O gate de release deve continuar
 bloqueado ate essa validacao real e ate o armazenamento de 14 dias
 passar com margem operacional.
+
+
+## Resultado atual do preflight e cobertura do gate — 16/11/2026
+
+No Horizon, foi verificado em modo somente leitura o manifesto do backup
+`9bab92da-2ce1-47a7-a9cf-515f3f3087a9` do Minecraft 005.
+O gate retornou `status=blocked` e `reasons=["insufficient_available_memory"]`:
+aproximadamente **6,83 GiB** de `MemAvailable` para o minimo de **12 GiB**
+exigidos, com aproximadamente **38,7 GiB** de espaco disponivel no volume.
+Nao executar boot ou usar o Horizon como destino de homologacao enquanto a
+condicao estiver bloqueada. A memoria e o espaco variam e devem ser novamente
+checados no momento do teste.
+
+O gate `scripts/minecraft_serverpack_release_gate.py` registra os casos
+`pytest` executados e ignorados a partir do XML JUnit. Quando houver
+`coverage.status=partial`, inspecionar `coverage.skipped_cases`; os casos
+que exigem opt-in, runner CI, artefato privado ou unidade systemd descartavel
+**nao estao homologados**, mesmo se `status=tests_passed`.
+Se o XML JUnit estiver ausente ou invalido, o gate retorna
+`status=tests_failed` (fail-closed). O campo `release_authorized`
+permanece `false` em todas as condicoes.
+
+A ativacao da retencao por 14 dias requer capacidade propria e segue
+adiada em #1049; o gate de Server Pack nao ativa essa politica nem certifica
+a restauracao de um mundo privado a partir de suites unitarias.
