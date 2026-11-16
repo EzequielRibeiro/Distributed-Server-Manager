@@ -262,6 +262,7 @@ class WindowsBackupClientInstanceRootTest(unittest.TestCase):
                 {
                     "instance_id": "instance-safe",
                     "backup_id": "already-gone",
+                    "reason": "manual",
                 },
             )
 

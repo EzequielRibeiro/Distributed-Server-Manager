@@ -211,16 +211,6 @@ def _safe_extract(archive_path, destination):
     return manifest
 
 
-def _retention(instance_dir, keep):
-    archives = sorted(
-        [path for path in instance_dir.glob("*.tar*") if path.is_file()],
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    for old in archives[max(1, int(keep)) :]:
-        old.unlink(missing_ok=True)
-
-
 def _retained_backup_capacity(instance_dir, policy):
     """Conservative headroom guard for explicitly enabled age retention.
 
