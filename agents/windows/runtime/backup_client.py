@@ -134,7 +134,7 @@ def _restore(config,cmd):
 def _delete(config,cmd):
  # Scheduled/legacy deletes are disabled unless explicitly opted in.
  # Explicit customer/manual deletion keeps the existing permission workflow.
- if (str(cmd.get("reason") or "").strip().lower()!="manual"
+ if (str(cmd.get("reason") or "").strip().lower() not in {"manual", "customer"}
      and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION","").strip()!="1"):
   raise ValueError("automatic backup deletion is disabled")
  iid=str(cmd["instance_id"]);_owned(config,iid);bid=str(cmd.get("backup_id") or "")

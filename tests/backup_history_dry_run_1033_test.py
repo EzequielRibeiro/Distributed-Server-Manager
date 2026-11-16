@@ -172,6 +172,17 @@ class WindowsRetentionParity1033Test(unittest.TestCase):
             owned.assert_not_called()
             artifact.assert_not_called()
 
+        # Explicit customer requests carry the "customer" reason from the
+        # Controller permission gate; they must remain distinguishable
+        # from scheduled/legacy commands, without deleting any real file.
+        with patch.object(module, "_owned", return_value=({}, Path("."))), \
+             patch.object(module, "_artifact", side_effect=FileNotFoundError):
+            response = module._delete({"agent_id":"test"}, {
+                "instance_id":"test", "backup_id":"already-absent",
+                "reason":"customer",
+            })
+            self.assertTrue(response["already_absent"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -610,7 +610,7 @@ def _restore(config, command):
 def _delete(config, command):
     # Defense in depth for retention commands already delivered to the Agent.
     # Manual deletions are intentionally separate from automatic retention.
-    if (str(command.get("reason") or "").strip().lower() != "manual"
+    if (str(command.get("reason") or "").strip().lower() not in {"manual", "customer"}
             and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
         raise ValueError("automatic backup deletion is disabled")
     instance_id = str(command["instance_id"])
