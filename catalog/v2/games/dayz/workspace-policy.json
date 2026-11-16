@@ -18,6 +18,18 @@
         "save": false,
         "graceful_shutdown": true,
         "native_countdown": true
+      },
+      "startup_parameters": {
+        "battleye_directory": {
+          "type": "string",
+          "customer_editable": true,
+          "default": "battleye",
+          "label": "Diretório privado BattlEye",
+          "description": "Subpasta da instância; até 3 segmentos, apenas letras, números, _ e -. Aplicação somente em reinicialização controlada.",
+          "format": "instance_private_subdirectory",
+          "restart_required": true,
+          "max_length": 194
+        }
       }
     }
   }

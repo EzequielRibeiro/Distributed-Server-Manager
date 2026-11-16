@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute typed DayZ map and wipe operations on Linux Agent."""
 from __future__ import annotations
-import json,os,subprocess,sys,time
+import json,os,re,subprocess,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
@@ -215,6 +215,25 @@ def _change_mission(config,record,iid,payload):
                 rollback_error=(rollback_error+"; " if rollback_error else "")+f"restart after rollback failed: {start_exc}"
         detail=f"mission change failed and was rolled back: {exc}" if rollback_error is None else f"mission change failed: {exc}; rollback error: {rollback_error}"
         raise RuntimeError(detail) from exc
+from dayz_bepath_config import _prepare_battleye_spec
+
+
+def _apply_battleye_directory(config,record,iid,payload):
+    if set(payload)!={"battleye_directory"}:
+        raise ValueError("BattlEye operation accepts only the structured directory")
+    current=status(config,iid)
+    if current.get("observed_state")!="stopped" or str(record.get("desired_state") or "")!="stopped":
+        raise RuntimeError("DayZ must be stopped before applying BattlEye settings; no restart attempted")
+    prepared=_prepare_battleye_spec(record,payload.get("battleye_directory"))
+    # No false-positive "already applied": the privileged helper must verify
+    # the installed unit even when the requested directory is unchanged.
+    if status(config,iid).get("observed_state")!="stopped":
+        raise RuntimeError("DayZ became active before BattlEye materialization")
+    operation=privileged_materialization.apply_dayz_battleye(config,prepared)
+    return {"changed":bool(operation.get("changed")),"applied":True,"restarted":False,
+            "battleye_directory":prepared["battleye_directory"]}
+
+
 def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
     oid=_token(command.get("operation_id"),"operation_id");previous=_read(_history(oid))
     if previous is not None:_write(_result(oid),previous);return previous
@@ -227,6 +246,8 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         if str(record.get("game_id") or "").lower()!="dayz":raise ValueError("DayZ operation requires DayZ instance")
         if action=="discover_missions":result=discover_missions(_record_with_prepared_maps(record,iid))
         elif action=="change_mission":result=_change_mission(config,record,iid,payload)
+        elif action=="apply_battleye_directory":
+            result=_apply_battleye_directory(config,record,iid,payload)
         elif action=="wipe":
             before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
             if was_running:lifecycle(config,iid,"stop")

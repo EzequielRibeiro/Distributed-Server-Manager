@@ -179,6 +179,17 @@ def repair_dayz_dlc_ownership(config: dict[str, Any], spec: dict[str, Any]) -> d
     return _invoke("repair-dayz-dlc-ownership", normalized)
 
 
+def apply_dayz_battleye(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """Only update the private BattlEye directory and owned unit of a stopped DayZ."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if str(normalized.get("game_id") or "").lower() != "dayz":
+        raise ValueError("BattlEye apply requires DayZ")
+    # The narrow helper owns the unit + RuntimeSpec transaction together so
+    # a failed state write cannot leave the unit changed and state stale.
+    return _invoke("apply-dayz-battleye", normalized)
+
+
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     agent_id = str(config.get("agent_id") or "").strip()
     normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)

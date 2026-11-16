@@ -179,6 +179,25 @@ def install_customer_dayz_http(legacy,authenticate):
                 persistence_mode=str(body.get("persistence_mode") or "fresh").strip().lower()
                 if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
                 queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission,"content_mode":content_mode,"persistence_mode":persistence_mode},requested_by=actor)
+            elif action=="apply_battleye_directory":
+                # Separate explicit action; saving startup preferences never
+                # enqueues a runtime mutation or restarts the server.
+                if set(body) - {"instance_id", "action"}:
+                    raise ValueError("BattlEye apply does not accept client-supplied paths")
+                caps=workspace.startup(user,instance_id)
+                preference=(caps.get("values") or {}).get("battleye_directory","battleye")
+                from instance_workspace_policy import validate_startup_values
+                normalized=validate_startup_values(
+                    {"battleye_directory":preference},
+                    (caps.get("declaration") or {}),
+                )
+                queued=repo.enqueue(
+                    agent_id=str(context.get("agent_id") or ""),
+                    instance_id=instance_id,
+                    action="apply_battleye_directory",
+                    payload={"battleye_directory":normalized["battleye_directory"]},
+                    requested_by=actor,
+                )
             elif action=="wipe":
                 scheduled_at=body.get("scheduled_at")
                 if scheduled_at:

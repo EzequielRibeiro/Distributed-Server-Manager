@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
+import re
 from typing import Any, Iterable
 
 INSTANCE_PERMISSIONS = frozenset({
@@ -134,8 +135,14 @@ def validate_startup_values(values: dict[str, Any] | None, declaration: dict[str
             if spec.get("max") is not None and value > int(spec["max"]): raise ValueError(f"startup parameter above maximum: {key}")
         elif kind == "boolean": value = bool(value)
         elif kind == "string":
-            value = str(value)
+            if not isinstance(value, str): raise ValueError(f"startup parameter must be a string: {key}")
             if len(value) > int(spec.get("max_length") or 256): raise ValueError(f"startup parameter too long: {key}")
+            if spec.get("format") == "instance_private_subdirectory":
+                # Match the Agent DayZ profile contract exactly; never accept
+                # absolute paths, traversal, backslashes or arbitrary -BEpath.
+                allowed = r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){0,2}"
+                if re.fullmatch(allowed, value) is None:
+                    raise ValueError(f"invalid private instance subdirectory: {key}")
         else: raise ValueError(f"unsupported startup parameter type: {kind}")
         normalized[str(key)] = value
     return normalized

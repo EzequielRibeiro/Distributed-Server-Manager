@@ -1128,6 +1128,113 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
             os.chmod(current, desired_mode)
 
 
+def _write_dayz_battleye_runtime(path: Path, record: dict[str, Any], owner) -> None:
+    """Atomic owner-preserving private state write, without touching game data."""
+    temp=path.with_name(f".{path.name}.{os.getpid()}.bepath.tmp")
+    try:
+        with temp.open("w",encoding="utf-8") as stream:
+            json.dump(record,stream,indent=2,sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp,0o600)
+        os.chown(temp,owner.st_uid,owner.st_gid)
+        os.replace(temp,path)
+        fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+    finally:
+        try:temp.unlink()
+        except FileNotFoundError:pass
+
+
+def _apply_dayz_battleye_private(spec: dict[str, Any], config: dict[str, Any], materializer) -> dict[str, Any]:
+    """Narrow privileged action: no DLC, templates, seeds, game-data or restarts."""
+    from dayz_bepath_config import _prepare_battleye_spec
+    instance_id = spec["instance_id"]
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        raise RuntimeError("BattlEye private action requires DayZ")
+    unit = f"capivara-instance-{_token(instance_id)}.service"
+    state = subprocess.run(
+        ["systemctl", "show", unit, "--property=LoadState",
+         "--property=ActiveState", "--property=MainPID", "--no-pager"],
+        capture_output=True, text=True, timeout=15, check=False)
+    fields = dict(line.split("=",1) for line in state.stdout.splitlines() if "=" in line)
+    if (state.returncode != 0 or fields.get("LoadState") != "loaded"
+            or fields.get("ActiveState") != "inactive"
+            or fields.get("MainPID") != "0"):
+        raise RuntimeError("BattlEye unit apply requires a stopped, loaded DayZ instance")
+    # Trust the canonical persisted Agent spec, not a Controller-submitted
+    # path, as the baseline for an exact, constrained RuntimeSpec delta.
+    old_path = STATE_DIR / "instances" / f"{instance_id}.json"
+    if old_path.is_symlink() or not old_path.is_file():
+        raise RuntimeError("BattlEye original RuntimeSpec unavailable")
+    old_stat=old_path.stat()
+    if old_stat.st_nlink!=1 or old_stat.st_mode & 0o077:
+        raise RuntimeError("BattlEye existing RuntimeSpec must be private and single-link")
+    old_bytes=old_path.read_bytes()
+    old = validate_runtime_spec(json.loads(old_bytes),
+                                expected_agent_id=str(config["agent_id"]))
+    if old["instance_id"] != instance_id or str(old.get("game_id") or "").lower() != "dayz":
+        raise RuntimeError("BattlEye original instance identity mismatch")
+    if old.get("desired_state") != "stopped" or spec.get("desired_state") != "stopped":
+        raise RuntimeError("BattlEye materialization requires stopped desired state")
+    expected = _prepare_battleye_spec(old,spec.get("battleye_directory"))
+    if expected != spec:
+        raise RuntimeError("BattlEye spec differs from authorized private path projection")
+    pool = _instance_storage_root(config, spec.get("storage_pool_id"))
+    root = Path(str(spec.get("instance_state_root") or ""))
+    if (not root.is_absolute() or root.is_symlink() or not root.is_dir()
+            or root.resolve() != (pool / instance_id).resolve()):
+        raise RuntimeError("BattlEye directory is not the Agent instance private root")
+    before = materializer.inspect(old)
+    if not before.get("exists") or not before.get("owned") or not before.get("matches"):
+        raise RuntimeError("BattlEye managed unit differs from persisted baseline")
+    owner = _validate_runtime_user(str(old["user"]))
+    target = root
+    new_folders=[]
+    for part in Path(spec["battleye_directory"]).parts:
+        target = target / part
+        if target.is_symlink() or (target.exists() and not target.is_dir()):
+            raise RuntimeError("BattlEye private path is unsafe")
+        if target.exists():
+            if target.stat().st_uid != owner.pw_uid:
+                raise RuntimeError("BattlEye private directory owner mismatch")
+        else:
+            new_folders.append(target)
+    for directory in new_folders:
+        directory.mkdir(mode=0o700)
+        os.chown(directory,owner.pw_uid,owner.pw_gid)
+        os.chmod(directory,0o700)
+    if expected["arguments"]==old["arguments"]:
+        return {"action":"apply-dayz-battleye","changed":False,"idempotent":True}
+    changed_unit=False
+    try:
+        # Recheck the persisted baseline before any unit/state mutation.
+        current_stat=old_path.stat()
+        if (current_stat.st_ino!=old_stat.st_ino or
+                current_stat.st_mtime_ns!=old_stat.st_mtime_ns or
+                old_path.read_bytes()!=old_bytes):
+            raise RuntimeError("BattlEye RuntimeSpec baseline changed during apply")
+        result=materializer.apply(spec)
+        changed_unit=bool(result.get("changed"))
+        new_record={**spec,"materialized":True}
+        _write_dayz_battleye_runtime(old_path,new_record,old_stat)
+    except Exception as exc:
+        try:
+            # Restore the exact previous configuration and unit, even if a
+            # fsync failure occurred after os.replace.
+            if old_path.exists() and old_path.read_bytes()!=old_bytes:
+                _write_dayz_battleye_runtime(old_path,json.loads(old_bytes),old_stat)
+            if changed_unit or not materializer.inspect(old).get("matches"):
+                materializer.apply(old)
+        except Exception as rollback:
+            raise RuntimeError("BattlEye unit/state rollback failed; manual recovery required") from rollback
+        raise RuntimeError("BattlEye unit/state apply failed; original configuration restored") from exc
+    return {"action":"apply-dayz-battleye","changed":changed_unit,
+            "idempotent":False,"runtime_spec_persisted":True}
+
+
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged materializer helper must run as root")
@@ -1180,6 +1287,8 @@ def run(instance_id: str) -> dict[str, Any]:
         ).lower().startswith("minecraft.java."):
             content_files = _sync_private_minecraft_content(spec, config)
         operation = materializer.apply(spec)
+    elif action == "apply-dayz-battleye":
+        operation = _apply_dayz_battleye_private(spec, config, materializer)
     elif action == "repair-dayz-dlc-ownership":
         if str(spec.get("game_id") or "").lower() != "dayz":
             raise RuntimeError("DayZ DLC repair requires a DayZ instance")
