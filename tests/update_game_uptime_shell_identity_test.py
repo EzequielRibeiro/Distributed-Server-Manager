@@ -59,6 +59,9 @@ verify_no_drain_rollback rollback_no_drain_disposable_fixture
         r = self.run_shell("""
 capture_no_drain_process_identities || exit 1
 NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED=1
+NO_DRAIN_DISPOSABLE_WORKSPACE="$(mktemp -d /tmp/dsm928-rollback-XXXXXXXX)" || exit 1
+printf 'DSM928_DISPOSABLE_FIXTURE_V1\\n' > "$NO_DRAIN_DISPOSABLE_WORKSPACE/fixture-owner"
+trap 'rm -rf -- "$NO_DRAIN_DISPOSABLE_WORKSPACE"' EXIT
 rollback_no_drain_disposable_fixture() { return 17; }
 verify_no_drain_rollback rollback_no_drain_disposable_fixture
 """)
@@ -69,6 +72,9 @@ verify_no_drain_rollback rollback_no_drain_disposable_fixture
         r = self.run_shell("""
 capture_no_drain_process_identities || exit 1
 NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED=1
+NO_DRAIN_DISPOSABLE_WORKSPACE="$(mktemp -d /tmp/dsm928-rollback-XXXXXXXX)" || exit 1
+printf 'DSM928_DISPOSABLE_FIXTURE_V1\\n' > "$NO_DRAIN_DISPOSABLE_WORKSPACE/fixture-owner"
+trap 'rm -rf -- "$NO_DRAIN_DISPOSABLE_WORKSPACE"' EXIT
 rollback_no_drain_disposable_fixture() { TEST_PID=3211; }
 verify_no_drain_rollback rollback_no_drain_disposable_fixture
 """)
