@@ -804,6 +804,15 @@ verify_no_drain_rollback() {
         echo "No-drain rollback callback is missing." >&2
         return 2
     }
+    # Never trust an environment flag alone: require an owner-controlled,
+    # explicitly marked disposable workspace under /tmp.
+    local FIXTURE_ROOT="${NO_DRAIN_DISPOSABLE_WORKSPACE:-}"
+    [[ -n "${FIXTURE_ROOT}" && -d "${FIXTURE_ROOT}" && ! -L "${FIXTURE_ROOT}" ]] || return 2
+    local FIXTURE_REAL
+    FIXTURE_REAL="$(realpath -e -- "${FIXTURE_ROOT}")" || return 2
+    [[ "${FIXTURE_REAL}" == /tmp/* && "${FIXTURE_REAL}" != /tmp ]] || return 2
+    [[ -f "${FIXTURE_REAL}/fixture-owner" && ! -L "${FIXTURE_REAL}/fixture-owner" ]] || return 2
+    [[ "$(cat -- "${FIXTURE_REAL}/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || return 2
     verify_no_drain_process_identities || {
         echo "No-drain rollback refused: process identity already changed." >&2
         return 2
