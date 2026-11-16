@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute typed DayZ map and wipe operations on Linux Agent."""
 from __future__ import annotations
-import json,os,subprocess,sys,time
+import json,os,re,subprocess,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
@@ -215,6 +215,93 @@ def _change_mission(config,record,iid,payload):
                 rollback_error=(rollback_error+"; " if rollback_error else "")+f"restart after rollback failed: {start_exc}"
         detail=f"mission change failed and was rolled back: {exc}" if rollback_error is None else f"mission change failed: {exc}; rollback error: {rollback_error}"
         raise RuntimeError(detail) from exc
+_BE_SUBDIR = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9_-]{0,63}){0,2}$")
+
+
+def _prepare_battleye_spec(record:dict[str,Any], value:Any)->dict[str,Any]:
+    """Change only the profile-owned BattlEye path, preserving map/mod state."""
+    from runtime_spec import validate_runtime_spec
+    if not isinstance(value,str) or _BE_SUBDIR.fullmatch(value) is None:
+        raise ValueError("invalid private BattlEye directory")
+    if str(record.get("game_id") or "").lower()!="dayz":
+        raise ValueError("BattlEye configuration requires DayZ")
+    root_value=record.get("instance_state_root")
+    if not isinstance(root_value,str) or not root_value.startswith("/"):
+        raise ValueError("DayZ instance private state root missing")
+    root=Path(root_value)
+    if root.is_symlink() or ".." in root.parts:
+        raise ValueError("unsafe DayZ instance state root")
+    old_value=record.get("battleye_directory","battleye")
+    if not isinstance(old_value,str) or _BE_SUBDIR.fullmatch(old_value) is None:
+        raise ValueError("previous BattlEye path is unsafe")
+    old=str(root/old_value)
+    new=str(root/value)
+    if not Path(new).is_relative_to(root):
+        raise ValueError("BattlEye path escaped private state root")
+    # Reject existing symlink components; a privileged materializer may create
+    # missing private directories, but may not follow links into other tenants.
+    for sub in Path(value).parts:
+        root=root/sub
+        if root.is_symlink():
+            raise ValueError("BattlEye private path contains a symlink")
+    result=dict(record)
+    previous_args=list(record.get("arguments") or [])
+    def replace_owned(values):
+        if not isinstance(values,list):
+            raise ValueError("invalid DayZ managed arguments")
+        matches=[i for i,arg in enumerate(values)
+                 if isinstance(arg,str) and re.match(r"(?i)^-bepath(?:=|\s|$)",arg)]
+        if len(matches)!=1 or values[matches[0]]!=f"-BEpath={old}":
+            raise ValueError("DayZ BattlEye argument is not the expected profile-owned path")
+        updated=list(values)
+        updated[matches[0]]=f"-BEpath={new}"
+        return updated
+    result["arguments"]=replace_owned(previous_args)
+    if "content_base_arguments" in record:
+        result["content_base_arguments"]=replace_owned(record["content_base_arguments"])
+    writable=record.get("writable_directories")
+    if not isinstance(writable,list) or writable.count(old)!=1:
+        raise ValueError("DayZ BattlEye writable directory does not match the managed spec")
+    if new!=old and new in writable:
+        raise ValueError("BattlEye path collides with another writable directory")
+    result["writable_directories"]=[new if item==old else item for item in writable]
+    context=record.get("profile_context")
+    if not isinstance(context,dict):
+        raise ValueError("DayZ structured profile context missing")
+    result["profile_context"]={**context,"battleye_directory":value}
+    result["battleye_directory"]=value
+    # Validation must not rewrite any unrelated persisted flags or shared data.
+    normalized=validate_runtime_spec(result,expected_agent_id=str(record["agent_id"]))
+    return normalized
+
+
+def _apply_battleye_directory(config,record,iid,payload):
+    if set(payload)!={"battleye_directory"}:
+        raise ValueError("BattlEye operation accepts only the structured directory")
+    current=status(config,iid)
+    if current.get("observed_state")!="stopped" or str(record.get("desired_state") or "")!="stopped":
+        raise RuntimeError("DayZ must be stopped before applying BattlEye settings; no restart attempted")
+    prepared=_prepare_battleye_spec(record,payload.get("battleye_directory"))
+    if prepared["arguments"]==record.get("arguments"):
+        return {"changed":False,"applied":True,"restarted":False,
+                "battleye_directory":prepared["battleye_directory"]}
+    # Recheck immediately before touching the unit; never stop a game here.
+    if status(config,iid).get("observed_state")!="stopped":
+        raise RuntimeError("DayZ became active before BattlEye materialization")
+    try:
+        privileged_materialization.materialize(config,prepared)
+    except Exception as exc:
+        # The privileged helper may have modified the unit before failing;
+        # attempt restoration of the exact previously persisted spec.
+        try:
+            privileged_materialization.materialize(config,record)
+        except Exception as rollback:
+            raise RuntimeError("BattlEye materialization and rollback failed; manual recovery required") from rollback
+        raise RuntimeError("BattlEye materialization failed; previous runtime restored") from exc
+    return {"changed":True,"applied":True,"restarted":False,
+            "battleye_directory":prepared["battleye_directory"]}
+
+
 def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
     oid=_token(command.get("operation_id"),"operation_id");previous=_read(_history(oid))
     if previous is not None:_write(_result(oid),previous);return previous
@@ -227,6 +314,8 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         if str(record.get("game_id") or "").lower()!="dayz":raise ValueError("DayZ operation requires DayZ instance")
         if action=="discover_missions":result=discover_missions(_record_with_prepared_maps(record,iid))
         elif action=="change_mission":result=_change_mission(config,record,iid,payload)
+        elif action=="apply_battleye_directory":
+            result=_apply_battleye_directory(config,record,iid,payload)
         elif action=="wipe":
             before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
             if was_running:lifecycle(config,iid,"stop")
