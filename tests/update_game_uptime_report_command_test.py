@@ -74,6 +74,26 @@ class NoDrainDiagnosticCommandTest(unittest.TestCase):
                 self.assertIn("Diagnostic only", result.stderr)
                 self.assertEqual(self.marker.read_text(), "preserved")
 
+    def test_no_drain_alone_is_read_only_and_cannot_bypass_backup(self):
+        for options in (("--no-drain",),
+                        ("--no-drain", "--yes", "--no-backup"),
+                        ("--no-backup", "--yes", "--no-drain")):
+            with self.subTest(options=options):
+                before = {str(path.relative_to(self.workspace))
+                          for path in self.workspace.rglob("*")}
+                result = self.run_diagnostic(*options)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                reports = [json.loads(line) for line in result.stdout.splitlines()
+                           if line.startswith('{"kind":')]
+                self.assertEqual(len(reports), 1, result.stdout)
+                self.assertFalse(reports[0]["live_no_drain_authorized"])
+                self.assertTrue(reports[0]["current_updater_drains_active_games"])
+                self.assertIn("Diagnostic only", result.stderr)
+                self.assertEqual(self.marker.read_text(), "preserved")
+                after = {str(path.relative_to(self.workspace))
+                         for path in self.workspace.rglob("*")}
+                self.assertEqual(before, after)
+
     def test_missing_target_and_symlinked_target_fail_before_python(self):
         missing = self.workspace / "missing-target"
         alias = self.workspace / "target-link"
