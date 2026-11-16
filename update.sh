@@ -794,6 +794,16 @@ verify_no_drain_rollback() {
         echo "No-drain rollback callback is not authorized." >&2
         return 2
     }
+    # A callback name alone is insufficient authorization. The transaction
+    # remains disabled unless a disposable fixture explicitly enables it.
+    [[ "${NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED:-0}" == 1 ]] || {
+        echo "No-drain rollback requires a disposable transaction fixture." >&2
+        return 2
+    }
+    declare -F "${ROLLBACK_CALLBACK}" >/dev/null || {
+        echo "No-drain rollback callback is missing." >&2
+        return 2
+    }
     verify_no_drain_process_identities || {
         echo "No-drain rollback refused: process identity already changed." >&2
         return 2
