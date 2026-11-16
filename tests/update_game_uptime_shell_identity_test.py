@@ -42,6 +42,26 @@ verify_no_drain_rollback rollback_no_drain_disposable_fixture
         self.assertEqual(r.returncode, 2, r.stderr)
         self.assertNotIn("CALLBACK_CALLED", r.stdout)
 
+    def test_rollback_success_preserves_identity(self):
+        r = self.run_shell("""
+capture_no_drain_process_identities || exit 1
+NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED=1
+rollback_no_drain_disposable_fixture() { echo FIXTURE_ROLLBACK; }
+verify_no_drain_rollback rollback_no_drain_disposable_fixture
+""")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("FIXTURE_ROLLBACK", r.stdout)
+
+    def test_rollback_callback_failure_is_not_hidden(self):
+        r = self.run_shell("""
+capture_no_drain_process_identities || exit 1
+NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED=1
+rollback_no_drain_disposable_fixture() { return 17; }
+verify_no_drain_rollback rollback_no_drain_disposable_fixture
+""")
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("manual recovery required", r.stderr)
+
     def test_rollback_rechecks_identity(self):
         r = self.run_shell("""
 capture_no_drain_process_identities || exit 1
