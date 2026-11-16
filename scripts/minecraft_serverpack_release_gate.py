@@ -13,7 +13,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import time
+from xml.etree import ElementTree
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -72,28 +74,99 @@ def commands(mode:str)->list[list[str]]:
     ]
 
 
+def _junit_coverage(report_file: Path) -> dict:
+    """Require structured pytest evidence, including intentional skips.
+
+    XML is produced by pytest's built-in JUnit plugin in disposable storage;
+    no private world, server log or game files are copied into the report.
+    """
+    try:
+        document=ElementTree.parse(report_file).getroot()
+        if document.tag not in {'testsuite','testsuites'}:
+            raise ValueError('unexpected JUnit XML root')
+        cases=list(document.iter('testcase'))
+        if not cases:
+            raise ValueError('no executed pytest cases in JUnit report')
+        skips=[]
+        failures=0
+        for item in cases:
+            failure=item.find('failure')
+            error=item.find('error')
+            if failure is not None or error is not None:
+                failures+=1
+            skip=item.find('skipped')
+            if skip is not None:
+                skips.append({
+                    'test':(str(item.get('classname') or '')+'.'+str(item.get('name') or ''))[:220],
+                    'reason':str(skip.get('message') or 'skipped without reason')[:180],
+                })
+        return {
+            'status':'partial' if skips else 'complete',
+            'collected':len(cases),
+            'passed':len(cases)-failures-len(skips),
+            'skipped':len(skips),
+            'failed':failures,
+            'skipped_cases':skips,
+        }
+    except (OSError, ValueError, ElementTree.ParseError) as exc:
+        return {
+            'status':'unavailable',
+            'reason':type(exc).__name__,
+            'collected':None,
+            'passed':None,
+            'skipped':None,
+            'failed':None,
+            'skipped_cases':[],
+        }
+
+
 def run(mode:str)->dict:
     env=os.environ.copy()
     env['PYTHONPATH']=str(ROOT)+os.pathsep+env.get('PYTHONPATH','')
     env['PYTHONDONTWRITEBYTECODE']='1'
     results=[]
-    for command in commands(mode):
-        print('$ '+' '.join(command),flush=True)
-        started=time.monotonic()
-        try:
-            result=subprocess.run(command,cwd=ROOT,env=env,check=False)
-            code=result.returncode
-        except OSError as exc:
-            print(f'Command could not start: {exc}',file=sys.stderr,flush=True)
-            code=127
-        results.append({'command':command,'exit_code':code,
-                        'elapsed_seconds':round(time.monotonic()-started,2)})
-        if code!=0:
-            break  # Never advance to another phase after failure.
-    return {'kind':'MinecraftServerPackRegressionGate','mode':mode,
-            'status':'tests_passed' if len(results)==len(commands(mode))
-                    and all(x['exit_code']==0 for x in results) else 'tests_failed',
-            'release_authorized':False,'steps':results}
+    coverage={'status':'not_run','skipped_cases':[]}
+    with tempfile.TemporaryDirectory(prefix='dsm1013-gate-') as scratch:
+        junit=Path(scratch)/'pytest.xml'
+        for command in commands(mode):
+            step=list(command)
+            is_pytest=(len(step)>=3 and step[1:3]==['-m','pytest'])
+            if is_pytest:
+                step.append('--junitxml='+str(junit))
+            print('$ '+' '.join(step),flush=True)
+            started=time.monotonic()
+            try:
+                result=subprocess.run(step,cwd=ROOT,env=env,check=False)
+                code=result.returncode
+            except OSError as exc:
+                print(f'Command could not start: {exc}',file=sys.stderr,flush=True)
+                code=127
+            if is_pytest and code==0:
+                coverage=_junit_coverage(junit)
+                if coverage['status']=='unavailable' or coverage.get('failed'):
+                    # A green exit code without a usable test inventory must
+                    # never be reported as complete evidence for this gate.
+                    code=1
+            results.append({'command':step,'exit_code':code,
+                            'elapsed_seconds':round(time.monotonic()-started,2)})
+            if code!=0:
+                break  # Never advance to another phase after failure.
+    passed=(len(results)==len(commands(mode))
+            and all(x['exit_code']==0 for x in results))
+    return {
+        'kind':'MinecraftServerPackRegressionGate',
+        'mode':mode,
+        'status':'tests_passed' if passed else 'tests_failed',
+        'coverage':coverage,
+        # Passing tests does not authorize release. Environment-gated skips,
+        # untested restored-world boot and deferred 14d retention are distinct
+        # operational acceptance gates, never inferred from green pytest.
+        'environment_test_coverage_complete':passed and coverage['status']=='complete',
+        'restored_private_world_boot_verified':False,
+        'backup_14_day_capacity_verified':False,
+        'release_authorized':False,
+        'steps':results,
+    }
 
 
 def main()->int:
