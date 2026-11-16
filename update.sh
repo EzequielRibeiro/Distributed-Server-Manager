@@ -748,6 +748,41 @@ run_process_guard()
 }
 
 
+# #928: Read-only process identity primitives for a future no-drain transaction.
+# These functions do not authorize no-drain or change any systemd state.
+# A transaction must capture identities before mutation and compare them after
+# each transition and rollback. Never infer preservation from ActiveState alone.
+declare -A NO_DRAIN_PID_SNAPSHOT=()
+declare -A NO_DRAIN_START_SNAPSHOT=()
+
+capture_no_drain_process_identities() {
+    local UNIT PID START ACTIVE
+    NO_DRAIN_PID_SNAPSHOT=()
+    NO_DRAIN_START_SNAPSHOT=()
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"; do
+        [[ "${UNIT}" == capivara-instance-*.service ]] || return 1
+        ACTIVE="$(systemctl show "${UNIT}" --property=ActiveState --value)" || return 1
+        PID="$(systemctl show "${UNIT}" --property=MainPID --value)" || return 1
+        START="$(systemctl show "${UNIT}" --property=ExecMainStartTimestampMonotonic --value)" || return 1
+        [[ "${ACTIVE}" == active && "${PID}" =~ ^[0-9]+$ && "${START}" =~ ^[0-9]+$ ]] || return 1
+        (( 10#${PID} > 1 && 10#${START} > 0 )) || return 1
+        NO_DRAIN_PID_SNAPSHOT["${UNIT}"]="${PID}"
+        NO_DRAIN_START_SNAPSHOT["${UNIT}"]="${START}"
+    done
+}
+
+verify_no_drain_process_identities() {
+    local UNIT PID START ACTIVE
+    [[ "${#ACTIVE_GAME_UNITS[@]}" -eq "${#NO_DRAIN_PID_SNAPSHOT[@]}" ]] || return 1
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"; do
+        [[ -n "${NO_DRAIN_PID_SNAPSHOT[${UNIT}]:-}" && -n "${NO_DRAIN_START_SNAPSHOT[${UNIT}]:-}" ]] || return 1
+        ACTIVE="$(systemctl show "${UNIT}" --property=ActiveState --value)" || return 1
+        PID="$(systemctl show "${UNIT}" --property=MainPID --value)" || return 1
+        START="$(systemctl show "${UNIT}" --property=ExecMainStartTimestampMonotonic --value)" || return 1
+        [[ "${ACTIVE}" == active && "${PID}" == "${NO_DRAIN_PID_SNAPSHOT[${UNIT}]}" && "${START}" == "${NO_DRAIN_START_SNAPSHOT[${UNIT}]}" ]] || return 1
+    done
+}
+
 # =============================================================
 # Drenagem automática de instâncias gerenciadas
 # Automatic managed game-instance drain
