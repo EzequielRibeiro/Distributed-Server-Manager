@@ -998,3 +998,380 @@ def _remove_dayz_mod_aliases(spec: dict[str, Any]) -> list[str]:
         return []
     working_root = Path(str(spec["working_directory"])).resolve()
     prefix = f"@dsm-{spec['instance_id']}-"
+    removed: list[str] = []
+    for target in working_root.glob(prefix + "*"):
+        if not target.is_symlink():
+            raise RuntimeError(f"refusing to remove non-Capivara DayZ alias: {target.name}")
+        target.unlink()
+        removed.append(str(target))
+    return removed
+
+
+def _verify_tree(source: Path, target: Path) -> tuple[int, int]:
+    _reject_symlinks(source)
+    _reject_symlinks(target)
+    source_files = {p.relative_to(source): p for p in source.rglob("*") if p.is_file()}
+    target_files = {p.relative_to(target): p for p in target.rglob("*") if p.is_file()}
+    if source_files.keys() != target_files.keys():
+        raise RuntimeError("storage migration verification failed: file set differs")
+    total = 0
+    for relative, src in source_files.items():
+        dst = target_files[relative]
+        if src.stat().st_size != dst.stat().st_size or _sha256(src) != _sha256(dst):
+            raise RuntimeError(f"storage migration verification failed: {relative}")
+        total += src.stat().st_size
+    return len(source_files), total
+
+
+def _migrate_storage_copy(
+    config: dict[str, Any],
+    spec: dict[str, Any],
+    *,
+    target_storage_pool_id: Any = None,
+    migration_id: Any = None,
+    target_root_value: Any = None,
+) -> dict[str, Any]:
+    source_pool_id = str(spec.get("storage_pool_id") or "").strip() or None
+    source_root = _instance_storage_root(config, source_pool_id)
+    if target_storage_pool_id is not None:
+        target_pool_id = _token(target_storage_pool_id, "target_storage_pool_id", 64)
+        target_root = _instance_storage_root(config, target_pool_id)
+        migration_token = _token(migration_id, "migration_id")
+    else:
+        target_pool_id = None
+        target_root = _storage_root(target_root_value, "target storage root")
+        migration_token = "root-migration"
+
+    if source_root == target_root:
+        return {
+            "changed": False,
+            "source_storage_pool_id": source_pool_id,
+            "target_storage_pool_id": target_pool_id,
+            "source": str(source_root),
+            "target": str(target_root),
+            "verified_files": 0,
+            "verified_bytes": 0,
+            "source_preserved": True,
+        }
+
+    instance_id = spec["instance_id"]
+    source = (source_root / instance_id).resolve(strict=False)
+    expected = Path(str(spec.get("instance_state_root") or source)).resolve(strict=False)
+    if source != expected:
+        raise RuntimeError("instance source state root does not match current Agent storage pool")
+    final = (target_root / instance_id).resolve(strict=False)
+    final.relative_to(target_root)
+    staging = (target_root / f".capivara-migrate-{instance_id}-{migration_token}").resolve(strict=False)
+    staging.relative_to(target_root)
+    if final.exists():
+        raise RuntimeError("target instance state already exists")
+    if staging.exists():
+        shutil.rmtree(staging)
+    target_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(target_root, 0o711)
+
+    try:
+        if source.exists():
+            _reject_symlinks(source)
+            shutil.copytree(source, staging, copy_function=shutil.copy2, symlinks=False)
+            count, total = _verify_tree(source, staging)
+        else:
+            staging.mkdir(parents=True, exist_ok=False)
+            count, total = 0, 0
+        account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+        os.chown(staging, account.pw_uid, account.pw_gid)
+        os.chmod(staging, 0o700)
+        os.replace(staging, final)
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+    return {
+        "changed": True,
+        "source_storage_pool_id": source_pool_id,
+        "target_storage_pool_id": target_pool_id,
+        "source": str(source),
+        "target": str(final),
+        "verified_files": count,
+        "verified_bytes": total,
+        "source_preserved": True,
+        "atomic_commit": True,
+    }
+
+
+def _grant_customer_files_access(spec: dict[str, Any]) -> None:
+    files_root_raw = str(spec.get("files_root") or "").strip()
+    if not files_root_raw:
+        return
+    state_root = Path(str(spec["instance_state_root"])).resolve()
+    files_root = _within(state_root, files_root_raw, "customer files root")
+    if not files_root.is_dir() or files_root.is_symlink():
+        return
+    try:
+        agent_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("Agent control group is unavailable") from exc
+    for current in [files_root, *files_root.rglob("*")]:
+        if current.is_symlink():
+            raise RuntimeError(f"customer files tree contains a symlink: {current}")
+        metadata = current.stat()
+        if metadata.st_gid != agent_group.gr_gid:
+            os.chown(current, -1, agent_group.gr_gid)
+        if current.is_dir():
+            desired_mode = 0o770
+        elif current.is_file():
+            desired_mode = 0o770 if metadata.st_mode & 0o111 else 0o660
+        else:
+            continue
+        if (metadata.st_mode & 0o7777) != desired_mode:
+            os.chmod(current, desired_mode)
+
+
+def _write_dayz_battleye_runtime(path: Path, record: dict[str, Any], owner) -> None:
+    """Atomic owner-preserving private state write, without touching game data."""
+    temp=path.with_name(f".{path.name}.{os.getpid()}.bepath.tmp")
+    try:
+        with temp.open("w",encoding="utf-8") as stream:
+            json.dump(record,stream,indent=2,sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp,0o600)
+        os.chown(temp,owner.st_uid,owner.st_gid)
+        os.replace(temp,path)
+        fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+    finally:
+        try:temp.unlink()
+        except FileNotFoundError:pass
+
+
+def _apply_dayz_battleye_private(spec: dict[str, Any], config: dict[str, Any], materializer) -> dict[str, Any]:
+    """Narrow privileged action: no DLC, templates, seeds, game-data or restarts."""
+    from dayz_bepath_config import _prepare_battleye_spec
+    instance_id = spec["instance_id"]
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        raise RuntimeError("BattlEye private action requires DayZ")
+    unit = f"capivara-instance-{_token(instance_id)}.service"
+    state = subprocess.run(
+        ["systemctl", "show", unit, "--property=LoadState",
+         "--property=ActiveState", "--property=MainPID", "--no-pager"],
+        capture_output=True, text=True, timeout=15, check=False)
+    fields = dict(line.split("=",1) for line in state.stdout.splitlines() if "=" in line)
+    if (state.returncode != 0 or fields.get("LoadState") != "loaded"
+            or fields.get("ActiveState") != "inactive"
+            or fields.get("MainPID") != "0"):
+        raise RuntimeError("BattlEye unit apply requires a stopped, loaded DayZ instance")
+    # Trust the canonical persisted Agent spec, not a Controller-submitted
+    # path, as the baseline for an exact, constrained RuntimeSpec delta.
+    old_path = STATE_DIR / "instances" / f"{instance_id}.json"
+    if old_path.is_symlink() or not old_path.is_file():
+        raise RuntimeError("BattlEye original RuntimeSpec unavailable")
+    old_stat=old_path.stat()
+    if old_stat.st_nlink!=1 or old_stat.st_mode & 0o077:
+        raise RuntimeError("BattlEye existing RuntimeSpec must be private and single-link")
+    old_bytes=old_path.read_bytes()
+    old = validate_runtime_spec(json.loads(old_bytes),
+                                expected_agent_id=str(config["agent_id"]))
+    if old["instance_id"] != instance_id or str(old.get("game_id") or "").lower() != "dayz":
+        raise RuntimeError("BattlEye original instance identity mismatch")
+    if old.get("desired_state") != "stopped" or spec.get("desired_state") != "stopped":
+        raise RuntimeError("BattlEye materialization requires stopped desired state")
+    expected = _prepare_battleye_spec(old,spec.get("battleye_directory"))
+    if expected != spec:
+        raise RuntimeError("BattlEye spec differs from authorized private path projection")
+    pool = _instance_storage_root(config, spec.get("storage_pool_id"))
+    root = Path(str(spec.get("instance_state_root") or ""))
+    if (not root.is_absolute() or root.is_symlink() or not root.is_dir()
+            or root.resolve() != (pool / instance_id).resolve()):
+        raise RuntimeError("BattlEye directory is not the Agent instance private root")
+    before = materializer.inspect(old)
+    if not before.get("exists") or not before.get("owned") or not before.get("matches"):
+        raise RuntimeError("BattlEye managed unit differs from persisted baseline")
+    owner = _validate_runtime_user(str(old["user"]))
+    target = root
+    new_folders=[]
+    for part in Path(spec["battleye_directory"]).parts:
+        target = target / part
+        if target.is_symlink() or (target.exists() and not target.is_dir()):
+            raise RuntimeError("BattlEye private path is unsafe")
+        if target.exists():
+            if target.stat().st_uid != owner.pw_uid:
+                raise RuntimeError("BattlEye private directory owner mismatch")
+        else:
+            new_folders.append(target)
+    for directory in new_folders:
+        directory.mkdir(mode=0o700)
+        os.chown(directory,owner.pw_uid,owner.pw_gid)
+        os.chmod(directory,0o700)
+    if expected["arguments"]==old["arguments"]:
+        return {"action":"apply-dayz-battleye","changed":False,"idempotent":True}
+    changed_unit=False
+    try:
+        # Recheck the persisted baseline before any unit/state mutation.
+        current_stat=old_path.stat()
+        if (current_stat.st_ino!=old_stat.st_ino or
+                current_stat.st_mtime_ns!=old_stat.st_mtime_ns or
+                old_path.read_bytes()!=old_bytes):
+            raise RuntimeError("BattlEye RuntimeSpec baseline changed during apply")
+        result=materializer.apply(spec)
+        changed_unit=bool(result.get("changed"))
+        new_record={**spec,"materialized":True}
+        _write_dayz_battleye_runtime(old_path,new_record,old_stat)
+    except Exception as exc:
+        try:
+            # Restore the exact previous configuration and unit, even if a
+            # fsync failure occurred after os.replace.
+            if old_path.exists() and old_path.read_bytes()!=old_bytes:
+                _write_dayz_battleye_runtime(old_path,json.loads(old_bytes),old_stat)
+            if changed_unit or not materializer.inspect(old).get("matches"):
+                materializer.apply(old)
+        except Exception as rollback:
+            raise RuntimeError("BattlEye unit/state rollback failed; manual recovery required") from rollback
+        raise RuntimeError("BattlEye unit/state apply failed; original configuration restored") from exc
+    return {"action":"apply-dayz-battleye","changed":changed_unit,
+            "idempotent":False,"runtime_spec_persisted":True}
+
+
+def run(instance_id: str) -> dict[str, Any]:
+    if os.geteuid() != 0:
+        raise RuntimeError("privileged materializer helper must run as root")
+    instance_id = _token(instance_id)
+    request_path = REQUEST_ROOT / f"{instance_id}.request.json"
+    result_path = REQUEST_ROOT / f"{instance_id}.result.json"
+    request = json.loads(request_path.read_text(encoding="utf-8"))
+    if not isinstance(request, dict) or request.get("kind") != "CapivaraPrivilegedMaterializationRequest":
+        raise RuntimeError("invalid privileged materialization request")
+    if str(request.get("instance_id") or "") != instance_id:
+        raise RuntimeError("privileged materialization instance_id mismatch")
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    local_agent_id = str(config.get("agent_id") or "").strip()
+    if not local_agent_id:
+        raise RuntimeError("local Agent identity is unavailable")
+    if str(request.get("agent_id") or "") != local_agent_id:
+        raise PermissionError("privileged materialization request belongs to another Agent")
+    spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
+    if spec["instance_id"] != instance_id:
+        raise RuntimeError("runtime spec instance_id mismatch")
+    action = str(request.get("action") or "").strip().lower()
+    materializer = resolve_materializer(spec)
+    templates: list[Any] = []
+    working_file_copies: list[dict[str, Any]] = []
+    dayz_mod_aliases: list[dict[str, Any]] = []
+    removed_dayz_mod_aliases: list[str] = []
+    content_files: list[str] = []
+    if (action in {"minecraft-serverpack-prepare-inputs", "minecraft-serverpack-build-candidate"}
+            or (action == "minecraft-serverpack-swap-phase"
+                and request.get("phase") in {"prepare", "switch", "recover", "archive-committed"})):
+        _serverpack_require_inactive(instance_id)
+    if action == "apply":
+        _ensure_runtime_identity(spec, config)
+        _ensure_dayz_runtime_root_acl(spec)
+        _normalize_dayz_dlc_ownership(spec)
+        working_file_copies = _sync_working_file_copies(spec)
+        dayz_mod_aliases = _sync_dayz_mod_aliases(spec)
+        templates = materialize_templates(spec)
+        templates.extend(materialize_network_properties(spec))
+        game_id = str(spec.get("game_id") or "").lower()
+        environment_id = str(spec.get("environment_id") or "").lower()
+        if game_id == "palworld":
+            materialize_admin_password(spec)
+        elif game_id == "minecraft" and environment_id.startswith("minecraft.java."):
+            materialize_minecraft_rcon_password(spec)
+        server_settings = materialize_server_settings(spec)
+        server_settings.extend(materialize_dynamic_values(spec))
+        if str(spec.get("game_id") or "").lower() == "minecraft" and str(
+            spec.get("environment_id") or ""
+        ).lower().startswith("minecraft.java."):
+            content_files = _sync_private_minecraft_content(spec, config)
+        operation = materializer.apply(spec)
+    elif action == "apply-dayz-battleye":
+        operation = _apply_dayz_battleye_private(spec, config, materializer)
+    elif action == "repair-dayz-dlc-ownership":
+        if str(spec.get("game_id") or "").lower() != "dayz":
+            raise RuntimeError("DayZ DLC repair requires a DayZ instance")
+        root_acl_checked = _ensure_dayz_runtime_root_acl(spec)
+        updated = _normalize_dayz_dlc_ownership(spec)
+        operation = {"action": action, "changed": updated > 0, "updated_paths": updated,
+                     "runtime_root_acl_checked": root_acl_checked}
+    elif action == "sync-minecraft-content":
+        installed = materializer.inspect(spec)
+        if not installed.get("exists") or not installed.get("owned"):
+            raise RuntimeError("Minecraft content synchronization requires an owned runtime")
+        content_files = _sync_private_minecraft_content(spec, config)
+        operation = {"action": action, "changed": bool(content_files), "content_files": content_files}
+    elif action == "remove":
+        operation = materializer.remove(spec)
+        removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
+        private_state_cleanup = _remove_instance_private_state(spec, config)
+        operation = {**operation, "private_state_cleanup": private_state_cleanup}
+    elif action == "minecraft-serverpack-prepare-inputs":
+        operation = _serverpack_prepare_inputs(spec, config, migration_value=request.get("migration"), selection=request.get("selection"))
+    elif action == "minecraft-serverpack-build-candidate":
+        operation = _serverpack_build_candidate(
+            spec, config,
+            loader_seed_value=request.get("loader_seed"),
+            target_loader_version=request.get("target_loader_version"),
+        )
+    elif action == "minecraft-serverpack-swap-phase":
+        operation = _serverpack_swap_phase(
+            spec, config, phase=request.get("phase"),
+            migration_plan_sha256=request.get("migration_plan_sha256"),
+            target_loader_version=request.get("target_loader_version"),
+            backup=request.get("backup"),
+            readiness_evidence=request.get("readiness_evidence"),
+        )
+    elif action == "migrate-storage-copy":
+        operation = _migrate_storage_copy(
+            config,
+            spec,
+            target_storage_pool_id=request.get("target_storage_pool_id"),
+            migration_id=request.get("migration_id"),
+            target_root_value=request.get("target_root"),
+        )
+    else:
+        raise RuntimeError("unsupported privileged materialization action")
+    result = {"status": "completed", "action": action, "instance_id": instance_id,
+              "agent_id": local_agent_id, "operation": operation, "templates": templates,
+              "server_settings": server_settings if action == "apply" else [],
+              "working_file_copies": working_file_copies,
+              "dayz_mod_aliases": dayz_mod_aliases,
+              "removed_dayz_mod_aliases": removed_dayz_mod_aliases,
+              "content_files": content_files}
+    if action == "apply":
+        _grant_customer_files_access(spec)
+    _write_result(result_path, result)
+    return result
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print("usage: materialize_instance.py INSTANCE_ID", file=sys.stderr)
+        return 2
+    instance_id = sys.argv[1]
+    result_path = REQUEST_ROOT / f"{_token(instance_id)}.result.json"
+    try:
+        result = run(instance_id)
+        print(json.dumps(result, sort_keys=True), flush=True)
+        return 0
+    except Exception as exc:
+        try:
+            request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+            if str(request.get("action") or "").strip().lower() == "apply":
+                config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                local_agent_id = str(config.get("agent_id") or "").strip()
+                spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
+                if spec.get("instance_id") == _token(instance_id):
+                    _grant_customer_files_access(spec)
+        except Exception:
+            pass
+        _write_result(result_path, {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]})
+        print(f"privileged materialization failed: {exc}", file=sys.stderr, flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
