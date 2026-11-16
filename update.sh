@@ -132,6 +132,7 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
+  --no-drain            Run read-only safety preflight; update remains blocked (exit 2).
   --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
@@ -152,7 +153,9 @@ parse_arguments() {
                 ;;
             --no-drain)
                 echo "No-drain update is not yet homologated; refusing to update." >&2
-                exit 2
+                # Use the same read-only diagnostic as --no-drain-report.
+                # Never advance into main(), stop services, or mutate files.
+                NO_DRAIN_REPORT=1
                 ;;
             --no-backup)
                 NO_BACKUP=1
