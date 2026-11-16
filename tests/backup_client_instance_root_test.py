@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _load_backup_client():
     module_path = ROOT / "agents/linux/runtime/backup_client.py"
+    # Load the runtime's local accounting dependency in isolated imports.
+    if str(module_path.parent) not in sys.path:
+        sys.path.insert(0, str(module_path.parent))
 
     runtime_stub = types.ModuleType("instance_runtime")
     runtime_stub.get_instance = lambda instance_id: None
@@ -88,6 +91,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
             # Canonical instance-private state.
             "files_root": str(self.private),
             "instance_state_root": str(self.private),
+            "storage_limit_bytes": 128 * 1024 * 1024,
         }
 
         self.config = {
@@ -96,6 +100,8 @@ class BackupClientInstanceRootTest(unittest.TestCase):
 
         self.old_backup_root = backup_client.BACKUP_ROOT
         self.old_result_root = backup_client.RESULT_ROOT
+        self.old_state_root = backup_client.STATE_ROOT
+        backup_client.STATE_ROOT = self.root / "agent-state"
 
         backup_client.BACKUP_ROOT = self.root / "backups"
         backup_client.RESULT_ROOT = self.root / "backup-results"
@@ -103,6 +109,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
     def tearDown(self):
         backup_client.BACKUP_ROOT = self.old_backup_root
         backup_client.RESULT_ROOT = self.old_result_root
+        backup_client.STATE_ROOT = self.old_state_root
         self.temp.cleanup()
 
     def command(self):
@@ -287,6 +294,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
                 {
                     "instance_id": "instance-safe",
                     "backup_id": "already-gone",
+                    "reason": "manual",
                 },
             )
 
@@ -313,6 +321,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
                     {
                         "instance_id": "instance-safe",
                         "backup_id": "duplicate",
+                        "reason": "manual",
                     },
                 )
 

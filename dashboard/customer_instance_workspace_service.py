@@ -52,6 +52,58 @@ class CustomerInstanceWorkspaceService:
    finally:s.close()
   if row is None:return {}
   value=dict(row);value["agent_metadata"]=_json(value.pop("metadata_json",None),{});return value
+ def _customer_storage_summary(self,user,context):
+  """Only account owners see the combined tenant usage, not invited teammates."""
+  customer_id=context.get("customer_id")
+  if customer_id is None:return None
+  role=str((user or {}).get("role") or "").lower()
+  if role not in {"admin","controller","customer"}:return None
+  ph=self.dialect.placeholder
+  with self.backend.connect() as c:
+   session=self._session(c)
+   try:
+    if role=="customer":
+     allowed=session.execute(
+      f"SELECT 1 FROM customer_account_members WHERE customer_id={ph} AND username={ph} AND account_role='owner'",
+      (customer_id,str((user or {}).get("username") or "").lower()),
+     ).fetchone()
+     if allowed is None:return None
+    instances=[dict(row) for row in session.execute(
+     f"SELECT id,agent_id FROM instances WHERE customer_id={ph} ORDER BY id",(customer_id,)
+    ).fetchall()]
+    agent_ids=sorted({str(i.get("agent_id") or "") for i in instances if i.get("agent_id")})
+    agents={}
+    if agent_ids:
+     rows=session.execute(
+      f"SELECT id,metadata_json FROM agents WHERE id IN ({self.dialect.parameters(len(agent_ids))})",
+      tuple(agent_ids),
+     ).fetchall()
+     agents={str(row["id"]):_json(row["metadata_json"],{}) for row in rows}
+   finally:session.close()
+  instance_total=backup_total=0
+  complete=True
+  for item in instances:
+   metadata=agents.get(str(item.get("agent_id") or ""),{})
+   matches=[entry for entry in metadata.get("instance_telemetry") or []
+            if isinstance(entry,dict) and str(entry.get("instance_id") or "")==str(item["id"])]
+   sample=matches[-1] if matches else {}
+   instance_value=sample.get("instance_storage_used_bytes")
+   backup_value=sample.get("backup_storage_used_bytes")
+   if (sample.get("backup_inventory_status")!="ok"
+       or type(instance_value) is not int or instance_value<0
+       or type(backup_value) is not int or backup_value<0):
+    complete=False
+    continue
+   instance_total+=instance_value
+   backup_total+=backup_value
+  return {
+   "status":"ok" if complete else "incomplete",
+   "instance_count":len(instances),
+   "instance_used_bytes":instance_total if complete else None,
+   "backup_used_bytes":backup_total if complete else None,
+   "total_used_bytes":(instance_total+backup_total) if complete else None,
+  }
+
  def _runtime_projection(self,context):
   agent_id=str(context.get("agent_id") or "").strip();instance_id=str(context.get("id") or context.get("instance_id") or "").strip();observation=None;agent_health="unknown"
   if agent_id:
@@ -106,7 +158,7 @@ class CustomerInstanceWorkspaceService:
   context=self.require(user,instance_id,"instance.view");runtime=self._runtime_projection(context);policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
   for item in agent_meta.get("instance_telemetry") or []:
    if isinstance(item,dict) and str(item.get("instance_id"))==instance_id:latest=item
-  telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
+  telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;inventory_ok=telemetry.get("backup_inventory_status")=="ok" and isinstance(telemetry.get("backup_storage_used_bytes"),int);customer_storage=self._customer_storage_summary(user,context) if context.get("customer_id") is not None else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
   if isinstance(provision,dict) and str(provision.get("stage") or "").lower()=="completed" and int(provision.get("progress") or 0)>=100:provision=None
   recovery=None
   if (str(context.get("game_id") or "").lower()=="minecraft"
@@ -128,7 +180,7 @@ class CustomerInstanceWorkspaceService:
     recovery["current_neoforge"]=current_neoforge
    provision=visible_provision_after_recovery(provision,recovery)
   instance={k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")};instance["persisted_status"]=context.get("status");instance["status"]=runtime.get("state") or "unknown"
-  return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"recovery":recovery,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
+  return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry, "storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct,"accounting_status":"ok" if inventory_ok else "incomplete","instance_used_bytes":telemetry.get("instance_storage_used_bytes") if inventory_ok else None,"backup_used_bytes":telemetry.get("backup_storage_used_bytes") if inventory_ok else None,"backup_files":telemetry.get("backup_storage_file_count") if inventory_ok else None,"manifest_only_files":telemetry.get("backup_manifest_only_count") if inventory_ok else None,"invalid_files":telemetry.get("backup_invalid_count") if inventory_ok else None},"customer_storage":customer_storage,"provision":provision,"recovery":recovery,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
  def console_output(self,user,instance_id,limit=300):self.require(user,instance_id,"console.read");return self.repo.console_output(instance_id,limit)
  def console_command_status(self,user,instance_id,command_id):
