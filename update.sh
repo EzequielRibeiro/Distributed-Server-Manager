@@ -846,6 +846,19 @@ run_no_drain_disposable_transaction() {
     [[ "${FIXTURE_REAL}" == /tmp/* && "${FIXTURE_REAL}" != /tmp ]] || return 2
     [[ -f "${FIXTURE_REAL}/fixture-owner" && ! -L "${FIXTURE_REAL}/fixture-owner" ]] || return 2
     [[ "$(cat -- "${FIXTURE_REAL}/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || return 2
+    # Never run a mutable shell-only transaction without a durable journal.
+    # The Python isolated composer owns journaling and crash recovery; this
+    # wrapper is intentionally unavailable until it is wired to that owner.
+    [[ "${NO_DRAIN_DURABLE_TRANSACTION_OWNER:-}" == "python-isolated-compose" ]] || {
+        echo "No-drain shell transaction refused: durable journal owner missing." >&2
+        return 2
+    }
+    [[ -d "${FIXTURE_REAL}/dsm928-composite-journal"
+       && ! -L "${FIXTURE_REAL}/dsm928-composite-journal"
+       && -f "${FIXTURE_REAL}/dsm928-composite-journal/game-uptime-transaction.json" ]] || {
+        echo "No-drain shell transaction refused: durable transaction journal missing." >&2
+        return 2
+    }
     if "${APPLY_CALLBACK}" && verify_no_drain_process_identities; then
         return 0
     fi
