@@ -90,6 +90,7 @@ AUTO_YES=0
 ALLOW_SAME_VERSION=0
 ALLOW_DOWNGRADE=0
 NO_BACKUP=0
+NO_DRAIN_REPORT=0
 NEW_SRC=""
 BACKUP_FILE=""
 BACKUP_PART=""
@@ -103,6 +104,8 @@ PRESERVED_TREES=(
     "game-data"
     "runtime/hybrid-agent-state"
     "runtime/hybrid-instance-storage"
+    # In-flight artifact uploads must survive the atomic release swap.
+    "runtime/artifact-transfers"
 )
 ACTIVE_SERVICES=()
 STOP_SERVICES=()
@@ -129,6 +132,8 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
+  --no-drain            Run read-only safety preflight; update remains blocked (exit 2).
+  --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
 }
@@ -146,8 +151,17 @@ parse_arguments() {
             --allow-downgrade)
                 ALLOW_DOWNGRADE=1
                 ;;
+            --no-drain)
+                echo "No-drain update is not yet homologated; refusing to update." >&2
+                # Use the same read-only diagnostic as --no-drain-report.
+                # Never advance into main(), stop services, or mutate files.
+                NO_DRAIN_REPORT=1
+                ;;
             --no-backup)
                 NO_BACKUP=1
+                ;;
+            --no-drain-report)
+                NO_DRAIN_REPORT=1
                 ;;
             -h|--help)
                 print_usage
@@ -734,6 +748,136 @@ run_process_guard()
 }
 
 
+# #928: Read-only process identity primitives for a future no-drain transaction.
+# These functions do not authorize no-drain or change any systemd state.
+# A transaction must capture identities before mutation and compare them after
+# each transition and rollback. Never infer preservation from ActiveState alone.
+declare -A NO_DRAIN_PID_SNAPSHOT=()
+declare -A NO_DRAIN_START_SNAPSHOT=()
+
+capture_no_drain_process_identities() {
+    local UNIT PID START ACTIVE
+    NO_DRAIN_PID_SNAPSHOT=()
+    NO_DRAIN_START_SNAPSHOT=()
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"; do
+        [[ "${UNIT}" == capivara-instance-*.service ]] || return 1
+        [[ ! -v 'NO_DRAIN_PID_SNAPSHOT[$UNIT]' ]] || return 1
+        ACTIVE="$(systemctl show "${UNIT}" --property=ActiveState --value)" || return 1
+        PID="$(systemctl show "${UNIT}" --property=MainPID --value)" || return 1
+        START="$(systemctl show "${UNIT}" --property=ExecMainStartTimestampMonotonic --value)" || return 1
+        [[ "${ACTIVE}" == active && "${PID}" =~ ^[0-9]+$ && "${START}" =~ ^[0-9]+$ ]] || return 1
+        (( 10#${PID} > 1 && 10#${START} > 0 )) || return 1
+        NO_DRAIN_PID_SNAPSHOT["${UNIT}"]="${PID}"
+        NO_DRAIN_START_SNAPSHOT["${UNIT}"]="${START}"
+    done
+}
+
+verify_no_drain_process_identities() {
+    local UNIT PID START ACTIVE
+    [[ "${#ACTIVE_GAME_UNITS[@]}" -eq "${#NO_DRAIN_PID_SNAPSHOT[@]}" ]] || return 1
+    for UNIT in "${ACTIVE_GAME_UNITS[@]}"; do
+        [[ "${UNIT}" == capivara-instance-*.service ]] || return 1
+        [[ -n "${NO_DRAIN_PID_SNAPSHOT[${UNIT}]:-}" && -n "${NO_DRAIN_START_SNAPSHOT[${UNIT}]:-}" ]] || return 1
+        ACTIVE="$(systemctl show "${UNIT}" --property=ActiveState --value)" || return 1
+        PID="$(systemctl show "${UNIT}" --property=MainPID --value)" || return 1
+        START="$(systemctl show "${UNIT}" --property=ExecMainStartTimestampMonotonic --value)" || return 1
+        [[ "${ACTIVE}" == active && "${PID}" == "${NO_DRAIN_PID_SNAPSHOT[${UNIT}]}" && "${START}" == "${NO_DRAIN_START_SNAPSHOT[${UNIT}]}" ]] || return 1
+    done
+}
+
+# #928: Fail-closed rollback verification for a future no-drain transaction.
+# The caller must first capture identities and must supply an isolated,
+# reviewed rollback callback. This helper does not authorize production use.
+verify_no_drain_rollback() {
+    local ROLLBACK_CALLBACK="${1:-}"
+    [[ "${ROLLBACK_CALLBACK}" == rollback_no_drain_disposable_fixture ]] || {
+        echo "No-drain rollback callback is not authorized." >&2
+        return 2
+    }
+    # A callback name alone is insufficient authorization. The transaction
+    # remains disabled unless a disposable fixture explicitly enables it.
+    [[ "${NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED:-0}" == 1 ]] || {
+        echo "No-drain rollback requires a disposable transaction fixture." >&2
+        return 2
+    }
+    declare -F "${ROLLBACK_CALLBACK}" >/dev/null || {
+        echo "No-drain rollback callback is missing." >&2
+        return 2
+    }
+    # Never trust an environment flag alone: require an owner-controlled,
+    # explicitly marked disposable workspace under /tmp.
+    local FIXTURE_ROOT="${NO_DRAIN_DISPOSABLE_WORKSPACE:-}"
+    [[ -n "${FIXTURE_ROOT}" && -d "${FIXTURE_ROOT}" && ! -L "${FIXTURE_ROOT}" ]] || return 2
+    local FIXTURE_REAL
+    FIXTURE_REAL="$(realpath -e -- "${FIXTURE_ROOT}")" || return 2
+    [[ "${FIXTURE_REAL}" == /tmp/* && "${FIXTURE_REAL}" != /tmp ]] || return 2
+    [[ -f "${FIXTURE_REAL}/fixture-owner" && ! -L "${FIXTURE_REAL}/fixture-owner" ]] || return 2
+    [[ "$(cat -- "${FIXTURE_REAL}/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || return 2
+    verify_no_drain_process_identities || {
+        echo "No-drain rollback refused: process identity already changed." >&2
+        return 2
+    }
+    "${ROLLBACK_CALLBACK}" || {
+        echo "No-drain rollback failed; manual recovery required." >&2
+        return 1
+    }
+    verify_no_drain_process_identities || {
+        echo "No-drain rollback changed a game process; manual recovery required." >&2
+        return 1
+    }
+}
+
+# #928: Disposable-only orchestration entry point for the identity and
+# rollback guards. No production updater path calls this helper.
+run_no_drain_disposable_transaction() {
+    local APPLY_CALLBACK="${1:-}" ROLLBACK_CALLBACK="${2:-}"
+    [[ "${APPLY_CALLBACK}" == apply_no_drain_disposable_fixture ]] || return 2
+    [[ "${ROLLBACK_CALLBACK}" == rollback_no_drain_disposable_fixture ]] || return 2
+    [[ "${NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED:-0}" == 1 ]] || return 2
+    declare -F "${APPLY_CALLBACK}" >/dev/null || return 2
+    declare -F "${ROLLBACK_CALLBACK}" >/dev/null || return 2
+    # Reuse the rollback guard to validate the fixture before any mutation.
+    # A no-op preflight callback must not modify the fixture.
+    capture_no_drain_process_identities || return 2
+    verify_no_drain_process_identities || return 2
+    local FIXTURE_ROOT="${NO_DRAIN_DISPOSABLE_WORKSPACE:-}" FIXTURE_REAL
+    [[ -n "${FIXTURE_ROOT}" && -d "${FIXTURE_ROOT}" && ! -L "${FIXTURE_ROOT}" ]] || return 2
+    FIXTURE_REAL="$(realpath -e -- "${FIXTURE_ROOT}")" || return 2
+    [[ "${FIXTURE_REAL}" == /tmp/* && "${FIXTURE_REAL}" != /tmp ]] || return 2
+    [[ -f "${FIXTURE_REAL}/fixture-owner" && ! -L "${FIXTURE_REAL}/fixture-owner" ]] || return 2
+    [[ "$(cat -- "${FIXTURE_REAL}/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || return 2
+    # Never run a mutable shell-only transaction without a durable journal.
+    # The Python isolated composer owns journaling and crash recovery; this
+    # wrapper is intentionally unavailable until it is wired to that owner.
+    [[ "${NO_DRAIN_DURABLE_TRANSACTION_OWNER:-}" == "python-isolated-compose" ]] || {
+        echo "No-drain shell transaction refused: durable journal owner missing." >&2
+        return 2
+    }
+    [[ -d "${FIXTURE_REAL}/dsm928-composite-journal"
+       && ! -L "${FIXTURE_REAL}/dsm928-composite-journal"
+       && -f "${FIXTURE_REAL}/dsm928-composite-journal/game-uptime-transaction.json" ]] || {
+        echo "No-drain shell transaction refused: durable transaction journal missing." >&2
+        return 2
+    }
+    # #928 stage 7: a synthetic contract is not an operational compatibility
+    # proof. Require an explicit, non-mutating compatibility callback and
+    # refuse to apply if it is missing or returns a nonzero status.
+    declare -F verify_no_drain_disposable_compatibility >/dev/null || {
+        echo "No-drain transaction refused: compatibility verifier missing." >&2
+        return 2
+    }
+    verify_no_drain_disposable_compatibility || {
+        echo "No-drain transaction refused: incompatible controller/agent/supervisor." >&2
+        return 2
+    }
+    verify_no_drain_process_identities || return 2
+    if "${APPLY_CALLBACK}" && verify_no_drain_process_identities; then
+        return 0
+    fi
+    verify_no_drain_rollback "${ROLLBACK_CALLBACK}" || return 1
+    return 1
+}
+
 # =============================================================
 # Drenagem automática de instâncias gerenciadas
 # Automatic managed game-instance drain
@@ -867,24 +1011,39 @@ stop_game_instances()
 restart_game_instances()
 {
     local UNIT
+    local RECOVERY_FAILED=0
 
     [[ "${#ACTIVE_GAME_UNITS[@]}" -gt 0 ]] || return 0
 
     echo
     echo "Restaurando instâncias que estavam ativas..."
-    echo "Restoring game instances that were active..."
+    echo "Restoring game instances..."
 
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        echo "[ERROR] Game recovery daemon-reload failed." >&2
+        return 1
+    }
 
     for UNIT in "${ACTIVE_GAME_UNITS[@]}"
     do
         echo "Iniciando instância | Starting instance: ${UNIT}"
-        systemctl start "${UNIT}"
-        wait_for_game_instance_active "${UNIT}"
+        if ! systemctl start "${UNIT}"; then
+            echo "[ERROR] Game recovery could not start ${UNIT}." >&2
+            RECOVERY_FAILED=1
+            continue
+        fi
+        if ! wait_for_game_instance_active "${UNIT}"; then
+            echo "[ERROR] Game recovery readiness failed for ${UNIT}." >&2
+            RECOVERY_FAILED=1
+            continue
+        fi
         echo "[OK] ${UNIT} restaurado | restored."
     done
+    if [[ "${RECOVERY_FAILED}" -ne 0 ]]; then
+        echo "[ERROR] One or more previously active games could not be recovered." >&2
+        return 1
+    fi
 }
-
 
 # =============================================================
 # Parar serviços DSM | Stop DSM services
@@ -1348,6 +1507,7 @@ reconcile_hybrid_runtime_substrate() {
 # =============================================================
 restart_services() {
     local SERVICE_NAME
+    local RECOVERY_FAILED=0
 
     echo
     echo "Gerenciando serviços DSM..."
@@ -1369,17 +1529,25 @@ restart_services() {
         return 0
     fi
 
-    systemctl daemon-reload
+    systemctl daemon-reload || {
+        echo "[ERROR] Controller service recovery daemon-reload failed." >&2
+        return 1
+    }
     for SERVICE_NAME in "${RESTORE_SERVICES[@]}"
     do
         echo
         echo "Iniciando serviço | Starting service: ${SERVICE_NAME}"
-        systemctl start "${SERVICE_NAME}" || {
+        if ! systemctl start "${SERVICE_NAME}"; then
             echo "[ERROR] Falha ao iniciar | Failed to start ${SERVICE_NAME}." >&2
-            return 1
-        }
+            RECOVERY_FAILED=1
+            continue
+        fi
         echo "[OK] ${SERVICE_NAME} iniciado | started."
     done
+    if [[ "${RECOVERY_FAILED}" -ne 0 ]]; then
+        echo "[ERROR] One or more previously active DSM services could not be recovered." >&2
+        return 1
+    fi
     echo
     echo "Processo de inicialização concluído."
     echo "Startup process completed."
@@ -1736,6 +1904,31 @@ main() {
     echo "Iniciando atualização DSM..."
     echo "Starting DSM update..."
     parse_arguments "$@"
+    # This diagnostic must execute BEFORE root, logging, backup, daemon or
+    # filesystem changes. Always exit 2: a report is never update approval.
+    if [[ "${NO_DRAIN_REPORT}" -eq 1 ]]; then
+        local DIAGNOSTIC="${SCRIPT_DIR}/update-manager/game-uptime-preflight.py"
+        if [[ -z "${NEW_SRC}" || ! -d "${NEW_SRC}" || -L "${NEW_SRC}"
+              || ! -f "${DIAGNOSTIC}" || -L "${DIAGNOSTIC}" ]]; then
+            echo "No-drain report requires a safe target directory and trusted installed diagnostic." >&2
+            exit 2
+        fi
+        if ! PYTHONDONTWRITEBYTECODE=1 python3 "${DIAGNOSTIC}" "${INSTALL_DIR}" "${NEW_SRC}"; then
+            echo "No-drain diagnostic could not establish a safe inventory." >&2
+            exit 2
+        fi
+        echo "Diagnostic only: --no-drain remains blocked; update was not started." >&2
+        exit 2
+    fi
+    # #928: Explicit integration boundary for the future no-drain transaction.
+    # The preflight above is read-only and MUST NOT fall through to this
+    # destructive/draining updater. A live transaction must implement durable
+    # rollback and PID/start-time verification before this boundary changes.
+    # Keep normal updates on the existing draining path.
+    if [[ "${NO_DRAIN_REPORT}" -ne 0 ]]; then
+        echo "Invalid no-drain transaction state; refusing update." >&2
+        exit 2
+    fi
     # Ambiente | Environment
     require_root
     # O pacote instalado pode ser substituído durante esta execução. Nunca
@@ -1831,12 +2024,30 @@ update_failed() {
     # Só executa rollback se existir backup | Only run rollback if backup exists
     if [[ "${UPDATE_FILES_STARTED}" -eq 1 && -n "${BACKUP_FILE}" && -f "${BACKUP_FILE}" ]]
     then
-        rollback
+        if ! rollback; then
+            echo "ERRO CRÍTICO: rollback automático falhou; intervenção manual necessária." >&2
+            echo "CRITICAL: automatic rollback failed; manual recovery required." >&2
+            echo "Backup preservado | Backup retained: ${BACKUP_FILE}" >&2
+        fi
     else
         echo
+        if [[ "${UPDATE_FILES_STARTED}" -eq 1 ]]; then
+            echo "ERRO CRÍTICO: arquivos alterados sem backup disponível para rollback." >&2
+            echo "CRITICAL: files changed but no rollback backup is available." >&2
+        fi
         if [[ "${UPDATE_TRANSACTION_STARTED}" -eq 1 && "${UPDATE_FILES_STARTED}" -eq 0 ]]; then
-            restart_services || true
-            restart_game_instances || true
+            # Services/games may have been stopped before the first file write.
+            # Attempt both recoveries even if one fails, but never hide a
+            # partial restart failure behind the original update error.
+            local SERVICE_RECOVERY_STATUS=0
+            local GAME_RECOVERY_STATUS=0
+            restart_services || SERVICE_RECOVERY_STATUS=$?
+            restart_game_instances || GAME_RECOVERY_STATUS=$?
+            if [[ "${SERVICE_RECOVERY_STATUS}" -ne 0 || "${GAME_RECOVERY_STATUS}" -ne 0 ]]; then
+                echo "ERRO CRÍTICO: recuperação de serviços/jogos incompleta; revisão manual necessária." >&2
+                echo "CRITICAL: pre-update service/game recovery incomplete; manual review required." >&2
+                echo "Recovery exit codes: services=${SERVICE_RECOVERY_STATUS}, games=${GAME_RECOVERY_STATUS}" >&2
+            fi
         fi
         echo "Rollback não executado."
         echo "Rollback not executed."
@@ -1976,9 +2187,27 @@ rollback() {
     echo
     echo "Recarregando Systemd..."
     echo "Reloading Systemd..."
-    systemctl daemon-reload 2>/dev/null || true
-    restart_services 2>/dev/null || true
-    restart_game_instances 2>/dev/null || true
+    local ROLLBACK_RELOAD_RC=0
+    local ROLLBACK_SERVICES_RC=0
+    local ROLLBACK_GAMES_RC=0
+    systemctl daemon-reload 2>/dev/null || ROLLBACK_RELOAD_RC=$?
+    # A failed daemon-reload on a live systemd host must not be followed by
+    # service starts against potentially stale unit definitions.
+    if [[ "${SYSTEMD_ENABLED}" -eq 1 && "${ROLLBACK_RELOAD_RC}" -ne 0 ]]; then
+        echo "CRITICAL: rollback systemd reload failed; manual recovery required." >&2
+        echo "Backup retained: ${BACKUP_FILE}" >&2
+        return 1
+    fi
+    # Attempt both recoveries, but never report successful rollback while
+    # either the Controller services or originally active games failed.
+    restart_services || ROLLBACK_SERVICES_RC=$?
+    restart_game_instances || ROLLBACK_GAMES_RC=$?
+    if [[ "${ROLLBACK_SERVICES_RC}" -ne 0 || "${ROLLBACK_GAMES_RC}" -ne 0 ]]; then
+        echo "CRITICAL: rollback restored files but service/game recovery incomplete; manual review required." >&2
+        echo "Rollback recovery exit codes: services=${ROLLBACK_SERVICES_RC}, games=${ROLLBACK_GAMES_RC}" >&2
+        echo "Backup retained: ${BACKUP_FILE}" >&2
+        return 1
+    fi
     # Remover staging incompleto | Remove incomplete staging
     rm -rf "${STAGING_DIR}"
     echo

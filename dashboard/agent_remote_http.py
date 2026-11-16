@@ -37,6 +37,7 @@ from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_cla
 from minecraft_recovery_event_persistence import persist_recovery_claims
 from minecraft_serverpack_heartbeat_recovery_offer import serverpack_recovery_offer
 from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpack_report_delivery
+from game_uptime_heartbeat_compat import assess_authenticated_probe
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -407,6 +408,19 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         else:
             _attach_game_data_state(result, body, agent_id=agent_id, backend=backend)
         _attach_instance_state(result, body, agent_id=agent_id, backend=backend)
+        # Optional #928 diagnostic: only after credential authentication.
+        # The result is informational, never an update command or release gate.
+        if "no_drain_compatibility_probe" in body:
+            try:
+                result["no_drain_compatibility_offer"] = assess_authenticated_probe(
+                    body["no_drain_compatibility_probe"],
+                    authenticated_agent_id=agent_id,
+                )
+            except (ValueError, TypeError):
+                result["no_drain_compatibility_offer"] = {
+                    "status": "blocked", "reason": "diagnostic_unavailable",
+                    "live_no_drain_authorized": False,
+                }
         # Authenticated, read-only proof for the Agent's post-commit recovery.
         # Deliberately does not apply reports or change content state.
         if "serverpack_recovery_probe" in body:

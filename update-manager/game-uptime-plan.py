@@ -8,10 +8,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 
-EXCLUDE_TOP = frozenset({"instances", "game-data", "logs", ".git"})
-EXCLUDE_PREFIX = ("runtime/hybrid-agent-state/", "runtime/hybrid-instance-storage/")
+# SteamCMD creates user-home caches under the installed tree on some hosts.
+# They are preserved runtime data, not DSM release payload. Never traverse them.
+EXCLUDE_TOP = frozenset({"instances", "game-data", "logs", ".git", ".steam", ".local"})
+EXCLUDE_PREFIX = ("runtime/hybrid-agent-state/", "runtime/hybrid-instance-storage/",
+                  "runtime/state/", "runtime/artifact-transfers/")
 EXCLUDE_EXACT = frozenset({"config/dsm.conf"})
 # This deliberately tiny allowlist does NOT yet authorize a live update.
 COSMETIC_PREFIX = ("docs/", "release/RELEASE_NOTES_", "dashboard/web/")
@@ -22,23 +26,35 @@ def _inventory(root: Path) -> dict[str, tuple[int, str]]:
     if not root.is_dir() or root.is_symlink():
         raise ValueError("unsafe or missing DSM root")
     files: dict[str, tuple[int, str]] = {}
-    for entry in root.rglob("*"):
-        rel = entry.relative_to(root).as_posix()
-        if rel.split("/", 1)[0] in EXCLUDE_TOP or any(
-            rel == prefix.rstrip("/") or rel.startswith(prefix) for prefix in EXCLUDE_PREFIX
-        ) or rel in EXCLUDE_EXACT:
-            continue
-        if entry.is_symlink():
-            raise ValueError(f"symlink in release impact inventory: {rel}")
-        if entry.is_dir():
-            continue
-        if not entry.is_file():
-            raise ValueError(f"unsafe release filesystem entry: {rel}")
-        digest = hashlib.sha256()
-        with entry.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                digest.update(chunk)
-        files[rel] = (entry.stat().st_mode & 0o777, digest.hexdigest())
+    # Prune preserved runtime trees BEFORE descending into them. A post-rglob
+    # exclusion still walks huge live game worlds and SteamCMD caches.
+    for current, dirs, names in os.walk(root, topdown=True, followlinks=False):
+        parent = Path(current)
+        def excluded(entry: Path) -> bool:
+            rel = entry.relative_to(root).as_posix()
+            return (rel.split("/", 1)[0] in EXCLUDE_TOP or
+                    any(rel == prefix.rstrip("/") or rel.startswith(prefix)
+                        for prefix in EXCLUDE_PREFIX) or rel in EXCLUDE_EXACT)
+        for dirname in list(dirs):
+            entry = parent / dirname
+            if excluded(entry):
+                dirs.remove(dirname)
+            elif entry.is_symlink():
+                raise ValueError(f"symlink in release impact inventory: {entry.relative_to(root)}")
+        for name in names:
+            entry = parent / name
+            if excluded(entry):
+                continue
+            rel = entry.relative_to(root).as_posix()
+            if entry.is_symlink():
+                raise ValueError(f"symlink in release impact inventory: {rel}")
+            if not entry.is_file():
+                raise ValueError(f"unsafe release filesystem entry: {rel}")
+            digest = hashlib.sha256()
+            with entry.open("rb") as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            files[rel] = (entry.stat().st_mode & 0o777, digest.hexdigest())
     return files
 
 
