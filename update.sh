@@ -827,6 +827,32 @@ verify_no_drain_rollback() {
     }
 }
 
+# #928: Disposable-only orchestration entry point for the identity and
+# rollback guards. No production updater path calls this helper.
+run_no_drain_disposable_transaction() {
+    local APPLY_CALLBACK="${1:-}" ROLLBACK_CALLBACK="${2:-}"
+    [[ "${APPLY_CALLBACK}" == apply_no_drain_disposable_fixture ]] || return 2
+    [[ "${ROLLBACK_CALLBACK}" == rollback_no_drain_disposable_fixture ]] || return 2
+    [[ "${NO_DRAIN_DISPOSABLE_ROLLBACK_ENABLED:-0}" == 1 ]] || return 2
+    declare -F "${APPLY_CALLBACK}" >/dev/null || return 2
+    declare -F "${ROLLBACK_CALLBACK}" >/dev/null || return 2
+    # Reuse the rollback guard to validate the fixture before any mutation.
+    # A no-op preflight callback must not modify the fixture.
+    capture_no_drain_process_identities || return 2
+    verify_no_drain_process_identities || return 2
+    local FIXTURE_ROOT="${NO_DRAIN_DISPOSABLE_WORKSPACE:-}" FIXTURE_REAL
+    [[ -n "${FIXTURE_ROOT}" && -d "${FIXTURE_ROOT}" && ! -L "${FIXTURE_ROOT}" ]] || return 2
+    FIXTURE_REAL="$(realpath -e -- "${FIXTURE_ROOT}")" || return 2
+    [[ "${FIXTURE_REAL}" == /tmp/* && "${FIXTURE_REAL}" != /tmp ]] || return 2
+    [[ -f "${FIXTURE_REAL}/fixture-owner" && ! -L "${FIXTURE_REAL}/fixture-owner" ]] || return 2
+    [[ "$(cat -- "${FIXTURE_REAL}/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || return 2
+    if "${APPLY_CALLBACK}" && verify_no_drain_process_identities; then
+        return 0
+    fi
+    verify_no_drain_rollback "${ROLLBACK_CALLBACK}" || return 1
+    return 1
+}
+
 # =============================================================
 # Drenagem automática de instâncias gerenciadas
 # Automatic managed game-instance drain
