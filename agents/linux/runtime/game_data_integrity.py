@@ -41,7 +41,14 @@ def inspect_game_data(root: Path, selection: dict[str, Any] | None = None) -> di
         except ValueError:
             executable_present = False; executable_ready = False
     health = "ok" if files and executable_present and executable_ready and not truncated else ("degraded" if files else "empty")
-    return {"health": health, "exists": True, "files": min(files, MAX_INVENTORY_FILES), "bytes": total, "tree_digest": digest.hexdigest(), "truncated": truncated, "executable_present": executable_present, "executable_ready": executable_ready, "virtual_executable": virtual_executable}
+    result = {"health": health, "exists": True, "files": min(files, MAX_INVENTORY_FILES), "bytes": total, "tree_digest": digest.hexdigest(), "truncated": truncated, "executable_present": executable_present, "executable_ready": executable_ready, "virtual_executable": virtual_executable}
+    if str((selection or {}).get("game") or "").strip().lower() == "dayz":
+        try:
+            from .content_discovery_audit import audit_dayz_dlc_roots
+        except ImportError:
+            from content_discovery_audit import audit_dayz_dlc_roots
+        result["content_discovery"] = audit_dayz_dlc_roots(root)
+    return result
 
 
 def should_repair(integrity: dict[str, Any]) -> bool:
