@@ -785,6 +785,29 @@ verify_no_drain_process_identities() {
     done
 }
 
+# #928: Fail-closed rollback verification for a future no-drain transaction.
+# The caller must first capture identities and must supply an isolated,
+# reviewed rollback callback. This helper does not authorize production use.
+verify_no_drain_rollback() {
+    local ROLLBACK_CALLBACK="${1:-}"
+    [[ "${ROLLBACK_CALLBACK}" == rollback_no_drain_disposable_fixture ]] || {
+        echo "No-drain rollback callback is not authorized." >&2
+        return 2
+    }
+    verify_no_drain_process_identities || {
+        echo "No-drain rollback refused: process identity already changed." >&2
+        return 2
+    }
+    "${ROLLBACK_CALLBACK}" || {
+        echo "No-drain rollback failed; manual recovery required." >&2
+        return 1
+    }
+    verify_no_drain_process_identities || {
+        echo "No-drain rollback changed a game process; manual recovery required." >&2
+        return 1
+    }
+}
+
 # =============================================================
 # Drenagem automática de instâncias gerenciadas
 # Automatic managed game-instance drain
