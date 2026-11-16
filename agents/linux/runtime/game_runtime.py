@@ -22,6 +22,7 @@ _PROFILE_CONTEXT_KEYS = (
     "install_path", "content_root", "working_directory", "executable", "ports", "environment", "arguments", "user",
     "desired_state", "instance_state_root", "storage_pool_id", "config_path", "mission", "dayz_mission", "catalog_runtime_policy",
     "variables", "runtime_variables", "resource_profile", "catalog_content_policy",
+    "battleye_directory",
 )
 
 
