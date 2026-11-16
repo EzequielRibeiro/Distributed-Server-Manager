@@ -86,14 +86,19 @@ class NoDrainDiagnosticCommandTest(unittest.TestCase):
                 self.assertNotIn('{"kind":', result.stdout)
         self.assertEqual(self.marker.read_text(), "preserved")
 
-    def test_no_drain_still_rejected_even_if_report_flag_is_present(self):
+    def test_no_drain_with_report_is_diagnostic_only(self):
         for options in (("--no-drain", "--no-drain-report"),
                         ("--no-drain-report", "--no-drain")):
             with self.subTest(options=options):
                 result = self.run_diagnostic(*options)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("not yet homologated", result.stderr)
-                self.assertNotIn('{"kind":', result.stdout)
+                self.assertIn("Diagnostic only", result.stderr)
+                reports = [json.loads(line) for line in result.stdout.splitlines()
+                           if line.startswith('{"kind":')]
+                self.assertEqual(len(reports), 1)
+                self.assertFalse(reports[0]["live_no_drain_authorized"])
+                self.assertEqual(self.marker.read_text(), "preserved")
 
 
 if __name__ == "__main__":
