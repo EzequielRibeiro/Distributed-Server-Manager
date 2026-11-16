@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import fnmatch
+import fcntl
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from instance_runtime import get_instance, lifecycle, status
+from backup_storage_accounting import quota_snapshot, source_size
 
 STATE_ROOT = Path(
     os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent")
@@ -245,6 +247,25 @@ def _retained_backup_capacity(instance_dir, policy):
 
 
 def _create(config, command):
+    """Serialize creates per instance to keep quota snapshots authoritative."""
+    instance_id = _safe(command["instance_id"])
+    # Non-mutating checks must run before creating even a lock file.
+    record, root = _owned(config, instance_id)
+    _selected(root, dict(command.get("policy") or {}))
+    locks = STATE_ROOT / "backup-create-locks"
+    locks.mkdir(parents=True, exist_ok=True)
+    lock_path = locks / f"{instance_id}.lock"
+    if lock_path.is_symlink():
+        raise OSError("backup creation lock is unsafe")
+    with lock_path.open("a+b") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            return _create_unlocked(config, command)
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
+def _create_unlocked(config, command):
     instance_id = str(command["instance_id"])
     record, root = _owned(config, instance_id)
     policy = dict(command.get("policy") or {})
@@ -254,6 +275,31 @@ def _create(config, command):
     instance_dir = BACKUP_ROOT / _safe(instance_id)
     _retained_backup_capacity(instance_dir, policy)
     selected_paths = _selected(root, policy)
+    # Both limits are controller/Agent authoritative: the smaller one wins.
+    # Never interpret an unknown quota as unlimited for a new customer backup.
+    limits = []
+    for raw in (record.get("storage_limit_bytes"), policy.get("storage_limit_bytes")):
+        if raw is not None:
+            if type(raw) is bool or int(raw) <= 0:
+                raise ValueError("invalid storage quota for backup")
+            limits.append(int(raw))
+    if not limits:
+        raise OSError("backup denied: instance storage quota is unavailable")
+    quota_limit = min(limits)
+    snapshot = quota_snapshot(record, BACKUP_ROOT)
+    if (BACKUP_ROOT / _safe(instance_id)).resolve().is_relative_to(root):
+        raise OSError("backup storage must not be inside the archived source directory")
+    estimate = source_size(selected_paths, root)
+    # TAR/gzip may expand slightly. Reserve an overhead and never assume
+    # compression savings when checking capacity.
+    reserve = estimate + max(2 * 1024 * 1024, estimate // 100)
+    if snapshot["total_used_bytes"] + reserve > quota_limit:
+        raise OSError("backup denied: instance plus archived backups exceed storage quota")
+    disk_parent = BACKUP_ROOT
+    while not disk_parent.exists() and disk_parent != disk_parent.parent:
+        disk_parent = disk_parent.parent
+    if shutil.disk_usage(disk_parent).free < reserve + 64 * 1024 * 1024:
+        raise OSError("backup denied: insufficient disk space to preserve existing archives")
 
     if consistency == "quiesced":
         raise RuntimeError(
@@ -285,8 +331,13 @@ def _create(config, command):
                 str(policy.get("compression") or "gzip"),
                 manifest,
             )
-            _validate_archive_payload(path)
             size = path.stat().st_size
+            # Re-scan real files after writing; races or unexpectedly large
+            # output must never commit a backup beyond the quota.
+            after = quota_snapshot(record, BACKUP_ROOT)
+            if after["total_used_bytes"] > quota_limit:
+                raise OSError("backup denied: final archive exceeds storage quota")
+            _validate_archive_payload(path)
             sha256 = _digest(path)
         except Exception:
             # Only this newly allocated destination may be removed on failure.
@@ -302,6 +353,9 @@ def _create(config, command):
             "size_bytes": size,
             "sha256": sha256,
             "manifest": manifest,
+            "quota_limit_bytes": quota_limit,
+            "quota_total_used_bytes": after["total_used_bytes"],
+            "quota_backup_used_bytes": after["backup_used_bytes"],
         }
     finally:
         if consistency == "stopped" and was_running:

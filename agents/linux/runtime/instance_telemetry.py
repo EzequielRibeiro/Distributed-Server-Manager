@@ -31,6 +31,7 @@ _COMMON = next((
 if str(_COMMON) not in sys.path:
     sys.path.insert(0, str(_COMMON))
 from minecraft_java_status import query_reserved_java_game_port
+from backup_storage_accounting import backup_inventory
 
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
@@ -522,8 +523,45 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
             storage_used = None
         else:
             storage_used = files_usage if files_root else _storage_used(record.get("path"))
+        # #1066: archived backups are stored outside the instance state
+        # tree. Count physical archives, including historical/unindexed files.
+        # Report unknown rather than a misleading partial quota when scanning
+        # fails (permission, symlink, hardlink, or incomplete tree).
+        private_usage = storage_used
+        backup_usage = None
+        backup_count = None
+        manifest_only_count = None
+        invalid_count = None
+        inventory_status = "unknown"
+        try:
+            backup_base = Path(os.environ.get(
+                "CAPIVARA_BACKUP_ROOT", str(STATE_DIR / "backups")
+            ))
+            inventory = backup_inventory(backup_base, instance_id)
+            backup_usage = inventory["bytes"]
+            backup_count = inventory["file_count"]
+            manifest_only_count = inventory["manifest_only_count"]
+            invalid_count = inventory["invalid_count"]
+            inventory_status = "ok"
+            if storage_used is not None:
+                backup_directory = (backup_base / instance_id).resolve()
+                private_directory = Path(str(state_root or files_root or record.get("path") or "")).resolve()
+                if backup_directory.is_relative_to(private_directory):
+                    private_usage = max(0, storage_used - backup_usage)
+                else:
+                    storage_used += backup_usage
+        except (OSError, ValueError, RuntimeError):
+            inventory_status = "unknown"
+            backup_usage = None
+            storage_used = None
         results.append({
             "instance_id": instance_id,
+            "instance_storage_used_bytes": private_usage,
+            "backup_storage_used_bytes": backup_usage,
+            "backup_storage_file_count": backup_count,
+            "backup_manifest_only_count": manifest_only_count,
+            "backup_invalid_count": invalid_count,
+            "backup_inventory_status": inventory_status,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,

@@ -493,6 +493,16 @@ class BackupRepository:
                     and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
                 continue
             policy=dict(self.get_policy(job["instance_id"]) or {})
+            if str(job.get("action") or "") == "create":
+                # #1066: pass the contractual limit in the Agent command.
+                # The Agent also verifies its own RuntimeSpec limit and uses
+                # the smaller one, so a stale Controller cannot grant space.
+                from instance_workspace_repository import InstanceWorkspaceRepository
+                workspace = InstanceWorkspaceRepository(self.backend)
+                resolved = workspace.workspace_policy(str(job["instance_id"]))
+                limit = resolved.get("storage_limit_bytes")
+                if limit is not None:
+                    policy["storage_limit_bytes"] = int(limit)
             schedule=self._workspace_schedule(job["instance_id"])
             if schedule is not None:
                 policy["keep_single_operational"] = bool(schedule.get("keep_single_operational"))
