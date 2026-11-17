@@ -21,6 +21,10 @@ def example(**changes):
         "FragmentPath": "/etc/systemd/system/capivara-instance-example.service",
         "PartOf": "", "BindsTo": "", "Requires": "sysinit.target",
         "Requisite": "", "StopPropagatedFrom": "", "PropagatesStopTo": "",
+        "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "",
+        "ExecStop": "", "ExecStopPost": "", "ExecReload": "",
+        "WorkingDirectory": "/var/lib/capivara-instances/example",
+        "EnvironmentFiles": "", "RootDirectory": "", "RootImage": "",
     }
     values.update(changes)
     return "\n".join(k + "=" + v for k, v in values.items())
@@ -52,6 +56,30 @@ class UptimeGuardTests(unittest.TestCase):
             with self.subTest(prop=prop), self.assertRaises(guard.GateError):
                 guard.inspect("capivara-instance-example.service",
                               fake(example(**{prop:"dsm-dashboard-worker.service"})))
+
+    def test_replaceable_lifecycle_hooks_fail_closed(self):
+        for prop in guard.LIFECYCLE_PROPERTIES:
+            with self.subTest(prop=prop), self.assertRaisesRegex(guard.GateError, prop):
+                guard.inspect("capivara-instance-example.service", fake(example(
+                    **{prop: "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /opt/dsm/agents/linux/runtime/hook.py ; }"})))
+
+    def test_replaceable_unit_path_directives_fail_closed(self):
+        for prop in guard.PATH_PROPERTIES:
+            with self.subTest(prop=prop), self.assertRaisesRegex(guard.GateError, prop):
+                guard.inspect("capivara-instance-example.service", fake(example(
+                    **{prop: "/opt/dsm/agents/linux/runtime/replaceable"})))
+
+    def test_unit_hook_change_rejected_even_with_same_pid(self):
+        original = guard.inspect("capivara-instance-example.service", fake(example()))
+        with self.assertRaisesRegex(guard.GateError, "changed"):
+            guard.verify_unchanged(original, fake(example(ExecStop=
+                "{ path=/usr/bin/true ; argv[]=/usr/bin/true ; }")))
+
+    def test_safe_auxiliary_hook_included_in_digest(self):
+        value = guard.inspect("capivara-instance-example.service", fake(example(
+            ExecStartPre="{ path=/usr/bin/true ; argv[]=/usr/bin/true ; }")))
+        self.assertEqual(len(value["unit_config_sha256"]), 64)
+        self.assertNotIn("ExecStartPre", value)
 
     def test_python_console_supervisor_rejected(self):
         with self.assertRaisesRegex(guard.GateError, "replaceable"):
