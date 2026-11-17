@@ -16,6 +16,10 @@ class SteamSessionProbeOnceTest(unittest.TestCase):
   examples=(
    ("Logging in user 'tester' to Steam Public...OK",0,'verified'),
    ('Logged in OK',0,'verified'),
+   ("Logging in user 'tester' [U:1:123456] to Steam Public...OK",0,'verified'),
+   ("Logging in user 'other' [U:1:123456] to Steam Public...OK",0,'account_mismatch'),
+   ("Logging in user 'tester' [U:1:123456] to Steam Public...OK\\nERROR! Login Failure",0,'authentication_rejected'),
+   ("Logging in user 'tester' [U:1:invalid] to Steam Public...OK",0,'account_mismatch'),
    ("Logging in user 'anonymous' to Steam Public...OK\nLogged in OK",0,'account_mismatch'),
    ('Loading Steam API...OK\nWaiting for user info...OK',0,'no_explicit_login_confirmation'),
    ("Logging in user 'tester' to Steam Public...OK\nERROR! Login Failure",0,'authentication_rejected'),
