@@ -937,6 +937,76 @@ class InstanceAgentRelocationRepository:
             return item
         raise ValueError("unsupported migration state")
 
+    def recovery_diagnostics(self, relocation_id):
+        """Read-only, fail-closed operator triage; never unfence either Agent."""
+        item = self.get(relocation_id)
+        owner = self._ownership(item)
+        with self.session() as session:
+            holds = session.execute(
+                f"SELECT node_id,protocol,port FROM instance_agent_relocation_port_holds "
+                f"WHERE relocation_id={self.ph} ORDER BY node_id,protocol,port",
+                (item["relocation_id"],),
+            ).fetchall()
+        source_hold = any(row["node_id"] == item["source_node_id"] for row in holds)
+        destination_hold = any(row["node_id"] == item["target_node_id"] for row in holds)
+        return {
+            "relocation_id": item["relocation_id"],
+            "instance_id": item["instance_id"],
+            "status": item["status"],
+            "owner_agent_id": owner["agent_id"],
+            "source_agent_id": item["source_agent_id"],
+            "target_agent_id": item["target_agent_id"],
+            "source_port_hold": source_hold,
+            "destination_port_hold": destination_hold,
+            "last_error": item.get("last_error"),
+            "requires_operator_verification": item["status"] == "manual_recovery",
+            "automatic_unfence_allowed": False,
+            "instructions": (
+                "Verify both Agent processes, source fence, destination shutdown, "
+                "ownership, backups and port reservations independently before "
+                "any manual recovery. Never run two copies concurrently."
+            ),
+        }
+
+    def request_safe_recovery(self, relocation_id, *, confirmation):
+        """Resume rollback only before cutover and before destination provisioning.
+
+        Ambiguous post-cutover states stay fenced pending independent Agent proof.
+        """
+        rid = _token(relocation_id, "relocation_id")
+        with self.session(transaction=True) as session:
+            row = session.execute(
+                f"SELECT * FROM instance_agent_relocations WHERE relocation_id={self.ph}" +
+                (" FOR UPDATE" if self.dialect.name in {"postgresql", "mysql"} else ""),
+                (rid,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(rid)
+            item = dict(row)
+            if confirmation != item["instance_id"]:
+                raise ValueError("confirm exact instance ID")
+            if item["status"] != "manual_recovery":
+                raise RelocationConflict("operation is not awaiting manual recovery")
+            owner = session.execute(
+                f"SELECT agent_id FROM instances WHERE id={self.ph}" +
+                (" FOR UPDATE" if self.dialect.name in {"postgresql", "mysql"} else ""),
+                (item["instance_id"],),
+            ).fetchone()
+            if not owner or owner["agent_id"] != item["source_agent_id"]:
+                raise RelocationConflict("destination ownership requires independent shutdown proof")
+            if item["provisioning_id"] or item["start_command_id"] or item["import_transfer_id"]:
+                raise RelocationConflict("destination may exist; do not unfence source")
+            if item["lease_until"] and int(item["lease_until"]) > int(datetime.now(timezone.utc).timestamp()):
+                raise RelocationConflict("reconciliation lease is still active")
+            # No lifecycle call here. The existing fail-closed rollback reconciler
+            # must independently verify the source fence before any unfence.
+            session.execute(
+                f"UPDATE instance_agent_relocations SET status='rolling_back',last_error={self.ph},"
+                f"updated_at={self.ph} WHERE relocation_id={self.ph} AND status='manual_recovery'",
+                ("operator requested guarded pre-cutover rollback", _now(), rid),
+            )
+        return self.get(rid)
+
     def reconcile_for_agent(self, agent_id):
         self.initialize()
         with self.session() as session:

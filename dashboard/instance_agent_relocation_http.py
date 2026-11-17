@@ -79,6 +79,11 @@ def install_instance_agent_relocation_http(legacy, authenticate):
             if relocation_id:
                 item = repo.get(relocation_id)
                 authorize(actor, item["instance_id"])
+                if (query.get("recovery_diagnostics") or [""])[0] == "1":
+                    return self.send_json(200, {
+                        "recovery": repo.recovery_diagnostics(relocation_id),
+                        "enabled": enabled(),
+                    })
                 return self.send_json(200, {"relocation": public_state(item), "enabled": enabled()})
             instance_id = str((query.get("instance_id") or [""])[0]).strip()
             repo = authorize(actor, instance_id)
@@ -112,8 +117,26 @@ def install_instance_agent_relocation_http(legacy, authenticate):
             return
         try:
             payload = self.read_json_body()
-            if not isinstance(payload, dict) or payload.get("action") != "start":
-                raise ValueError("action=start required")
+            if not isinstance(payload, dict):
+                raise ValueError("JSON object required")
+            if payload.get("action") == "recover_pre_cutover":
+                relocation_id = str(payload.get("relocation_id") or "").strip()
+                repo = service()
+                item = repo.get(relocation_id)
+                repo = authorize(actor, item["instance_id"], mutate=True)
+                if not enabled():
+                    return self.send_json(423, {"error": "relocation_not_certified"})
+                state = repo.request_safe_recovery(
+                    relocation_id, confirmation=str(payload.get("confirmation") or ""),
+                )
+                try:
+                    legacy.audit(actor, "instance.agent-relocation", "recovery_requested",
+                                 item["instance_id"], f"relocation={relocation_id}")
+                except Exception:
+                    pass
+                return self.send_json(202, {"relocation": public_state(state)})
+            if payload.get("action") != "start":
+                raise ValueError("action=start or recover_pre_cutover required")
             instance_id = str(payload.get("instance_id") or "").strip()
             target_id = str(payload.get("target_agent_id") or "").strip()
             repo = authorize(actor, instance_id, mutate=True)

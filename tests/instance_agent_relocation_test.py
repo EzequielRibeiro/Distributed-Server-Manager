@@ -99,6 +99,43 @@ class AgentRelocationTest(unittest.TestCase):
             return self.repo.enqueue("server-1", "target-agent",
                                      requested_by="admin@example.com", confirmation="server-1")
 
+    def test_recovery_diagnostics_never_unfence_or_mutate(self):
+        item = self.enqueue()
+        before = self.repo.get(item["relocation_id"])
+        with patch.object(self.repo, "_lifecycle", side_effect=AssertionError("unsafe lifecycle")):
+            state = self.repo.recovery_diagnostics(item["relocation_id"])
+        self.assertEqual(state["owner_agent_id"], "source-agent")
+        self.assertTrue(state["destination_port_hold"])
+        self.assertFalse(state["automatic_unfence_allowed"])
+        self.assertFalse(state["requires_operator_verification"])
+        self.assertEqual(self.repo.get(item["relocation_id"]), before)
+        self.repo._set(item["relocation_id"], status="manual_recovery")
+        state = self.repo.recovery_diagnostics(item["relocation_id"])
+        self.assertTrue(state["requires_operator_verification"])
+        self.assertFalse(state["automatic_unfence_allowed"])
+
+    def test_guarded_recovery_rejects_unverified_destination_and_wrong_confirmation(self):
+        item = self.enqueue()
+        rid = item["relocation_id"]
+        self.repo._set(rid, status="manual_recovery")
+        with self.assertRaises(ValueError):
+            self.repo.request_safe_recovery(rid, confirmation="wrong")
+        self.repo._set(rid, provisioning_id="possibly-created")
+        with self.assertRaisesRegex(RelocationConflict, "may exist"):
+            self.repo.request_safe_recovery(rid, confirmation="server-1")
+        self.assertEqual(self.repo.get(rid)["status"], "manual_recovery")
+
+    def test_guarded_pre_cutover_recovery_never_directly_unfences(self):
+        item = self.enqueue()
+        rid = item["relocation_id"]
+        self.repo._set(rid, status="manual_recovery")
+        with patch.object(self.repo, "_lifecycle", side_effect=AssertionError("unsafe direct lifecycle")):
+            state = self.repo.request_safe_recovery(rid, confirmation="server-1")
+        self.assertEqual(state["status"], "rolling_back")
+        self.assertIsNone(state["unfence_command_id"])
+        with self.assertRaises(RelocationConflict):
+            self.repo.request_safe_recovery(rid, confirmation="server-1")
+
     def test_active_relocation_blocks_destructive_delete_and_retry(self):
         from dashboard_repository import DashboardRepository
         item = self.enqueue()
