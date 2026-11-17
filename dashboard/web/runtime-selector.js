@@ -32,6 +32,7 @@
         placementReady: false,
         regions: [],
         region: null,
+        serverRef: null,
         allowCrossRegion: false,
         creating: false,
     };
@@ -64,6 +65,8 @@
             summaryRegionFallback: $("runtime-summary-region-fallback"),
             minecraftNotice: $("minecraft-runtime-notice"),
             minecraftEula: $("minecraft-eula-accepted"),
+            votifierOption: $("votifier-creation-option"),
+            votifierEnabled: $("votifier-creation-enabled"),
             submit: $("create-instance-submit"),
             message: $("customer-message"),
         };
@@ -208,7 +211,8 @@
         const mods = Boolean(types.mod);
         const plugins = Boolean(types.plugin);
         const modpacks = Boolean(bundles.modpack);
-        const hasVotifierPort = ports.some((port) => normalize(port?.name) === "votifier");
+        const optionalPorts = Array.isArray(runtime?.network?.on_demand_ports) ? runtime.network.on_demand_ports : [];
+        const hasVotifierPort = [...ports, ...optionalPorts].some((port) => normalize(port?.name) === "votifier");
         let votifierMode = "";
         if (hasVotifierPort && mods && plugins) votifierMode = "Mod/Plugin";
         else if (hasVotifierPort && plugins) votifierMode = "Plugin";
@@ -312,6 +316,7 @@
         state.placementAbortController = controller;
         const generation = ++state.placementRequestGeneration;
         const previousRegionId = state.region?.id || null;
+        const previousServerRef = state.serverRef;
         const isCurrentRequest = () => (
             generation === state.placementRequestGeneration
             && String(state.runtime?.id || "").trim() === runtimeId
@@ -321,6 +326,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         renderRegions();
         updateSummary();
 
@@ -335,6 +341,8 @@
             state.region = previousRegionId
                 ? state.regions.find((region) => region.id === previousRegionId) || null
                 : null;
+            state.serverRef = state.region?.servers?.some(server => server.ref === previousServerRef)
+                ? previousServerRef : null;
             state.placementLoading = false;
             state.placementReady = state.regions.length > 0;
             renderRegions();
@@ -366,6 +374,8 @@
         el.summaryStep.hidden = true;
         el.minecraftNotice.hidden = true;
         if (el.minecraftEula) el.minecraftEula.checked = false;
+        if (el.votifierEnabled) el.votifierEnabled.checked = false;
+        if (el.votifierOption) el.votifierOption.hidden = true;
         el.version.replaceChildren(new Option("Selecione…", ""));
         el.build.replaceChildren(new Option("Selecione…", ""));
         el.submit.disabled = true;
@@ -393,6 +403,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         state.allowCrossRegion = false;
 
         const el = elements();
@@ -534,6 +545,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         renderRegions();
         renderEditions();
         renderDistributions();
@@ -589,6 +601,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         renderRegions();
         renderDistributions();
         elements().buildStep.hidden = true;
@@ -770,20 +783,83 @@
         return region.display_label || [region.name, region.country_code].filter(Boolean).join(" - ") || region.id || "Região";
     }
 
+    function countryFlag(code) {
+        const normalized = String(code || "").trim().toUpperCase();
+        return /^[A-Z]{2}$/.test(normalized)
+            ? [...normalized].map(letter => String.fromCodePoint(127397 + letter.charCodeAt(0))).join("")
+            : "";
+    }
+
+    function serverLocationLabel(region, server) {
+        const code = String(server.country_code || region.country_code || "").trim().toUpperCase();
+        let countryName = "";
+        try {
+            if (/^[A-Z]{2}$/.test(code)) {
+                countryName = new Intl.DisplayNames(["pt-BR"], {type: "region"}).of(code) || "";
+            }
+        } catch (_error) { /* Use the reported name below. */ }
+        countryName = countryName || server.country_name || region.country_name || region.name || code || "Localização";
+        const stateName = String(server.state_name || server.state_code || region.state_name || region.state_code || "").trim();
+        const latency = server.latency_ms ?? region.latency_ms;
+        const latencyText = latency !== null && latency !== undefined && Number.isFinite(Number(latency))
+            ? `Ping estimado ~${Math.round(Number(latency))} ms`
+            : "Ping indisponível";
+        // Only the best Agent in the globally recommended region has this badge.
+        const recommended = region.recommended === true && server.recommended === true;
+        return [
+            [countryFlag(code), countryName].filter(Boolean).join(" "),
+            stateName,
+            latencyText,
+            recommended ? "(recomendado)" : "",
+        ].filter(Boolean).join(" · ");
+    }
+
     function renderRegions() {
         const el = elements();
-        const placeholder = state.placementLoading ? "Verificando disponibilidade…" : "Selecione…";
+        const placeholder = state.placementLoading ? "Verificando servidores…" : "Selecione…";
         el.region.replaceChildren(new Option(placeholder, ""));
-        for (const region of state.regions) el.region.append(new Option(regionLabel(region), region.id));
+        const options = [];
+        for (const region of state.regions) {
+            for (const server of region.servers || []) {
+                options.push({
+                    region, server,
+                    label: serverLocationLabel(region, server),
+                    recommended: region.recommended === true && server.recommended === true,
+                });
+            }
+        }
+        options.sort((a, b) =>
+            Number(b.recommended) - Number(a.recommended)
+            || (Number(a.server.latency_ms ?? a.region.latency_ms ?? Infinity)
+                - Number(b.server.latency_ms ?? b.region.latency_ms ?? Infinity))
+            || a.label.localeCompare(b.label, "pt-BR")
+        );
+        for (const item of options) {
+            el.region.append(new Option(item.label, item.server.ref));
+        }
+        // Backward-compatible fallback for older Controllers without server choices.
+        if (!options.length) {
+            for (const region of state.regions) {
+                el.region.append(new Option(regionLabel(region), region.id));
+            }
+        }
         el.region.disabled = state.placementLoading || state.regions.length === 0;
         el.regionHelp.textContent = state.placementLoading
-            ? "Verificando a compatibilidade do runtime com os servidores disponíveis."
-            : state.regions.length
-                ? "A recomendação considera disponibilidade, compatibilidade do runtime e latência estimada. O Controller selecionará o Agent adequado."
-                : "Nenhum servidor elegível está disponível para este runtime.";
-        if (state.region && state.regions.some((region) => region.id === state.region.id)) {
+            ? "Verificando a compatibilidade dos Agents com o jogo."
+            : options.length
+                ? "Cada opção indica país, estado e ping estimado do servidor. Não é uma medição real de rede."
+                : state.regions.length
+                    ? "O Controller escolherá automaticamente o Agent disponível na região selecionada."
+                    : "Nenhum servidor elegível está disponível para este runtime.";
+        if (state.serverRef && options.some(item => item.server.ref === state.serverRef)) {
+            el.region.value = state.serverRef;
+        } else if (state.region && !options.length && state.regions.some(region => region.id === state.region.id)) {
             el.region.value = state.region.id;
         }
+    }
+
+    function requiresMinecraftJavaEula(game, edition) {
+        return normalize(game) === "minecraft" && normalize(edition) === "java";
     }
 
     function updateSummary() {
@@ -791,6 +867,12 @@
         const complete = Boolean(state.game && state.edition && state.distribution && state.runtime && state.version && state.build);
         el.regionStep.hidden = !complete;
         el.summaryStep.hidden = !complete;
+        const minecraftJavaEula = requiresMinecraftJavaEula(state.game, state.edition);
+        el.minecraftNotice.hidden = !complete || !minecraftJavaEula;
+        const canVotifier = complete && runtimeCardCapabilities(state.runtime).votifier;
+        el.votifierOption.hidden = !canVotifier;
+        if (!canVotifier) el.votifierEnabled.checked = false;
+        if (!minecraftJavaEula && el.minecraftEula) el.minecraftEula.checked = false;
         if (!complete) {
             el.submit.disabled = true;
             return;
@@ -800,9 +882,12 @@
         el.summaryRuntime.textContent = distributionLabel({id: state.distribution}, state.runtime);
         el.summaryVersion.textContent = state.version.label;
         el.summaryBuild.textContent = state.build.label;
-        el.summaryRegion.textContent = state.region ? regionLabel(state.region) : "Automática";
+        const selectedServer = state.region?.servers?.find(server => server.ref === state.serverRef);
+        el.summaryRegion.textContent = state.region
+            ? (selectedServer ? serverLocationLabel(state.region, selectedServer) : regionLabel(state.region))
+            : "Automática";
+        el.regionFallback.disabled = Boolean(selectedServer);
         el.summaryRegionFallback.textContent = state.allowCrossRegion ? "Sim" : "Não";
-        el.minecraftNotice.hidden = state.game !== "minecraft";
         el.submit.disabled = !state.placementReady;
     }
 
@@ -813,6 +898,7 @@
             contract_id: state.contract.id,
             resource_profile_id: state.contract.resource_profile_id || null,
             runtime_id: state.runtime.id,
+            votifier_enabled: Boolean(elements().votifierEnabled?.checked && runtimeCardCapabilities(state.runtime).votifier),
             edition: state.edition,
             variant: state.distribution,
             version: state.version.value,
@@ -825,7 +911,11 @@
                 version: state.version.value,
                 build: state.build.value,
             },
-            placement: {region_id: state.region?.id || null, allow_cross_region: state.allowCrossRegion},
+            placement: {
+                region_id: state.region?.id || null,
+                allow_cross_region: state.allowCrossRegion,
+                server_ref: state.serverRef || null,
+            },
         };
     }
 
@@ -874,6 +964,7 @@
         state.placementReady = false;
         state.regions = [];
         state.region = null;
+        state.serverRef = null;
         state.allowCrossRegion = false;
         resetSelectionUI();
     }
@@ -884,7 +975,16 @@
         el.version?.addEventListener("change", () => selectVersion(el.version.value).catch((e) => showMessage(e.message)));
         el.build?.addEventListener("change", () => selectBuild(el.build.value));
         el.region?.addEventListener("change", () => {
-            state.region = state.regions.find((region) => region.id === el.region.value) || null;
+            const selected = el.region.value;
+            const match = state.regions.flatMap(region =>
+                (region.servers || []).map(server => ({region, server}))
+            ).find(item => item.server.ref === selected);
+            state.region = match?.region || state.regions.find(region => region.id === selected) || null;
+            state.serverRef = match?.server.ref || null;
+            if (state.serverRef) {
+                state.allowCrossRegion = false;
+                el.regionFallback.checked = false;
+            }
             updateSummary();
         });
         el.regionFallback?.addEventListener("change", () => {
@@ -910,6 +1010,7 @@
     window.CapivaraRuntimeSelector = {
         open,
         close: closeSelector,
+        requiresMinecraftJavaEula,
         state() {
             return {
                 contract: state.contract,

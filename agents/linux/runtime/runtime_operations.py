@@ -92,6 +92,61 @@ def recover_interrupted_operations(config: dict[str, Any]) -> list[dict[str, Any
     return recovered
 
 
+def read_recovered_migration(instance_id: str) -> dict[str, Any] | None:
+    """Read a durable recovered migration record, falling back to current journal."""
+    current = read_operation(instance_id)
+    if (isinstance(current, dict) and current.get("operation") == "minecraft_serverpack_migration"
+            and current.get("status") == "recovered"):
+        return current
+    path = Path(instance_runtime.STATE_DIR) / "recovery-evidence" / (
+        f"{instance_runtime._token(instance_id, 'instance_id')}.json")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(value, dict) or value.get("instance_id") != instance_id:
+        return None
+    return value if value.get("operation") == "minecraft_serverpack_migration" and value.get("status") == "recovered" else None
+
+
+def _preserve_recovered_migration(instance_id: str, previous: dict[str, Any] | None) -> None:
+    """Preserve proof before another operation overwrites the single-slot journal.
+
+    Fail closed on persistence errors; do not allow a new operation to erase
+    the only recovered-migration evidence.
+    """
+    if (not isinstance(previous, dict) or
+            previous.get("operation") != "minecraft_serverpack_migration" or
+            previous.get("status") != "recovered" or
+            previous.get("instance_id") != instance_id):
+        return
+    path = Path(instance_runtime.STATE_DIR) / "recovery-evidence" / f"{instance_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        # Do not consult read_recovered_migration here: it prefers the current
+        # journal and could hide a different archived recovery.
+        if path.is_symlink() or not path.is_file():
+            raise RuntimeError("recovery evidence archive is unsafe")
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("recovery evidence archive is unreadable") from exc
+        if (not isinstance(existing, dict) or existing != previous):
+            raise RuntimeError("recovery evidence archive conflicts with the current journal")
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output:
+            json.dump(previous, output, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 @contextmanager
 def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, *, lock_timeout_seconds: float = 5.0) -> Iterator[dict[str, Any]]:
     agent_id = str(config.get("agent_id") or "").strip()
@@ -99,9 +154,17 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
         raise ValueError("agent_id is required")
     instance_id = instance_runtime._token(instance_id, "instance_id")
     operation = str(operation or "").strip()
-    previous = read_operation(instance_id)
     started = time.monotonic()
     with instance_lock(instance_id, operation, timeout_seconds=lock_timeout_seconds):
+        # Never overwrite evidence of a staged Server Pack transaction after a
+        # crash. Only a dedicated, separately homologated recovery routine may
+        # clear this barrier. Inspect journal under the exclusive instance lock.
+        previous = read_operation(instance_id)
+        if previous is None and _path(instance_id).exists():
+            raise RuntimeError("instance operation journal is unreadable; manual recovery required")
+        if (previous and previous.get("operation") == "minecraft_serverpack_migration"
+                and previous.get("status") in {"running", "interrupted", "failed", "finalization_pending"}):
+            raise RuntimeError("interrupted staged Minecraft migration requires manual recovery; instance operation blocked")
         journal = {
             "schema_version": 1,
             "kind": "CapivaraInstanceRuntimeOperation",
@@ -112,6 +175,7 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
             "started_at": _now(),
             "previous_interrupted": bool(previous and previous.get("status") in {"running", "interrupted"}),
         }
+        _preserve_recovered_migration(instance_id, previous)
         _atomic(_path(instance_id), journal)
         try:
             yield journal
@@ -123,10 +187,13 @@ def runtime_operation(config: dict[str, Any], instance_id: str, operation: str, 
             _atomic(_path(instance_id), journal)
             raise
         else:
-            journal["status"] = "completed"
+            # A committed migration with pending archival is not ready for
+            # another operation; retain this durable barrier.
+            if journal.get("status") not in {"finalization_pending"}:
+                journal["status"] = "completed"
             journal["finished_at"] = _now()
             journal["duration_ms"] = int((time.monotonic() - started) * 1000)
             _atomic(_path(instance_id), journal)
 
 
-__all__ = ["read_operation", "recover_interrupted_operations", "runtime_operation"]
+__all__ = ["read_recovered_migration", "read_operation", "recover_interrupted_operations", "runtime_operation"]

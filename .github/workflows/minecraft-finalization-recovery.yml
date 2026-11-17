@@ -1,0 +1,123 @@
+name: Minecraft Server Pack Finalization Recovery
+
+on:
+  pull_request:
+    paths:
+      - 'agents/common/minecraft_serverpack_migration_swap.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'agents/linux/runtime/minecraft_serverpack_*.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/provisioning_executor.py'
+      - 'agents/linux/runtime/runtime_operations.py'
+      - 'agents/windows/runtime/minecraft_serverpack_migration_transaction.py'
+      - 'agents/windows/runtime/runtime_operations.py'
+      - 'tests/minecraft_serverpack_*.py'
+      - 'tests/agent_instance_provisioning_test.py'
+      - '.github/workflows/minecraft-finalization-recovery.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'agents/common/minecraft_serverpack_migration_swap.py'
+      - 'agents/linux/privileged/materialize_instance.py'
+      - 'agents/linux/runtime/minecraft_serverpack_*.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/provisioning_executor.py'
+      - 'agents/linux/runtime/runtime_operations.py'
+      - 'agents/windows/runtime/minecraft_serverpack_migration_transaction.py'
+      - 'agents/windows/runtime/runtime_operations.py'
+      - 'tests/minecraft_serverpack_*.py'
+      - 'tests/agent_instance_provisioning_test.py'
+      - '.github/workflows/minecraft-finalization-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  crash-replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile finalization modules and privileged materializer
+        run: |
+          python3 -m py_compile \
+            agents/linux/privileged/materialize_instance.py \
+            agents/linux/runtime/agent.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_bridge.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_dispatcher.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_checkpoint.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_resume.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_completion.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_operational.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_worker.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_supervisor.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_coordinator.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_recovery.py \
+            agents/linux/runtime/minecraft_serverpack_finalization_scheduler.py \
+            agents/linux/runtime/minecraft_serverpack_migration_provisioning.py \
+            agents/linux/runtime/minecraft_serverpack_migration_transaction.py \
+            agents/linux/runtime/provisioning_executor.py \
+            agents/linux/runtime/runtime_operations.py \
+            agents/windows/runtime/minecraft_serverpack_migration_transaction.py \
+            agents/windows/runtime/runtime_operations.py
+      - name: Simulate crashes, committed journals, and idempotent recovery
+        env:
+          PYTHONPATH: .
+        run: |
+          python3 -m unittest \
+            tests.minecraft_serverpack_migration_swap_test \
+            tests.minecraft_serverpack_migration_transaction_test \
+            tests.minecraft_serverpack_windows_journal_native_test \
+            tests.minecraft_serverpack_finalization_gate_test \
+            tests.minecraft_serverpack_finalization_recovery_test \
+            tests.minecraft_serverpack_finalization_coordinator_test \
+            tests.minecraft_serverpack_finalization_scheduler_test \
+            tests.minecraft_serverpack_finalization_agent_gate_test \
+            tests.minecraft_serverpack_finalization_order_test \
+            tests.minecraft_serverpack_finalization_bridge_test \
+            tests.minecraft_serverpack_finalization_dispatcher_test \
+            tests.minecraft_serverpack_finalization_checkpoint_test \
+            tests.minecraft_serverpack_finalization_resume_test \
+            tests.minecraft_serverpack_finalization_completion_test \
+            tests.minecraft_serverpack_finalization_operational_test \
+            tests.minecraft_serverpack_finalization_worker_test \
+            tests.minecraft_serverpack_finalization_supervisor_test \
+            tests.minecraft_serverpack_finalization_subprocess_e2e_test \
+            tests.minecraft_serverpack_finalization_systemd_e2e_test \
+            tests.minecraft_serverpack_finalization_real_adapter_e2e_test \
+            tests.minecraft_serverpack_finalization_real_swap_e2e_test \
+            tests.minecraft_serverpack_privileged_real_systemd_e2e_test \
+            tests.minecraft_serverpack_finalization_worker_operational_systemd_e2e_test \
+            tests.minecraft_serverpack_finalization_full_neoforge_e2e_test -v
+      - name: Controller terminal replay and atomic pending bundle publication
+        env:
+          PYTHONPATH: .:database:dashboard:core
+        run: |
+          python3 -m unittest \
+            tests.minecraft_serverpack_pending_publication_atomic_test \
+            tests.minecraft_serverpack_controller_flow_test \
+            tests.minecraft_serverpack_finalization_http_e2e_test -v
+      - name: Agent package compatibility
+        run: bash tests/agent_package_test.sh
+      - name: Provisioning compatibility regressions
+        env:
+          PYTHONPATH: .
+        run: python3 -m unittest tests.agent_instance_provisioning_test -v
+
+
+  native-windows-transaction:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile Windows migration transaction and journal modules
+        shell: pwsh
+        run: |
+          python -m py_compile agents/windows/runtime/minecraft_serverpack_migration_transaction.py agents/windows/runtime/runtime_operations.py agents/windows/runtime/runtime_lock.py
+      - name: Verify migration parity and Windows native journal persistence
+        shell: pwsh
+        run: |
+          python -m unittest tests.minecraft_serverpack_migration_transaction_test tests.minecraft_serverpack_windows_journal_native_test -v

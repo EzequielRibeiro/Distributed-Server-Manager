@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Materialize Capivara-owned systemd units from validated local runtime specs."""
 from __future__ import annotations
-import os,subprocess
+import hashlib, os, pwd, re, stat, subprocess
 from pathlib import Path
 from typing import Any,Callable
 from adapters.systemd import unit_for_instance
@@ -49,7 +49,8 @@ def _resource_lines(spec):
   try:cpu=float(cpu)
   except (TypeError,ValueError) as exc:raise MaterializerError("invalid cpu_limit_cores") from exc
   if cpu<=0:raise MaterializerError("CPU limit must be positive")
-  lines.append(f"CPUQuota={cpu*100:.3f}%")
+  quota=f"{cpu*100:.2f}".rstrip("0").rstrip(".")
+  lines.append(f"CPUQuota={quota}%")
  pids=spec.get("pids_limit")
  if pids is not None:
   try:pids=int(pids)
@@ -71,13 +72,86 @@ def _stop_signal(spec):
  signal=str(spec.get("stop_signal") or "SIGTERM").strip().upper()
  if signal not in {"SIGTERM","SIGINT"}:raise MaterializerError("unsupported systemd stop signal")
  return signal
-def render_unit(spec):
+def _preview_readable_by_service_user(path, user):
+ """Check POSIX owner/group/mode for every ancestor and the pinned file.
+
+ This is a static preview, not a promise that Linux namespaces/ACLs will
+ behave identically; actual non-root systemd startup must still be exercised.
+ """
+ if not isinstance(user,str) or not user:
+  raise MaterializerError("invalid pinned supervisor service user")
+ try:
+  identity=pwd.getpwnam(user)
+  groups=set(os.getgrouplist(user,identity.pw_gid))
+ except (KeyError,OSError,ValueError) as exc:
+  raise MaterializerError("unknown pinned supervisor service user") from exc
+ def allowed(info, permission):
+  if identity.pw_uid==0:
+   return True
+  shift=6 if info.st_uid==identity.pw_uid else 3 if info.st_gid in groups else 0
+  return bool(info.st_mode & (permission<<shift))
+ for directory in (path.parent,*path.parent.parents):
+  try:
+   info=directory.lstat()
+  except OSError as exc:
+   raise MaterializerError("unreadable pinned supervisor ancestor") from exc
+  if not stat.S_ISDIR(info.st_mode) or not allowed(info,1):
+   raise MaterializerError("pinned supervisor not traversable by service user")
+ if not allowed(path.stat(),4):
+  raise MaterializerError("pinned supervisor not readable by service user")
+
+
+def _validated_preview_supervisor_path(pin, *, service_user):
+ """Validate a staged content-addressed path solely for offline unit rendering.
+
+ Never accept this value from an instance spec or daemon config. A caller must
+ deliberately pass it as a keyword argument to render_unit() in a fixture.
+ """
+ if not isinstance(pin, dict) or set(pin) != {"path", "sha256"}:
+  raise MaterializerError("supervisor preview requires exact pinned path and SHA-256")
+ digest=pin.get("sha256")
+ raw=pin.get("path")
+ if not isinstance(digest,str) or not re.fullmatch(r"[a-f0-9]{64}",digest):
+  raise MaterializerError("invalid pinned supervisor SHA-256")
+ if not isinstance(raw,str) or not raw.startswith("/") or any(c in raw for c in ("\x00","\r","\n"," ","\t",'"',";")):
+  raise MaterializerError("invalid pinned supervisor path")
+ path=Path(raw)
+ if str(path)!=raw or ".." in path.parts or path.name!="console-supervisor-"+digest+".py":
+  raise MaterializerError("pinned supervisor filename or canonical path mismatch")
+ if raw.startswith(("/opt/dsm/","/opt/capivara-agent/")):
+  raise MaterializerError("pinned supervisor must be outside replaceable DSM trees")
+ try:
+  parent=path.parent
+  if parent.is_symlink() or not parent.is_dir() or parent.stat().st_mode & 0o022:
+   raise MaterializerError("unsafe pinned supervisor directory")
+  if parent.stat().st_uid != os.geteuid():
+   raise MaterializerError("pinned supervisor directory owner mismatch")
+  if path.is_symlink() or not path.is_file():
+   raise MaterializerError("pinned supervisor missing or symlinked")
+  info=path.stat()
+  if (not stat.S_ISREG(info.st_mode) or info.st_nlink!=1
+      or info.st_size>1024*1024 or info.st_size==0
+      or info.st_mode & 0o222):
+   raise MaterializerError("pinned supervisor must be non-writable single-link regular file")
+  if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+   raise MaterializerError("pinned supervisor digest mismatch")
+ except OSError as exc:
+  raise MaterializerError("unable to inspect pinned supervisor") from exc
+ _preview_readable_by_service_user(path,service_user)
+ return path
+
+
+def render_unit(spec, *, pinned_supervisor_preview=None):
  instance_id=str(spec["instance_id"]);agent_id=str(spec["agent_id"]);runtime_id=str(spec["runtime_id"]);state_directory,default_state_path,private_state_path=_private_state(spec);argv=[str(spec["executable"]),*[str(x) for x in spec.get("arguments",[])]]
  game_id=str(spec.get("game_id") or "").strip().lower()
  environment_id=str(spec.get("environment_id") or "").strip().lower()
  native_console=(game_id=="minecraft" and environment_id.startswith("minecraft.java."))
+ if pinned_supervisor_preview is not None and not native_console:
+  raise MaterializerError("supervisor preview is only for Minecraft Java")
  if native_console:
-  supervisor=Path(__file__).resolve().parents[1]/"console_supervisor.py"
+  supervisor=(_validated_preview_supervisor_path(pinned_supervisor_preview, service_user=str(spec["user"]))
+              if pinned_supervisor_preview is not None else
+              Path(__file__).resolve().parents[1]/"console_supervisor.py")
   console_runtime=f"capivara-instance-console-{instance_id}"
   console_socket=f"/run/{console_runtime}/console.sock"
   argv=["/usr/bin/python3",str(supervisor),"--socket",console_socket,"--",*argv]
@@ -94,8 +168,24 @@ def render_unit(spec):
   ])
  for binding in spec.get("bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
  for binding in spec.get("runtime_bind_paths",[]):lines.append(f"BindPaths={_bind_path(binding['source'],binding['target'])}")
+ for hidden in spec.get("inaccessible_content_paths", []):
+  root=Path(_working_directory(spec["working_directory"]))
+  candidate=Path(_working_directory(hidden))
+  if any(ch in str(candidate) for ch in (":"," ","\t")) or ".." in candidate.parts:
+   raise MaterializerError("invalid inaccessible content path")
+  if candidate == root or root not in candidate.parents:
+   raise MaterializerError("inaccessible content path must be a child of working directory")
+  # Do not allow a symlink to redirect the mount outside the game's content root.
+  if root.exists() and candidate.exists():
+   try:
+    candidate.resolve(strict=True).relative_to(root.resolve(strict=True))
+   except (ValueError,OSError,RuntimeError) as exc:
+    raise MaterializerError("inaccessible content path escapes working directory") from exc
+  # Optional DLC roots may be absent after a game-data update.
+  # The systemd '-' prefix ignores missing paths rather than failing startup.
+  lines.append(f"InaccessiblePaths=-{candidate}")
  lines.extend([f"WorkingDirectory={_working_directory(spec['working_directory'])}",f"Environment={_quote(f'HOME={_RUNTIME_ACCOUNT_HOME}')}",f"Environment={_quote(f'XDG_DATA_HOME={_RUNTIME_ACCOUNT_HOME}/.local/share')}",f"Environment={_quote(f'XDG_CACHE_HOME={_RUNTIME_ACCOUNT_HOME}/.cache')}",f"Environment={_quote(f'XDG_CONFIG_HOME={_RUNTIME_ACCOUNT_HOME}/.config')}"])
- lines.extend(_credential_lines(spec));lines.extend(_resource_lines(spec))
+ lines.extend(_credential_lines(spec));lines.append("LimitCORE=0");lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
   pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]];lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
  lines.append("ExecStart="+" ".join(_quote(x) for x in argv));lines.extend(_success_exit_status_lines(spec));lines.extend(["Restart=no",f"KillSignal={_stop_signal(spec)}","TimeoutStopSec=60"])
@@ -106,6 +196,105 @@ def _owned_content(content,spec):
 class SystemdMaterializer(InstanceRuntimeMaterializer):
  name="systemd"
  def __init__(self,runner=None):self.runner=runner or _default_runner
+ def plan_pinned_transition(self, spec, *, pinned_supervisor_preview,
+                            expected_installed_sha256):
+  """Read-only owned-unit transition plan with stale-unit rollback protection.
+
+  No daemon-reload, no disk writes and no opt-in for live materialization.
+  Original unit bytes must be captured and preserved outside this method
+  before a future privileged updater could ever implement atomic switching.
+  """
+  if not isinstance(expected_installed_sha256,str) or not re.fullmatch(r"[a-f0-9]{64}",expected_installed_sha256):
+   raise MaterializerError("expected installed systemd unit digest required")
+  path=unit_path_for_spec(spec)
+  if path.is_symlink() or not path.is_file():
+   raise MaterializerError("installed systemd unit missing or unsafe")
+  try:
+   before_stat=path.lstat()
+   if (not stat.S_ISREG(before_stat.st_mode) or before_stat.st_nlink!=1 or
+       before_stat.st_size==0 or before_stat.st_size>65536):
+    raise MaterializerError("installed systemd unit is not a safe regular file")
+   original=path.read_bytes()
+   after_stat=path.lstat()
+   if (before_stat.st_dev!=after_stat.st_dev or before_stat.st_ino!=after_stat.st_ino or
+       before_stat.st_size!=after_stat.st_size or before_stat.st_mtime_ns!=after_stat.st_mtime_ns or
+       before_stat.st_ctime_ns!=after_stat.st_ctime_ns):
+    raise MaterializerError("installed systemd unit changed during inspection")
+   old_digest=hashlib.sha256(original).hexdigest()
+   if old_digest!=expected_installed_sha256:
+    raise MaterializerError("installed systemd unit changed since baseline")
+   text=original.decode("utf-8")
+  except (OSError,UnicodeError) as exc:
+   raise MaterializerError("cannot read installed unit for transition plan") from exc
+  if not _owned_content(text,spec):
+   raise MaterializerError("unowned systemd unit cannot be transitioned")
+  # Validation of service user access, SHA, and path is delegated to
+  # the already fail-closed offline renderer.
+  candidate=render_unit(spec,pinned_supervisor_preview=pinned_supervisor_preview)
+  legacy=render_unit(spec)
+  # An ownership marker alone cannot authorize replacing a drifted service.
+  # The baseline must match a known generated unit, not merely carry labels.
+  if text not in (legacy,candidate):
+   raise MaterializerError("installed unit differs from known generated baseline")
+  return {"kind":"Capivara928PinnedUnitTransitionPlan",
+          "unit":path.name,"installed_unit_sha256":old_digest,
+          "candidate_unit_sha256":hashlib.sha256(candidate.encode("utf-8")).hexdigest(),
+          "change_proposed":text!=candidate,
+          "old_unit_snapshot_required":True,
+          "retain_all_earlier_supervisor_versions":True,
+          "reinspect_active_process_identity_before_and_after":True,
+          "mode":"read_only","unit_write_permitted":False,
+          "live_no_drain_authorized":False}
+ def apply_pinned_transition_disposable(self, spec, *, pinned_supervisor_preview,
+                                    expected_installed_sha256, process_identity_observer=None):
+  """Atomic fixture-only unit switch; never authorized for production."""
+  directory=_unit_dir()
+  if (not os.environ.get("CAPIVARA_INSTANCE_SYSTEMD_DIR") or not directory.is_absolute() or
+      directory.is_symlink() or not directory.is_dir() or
+      not directory.resolve().is_relative_to(Path("/tmp"))):
+   raise MaterializerError("pinned transition requires explicit disposable systemd directory")
+  if process_identity_observer is None or not callable(process_identity_observer):
+   raise MaterializerError("disposable transition requires process identity observer")
+  identity_before=process_identity_observer()
+  if not identity_before:
+   raise MaterializerError("active process identity unavailable")
+  plan=self.plan_pinned_transition(spec,pinned_supervisor_preview=pinned_supervisor_preview,
+                                   expected_installed_sha256=expected_installed_sha256)
+  path=unit_path_for_spec(spec)
+  old=path.read_bytes()
+  candidate=render_unit(spec,pinned_supervisor_preview=pinned_supervisor_preview).encode("utf-8")
+  if not plan["change_proposed"]:
+   if process_identity_observer()!=identity_before:
+    raise MaterializerError("active process identity changed during no-op transition")
+   return {"changed":False,"live_no_drain_authorized":False,"active_process_identity_verified":True}
+  def replace(content):
+   import tempfile
+   fd,tmp=tempfile.mkstemp(prefix=".capivara-unit-",dir=directory)
+   try:
+    with os.fdopen(fd,"wb") as writer:
+     writer.write(content);writer.flush();os.fsync(writer.fileno())
+    os.chmod(tmp,0o644)
+    os.replace(tmp,path)
+   finally:
+    if os.path.exists(tmp):os.unlink(tmp)
+  if (path.is_symlink() or not path.is_file() or path.stat().st_nlink!=1 or
+      hashlib.sha256(old).hexdigest()!=expected_installed_sha256 or
+      path.read_bytes()!=old):
+   raise MaterializerError("installed systemd unit changed before replacement")
+  try:
+   replace(candidate)
+   self._reload()
+   if process_identity_observer()!=identity_before:
+    raise MaterializerError("active process identity changed during pinned transition")
+  except Exception as exc:
+   try:
+    replace(old)
+    self._reload()
+   except Exception as rollback_exc:
+    raise MaterializerError("pinned transition failed and rollback failed") from rollback_exc
+   raise MaterializerError("pinned transition failed; previous unit restored") from exc
+  return {"changed":True,"live_no_drain_authorized":False,
+          "active_process_identity_verified":True}
  def inspect(self,spec):
   path=unit_path_for_spec(spec)
   try:content=path.read_text(encoding="utf-8")

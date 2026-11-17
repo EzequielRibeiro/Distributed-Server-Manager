@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Version 22 backfill for existing Baseline v2 installs (SQLite)."""
+"""Version 23 relocation backfill after v22 evidence upgrade (SQLite)."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,20 +16,20 @@ from baseline_upgrade_engine import apply_pending_upgrades, latest_upgrade_versi
 
 
 class AgentRelocationUpgradeTest(unittest.TestCase):
-    def test_upgrade_v21_to_v22_creates_only_relocation_tables(self):
+    def test_upgrade_v22_to_v23_creates_only_relocation_tables(self):
         with tempfile.TemporaryDirectory() as temp:
             backend = create_backend(DatabaseConfig(driver="sqlite", database=str(Path(temp) / "db.sqlite")))
             backend.initialize()
             with backend.connect() as c:
                 c.execute("DROP TABLE instance_agent_relocation_port_holds")
                 c.execute("DROP TABLE instance_agent_relocations")
-                c.execute("DELETE FROM baseline_upgrades WHERE version=22")
+                c.execute("DELETE FROM baseline_upgrades WHERE version=23")
                 c.commit()
             with backend.transaction() as c:
                 upgrades = apply_pending_upgrades(
-                    backend, c, installed_checksum="different-baseline-checksum-after-v21",
+                    backend, c, installed_checksum="different-baseline-checksum-after-v22",
                 )
-                self.assertEqual(upgrades, [22])
+                self.assertEqual(upgrades, [23])
             with backend.connect() as c:
                 rows = [r["name"] for r in c.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' "

@@ -41,6 +41,28 @@ class ServerUpdateRepository:
    if state:s.execute(f'UPDATE instance_update_state SET agent_id={ph},provider={ph},target_key={ph},updated_at={ph} WHERE instance_id={ph}',(aid,provider,target,now,iid))
    else:s.execute('INSERT INTO instance_update_state(instance_id,agent_id,provider,target_key,state,rollback_supported,updated_at) '+f'VALUES ({self.dialect.parameters(7)})',(iid,aid,provider,target,'unknown',0,now))
   return self.snapshot(iid)
+ def record_read_only_probe(self,instance_id:str,detail:dict[str,Any])->dict[str,Any]:
+  """Persist an independent Steam observation without scheduling any game operation."""
+  iid=str(instance_id or '').strip()
+  if not iid or not isinstance(detail,dict) or detail.get('provider')!='steam' or detail.get('state') not in ('up_to_date','update_available','unknown'):
+   raise ValueError('invalid read-only Steam observation')
+  installed=_short(detail.get('installed_version'));available=_short(detail.get('available_version'))
+  if not available or not available.isdecimal() or (installed is not None and not installed.isdecimal()):
+   raise ValueError('invalid Steam build identifiers')
+  if detail['state']=='up_to_date' and installed!=available:raise ValueError('inconsistent Steam build state')
+  if detail['state']=='update_available' and (not installed or installed==available):raise ValueError('inconsistent Steam build state')
+  if detail['state']=='unknown' and installed is not None:raise ValueError('inconsistent Steam build state')
+  now=utc_timestamp();ph=self.dialect.placeholder
+  with self.session(transaction=True) as session:
+   row=session.execute(f'SELECT s.target_key,s.active_job_id,p.selection_json FROM instance_update_state s JOIN instance_update_policy p ON p.instance_id=s.instance_id WHERE s.instance_id={ph}',(iid,)).fetchone()
+   if not row:raise KeyError(iid)
+   if str(row['target_key'])!=str(detail.get('app_id')):raise ValueError('Steam application mismatch')
+   selection=json.loads(row['selection_json']) if row.get('selection_json') else {}
+   expected_branch=str((selection.get('install') or {}).get('branch') or selection.get('branch') or 'public')
+   if str(detail.get('branch') or 'public')!=expected_branch:raise ValueError('Steam branch mismatch')
+   if row['active_job_id']:raise RuntimeError('update operation active')
+   session.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},last_checked_at={ph},last_error_code=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,str(detail['state']),now,now,iid))
+  return {'instance_id':iid,'installed_version':installed,'available_version':available,'state':detail['state'],'last_checked_at':now,'source':'read_only_steam_probe'}
  def set_content_policy(self,*,instance_id:str,content_id:str,mode:Any,requested_by:str|None=None)->dict[str,Any]:
   iid=str(instance_id or '').strip();cid=str(content_id or '').strip();normalized=normalize_content_update_mode(mode);ph=self.dialect.placeholder;now=utc_timestamp()
   if not iid or not cid or len(iid)>191 or len(cid)>191:raise ValueError('valid instance_id and content_id are required')
@@ -97,6 +119,21 @@ class ServerUpdateRepository:
   with self.session() as s:return s.execute(f'SELECT p.*,s.agent_id,s.state,s.last_checked_at,s.active_job_id,s.available_version,s.installed_version FROM instance_update_policy p JOIN instance_update_state s ON s.instance_id=p.instance_id WHERE p.instance_id={ph}',(instance_id,)).fetchone()
  def _selection(self,row,operation:str)->dict[str,Any]:
   selection=json.loads(row['selection_json']);selection=dict(selection);selection['_server_update']={'instance_id':str(row['instance_id']),'operation':operation,'backup_before_update':bool(row['backup_before_update'])};return selection
+ def queue_customer_operation(self,instance_id:str,*,action:str,requested_by:str)->dict[str,Any]:
+  """Atomically reserve the customer action before dispatching its Agent job."""
+  if action not in {'check','update'}:raise ValueError('invalid update action')
+  iid=str(instance_id or '').strip();ph=self.dialect.placeholder;reservation='reserved-'+uuid.uuid4().hex
+  with self.session(transaction=True) as s:
+   state_guard=f" AND state={ph}" if action=='update' else ''
+   args=(reservation,utc_timestamp(),iid)+(('update_available',) if action=='update' else ())
+   cursor=s.execute(f'UPDATE instance_update_state SET active_job_id={ph},updated_at={ph} WHERE instance_id={ph} AND active_job_id IS NULL{state_guard}',args)
+   if int(getattr(cursor,'rowcount',0) or 0)!=1:raise ValueError('Atualização indisponível ou outra operação em andamento.')
+  try:
+   if action=='check':return {'job':self.queue_check(iid,requested_by=requested_by)}
+   return self.queue_update(iid,requested_by=requested_by,trigger_type='manual')
+  except Exception:
+   with self.session(transaction=True) as s:s.execute(f'UPDATE instance_update_state SET active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',(utc_timestamp(),iid,reservation))
+   raise
  def queue_check(self,instance_id:str,*,requested_by:str='scheduler')->dict[str,Any]:
   row=self._row(instance_id)
   if not row:raise KeyError(instance_id)
@@ -125,13 +162,42 @@ class ServerUpdateRepository:
   iid=str(meta.get('instance_id') or '');operation=str(meta.get('operation') or '');status=str(result.get('status') or '');now=utc_timestamp();ph=self.dialect.placeholder
   if status=='running':return
   if status=='failed':
-   with self.session(transaction=True) as s:s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph}',('update_failed' if operation=='update' else 'unknown','agent_operation_failed',now,iid));s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed','agent_operation_failed',now,now,job['job_id']))
+   with self.session(transaction=True) as s:
+    cursor=s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',('update_failed' if operation=='update' else 'unknown','agent_operation_failed',now,iid,str(job['job_id'])))
+    if cursor.rowcount==1 and operation=='update':s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed','agent_operation_failed',now,now,job['job_id']))
    return
   detail=result.get('update_status') if operation=='check' else result.get('update_status_after')
-  if not isinstance(detail,dict):detail={}
-  state=str(detail.get('state') or ('updated' if operation=='update' else 'unknown'));installed=detail.get('installed_version');available=detail.get('available_version')
+  # A generic Agent completion is not proof that the instance was updated.
+  # Fail closed and retain the last observed versions for subsequent diagnosis.
+  installed=detail.get('installed_version') if isinstance(detail,dict) else None
+  available=detail.get('available_version') if isinstance(detail,dict) else None
+  valid_builds=(isinstance(installed,str) and installed.isdecimal()
+                and isinstance(available,str) and available.isdecimal())
+  valid_activation=(result.get('activation')=='atomic-swap'
+                    and result.get('readiness')=='healthy')
+  valid_noop=(result.get('readiness')=='unchanged'
+              and not result.get('activation')
+              and isinstance(detail,dict)
+              and detail.get('state')=='up_to_date')
+  valid_update=(operation=='update' and valid_builds
+                and installed==available
+                and detail.get('state')=='up_to_date'
+                and (valid_activation or valid_noop))
+  valid_check=(operation=='check' and isinstance(detail,dict)
+               and detail.get('state') in ('up_to_date','update_available','unknown')
+               and isinstance(available,str) and available.isdecimal()
+               and (installed is None or isinstance(installed,str) and installed.isdecimal()))
+  if not (valid_update or valid_check):
+   error='invalid_update_result' if operation=='update' else 'invalid_check_result'
+   with self.session(transaction=True) as s:
+    cursor=s.execute(f'UPDATE instance_update_state SET state={ph},last_error_code={ph},active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',('update_failed' if operation=='update' else 'unknown',error,now,iid,str(job['job_id'])))
+    if cursor.rowcount==1 and operation=='update':
+     s.execute(f'UPDATE instance_update_runs SET status={ph},error_code={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',('failed',error,now,now,job['job_id']))
+   return
+  state=str(detail['state'])
   with self.session(transaction=True) as s:
-   s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid))
+   cursor=s.execute(f'UPDATE instance_update_state SET installed_version={ph},available_version={ph},state={ph},rollback_supported={ph},last_checked_at={ph},last_error_code=NULL,active_job_id=NULL,updated_at={ph} WHERE instance_id={ph} AND active_job_id={ph}',(installed,available,'updated' if operation=='update' else state,1 if detail.get('rollback_supported') else 0,now,now,iid,str(job['job_id'])))
+   if cursor.rowcount != 1:return
    if operation=='update':s.execute(f'UPDATE instance_update_runs SET installed_after={ph},status={ph},completed_at={ph},updated_at={ph} WHERE game_data_job_id={ph}',(installed,'completed',now,now,job['job_id']))
   if operation=='check' and state=='update_available':
    row=self._row(iid);policy={'mode':row['mode'],'timezone':row['timezone'],'weekdays':json.loads(row['weekdays_json']),'start_time':row['start_time'],'duration_minutes':row['duration_minutes'],'check_interval_seconds':row['check_interval_seconds'],'backup_before_update':bool(row['backup_before_update'])}

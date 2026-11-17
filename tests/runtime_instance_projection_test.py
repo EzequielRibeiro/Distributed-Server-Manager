@@ -4,6 +4,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -142,7 +143,8 @@ class RuntimeProjectionTest(unittest.TestCase):
                             "desired_state": "running",
                             "observed_state": "running",
                             "health": "healthy",
-                            "reported_at": "2026-09-09T10:38:07Z",
+                            "reported_at": datetime.now(timezone.utc).isoformat(),
+                            "reported_at": datetime.now(timezone.utc).isoformat(),
                         }
                     ]
                 },
@@ -183,6 +185,7 @@ class RuntimeProjectionTest(unittest.TestCase):
                             "instance_id": "cli-000001-dayz-001",
                             "observed_state": "running",
                             "health": "healthy",
+                            "reported_at": datetime.now(timezone.utc).isoformat(),
                         }
                     ]
                 },
@@ -205,7 +208,7 @@ class RuntimeProjectionTest(unittest.TestCase):
             legacy = self.make_legacy(root, records, legacy_status="online", create_resource=True)
             self.install(
                 legacy,
-                {"agent-horizon-server": [{"instance_id": "cli-000001-dayz-001", "observed_state": "stopped", "health": "offline"}]},
+                {"agent-horizon-server": [{"instance_id": "cli-000001-dayz-001", "observed_state": "stopped", "health": "offline", "reported_at": datetime.now(timezone.utc).isoformat()}]},
                 {"agent-horizon-server": "online"},
             )
 

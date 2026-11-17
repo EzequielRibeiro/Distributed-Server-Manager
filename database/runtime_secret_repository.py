@@ -187,7 +187,9 @@ class RuntimeSecretOutbox:
             path, meta = item
             if str(report.get("target_id") or "") != str(meta.get("instance_id") or ""):
                 continue
-            # One-time delivery: final reports always destroy the Controller copy.
+            # Retain failed deliveries for retry; destroy only after applied.
+            if str(report.get("status") or "").strip().lower() != "applied":
+                continue
             for candidate in (path, _private_root() / f"{revision}.secret"):
                 try:
                     if candidate.is_symlink():

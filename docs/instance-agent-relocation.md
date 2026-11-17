@@ -61,7 +61,7 @@ lease so overlapping heartbeats do not issue duplicate phase transitions.
 
 - The HTTP mutation endpoint is **disabled unless**
   `CAPIVARA_ENABLE_AGENT_RELOCATION=1`. Preview and history remain available.
-- Validate the new additive Baseline v22 schema on
+- Validate the new additive Baseline v23 schema on
   **PostgreSQL**, MySQL/MariaDB and SQLite; don't assume SQLite tests cover all.
 - Verify Linux privileged systemd helper/polkit and Windows SCM startup-mode
   restoration with **two actual hosts**; simulated Windows tests are not native

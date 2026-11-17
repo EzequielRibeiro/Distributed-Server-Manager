@@ -133,14 +133,16 @@ def _network_variable_template(value: object) -> str:
 def _catalog_network_exposure(runtime: dict[str, Any]) -> list[dict[str, str]]:
     network = runtime.get("network") if isinstance(runtime.get("network"), dict) else {}
     result: list[dict[str, str]] = []
-    for item in network.get("ports") or []:
-        if not isinstance(item, dict):
-            continue
-        result.append({
-            "name": str(item.get("name") or ""),
-            "protocol": str(item.get("protocol") or "").lower(),
-            "exposure": str(item.get("exposure") or "none").lower(),
-        })
+    for group, optional in (("ports", False), ("on_demand_ports", True)):
+        for item in network.get(group) or []:
+            if not isinstance(item, dict):
+                continue
+            result.append({
+                "name": str(item.get("name") or ""),
+                "protocol": str(item.get("protocol") or "").lower(),
+                "exposure": str(item.get("exposure") or "none").lower(),
+                **({"optional": True} if optional else {}),
+            })
     return result
 
 
@@ -343,7 +345,9 @@ def validate_policy(payload: dict[str, Any], *, runtime_id: str) -> dict[str, An
             raise ValueError("invalid network exposure protocol")
         if scope not in {"public", "private", "none"}:
             raise ValueError("invalid network exposure scope")
-        normalized_exposure.append({"name": name, "protocol": protocol, "exposure": scope})
+        if "optional" in item and item["optional"] is not True:
+            raise ValueError("optional network exposure must be true")
+        normalized_exposure.append({"name": name, "protocol": protocol, "exposure": scope, **({"optional": True} if item.get("optional") else {})})
         seen_exposure.add(name)
     result["network_exposure"] = normalized_exposure
     result["server_settings"] = _normalize_server_settings(result.get("server_settings") or {})

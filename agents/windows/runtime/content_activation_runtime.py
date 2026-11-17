@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 try:
- from content_activation_dayz import DayZContentActivationError,project_dayz_activation
+ from content_activation_dayz import DayZContentActivationError,project_dayz_activation,project_dayz_community_maps
 except ModuleNotFoundError as exc:
  if exc.name != "content_activation_dayz":raise
  import importlib.util
@@ -21,6 +21,7 @@ except ModuleNotFoundError as exc:
  _dayz_module=importlib.util.module_from_spec(_dayz_spec);_dayz_spec.loader.exec_module(_dayz_module)
  DayZContentActivationError=_dayz_module.DayZContentActivationError
  project_dayz_activation=_dayz_module.project_dayz_activation
+ project_dayz_community_maps=_dayz_module.project_dayz_community_maps
 try:
  from content_activation_palworld import PalworldContentActivationError,materialize_palworld_settings,project_palworld_activation
 except ModuleNotFoundError as exc:
@@ -34,7 +35,7 @@ except ModuleNotFoundError as exc:
  materialize_palworld_settings=_palworld_module.materialize_palworld_settings
  project_palworld_activation=_palworld_module.project_palworld_activation
 try:
- from content_activation_minecraft import MinecraftContentActivationError,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
+ from content_activation_minecraft import MinecraftContentActivationError,assert_no_unverified_bundle_removal,materialize_minecraft_files,materialize_minecraft_overrides,project_minecraft_bundle_overrides,project_minecraft_files
 except ModuleNotFoundError as exc:
  if exc.name != "content_activation_minecraft":raise
  import importlib.util
@@ -43,6 +44,7 @@ except ModuleNotFoundError as exc:
  if _minecraft_spec is None or _minecraft_spec.loader is None:raise
  _minecraft_module=importlib.util.module_from_spec(_minecraft_spec);_minecraft_spec.loader.exec_module(_minecraft_module)
  MinecraftContentActivationError=_minecraft_module.MinecraftContentActivationError
+ assert_no_unverified_bundle_removal=_minecraft_module.assert_no_unverified_bundle_removal
  materialize_minecraft_files=_minecraft_module.materialize_minecraft_files
  materialize_minecraft_overrides=_minecraft_module.materialize_minecraft_overrides
  project_minecraft_bundle_overrides=_minecraft_module.project_minecraft_bundle_overrides
@@ -87,7 +89,14 @@ def project_runtime_spec(spec:dict[str,Any],snapshot:dict[str,Any])->dict[str,An
  game_id=str(result.get("game_id") or "").strip().lower();dayz_enabled=not (game_id=="dayz" and result.get("dayz_content_enabled") is False)
  if game_id=="dayz":result["dayz_content_enabled"]=dayz_enabled
  if game_id=="dayz" and not dayz_enabled:base=[value for value in base if not str(value).strip().lower().startswith(("-mod=","-servermod="))]
- dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz"] if dayz_enabled else []
+ dayz_map_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()=="map"]
+ required_dayz={str(value).strip() for value in result.get("dayz_required_content_ids") or [] if str(value).strip()}
+ dayz_entries=[entry for entry in entries if _adapter(entry)=="dayz" and str(entry.get("content_type") or "").strip().lower()!="map" and (dayz_enabled or str(entry.get("content_id") or "") in required_dayz)]
+ try:
+  community_missions=project_dayz_community_maps(result,dayz_map_entries) if game_id=="dayz" else []
+ except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
+ if community_missions:result["content_dayz_community_missions"]=community_missions
+ else:result.pop("content_dayz_community_missions",None)
  if dayz_entries:
   try:dayz=project_dayz_activation(result,dayz_entries)
   except DayZContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
@@ -118,6 +127,8 @@ def _configuration_root(spec:dict[str,Any])->Path:
  return Path(str(raw)).resolve()
 
 def materialize_content_activation(spec:dict[str,Any])->list[str]:
+ try:assert_no_unverified_bundle_removal(spec)
+ except MinecraftContentActivationError as exc:raise ContentRuntimeActivationError(str(exc)) from exc
  props=spec.get("content_configuration_properties") if isinstance(spec.get("content_configuration_properties"),list) else []
  root=_configuration_root(spec);written=[]
  for item in props:

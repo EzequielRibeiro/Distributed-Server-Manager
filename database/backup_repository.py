@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -102,10 +104,56 @@ class BackupRepository:
             try:return [dict(row) for row in session.execute(f"SELECT * FROM backup_policy_revisions WHERE policy_id={self.ph} ORDER BY revision DESC",(policy_id,)).fetchall()]
             finally:session.close()
 
+    def _protect_age_retention_delete(self, instance_id, backup_id):
+        """Reject manual/scheduled deletion of the last confirmed or young backup.
+
+        The opt-in is the same instance-scoped flag as automatic retention. When
+        disabled, existing customer deletion behavior remains unchanged.
+        """
+        days = self._age_retention_days(instance_id)
+        if days is None:
+            return
+        target_id = str(backup_id or "").strip()
+        if not target_id:
+            raise BackupValidationError("backup ID is required for age-retained deletion")
+        jobs = self.list_effective_jobs(instance_id=instance_id, limit=2000)
+        confirmed = [
+            row for row in jobs
+            if row.get("action") == "create"
+            and row.get("status") == "completed"
+            and row.get("backup_id")
+            and row.get("sha256")
+            and row.get("artifact_path")
+        ]
+        if not confirmed:
+            raise BackupValidationError("cannot delete without a confirmed replacement backup")
+        protected_id = str(confirmed[0]["backup_id"])
+        if protected_id == target_id:
+            raise BackupValidationError("cannot delete the last confirmed backup")
+        matching = next(
+            (row for row in confirmed if str(row["backup_id"]) == target_id),
+            None,
+        )
+        if matching is None:
+            raise BackupValidationError("refusing deletion of an unconfirmed backup")
+        completed_at = _datetime(matching.get("completed_at"))
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        if completed_at is None or completed_at >= cutoff:
+            raise BackupValidationError("backup is protected by the retention window")
+        if any(
+            row.get("action") == "delete"
+            and row.get("status") in {"pending", "running"}
+            and str(row.get("backup_id") or "") == target_id
+            for row in jobs
+        ):
+            raise BackupValidationError("backup deletion is already queued")
+
     def request(self, instance_id, *, action="create", backup_id=None, reason="manual", requested_by=None):
         require_unlocked(self.backend, instance_id, requested_by=requested_by)
         instance=self._instance(instance_id)
         if instance is None:raise BackupValidationError("instance does not exist")
+        if str(action).strip().lower()=="delete":
+            self._protect_age_retention_delete(instance_id, backup_id)
         aid=str(dict(instance).get("agent_id") or "");policy=self.get_policy(instance_id);command_id=str(uuid.uuid4());now=utc_now()
         with self.backend.transaction() as connection:
             session=AlertSession(self.backend,connection)
@@ -376,14 +424,99 @@ class BackupRepository:
             created.append(self.request(policy["instance_id"],action="create",reason="schedule",requested_by="scheduler"))
         return created
 
+    @staticmethod
+    def _age_retention_days(instance_id):
+        """Opt-in, instance-scoped age policy. Never fall back to destructive
+        count retention when a requested policy is malformed.
+        """
+        days_raw = os.environ.get("DSM_BACKUP_RETENTION_DAYS", "").strip()
+        allow_raw = os.environ.get("DSM_BACKUP_RETENTION_INSTANCE_IDS", "").strip()
+        if not days_raw and not allow_raw:
+            return None
+        if not days_raw or not allow_raw or not days_raw.isascii() or not days_raw.isdecimal():
+            raise ValueError("age backup retention requires days and instance allowlist")
+        days = int(days_raw)
+        if not 1 <= days <= 365:
+            raise ValueError("backup retention days must be between 1 and 365")
+        instance_ids = [value.strip() for value in allow_raw.split(",")]
+        if not all(re.fullmatch(r"[A-Za-z0-9._-]{1,191}", value) for value in instance_ids):
+            raise ValueError("invalid backup retention instance allowlist")
+        return days if instance_id in instance_ids else None
+
+    def _single_operational_cleanup(self, instance_id, completed_backup_id):
+        """Queue deletions only after a replacement backup is persisted.
+
+        Never delete unmanaged/orphan archives and never delete the most recent
+        completed backup. Agent delete operations are idempotent.
+        """
+        # Preserve all existing backups by default. Automatic deletion requires
+        # an explicit operator opt-in independent of retention schedule flags.
+        if os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1":
+            return []
+        schedule = self._workspace_schedule(instance_id)
+        if not schedule or not bool(schedule.get("keep_single_operational")):
+            return []
+        days = self._age_retention_days(instance_id)
+        jobs = self.list_jobs(instance_id=instance_id, limit=2000)
+        completed = [job for job in jobs if job.get("action") == "create"
+                     and job.get("status") == "completed" and job.get("backup_id")
+                     and job.get("sha256") and job.get("artifact_path")]
+        if not completed or str(completed[0]["backup_id"]) != str(completed_backup_id):
+            return []  # fail closed if a newer completed backup exists
+        # A 14-day policy keeps EVERY completed backup in the window; an
+        # unparseable timestamp is always retained, never guessed stale.
+        # The latest confirmed backup is protected even beyond the window.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+        excluded = {str(job["backup_id"]) for job in jobs
+                    if job.get("action") == "delete"
+                    and job.get("status") in {"pending", "running", "completed"}
+                    and job.get("backup_id")}
+        queued = []
+        for job in completed[1:]:
+            old_id = str(job["backup_id"])
+            if old_id == str(completed_backup_id) or old_id in excluded:
+                continue
+            if cutoff is not None:
+                completed_at = _datetime(job.get("completed_at"))
+                if completed_at is None or completed_at >= cutoff:
+                    continue
+            queued.append(self.request(
+                instance_id, action="delete", backup_id=old_id,
+                reason="age_retention" if days else "operational_retention",
+                requested_by="scheduler"))
+            excluded.add(old_id)
+        return queued
+
     def commands_for_agent(self, agent_id):
         self.schedule_due(agent_id);output=[]
         for job in reversed(self.list_jobs(agent_id=agent_id,status="pending",limit=100)):
-            policy=self.get_policy(job["instance_id"])
+            # Old queued retention jobs must not bypass the new opt-in gate.
+            if (str(job.get("action") or "").lower() == "delete"
+                    and str(job.get("reason") or "").strip().lower() != "manual"
+                    and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
+                continue
+            policy=dict(self.get_policy(job["instance_id"]) or {})
+            if str(job.get("action") or "") == "create":
+                # #1066: pass the contractual limit in the Agent command.
+                # The Agent also verifies its own RuntimeSpec limit and uses
+                # the smaller one, so a stale Controller cannot grant space.
+                from instance_workspace_repository import InstanceWorkspaceRepository
+                workspace = InstanceWorkspaceRepository(self.backend)
+                resolved = workspace.workspace_policy(str(job["instance_id"]))
+                limit = resolved.get("storage_limit_bytes")
+                if limit is not None:
+                    policy["storage_limit_bytes"] = int(limit)
+            schedule=self._workspace_schedule(job["instance_id"])
+            if schedule is not None:
+                policy["keep_single_operational"] = bool(schedule.get("keep_single_operational"))
+            days = self._age_retention_days(job["instance_id"])
+            if days is not None:
+                policy["retention_days"] = days  # explicit no-count-prune contract to Agent
             if str(job.get("reason") or "").startswith("agent_relocation:") and job["action"] == "create":
-                policy={**(policy or {}), "enabled":True, "mode":"full", "consistency":"stopped",
-                        "compression":"gzip", "include_paths":[], "exclude_paths":[], "retention_count":7}
-            output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy or {},"requested_by":job.get("requested_by")})
+                policy.update({"enabled":True,"mode":"full","consistency":"stopped",
+                               "compression":"gzip","include_paths":[],"exclude_paths":[],"retention_count":7})
+            output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy,"requested_by":job.get("requested_by")})
+
         return output
 
     def record_agent_state(self, agent_id, reports: list[Mapping[str, Any]]):
@@ -399,6 +532,17 @@ class BackupRepository:
                     backup_id=report.get("backup_id") or dict(row).get("backup_id")
                     session.execute(f"UPDATE backup_jobs SET backup_id={self.ph},status={self.ph},size_bytes={self.ph},sha256={self.ph},artifact_path={self.ph},started_at={self.ph},completed_at={self.ph},last_error={self.ph},updated_at={self.ph} WHERE command_id={self.ph}",(backup_id,status,report.get("size_bytes"),report.get("sha256"),report.get("artifact_path"),report.get("started_at") or (now if status=="running" else None),report.get("completed_at") or (now if status in {"completed","failed"} else None),report.get("last_error"),now,command_id));accepted+=1
             finally:session.close()
+        # Physical deletion runs only after the successful create report is
+        # committed. An interrupted/failed backup never replaces its predecessor.
+        for report in reports[:500]:
+            if str(report.get("status") or "").lower() != "completed":
+                continue
+            job = self.get_job(str(report.get("command_id") or ""))
+            if (not job or job.get("agent_id") != agent_id or job.get("action") != "create"
+                or job.get("status") != "completed" or not job.get("backup_id")
+                or not job.get("sha256") or not job.get("artifact_path")):
+                continue
+            self._single_operational_cleanup(job["instance_id"], job["backup_id"])
         return accepted
 
 

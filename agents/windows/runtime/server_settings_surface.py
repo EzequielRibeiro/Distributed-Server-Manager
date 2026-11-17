@@ -111,11 +111,15 @@ def _secret(key:str)->bool:
  compact=re.sub(r"[^a-z0-9_]","",str(key).lower())
  return any(word in compact for word in _SECRET_WORDS)
 
-def _platform_managed(key:str)->bool:
+def _platform_managed(key:str,src:dict[str,Any]|None=None)->bool:
  raw=str(key or "").strip();compact=re.sub(r"[^a-z0-9]","",raw.lower())
  common={"port","serverport","serverportv6","queryport","steamqueryport","rconport","publicport","bindport","gameport","gamequeryport","a2sport","steamport","bindaddress","publicaddress","serverip","bindip","publicip","endpointaddudp","endpointaddtcp"}
  if compact in common:return True
  if re.search(r"(?:^|[_-])(bind|public|query|steam|rcon|a2s|game)[_-]?port$",raw,re.I):return True
+ context=src if isinstance(src,dict) else {}
+ runtime_id=str(context.get("runtime_id") or "").strip().lower()
+ path=str(context.get("path") or "").strip().replace("\\","/").lower()
+ if runtime_id.startswith("dayz") and path=="serverdz.cfg" and compact=="template":return True
  return False
 
 def _field_id(path:str,fmt:str,locator:str)->str:
@@ -202,8 +206,8 @@ def _field(path:str,fmt:str,locator:str,key:str,value:Any,src:dict[str,Any],*,se
  boolean_values=semantic.get("boolean_values") if isinstance(semantic.get("boolean_values"),dict) else None
  if kind=="boolean" and boolean_values and not isinstance(value,bool):
   text=str(value);value=True if text==str(boolean_values.get("true")) else False if text==str(boolean_values.get("false")) else _coerce(value,"boolean")
- secret=_secret(key);managed=str(key).lower() in src.get("managed",set()) or _platform_managed(key)
- editable=not managed and not secret
+ secret=_secret(key);managed=str(key).lower() in src.get("managed",set()) or _platform_managed(key,src)
+ editable=not managed and (not secret or (bool(decl.get("customer_editable")) and str(decl.get("secret_policy") or "").strip().lower()=="customer-editable"))
  item={"id":_field_id(path,fmt,f"{locator}#{occurrence}"),"path":path,"format":fmt,"key":key,"label":str(decl.get("label") or key),"type":kind,"editable":editable,"managed":managed,"secret":secret,"logical_id":logical,"section":section,"occurrence":occurrence,"locator":locator,"quoted":raw_quote}
  if decl.get("description"):item["description"]=decl["description"]
  for name in ("min","max","max_length","allowed","step","group","requires_argument","safe_relative_path","max_items","boolean_values"):
@@ -402,6 +406,7 @@ def normalize_dynamic_values(spec:dict[str,Any],values:dict[str,Any],*,player_li
  for fid,raw in values.items():
   field=by_id.get(str(fid))
   if field is None:raise PermissionError("unknown or catalog-owned server setting")
+  if str(field.get("key") or "").lower()=="disable3rdperson" and "perspective_mode" in (spec.get("server_settings_values") or {}):raise PermissionError("DayZ perspective is managed by perspective_mode")
   if not field.get('editable'):raise PermissionError("server setting is managed by Capivara")
   value=_coerce(raw,str(field.get('type') or 'string'))
   if field.get("min") is not None and isinstance(value,(int,float)) and value<float(field["min"]):raise ValueError("server setting below minimum")
@@ -533,8 +538,11 @@ def materialize_dynamic_values(spec:dict[str,Any])->list[str]:
  if not values:return []
  surface=observed_surface(spec);by_id={f['id']:f for f in surface['fields'] if not f.get('logical_id') and f.get('path')!='@launcher'};root=_root(spec);written=[]
  for fid,value in values.items():
+  # Stored legacy flag is removed during DayZ 1.30 migration; skip its old field ID.
+  if "perspective_mode" in (spec.get("server_settings_values") or {}) and str(fid)==_field_id("serverDZ.cfg","semicolon","disable3rdPerson#0"):continue
   field=by_id.get(str(fid))
   if field is None:raise PermissionError("dynamic server setting no longer exists")
+  if str(field.get("key") or "").lower()=="disable3rdperson" and "perspective_mode" in (spec.get("server_settings_values") or {}):continue # Legacy saved value is superseded by the structured setting.
   if not field.get('editable'):raise PermissionError("dynamic server setting is managed by Capivara")
   _apply_field(root,field,_coerce(value,str(field.get('type') or 'string')));written.append(str(field['path']))
  return sorted(set(written))

@@ -11,8 +11,35 @@ from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
 from operation_diagnostic_repository import OperationDiagnosticRepository
+from minecraft_serverpack_pending_publication import publish_pending_serverpack_bundle
 from storage_pool_placement import select_storage_pool
 from universal_event_repository import UniversalEventRepository
+
+def reject_pending_minecraft_finalization(result: dict[str, Any]) -> None:
+    """Never allow an outer completed envelope to override pending migration evidence.
+
+    Reused by the canonical repository and the dashboard sanitizing adapter.
+    Older completed migrations without these pending markers retain legacy
+    compatibility; this does not replace Agent-side SHA/readiness attestation.
+    """
+    migration_evidence = result.get("minecraft_serverpack_migration")
+    if not isinstance(migration_evidence, dict):
+        return
+    phase = str(migration_evidence.get("status") or "").lower()
+    trace = migration_evidence.get("trace")
+    finalization = migration_evidence.get("finalization")
+    finalization_status = (
+        str(finalization.get("status") or "").lower()
+        if isinstance(finalization, dict) else ""
+    )
+    if (phase in {"finalization_pending", "restart_pending"}
+            or (isinstance(trace, list)
+                and any(item in {"finalization_pending", "restart_pending"}
+                        for item in trace if isinstance(item, str))
+                and "finalized" not in trace)
+            or finalization_status in {"finalization_pending", "restart_pending"}):
+        raise ValueError("Minecraft Server Pack finalization is still pending")
+
 
 ACTIVE_STATES = {"queued", "delivered", "running"}
 FINAL_STATES = {"completed", "failed"}
@@ -179,7 +206,7 @@ class AgentInstanceProvisioningRepository:
             provisioning_id = "instance-provision-" + uuid.uuid4().hex
             instance_request = {
                 "instance_id": instance_id, "agent_id": agent_id, "game_id": str(instance["game_id"] or ""),
-                "environment_id": environment_id, "runtime_id": str(instance["runtime_id"] or instance_id),
+                "environment_id": environment_id, "runtime_id": environment_id,
                 "desired_state": desired_state,
             }
             if storage_decision is not None:
@@ -313,9 +340,13 @@ class AgentInstanceProvisioningRepository:
             raise PermissionError("provisioning operation belongs to another Agent")
         if str(result.get("instance_id") or "") != str(current.get("instance_id") or ""):
             raise ValueError("provisioning result instance_id mismatch")
+        if str(current.get("status") or "").lower() in FINAL_STATES:
+            return current
         status = str(result.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
+        if status == "completed":
+            reject_pending_minecraft_finalization(result)
         try:
             progress = int(result.get("progress", current.get("progress", 0)))
         except (TypeError, ValueError):
@@ -328,16 +359,54 @@ class AgentInstanceProvisioningRepository:
         request = current.get("request") if isinstance(current.get("request"), dict) else {}
         configuration = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
         minecraft_update = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
+        minecraft_migration = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
+        minecraft_change = minecraft_migration or minecraft_update
         ph = self.dialect.placeholder
+        running_updated = True
         with self.session(transaction=True) as session:
+            # Serialize terminal result publication with the terminal state.
+            # A replay must not publish a second bundle or emit another event.
+            if status in FINAL_STATES:
+                claim = session.execute(
+                    "UPDATE agent_instance_provisioning SET "
+                    f"updated_at={ph} WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
+                    (now, provisioning_id),
+                )
+                if int(getattr(claim, "rowcount", 0) or 0) != 1:
+                    row = session.execute(
+                        f"SELECT * FROM agent_instance_provisioning WHERE provisioning_id={ph}",
+                        (provisioning_id,),
+                    ).fetchone()
+                    if row is None or str(row["status"] or "") not in FINAL_STATES:
+                        raise RuntimeError("provisioning terminal claim lost without terminal state")
+                    terminal = dict(row)
+                    for source, target in (("request_json", "request"), ("result_json", "result")):
+                        raw = terminal.pop(source, None)
+                        try:
+                            terminal[target] = json.loads(raw) if raw else None
+                        except (TypeError, ValueError):
+                            terminal[target] = None
+                    return terminal
+            if status == "completed":
+                publication = publish_pending_serverpack_bundle(
+                    backend=self.backend,
+                    session=session,
+                    request=request,
+                    result=result,
+                    instance_id=str(current.get("instance_id") or ""),
+                )
+                if publication is not None:
+                    result = {**result, "controller_bundle_publication": publication}
+                    payload = json.dumps(result, separators=(",", ":"), sort_keys=True)
             if status == "running":
-                session.execute(
+                update = session.execute(
                     "UPDATE agent_instance_provisioning SET "
                     f"status={ph},current_step={ph},progress={ph},result_json={ph},last_error={ph},"
                     f"started_at=CASE WHEN started_at IS NULL THEN {ph} ELSE started_at END,updated_at={ph} "
                     f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
                     (status, current_step, progress, payload, error, now, now, provisioning_id),
                 )
+                running_updated = int(getattr(update, "rowcount", 0) or 0) == 1
             else:
                 session.execute(
                     "UPDATE agent_instance_provisioning SET "
@@ -345,17 +414,30 @@ class AgentInstanceProvisioningRepository:
                     f"completed_at={ph},updated_at={ph} WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
                     (status, current_step, progress, payload, error, now, now, provisioning_id),
                 )
-                if status == "completed" and minecraft_update:
-                    target_version = str(minecraft_update.get("target_version") or "").strip()
-                    target_build = str(minecraft_update.get("target_build") or "").strip()
+                if status == "completed" and minecraft_change:
+                    target_version = str(minecraft_change.get("target_version") or "").strip()
+                    target_build = str(minecraft_change.get("target_build") or "").strip()
                     if not target_version or not target_build:
                         raise ValueError("Minecraft version update result is missing target identity")
-                    session.execute(
-                        f"UPDATE instances SET game_version={ph},build_id={ph},updated_at={ph} WHERE id={ph}",
-                        (target_version, target_build, now, str(current.get("instance_id") or "")),
-                    )
+                    if minecraft_migration:
+                        target_runtime_id = str(minecraft_migration.get("target_runtime_id") or "").strip()
+                        if not target_runtime_id:
+                            raise ValueError("Minecraft runtime migration result is missing target runtime")
+                        session.execute(
+                            f"UPDATE instances SET runtime_id={ph},game_version={ph},build_id={ph},updated_at={ph} WHERE id={ph}",
+                            (target_runtime_id, target_version, target_build, now, str(current.get("instance_id") or "")),
+                        )
+                    else:
+                        session.execute(
+                            f"UPDATE instances SET game_version={ph},build_id={ph},updated_at={ph} WHERE id={ph}",
+                            (target_version, target_build, now, str(current.get("instance_id") or "")),
+                        )
 
         state = self.snapshot(provisioning_id)
+        if status == "running" and not running_updated:
+            # A terminal result won while this progress update was in flight.
+            # Do not emit a misleading late progress event.
+            return state
         diagnostic = None
         if status == "failed":
             technical_detail = result.get("technical_detail") or result.get("root_cause") or result.get("error")
@@ -389,15 +471,23 @@ class AgentInstanceProvisioningRepository:
         elif status == "completed":
             completed_data = {"message": "Provisionamento da instância concluído com sucesso."}
             event_type = "INSTANCE_PROVISION_COMPLETED"
-            if minecraft_update:
+            if minecraft_change:
                 completed_data.update({
-                    "from_version": minecraft_update.get("from_version"),
-                    "from_build": minecraft_update.get("from_build"),
-                    "target_version": minecraft_update.get("target_version"),
-                    "target_build": minecraft_update.get("target_build"),
-                    "message": "Atualização da versão do Minecraft concluída com sucesso.",
+                    "from_version": minecraft_change.get("from_version"),
+                    "from_build": minecraft_change.get("from_build"),
+                    "target_version": minecraft_change.get("target_version"),
+                    "target_build": minecraft_change.get("target_build"),
                 })
-                event_type = "MINECRAFT_VERSION_UPDATE_COMPLETED"
+                if minecraft_migration:
+                    completed_data.update({
+                        "from_runtime_id": minecraft_migration.get("from_runtime_id"),
+                        "target_runtime_id": minecraft_migration.get("target_runtime_id"),
+                        "message": "Migração do runtime Minecraft concluída com sucesso.",
+                    })
+                    event_type = "MINECRAFT_RUNTIME_MIGRATION_COMPLETED"
+                else:
+                    completed_data["message"] = "Atualização da versão do Minecraft concluída com sucesso."
+                    event_type = "MINECRAFT_VERSION_UPDATE_COMPLETED"
             self._publish_event(event_id=f"{provisioning_id}:completed", event_type=event_type,
                 severity="info", provisioning=state, data=completed_data)
         else:
@@ -409,15 +499,23 @@ class AgentInstanceProvisioningRepository:
                 "current_step": current_step,
             }
             failed_type = "INSTANCE_PROVISION_FAILED"
-            if minecraft_update:
+            if minecraft_change:
                 failed_data.update({
-                    "from_version": minecraft_update.get("from_version"),
-                    "from_build": minecraft_update.get("from_build"),
-                    "target_version": minecraft_update.get("target_version"),
-                    "target_build": minecraft_update.get("target_build"),
-                    "message": "A atualização da versão do Minecraft falhou; a seleção persistida anterior foi preservada.",
+                    "from_version": minecraft_change.get("from_version"),
+                    "from_build": minecraft_change.get("from_build"),
+                    "target_version": minecraft_change.get("target_version"),
+                    "target_build": minecraft_change.get("target_build"),
                 })
-                failed_type = "MINECRAFT_VERSION_UPDATE_FAILED"
+                if minecraft_migration:
+                    failed_data.update({
+                        "from_runtime_id": minecraft_migration.get("from_runtime_id"),
+                        "target_runtime_id": minecraft_migration.get("target_runtime_id"),
+                        "message": "A migração do runtime Minecraft falhou; o runtime persistido anterior foi preservado.",
+                    })
+                    failed_type = "MINECRAFT_RUNTIME_MIGRATION_FAILED"
+                else:
+                    failed_data["message"] = "A atualização da versão do Minecraft falhou; a seleção persistida anterior foi preservada."
+                    failed_type = "MINECRAFT_VERSION_UPDATE_FAILED"
             self._publish_event(event_id=f"{provisioning_id}:failed", event_type=failed_type,
                 severity="critical", provisioning=state, data=failed_data)
             if self._steam_auth_required(error, result):

@@ -59,6 +59,28 @@ broadcast_client.resolve_adapter=lambda record:BroadcastAdapter();bcast=broadcas
 rec=runtime_reconciler.reconcile_all(config,force=True)[0];assert rec["status"]=="healthy",rec
 e=emit_runtime_event(Path(instance_runtime.STATE_DIR),"TEST",agent_id="win-agent-one",instance_id="srv-one");events=read_runtime_events(Path(instance_runtime.STATE_DIR));assert e["event_id"] in {x["event_id"] for x in events};acknowledge_runtime_events(Path(instance_runtime.STATE_DIR),[e["event_id"]]);assert e["event_id"] not in {x["event_id"] for x in read_runtime_events(Path(instance_runtime.STATE_DIR))}
 ''',state_dir=state);self.assertEqual(r.returncode,0,r.stderr)
+ def test_minecraft_failed_boot_restores_previous_world_and_runtime(self):
+  with tempfile.TemporaryDirectory() as state:
+   r=self._run('''
+from pathlib import Path
+from unittest.mock import patch
+import provisioning_executor as executor
+config={"agent_id":"win-agent-one"}
+request={"provisioning_id":"p-minecraft","instance_id":"srv-one","agent_id":"win-agent-one","instance":{"instance_id":"srv-one","game_id":"minecraft","runtime_id":"minecraft.java.paper"},"desired_state":"stopped","configuration":{"minecraft_version_update":{"backup_before_update":True}},"ports":{"game":{"port":25565,"protocol":"tcp"}},"content":{"action":"install","selection":{"game":"minecraft"}}}
+previous={"instance_id":"srv-one","runtime_id":"minecraft.java.youer","desired_state":"stopped"}
+calls=[]
+def materialize(config,spec):
+ calls.append(("materialize",spec["runtime_id"]));return {"operation":{"changed":True}}
+def reconcile(config,instance_id):
+ if not any(x[0]=="restore" for x in calls):raise RuntimeError("simulated Minecraft boot failure")
+ calls.append(("reconcile",instance_id));return {"observed_state":"stopped"}
+with patch.object(executor.instance_runtime,"get_instance",return_value=previous),patch.object(executor.instance_runtime,"status",return_value={"observed_state":"stopped"}),patch.object(executor,"execute_game_data",return_value={"provider":"test","game":"minecraft","version":"1.21.4","target_path":"C:/mock"}),patch.object(executor.game_runtime,"build_runtime_spec",return_value={"instance_id":"srv-one","runtime_id":"minecraft.java.paper","adapter":"windows-process","profile":"minecraft","profile_version":1,"desired_state":"stopped"}),patch.object(executor.runtime_materialization,"materialize",side_effect=materialize),patch.object(executor.runtime_materialization,"reconcile",side_effect=reconcile),patch.object(executor,"create_backup",return_value={"backup_id":"snapshot-1","sha256":"b"*64,"size_bytes":1024}),patch.object(executor,"restore_backup",side_effect=lambda config,cmd:calls.append(("restore",cmd["backup_id"]))),patch.object(executor,"_event"):
+ result=executor.execute(config,request,Path("result.json"))
+assert result["status"]=="failed",result
+assert calls[:3]==[("materialize","minecraft.java.paper"),("materialize","minecraft.java.youer"),("restore","snapshot-1")],calls
+assert "previous_world_restored" in result["compensation"] and "previous_runtime_restored" in result["compensation"],result
+''',state_dir=state)
+   self.assertEqual(r.returncode,0,r.stderr)
  def test_dayz_profile_and_end_to_end_provisioning(self):
   with tempfile.TemporaryDirectory() as state,tempfile.TemporaryDirectory() as install:
    root=Path(install);executable=root/"DayZServer_x64.exe";executable.write_bytes(b"test");(root/"serverDZ.cfg").write_text('hostname="test";\n',encoding="utf-8");mission=root/"mpmissions"/"dayzOffline.chernarusplus"/"db";mission.mkdir(parents=True);(mission/"messages.xml").write_text("<messages/>\n",encoding="utf-8")

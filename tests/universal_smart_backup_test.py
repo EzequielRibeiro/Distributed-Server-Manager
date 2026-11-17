@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import os
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 import sys,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
@@ -50,6 +53,94 @@ class BackupRepositoryTest(unittest.TestCase):
   self.assertFalse(any(job.get("action")=="create" and job.get("backup_id")=="backup-deleted" for job in effective))
   self.assertTrue(any(job.get("action")=="delete" and job.get("status")=="completed" for job in effective))
   self.assertIsNone(self.repo.latest_completed("instance-c5"))
+ def _completed_backup(self, backup_id, *, days_ago=0, valid=True):
+  command=self.repo.request("instance-c5",action="create",requested_by="test")
+  timestamp=(datetime.now(timezone.utc)-timedelta(days=days_ago)).isoformat()
+  self.assertEqual(1,self.repo.record_agent_state("agent-c5",[{
+   "command_id":command["command_id"],"status":"completed",
+   "backup_id":backup_id,"size_bytes":42,
+   "sha256":"a"*64 if valid else None,
+   "artifact_path":f"/tmp/fixture/{backup_id}.tar.gz",
+   "completed_at":timestamp,
+  }]))
+  return command
+
+ def test_age_retention_manual_delete_keeps_latest_and_recent(self):
+  self._completed_backup("old-17d",days_ago=17)
+  self._completed_backup("young-4d",days_ago=4)
+  self._completed_backup("latest")
+  with patch.dict(os.environ,{
+   "DSM_BACKUP_RETENTION_DAYS":"14",
+   "DSM_BACKUP_RETENTION_INSTANCE_IDS":"instance-c5",
+  }):
+   for blocked in ("latest","young-4d","missing"):
+    with self.subTest(backup_id=blocked),self.assertRaises(BackupValidationError):
+     self.repo.request("instance-c5",action="delete",backup_id=blocked,
+                       reason="customer",requested_by="customer")
+   self.assertEqual(3,len([j for j in self.repo.list_jobs(instance_id="instance-c5")
+                           if j["action"]=="create"]))
+   queued=self.repo.request("instance-c5",action="delete",backup_id="old-17d",
+                            reason="age_retention",requested_by="scheduler")
+   self.assertEqual("pending",queued["status"])
+   with self.assertRaisesRegex(BackupValidationError,"already queued"):
+    self.repo.request("instance-c5",action="delete",backup_id="old-17d",
+                      reason="customer",requested_by="customer")
+   self.assertEqual(1,self.repo.record_agent_state("agent-c5",[{
+    "command_id":queued["command_id"],"status":"completed",
+    "backup_id":"old-17d",
+   }]))
+   self.assertEqual("latest",self.repo.latest_completed("instance-c5")["backup_id"])
+
+ def test_age_retention_never_deletes_only_confirmed_backup(self):
+  self._completed_backup("only-good",days_ago=40)
+  self._completed_backup("incomplete-new",valid=False)
+  with patch.dict(os.environ,{
+   "DSM_BACKUP_RETENTION_DAYS":"14",
+   "DSM_BACKUP_RETENTION_INSTANCE_IDS":"instance-c5",
+  }):
+   with self.assertRaisesRegex(BackupValidationError,"last confirmed"):
+    self.repo.request("instance-c5",action="delete",backup_id="only-good",
+                      requested_by="customer")
+   with self.assertRaisesRegex(BackupValidationError,"unconfirmed"):
+    self.repo.request("instance-c5",action="delete",backup_id="incomplete-new",
+                      requested_by="customer")
+  self.assertEqual([],[j for j in self.repo.list_jobs(instance_id="instance-c5")
+                       if j["action"]=="delete"])
+
+ def test_age_retention_delete_guard_scoped_and_fail_closed(self):
+  self._completed_backup("recent",days_ago=2)
+  with patch.dict(os.environ,{
+   "DSM_BACKUP_RETENTION_DAYS":"14",
+   "DSM_BACKUP_RETENTION_INSTANCE_IDS":"other-instance",
+  }):
+   job=self.repo.request("instance-c5",action="delete",backup_id="recent",
+                         requested_by="customer")
+   self.assertEqual("pending",job["status"])
+  with patch.dict(os.environ,{
+   "DSM_BACKUP_RETENTION_DAYS":"14",
+   "DSM_BACKUP_RETENTION_INSTANCE_IDS":"",
+  }):
+   with self.assertRaises(ValueError):
+    self.repo.request("instance-c5",action="delete",backup_id="recent",
+                      requested_by="customer")
+
+ def test_age_retention_http_rejects_last_confirmed_delete(self):
+  self.repo.put_policy(self.policy())
+  self._completed_backup("last-valid",days_ago=31)
+  with patch.dict(os.environ,{
+   "DSM_BACKUP_RETENTION_DAYS":"14",
+   "DSM_BACKUP_RETENTION_INSTANCE_IDS":"instance-c5",
+  }):
+   status,response=dispatch_backup_post(
+    "/api/backups",{"operation":"delete","instance_id":"instance-c5",
+                    "backup_id":"last-valid"},
+    user={"role":"admin","username":"root"},backend=self.backend)
+  self.assertEqual(400,status)
+  self.assertEqual("invalid_request",response["error"])
+  self.assertIn("last confirmed",response["message"])
+  self.assertFalse(any(job["action"]=="delete"
+                       for job in self.repo.list_jobs(instance_id="instance-c5")))
+
  def test_manual_restore_delete_and_http_rbac(self):
   self.repo.put_policy(self.policy());admin={"role":"admin","username":"root"}
   status,created=dispatch_backup_post("/api/backups",{"operation":"create","instance_id":"instance-c5"},user=admin,backend=self.backend);self.assertEqual(status,202);self.assertEqual(created["action"],"create")

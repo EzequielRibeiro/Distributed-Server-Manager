@@ -33,6 +33,29 @@ class MinecraftJavaInstanceIsolationTest(unittest.TestCase):
     a=profile.build_runtime_spec({**base,"instance_id":"mc-a"},context(install,state_a,runtime_id));b=profile.build_runtime_spec({**base,"instance_id":"mc-b"},context(install,state_b,runtime_id))
     self.assertEqual(a["seed_directories"][0]["source"],str(install));self.assertEqual(b["seed_directories"][0]["source"],str(install));self.assertTrue(a["seed_directories"][0]["overlay"]);self.assertTrue(b["seed_directories"][0]["overlay"]);self.assertNotEqual(a["working_directory"],b["working_directory"]);self.assertNotEqual(a["seed_directories"][0]["target"],b["seed_directories"][0]["target"]);self.assertTrue(a["working_directory"].startswith(str(state_a)));self.assertTrue(b["working_directory"].startswith(str(state_b)));self.assertEqual(a["files_root"],a["working_directory"]);self.assertEqual(b["files_root"],b["working_directory"])
 
+ def test_vanilla_without_votifier_is_valid_on_both_agents(self):
+  for platform in ("linux", "windows"):
+   registry=load_module(platform,"registry")
+   with tempfile.TemporaryDirectory() as td:
+    root=Path(td).resolve();install=root/"seed";install.mkdir()
+    vanilla=registry.resolve_profile({"game_id":"minecraft","environment_id":"minecraft.java.vanilla"})
+    context_without_voter=context(install,root/"state","minecraft.java.vanilla")
+    del context_without_voter["ports"]["votifier"]
+    instance={"agent_id":"agent-1","instance_id":"mc-a","game_id":"minecraft","environment_id":"minecraft.java.vanilla"}
+    spec=vanilla.build_runtime_spec(instance,context_without_voter)
+    self.assertNotIn("votifier",spec["ports"])
+    legacy=context(install,root/"state","minecraft.java.vanilla")
+    self.assertIn("votifier",vanilla.build_runtime_spec(instance,legacy)["ports"])
+    legacy["ports"]["votifier"]["protocol"]="udp"
+    with self.assertRaises(Exception):
+     vanilla.build_runtime_spec(instance,legacy)
+    paper=registry.resolve_profile({"game_id":"minecraft","environment_id":"minecraft.java.paper"})
+    paper_instance={**instance,"environment_id":"minecraft.java.paper"}
+    missing=context(install,root/"state","minecraft.java.paper")
+    del missing["ports"]["votifier"]
+    spec=paper.build_runtime_spec(paper_instance,missing)
+    self.assertNotIn("votifier",spec["ports"])
+
  def test_bedrock_never_falls_into_java_profile(self):
   linux=load_module("linux","registry")
   bedrock=linux.resolve_profile({"game_id":"minecraft","environment_id":"minecraft.bedrock.vanilla"})

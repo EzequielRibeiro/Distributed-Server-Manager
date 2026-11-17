@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT=Path(__file__).resolve().parents[1]
+COMMON=ROOT/"agents/common"
+if str(COMMON) not in sys.path:sys.path.insert(0,str(COMMON))
+spec=importlib.util.spec_from_file_location(
+ "minecraft_serverpack_migration_runtime_stage",
+ COMMON/"minecraft_serverpack_migration_runtime_stage.py")
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+
+
+def loader_seed(root:Path,version:str)->Path:
+ root.mkdir(parents=True)
+ libs=root/"libraries/net/neoforged/neoforge"/version
+ libs.mkdir(parents=True)
+ args=(libs/"unix_args.txt")
+ args.write_text(f"--loader {version}\n")
+ (root/"capivara-launch.args").write_bytes(args.read_bytes())
+ (root/"user_jvm_args.txt").write_text("-Xmx2G\n")
+ (root/"eula.txt").write_text("eula=true\n")
+ (root/"run.sh").write_text("# inert\n")
+ (root/"run.bat").write_text("@rem inert\n")
+ return root
+
+
+class RuntimeStageTest(unittest.TestCase):
+ def make_active(self,root:Path)->Path:
+  active=loader_seed(root/"active","26.1.2.94")
+  (active/"mods").mkdir();(active/"mods/old.jar").write_bytes(b"old")
+  (active/"world").mkdir();(active/"world/level.dat").write_bytes(b"WORLD")
+  (active/"config").mkdir();(active/"config/customer.toml").write_text("keep=true\n")
+  (active/"kubejs").mkdir();(active/"kubejs/local.js").write_text("// keep\n")
+  (active/"server.properties").write_text("motd=customer\n")
+  return active
+
+ def make_pack(self,root:Path)->Path:
+  pack=root/"pack";(pack/"mods").mkdir(parents=True)
+  (pack/"mods/new-a.jar").write_bytes(b"a")
+  (pack/"mods/new-b.jar").write_bytes(b"b")
+  (pack/"server-overrides/config").mkdir(parents=True)
+  (pack/"server-overrides/config/default.toml").write_text("replace=false\n")
+  return pack
+
+ def test_candidate_replaces_loader_and_mods_and_preserves_existing_configs(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (active/"mods").chmod(0o770)
+   result=module.build_staged_runtime(
+    active_runtime=active,target_loader_seed=seed,serverpack_stage=pack,
+    destination=root/"candidate",target_loader_version="26.1.2.109")
+   candidate=root/"candidate"
+   self.assertEqual(result["mods"],2)
+   self.assertEqual((candidate/"mods").stat().st_mode & 0o777,0o770)
+   self.assertTrue(result["existing_config_preserved"])
+   self.assertTrue(result["world_preserved"])
+   self.assertFalse(result["activated"])
+   self.assertEqual((candidate/"world/level.dat").read_bytes(),b"WORLD")
+   self.assertEqual((candidate/"config/customer.toml").read_text(),"keep=true\n")
+   self.assertEqual((candidate/"config/default.toml").read_text(),"replace=false\n")
+   self.assertEqual(result["new_override_files"],1)
+   self.assertEqual((candidate/"kubejs/local.js").read_text(),"// keep\n")
+   self.assertEqual((candidate/"server.properties").read_text(),"motd=customer\n")
+   self.assertFalse((candidate/"mods/old.jar").exists())
+   self.assertTrue((candidate/"mods/new-a.jar").is_file())
+   self.assertFalse((candidate/"server-overrides").exists())
+   self.assertTrue((candidate/"libraries/net/neoforged/neoforge/26.1.2.109").is_dir())
+   self.assertFalse((candidate/"libraries/net/neoforged/neoforge/26.1.2.94").exists())
+
+ def test_declared_kubejs_override_preserves_old_scripts_and_world(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   override=pack/"server-overrides/kubejs";override.mkdir(parents=True)
+   (override/"startup_scripts").mkdir();(override/"startup_scripts/new.js").write_text("// new\n")
+   result=module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   candidate=root/"candidate"
+   self.assertEqual((candidate/"kubejs/local.js").read_text(),"// keep\n")
+   self.assertEqual((candidate/"kubejs/startup_scripts/new.js").read_text(),"// new\n")
+   self.assertEqual((candidate/"world/level.dat").read_bytes(),b"WORLD")
+   self.assertEqual((candidate/"server.properties").read_text(),"motd=customer\n")
+   self.assertTrue(result["existing_config_preserved"])
+
+ def test_preserves_owner_and_mode_of_private_world_and_log_files(self):
+  if os.geteuid()!=0:
+   self.skipTest("ownership regression requires root")
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (active/"logs").mkdir();(active/"logs/latest.log").write_text("hello\n")
+   for path in (active/"world/level.dat",active/"logs/latest.log"):
+    path.chmod(0o600);os.chown(path,996,988)
+   module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   for rel in ("world/level.dat","logs/latest.log"):
+    src=(active/rel).stat();dst=(root/"candidate"/rel).stat()
+    self.assertEqual((src.st_uid,src.st_gid,src.st_mode&0o777),
+                     (dst.st_uid,dst.st_gid,dst.st_mode&0o777))
+
+ def test_new_pack_mods_inherit_service_identity_under_root(self):
+  if os.geteuid()!=0:
+   self.skipTest("privileged ownership test requires root")
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   os.chown(active/"mods",996,988)
+   (active/"mods").chmod(0o770)
+   module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   for rel in ("mods", "mods/new-a.jar", "mods/new-b.jar"):
+    obj=root/"candidate"/rel
+    self.assertEqual((obj.stat().st_uid,obj.stat().st_gid),(996,988),rel)
+    if obj.is_file():
+     self.assertFalse(obj.stat().st_mode & 0o111,rel)
+
+ def test_pack_config_inherits_existing_service_user_acl(self):
+  if not shutil.which("setfacl"):
+   self.skipTest("POSIX ACL tooling unavailable")
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   uid=os.getuid()
+   for path in (active/"config",active/"config/customer.toml"):
+    subprocess.run(["setfacl","-m",f"u:{uid}:rwX",str(path)],check=True)
+   (pack/"server-overrides/config/customer.toml").write_text("replaced=true\n")
+   module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   self.assertEqual((root/"candidate/config/customer.toml").read_text(),"keep=true\n")
+   for name in ("customer.toml","default.toml"):
+    path=root/"candidate/config"/name
+    self.assertIn("system.posix_acl_access",os.listxattr(path))
+    self.assertEqual(os.getxattr(path,"system.posix_acl_access")[:4],b"\x02\x00\x00\x00")
+    with path.open("a") as stream:
+     stream.write("# writable by ACL principal\n")
+
+ def test_new_config_directory_inherits_instance_access_when_absent(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   shutil.rmtree(active/"config")
+   result=module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+    serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   self.assertEqual((root/"candidate/config/default.toml").read_text(),"replace=false\n")
+   self.assertEqual(result["new_override_files"],1)
+
+ def test_conflicting_override_type_fails_without_changing_live_runtime(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (pack/"server-overrides/config/customer.toml").mkdir()
+   (pack/"server-overrides/config/customer.toml"/"incompatible.txt").write_text("bad")
+   with self.assertRaisesRegex(module.MinecraftServerPackRuntimeStageError,"type conflicts"):
+    module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+     serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   self.assertEqual((active/"config/customer.toml").read_text(),"keep=true\n")
+   self.assertFalse((root/"candidate").exists())
+
+ def test_wrong_loader_seed_or_existing_destination_fails_closed(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.108");pack=self.make_pack(root)
+   with self.assertRaises(module.MinecraftServerPackRuntimeStageError):
+    module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+     serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+   destination=root/"exists";destination.mkdir()
+   seed2=loader_seed(root/"new2","26.1.2.109")
+   with self.assertRaisesRegex(module.MinecraftServerPackRuntimeStageError,"must not already exist"):
+    module.build_staged_runtime(active_runtime=active,target_loader_seed=seed2,
+     serverpack_stage=pack,destination=destination,target_loader_version="26.1.2.109")
+
+ def test_symlink_in_active_tree_is_rejected(self):
+  with tempfile.TemporaryDirectory() as name:
+   root=Path(name);active=self.make_active(root);seed=loader_seed(root/"new","26.1.2.109");pack=self.make_pack(root)
+   (active/"bad-link").symlink_to(active/"world")
+   with self.assertRaisesRegex(module.MinecraftServerPackRuntimeStageError,"symbolic link"):
+    module.build_staged_runtime(active_runtime=active,target_loader_seed=seed,
+     serverpack_stage=pack,destination=root/"candidate",target_loader_version="26.1.2.109")
+
+
+if __name__=="__main__":unittest.main()

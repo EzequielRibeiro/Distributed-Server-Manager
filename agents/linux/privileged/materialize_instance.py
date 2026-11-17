@@ -9,6 +9,7 @@ import os
 import pwd
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,7 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 from catalog_runtime_policy import materialize_network_properties, materialize_templates
+from content_activation_runtime import materialize_content_activation
 from minecraft_rcon_secret import materialize_password as materialize_minecraft_rcon_password
 from palworld_admin_secret import materialize_admin_password
 from server_settings_runtime import materialize_server_settings
@@ -26,6 +28,14 @@ from server_settings_surface import materialize_dynamic_values
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 from storage_pools import resolve_storage_pool
+
+COMMON_DIR = INSTALL_ROOT / "common"
+if not COMMON_DIR.is_dir():
+    COMMON_DIR = Path(__file__).resolve().parents[2] / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_DIR))
+
+from minecraft_committed_content_guard import refuse_content_sync_during_serverpack_transaction
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -159,6 +169,222 @@ def _within(root: Path, value: str, label: str) -> Path:
     return path
 
 
+def _serverpack_migration_root(spec: dict[str, Any], config: dict[str, Any], *, allow_missing_active: bool = False) -> Path:
+    """Resolve a Minecraft Java instance root without trusting request paths.
+
+    All privileged migration phases must derive their root from the Agent's
+    configured storage pool, not an arbitrary path supplied by the Worker.
+    """
+    if str(spec.get("game_id") or "").lower() != "minecraft":
+        raise RuntimeError("Server Pack migration requires Minecraft")
+    if not str(spec.get("environment_id") or "").lower().startswith("minecraft.java."):
+        raise RuntimeError("Server Pack migration requires Minecraft Java")
+    instance_id = _token(spec["instance_id"])
+    storage_root = _instance_storage_root(config, spec.get("storage_pool_id"))
+    expected = storage_root / instance_id
+    configured = Path(str(spec.get("instance_state_root") or ""))
+    if not configured.is_absolute() or configured != expected:
+        raise RuntimeError("Server Pack migration instance root differs from storage policy")
+    if expected.is_symlink() or not expected.is_dir():
+        raise RuntimeError("Server Pack migration instance root is unsafe")
+    if expected.resolve() != configured.resolve():
+        raise RuntimeError("Server Pack migration instance root resolves outside storage policy")
+    # Never permit root operations through a symlink at a storage boundary.
+    if storage_root.is_symlink() or not storage_root.is_dir():
+        raise RuntimeError("Server Pack migration storage root is unsafe")
+    active = expected / "runtime"
+    if active.is_symlink() or (not active.is_dir() and not (allow_missing_active and not active.exists())):
+        raise RuntimeError("Server Pack migration active runtime is unsafe")
+    if Path(str(spec.get("working_directory") or "")) != active:
+        raise RuntimeError("Server Pack migration working directory differs from storage policy")
+    return expected
+
+
+def _serverpack_migration_paths(spec: dict[str, Any], config: dict[str, Any], *, allow_missing_active: bool = False) -> dict[str, Path]:
+    """Bind privileged migration writes to fixed, instance-local filenames."""
+    root = _serverpack_migration_root(spec, config, allow_missing_active=allow_missing_active)
+    control = root / ".dsm"
+    if control.is_symlink() or (control.exists() and not control.is_dir()):
+        raise RuntimeError("Server Pack migration control directory is unsafe")
+    stage = root / "runtime.migration-stage"
+    rollback = root / "runtime.migration-rollback"
+    failed = root / "runtime.migration-failed"
+    for label, path in (("stage", stage), ("rollback", rollback), ("failed", failed)):
+        if path.is_symlink():
+            raise RuntimeError(f"Server Pack migration {label} directory is unsafe")
+    journal = control / "minecraft-serverpack-migration.json"
+    journal_temp = control / ".minecraft-serverpack-migration.json.tmp"
+    for path in (journal, journal_temp):
+        if path.is_symlink():
+            raise RuntimeError("Server Pack migration journal path is unsafe")
+    return {
+        "root": root, "active": root / "runtime", "control": control,
+        "stage": stage, "rollback": rollback, "failed": failed,
+        "journal": journal, "journal_temp": journal_temp,
+    }
+
+
+def _serverpack_require_inactive(instance_id: str) -> None:
+    """Independently confirm the game unit is stopped before filesystem mutation."""
+    unit = f"capivara-instance-{_token(instance_id)}.service"
+    completed = subprocess.run(
+        ["systemctl", "show", unit, "--property=LoadState", "--property=ActiveState", "--no-pager"],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError("Server Pack migration cannot verify instance systemd state")
+    properties = dict(line.split("=", 1) for line in completed.stdout.splitlines() if "=" in line)
+    if properties.get("LoadState") != "loaded" or properties.get("ActiveState") != "inactive":
+        raise RuntimeError("Server Pack migration requires an inactive loaded instance unit")
+
+
+def _serverpack_prepare_inputs(
+    spec: dict[str, Any], config: dict[str, Any], *,
+    migration_value: Any, selection: Any,
+) -> dict[str, Any]:
+    """Extract the re-attested archive under the fixed private control root."""
+    from content_upload_quarantine import quarantine_destination, validate_quarantine_archive
+    from minecraft_serverpack_migration_adapter import prepare_migration_inputs
+    from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
+
+    paths = _serverpack_migration_paths(spec, config)
+    if paths["journal"].exists() or paths["journal_temp"].exists():
+        raise RuntimeError("Server Pack migration journal already exists")
+    if paths["stage"].exists() or paths["rollback"].exists() or paths["failed"].exists():
+        raise RuntimeError("Server Pack migration destination already occupied")
+    migration = validate_minecraft_serverpack_migration(
+        migration_value, instance_id=str(spec["instance_id"])
+    )
+    archive = quarantine_destination(
+        spec["instance_id"], migration["transfer_id"], migration["filename"]
+    )
+    if validate_quarantine_archive(archive).get("archive_type") != "zip":
+        raise RuntimeError("Server Pack migration requires a quarantined ZIP")
+    control = paths["control"]
+    stage = control / "pr855-serverpack-stage"
+    if stage.is_symlink():
+        raise RuntimeError("Server Pack input stage is unsafe")
+    if stage.exists():
+        if not stage.is_dir():
+            raise RuntimeError("Server Pack input stage is not a directory")
+        _reject_symlinks(stage, label="Server Pack input stage")
+        shutil.rmtree(stage)
+    return prepare_migration_inputs(
+        archive=archive, stage_root=stage,
+        migration=migration, selection=selection,
+    )
+
+
+def _serverpack_build_candidate(
+    spec: dict[str, Any], config: dict[str, Any], *,
+    loader_seed_value: Any, target_loader_version: Any,
+) -> dict[str, Any]:
+    """Build an isolated candidate as root, never mutate the live runtime."""
+    from game_data_state import GAME_DATA_ROOT
+    from minecraft_serverpack_migration_runtime_stage import build_staged_runtime
+
+    paths = _serverpack_migration_paths(spec, config)
+    stage = paths["control"] / "pr855-serverpack-stage"
+    if stage.is_symlink() or not stage.is_dir():
+        raise RuntimeError("Server Pack input stage is missing or unsafe")
+    seed_root = Path(GAME_DATA_ROOT) / "minecraft"
+    seed = _within(seed_root, str(loader_seed_value or ""), "NeoForge loader seed")
+    if not seed.is_dir() or seed.is_symlink() or seed == seed_root:
+        raise RuntimeError("NeoForge loader seed is missing or unsafe")
+    version = _token(target_loader_version, "target_loader_version", 80)
+    if paths["stage"].exists() or paths["stage"].is_symlink():
+        raise RuntimeError("Server Pack candidate already exists")
+    if paths["journal"].exists() or paths["journal_temp"].exists():
+        raise RuntimeError("Server Pack migration has a pending journal")
+    return build_staged_runtime(
+        active_runtime=paths["active"], target_loader_seed=seed,
+        serverpack_stage=stage, destination=paths["stage"],
+        target_loader_version=version,
+    )
+
+
+def _serverpack_swap_phase(
+    spec: dict[str, Any], config: dict[str, Any], *,
+    phase: Any, migration_plan_sha256: Any = None,
+    target_loader_version: Any = None, backup: Any = None,
+    readiness_evidence: Any = None,
+) -> dict[str, Any]:
+    """Only expose fixed transaction journal/swap phases to the root helper."""
+    import minecraft_serverpack_migration_swap as swap
+
+    operation = str(phase or "").strip()
+    if operation not in {"prepare", "switch", "commit", "recover", "archive-committed"}:
+        raise RuntimeError("unsupported Server Pack migration phase")
+    paths = _serverpack_migration_paths(spec, config, allow_missing_active=(operation == "recover"))
+    if operation == "archive-committed":
+        return swap.archive_committed(paths["root"])
+    if operation == "prepare":
+        if not isinstance(backup, dict) or backup.get("integrity_verified") is not True:
+            raise RuntimeError("verified migration backup is required")
+        return swap.prepare(
+            paths["root"],
+            migration_plan_sha256=str(migration_plan_sha256 or ""),
+            target_loader_version=str(target_loader_version or ""),
+            backup=backup,
+        )
+    if operation == "switch":
+        switched = swap.switch(paths["root"])
+        # Root records a log baseline after the atomic swap, before readiness.
+        log = paths["active"] / "logs/latest.log"
+        if log.is_symlink():
+            raise RuntimeError("Server Pack readiness log is unsafe")
+        baseline = None
+        if log.is_file():
+            stat_result = log.stat()
+            baseline = {"inode": stat_result.st_ino, "size": stat_result.st_size}
+        journal_paths = swap._paths(paths["root"])
+        checkpoint = swap._read(journal_paths)
+        if checkpoint.get("phase") != "swapped":
+            raise RuntimeError("Server Pack swap readiness checkpoint is invalid")
+        checkpoint["readiness_log_baseline"] = baseline
+        checkpoint["readiness_checkpoint_recorded"] = True
+        swap._atomic(journal_paths, checkpoint)
+        return switched
+    if operation == "commit":
+        if not isinstance(readiness_evidence, dict) or readiness_evidence.get("passed") is not True:
+            raise RuntimeError("Server Pack commit requires successful readiness evidence")
+        journal = swap._read(swap._paths(paths["root"]))
+        if (journal.get("phase") != "swapped"
+                or readiness_evidence.get("migration_plan_sha256") != journal.get("migration_plan_sha256")
+                or readiness_evidence.get("target_loader_version") != journal.get("target_loader_version")):
+            raise RuntimeError("Server Pack readiness evidence differs from migration checkpoint")
+        if journal.get("readiness_checkpoint_recorded") is not True:
+            raise RuntimeError("Server Pack readiness checkpoint is missing")
+        log = paths["active"] / "logs/latest.log"
+        if log.is_symlink() or not log.is_file():
+            raise RuntimeError("Server Pack readiness log is unavailable or unsafe")
+        baseline = journal.get("readiness_log_baseline")
+        current = log.stat()
+        offset = (baseline["size"] if isinstance(baseline, dict)
+                  and baseline.get("inode") == current.st_ino
+                  and type(baseline.get("size")) is int
+                  and current.st_size >= baseline["size"] else 0)
+        if (isinstance(baseline, dict) and baseline.get("inode") == current.st_ino
+                and (type(baseline.get("size")) is not int
+                     or current.st_size < baseline["size"])):
+            raise RuntimeError("Server Pack readiness log changed unexpectedly")
+        with log.open("rb") as stream:
+            stream.seek(offset)
+            recent = stream.read(8 * 1024 * 1024 + 1)
+        if len(recent) > 8 * 1024 * 1024 or b"Done (" not in recent:
+            raise RuntimeError("Server Pack has no fresh readiness log confirmation")
+        count = readiness_evidence.get("serverpack_mod_count")
+        if type(count) is not int or count <= 0:
+            raise RuntimeError("Server Pack readiness mod count is invalid")
+        mods = paths["active"] / "mods"
+        if not mods.is_dir() or mods.is_symlink() or len(list(mods.glob("*.jar"))) != count:
+            raise RuntimeError("Server Pack readiness mods differ from active runtime")
+        return swap.commit(paths["root"], readiness_passed=True)
+    if not paths["journal"].is_file():
+        return {"status": "no_swap"}
+    return swap.recover(paths["root"])
+
+
 def _seed_source(spec: dict[str, Any], working_root: Path, value: Any, label: str) -> Path:
     raw = Path(str(value))
     path = (working_root / raw).resolve() if not raw.is_absolute() else raw.resolve()
@@ -223,11 +449,17 @@ def _same_regular_file(source: Path, target: Path) -> bool:
                 return True
 
 
-def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_passwd) -> None:
+def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, preserve_committed_launcher: bool = False) -> None:
     _reject_symlinks(source, label="directory seed")
     _reject_symlinks(target, label="directory seed target")
     for current in source.rglob("*"):
         relative = current.relative_to(source)
+        # An already-committed NeoForge Server Pack owns its launch arguments.
+        # Re-seeding the original installer must not revert the upgraded loader.
+        if preserve_committed_launcher and relative.as_posix() in {
+            "capivara-launch.args", "run.sh", "run.bat",
+        }:
+            continue
         destination = target / relative
         if current.is_dir():
             if destination.exists() and (not destination.is_dir() or destination.is_symlink()):
@@ -261,6 +493,64 @@ def _overlay_seed_directory(source: Path, target: Path, account: pwd.struct_pass
                 pass
 
 
+def _prepare_seed_parent(parent: Path, account: pwd.struct_passwd) -> None:
+    """Secure new seed parents without changing an existing instance boundary."""
+    missing: list[Path] = []
+    current = parent
+    while not current.exists():
+        missing.append(current)
+        current = current.parent
+    if current.is_symlink() or not current.is_dir():
+        raise RuntimeError("seed parent is not a safe directory")
+    for directory in reversed(missing):
+        directory.mkdir(mode=0o700)
+        os.chown(directory, account.pw_uid, account.pw_gid)
+        os.chmod(directory, 0o700)
+
+
+def _has_committed_minecraft_migration(target: Path) -> bool:
+    control = target.parent / ".dsm"
+    journal = control / "minecraft-serverpack-migration.json"
+    if journal.is_symlink() or (journal.exists() and not journal.is_file()):
+        raise RuntimeError("unsafe Minecraft migration journal during seed overlay")
+    if journal.is_file():
+        try:
+            data = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("unreadable Minecraft migration journal during seed overlay") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError("invalid Minecraft migration journal during seed overlay")
+        if data.get("phase") == "committed":
+            return True
+
+    # Finalization moves the committed journal into migration-history. A
+    # subsequent installer overlay must not revert the upgraded launcher.
+    checkpoint = control / "minecraft-serverpack-archive-checkpoint.json"
+    if checkpoint.is_symlink() or (checkpoint.exists() and not checkpoint.is_file()):
+        raise RuntimeError("unsafe Minecraft archival checkpoint during seed overlay")
+    if not checkpoint.exists():
+        return False
+    try:
+        saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+        digest = saved.get("sha256") if isinstance(saved, dict) and saved.get("schema_version") == 1 else None
+        if (not isinstance(digest, str) or len(digest) != 64
+                or any(c not in "0123456789abcdef" for c in digest)):
+            raise ValueError("invalid checkpoint digest")
+        history = control / "migration-history"
+        archived = history / digest[:24] / "minecraft-serverpack-migration.json"
+        if (history.is_symlink() or archived.is_symlink() or not archived.is_file()):
+            raise ValueError("archived journal is missing or unsafe")
+        payload = archived.read_bytes()
+        if hashlib.sha256(payload).hexdigest() != digest:
+            raise ValueError("archived journal checksum mismatch")
+        data = json.loads(payload)
+        if not isinstance(data, dict) or data.get("phase") != "committed":
+            raise ValueError("archived journal does not prove commit")
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError("unverified Minecraft archival evidence during seed overlay") from exc
+    return True
+
+
 def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, optional: bool = False, overlay: bool = False) -> None:
     if not source.is_dir():
         if optional:
@@ -272,15 +562,13 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
             raise RuntimeError(f"seed directory target is not a private directory: {target}")
         if any(target.iterdir()):
             if overlay:
-                _overlay_seed_directory(source, target, account)
+                _overlay_seed_directory(source, target, account, preserve_committed_launcher=_has_committed_minecraft_migration(target))
             else:
                 _reject_symlinks(target, label="directory seed target")
             _repair_private_seed_modes(source, target, account)
             return
         target.rmdir()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    os.chown(target.parent, account.pw_uid, account.pw_gid)
-    os.chmod(target.parent, 0o700)
+    _prepare_seed_parent(target.parent, account)
     staging = target.with_name(f".{target.name}.{os.getpid()}.seed.tmp")
     if staging.exists():
         shutil.rmtree(staging, ignore_errors=True)
@@ -348,9 +636,7 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         target = _within(state_root, str(item["target"]), "seed target")
         if not source.is_file():
             raise RuntimeError(f"seed source is unavailable: {source}")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        os.chown(target.parent, account.pw_uid, account.pw_gid)
-        os.chmod(target.parent, 0o700)
+        _prepare_seed_parent(target.parent, account)
         if not target.exists():
             shutil.copy2(source, target)
         executable = bool(source.stat().st_mode & 0o111)
@@ -375,12 +661,225 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         target.mkdir(parents=True, exist_ok=True)
 
 
+def _sync_private_minecraft_content(spec: dict[str, Any], config: dict[str, Any]) -> list[str]:
+    """Activate Java content as the confined root helper, not as the Controller worker.
+
+    The instance runtime remains mode 0700 for capivara-instance; granting the
+    Controller account access to world files would break that isolation.
+    """
+    if str(spec.get("game_id") or "").lower() != "minecraft" or not str(
+        spec.get("environment_id") or ""
+    ).lower().startswith("minecraft.java."):
+        raise RuntimeError("private content synchronization is Minecraft Java only")
+    expected = _instance_storage_root(config, spec.get("storage_pool_id")) / spec["instance_id"]
+    state_raw = Path(str(spec.get("instance_state_root") or ""))
+    work_raw = Path(str(spec.get("working_directory") or ""))
+    if (not state_raw.is_absolute() or state_raw.is_symlink()
+            or state_raw.resolve() != expected.resolve()):
+        raise RuntimeError("Minecraft state root does not match Agent storage policy")
+    if (not work_raw.is_absolute() or work_raw.is_symlink()
+            or work_raw.resolve() != (expected / "runtime").resolve()
+            or not work_raw.is_dir()):
+        raise RuntimeError("Minecraft runtime is outside its private instance root")
+    group = grp.getgrnam(_AGENT_GROUP)
+    runtime_user = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    boundary = state_raw.stat()
+    if (boundary.st_uid != runtime_user.pw_uid or boundary.st_gid != group.gr_gid
+            or stat.S_IMODE(boundary.st_mode) != 0o710):
+        raise RuntimeError("Minecraft instance boundary lacks isolated control access")
+    control_user = pwd.getpwnam(
+        str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent").strip()
+    )
+    control = state_raw / ".dsm"
+    if control.is_symlink() or not control.is_dir():
+        raise RuntimeError("Minecraft private control directory is unavailable")
+    control_stat = control.stat()
+    if (control_stat.st_uid != control_user.pw_uid
+            or stat.S_IMODE(control_stat.st_mode) != 0o700):
+        raise RuntimeError("Minecraft control directory must be private to the Agent")
+    # Keep the previously committed Server Pack immutable until its journal
+    # has been durably finalized/archived. This check runs before content writes.
+    refuse_content_sync_during_serverpack_transaction(state_raw)
+    files = materialize_content_activation(spec)
+    for filename in ("content-activation-files.json", "content-activation-overrides.json"):
+        manifest = control / filename
+        if manifest.is_symlink():
+            raise RuntimeError("Minecraft activation manifest cannot be a symlink")
+        if manifest.exists():
+            if not manifest.is_file():
+                raise RuntimeError("Minecraft activation manifest must be a regular file")
+            os.chown(manifest, control_user.pw_uid, group.gr_gid)
+            os.chmod(manifest, 0o600)
+    return files
+
+
+def _normalize_dayz_dlc_ownership(spec: dict[str, Any]) -> int:
+    """Repair DLC ownership during privileged apply for new and existing DayZ.
+
+    Only the registered managed game-data DayZ installation is allowed.
+    Preserve file modes and instance/mod private state.
+    """
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        return 0
+    from dayz_dlc_ownership import (
+        discover_dayz_dlc_paths, verified_dayz_dlc_paths_from_steam_home,
+    )
+    working = Path(str(spec.get("working_directory") or ""))
+    trusted = (STATE_DIR / "game-data" / "dayz").resolve()
+    if not working.is_absolute() or working.is_symlink():
+        raise RuntimeError("DayZ DLC ownership requires a real installation root")
+    resolved = working.resolve(strict=True)
+    try:
+        relative = resolved.relative_to(trusted)
+    except ValueError:
+        # User-managed instances outside managed game-data are out of scope.
+        return 0
+    if len(relative.parts) != 1 or not resolved.is_dir():
+        raise RuntimeError("DayZ installation path is not an expected managed root")
+    account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    group = grp.getgrnam(_AGENT_GROUP)
+    control_user = pwd.getpwnam(
+        str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent")
+    )
+    try:
+        candidates = verified_dayz_dlc_paths_from_steam_home(
+            resolved, Path(control_user.pw_dir), STATE_DIR,
+        )
+        if not candidates and discover_dayz_dlc_paths(resolved):
+            # Never report a successful repair when DLCs are installed but
+            # no trusted SteamCMD depot manifests can authorize their files.
+            raise RuntimeError(
+                "DayZ DLC files found without verified Steam depot manifests; "
+                "check Agent Steam/depotcache and .local/share/Steam/depotcache"
+            )
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("unsafe or inconsistent DayZ Steam depot provenance") from exc
+    updated = 0
+    for path in candidates:
+        st = path.lstat()
+        if st.st_uid != account.pw_uid or st.st_gid != group.gr_gid:
+            os.chown(path, account.pw_uid, group.gr_gid, follow_symlinks=False)
+            updated += 1
+    # SteamCMD runs under the Agent's control account, not the DayZ runtime
+    # user. Preserve its write access for the *next* app_update after chown.
+    # rwX grants directory traversal and write, without marking PBOs executable.
+    for offset in range(0, len(candidates), 100):
+        batch = candidates[offset:offset + 100]
+        completed = subprocess.run(
+            ["setfacl", "-m", f"u:{control_user.pw_name}:rwX",
+             *(str(path) for path in batch)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+        if completed.returncode:
+            raise RuntimeError("cannot preserve DayZ SteamCMD update access")
+    return updated
+
+
+def _ensure_dayz_runtime_root_acl(spec: dict[str, Any]) -> bool:
+    """Allow DayZ's writable-root probe on verified Agent-managed content.
+
+    The DayZ binary checks W_OK in the installation directory before it loads
+    scripts/1_Core. Grant runtime access to the root only, not recursively to
+    PBOs or game files; keep SteamCMD ownership under the Agent.
+    """
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        return False
+    user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
+    if user != _DEFAULT_RUNTIME_USER:
+        return False  # Never grant spec-supplied identities shared-content write access.
+
+    working = Path(str(spec.get("working_directory") or ""))
+    if not working.is_absolute() or working.is_symlink():
+        raise RuntimeError("DayZ managed installation must be an absolute non-symlink directory")
+    trusted = (STATE_DIR / "game-data" / "dayz").resolve()
+    resolved = working.resolve(strict=True)
+    try:
+        relative = resolved.relative_to(trusted)
+    except ValueError:
+        return False  # User-managed DayZ installations are not modified.
+    if len(relative.parts) != 1 or not resolved.is_dir():
+        raise RuntimeError("DayZ managed installation is not an expected game-data root")
+
+    agent = pwd.getpwnam("capivara-agent")
+    group = grp.getgrnam(_AGENT_GROUP)
+    metadata = resolved.stat()
+    if metadata.st_uid != agent.pw_uid or metadata.st_gid != group.gr_gid:
+        raise RuntimeError("DayZ game-data root is not owned by the SteamCMD Agent")
+    _validate_runtime_user(user)
+    try:
+        result = subprocess.run(
+            ["setfacl", "-m", f"u:{user}:rwx", str(resolved)],
+            capture_output=True, text=True, check=False, timeout=30,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError("ACL tools unavailable: install the acl package on the Agent") from exc
+    if result.returncode:
+        raise RuntimeError(f"cannot grant DayZ runtime root ACL: {result.stderr.strip()[:300]}")
+    return True
+
+
 def _ensure_runtime_identity(spec: dict[str, Any], config: dict[str, Any]) -> None:
     user = str(spec.get("user") or _DEFAULT_RUNTIME_USER)
     account = _validate_runtime_user(user)
     _prepare_runtime_access(str(spec["working_directory"]), user)
     _validate_runtime_access(str(spec["working_directory"]), user)
     _prepare_private_state(spec, account, _instance_storage_root(config, spec.get("storage_pool_id")))
+
+
+def _remove_instance_private_state(spec: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Remove only instance-owned storage while preserving shared game-data caches."""
+    instance_id = _token(spec["instance_id"])
+    storage_root = _instance_storage_root(config, spec.get("storage_pool_id"))
+    expected = (storage_root / instance_id).resolve(strict=False)
+    configured = Path(str(spec.get("instance_state_root") or expected)).resolve(strict=False)
+    if configured != expected:
+        raise RuntimeError("instance state root does not match Agent storage pool policy")
+
+    removed: list[str] = []
+    directory_targets = (
+        (expected, storage_root.resolve(strict=False), "instance private state"),
+        (
+            (STATE_DIR / "managed-content" / instance_id).resolve(strict=False),
+            (STATE_DIR / "managed-content").resolve(strict=False),
+            "instance managed content state",
+        ),
+    )
+    for target, allowed_root, label in directory_targets:
+        try:
+            target.relative_to(allowed_root)
+        except ValueError as exc:
+            raise RuntimeError(f"{label} escapes its allowed root") from exc
+        if not target.exists():
+            continue
+        if target.is_symlink() or not target.is_dir():
+            raise RuntimeError(f"{label} is not a safe directory")
+        _reject_symlinks(target, label=label)
+        shutil.rmtree(target)
+        removed.append(str(target))
+
+    file_targets = (
+        (
+            (STATE_DIR / "content-activation" / f"{instance_id}.json").resolve(strict=False),
+            (STATE_DIR / "content-activation").resolve(strict=False),
+            "instance content activation snapshot",
+        ),
+    )
+    for target, allowed_root, label in file_targets:
+        try:
+            target.relative_to(allowed_root)
+        except ValueError as exc:
+            raise RuntimeError(f"{label} escapes its allowed root") from exc
+        if not target.exists():
+            continue
+        if target.is_symlink() or not target.is_file():
+            raise RuntimeError(f"{label} is not a safe file")
+        target.unlink()
+        removed.append(str(target))
+    return {
+        "changed": bool(removed),
+        "removed_paths": removed,
+        "shared_game_data_preserved": True,
+    }
 
 
 def _sha256(path: Path) -> str:
@@ -601,6 +1100,141 @@ def _migrate_storage_copy(
     }
 
 
+def _grant_customer_files_access(spec: dict[str, Any]) -> None:
+    files_root_raw = str(spec.get("files_root") or "").strip()
+    if not files_root_raw:
+        return
+    state_root = Path(str(spec["instance_state_root"])).resolve()
+    files_root = _within(state_root, files_root_raw, "customer files root")
+    if not files_root.is_dir() or files_root.is_symlink():
+        return
+    try:
+        agent_group = grp.getgrnam(_AGENT_GROUP)
+    except KeyError as exc:
+        raise RuntimeError("Agent control group is unavailable") from exc
+    for current in [files_root, *files_root.rglob("*")]:
+        if current.is_symlink():
+            raise RuntimeError(f"customer files tree contains a symlink: {current}")
+        metadata = current.stat()
+        if metadata.st_gid != agent_group.gr_gid:
+            os.chown(current, -1, agent_group.gr_gid)
+        if current.is_dir():
+            desired_mode = 0o770
+        elif current.is_file():
+            desired_mode = 0o770 if metadata.st_mode & 0o111 else 0o660
+        else:
+            continue
+        if (metadata.st_mode & 0o7777) != desired_mode:
+            os.chmod(current, desired_mode)
+
+
+def _write_dayz_battleye_runtime(path: Path, record: dict[str, Any], owner) -> None:
+    """Atomic owner-preserving private state write, without touching game data."""
+    temp=path.with_name(f".{path.name}.{os.getpid()}.bepath.tmp")
+    try:
+        with temp.open("w",encoding="utf-8") as stream:
+            json.dump(record,stream,indent=2,sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp,0o600)
+        os.chown(temp,owner.st_uid,owner.st_gid)
+        os.replace(temp,path)
+        fd=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY|os.O_CLOEXEC)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+    finally:
+        try:temp.unlink()
+        except FileNotFoundError:pass
+
+
+def _apply_dayz_battleye_private(spec: dict[str, Any], config: dict[str, Any], materializer) -> dict[str, Any]:
+    """Narrow privileged action: no DLC, templates, seeds, game-data or restarts."""
+    from dayz_bepath_config import _prepare_battleye_spec
+    instance_id = spec["instance_id"]
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        raise RuntimeError("BattlEye private action requires DayZ")
+    unit = f"capivara-instance-{_token(instance_id)}.service"
+    state = subprocess.run(
+        ["systemctl", "show", unit, "--property=LoadState",
+         "--property=ActiveState", "--property=MainPID", "--no-pager"],
+        capture_output=True, text=True, timeout=15, check=False)
+    fields = dict(line.split("=",1) for line in state.stdout.splitlines() if "=" in line)
+    if (state.returncode != 0 or fields.get("LoadState") != "loaded"
+            or fields.get("ActiveState") != "inactive"
+            or fields.get("MainPID") != "0"):
+        raise RuntimeError("BattlEye unit apply requires a stopped, loaded DayZ instance")
+    # Trust the canonical persisted Agent spec, not a Controller-submitted
+    # path, as the baseline for an exact, constrained RuntimeSpec delta.
+    old_path = STATE_DIR / "instances" / f"{instance_id}.json"
+    if old_path.is_symlink() or not old_path.is_file():
+        raise RuntimeError("BattlEye original RuntimeSpec unavailable")
+    old_stat=old_path.stat()
+    if old_stat.st_nlink!=1 or old_stat.st_mode & 0o077:
+        raise RuntimeError("BattlEye existing RuntimeSpec must be private and single-link")
+    old_bytes=old_path.read_bytes()
+    old = validate_runtime_spec(json.loads(old_bytes),
+                                expected_agent_id=str(config["agent_id"]))
+    if old["instance_id"] != instance_id or str(old.get("game_id") or "").lower() != "dayz":
+        raise RuntimeError("BattlEye original instance identity mismatch")
+    if old.get("desired_state") != "stopped" or spec.get("desired_state") != "stopped":
+        raise RuntimeError("BattlEye materialization requires stopped desired state")
+    expected = _prepare_battleye_spec(old,spec.get("battleye_directory"))
+    if expected != spec:
+        raise RuntimeError("BattlEye spec differs from authorized private path projection")
+    pool = _instance_storage_root(config, spec.get("storage_pool_id"))
+    root = Path(str(spec.get("instance_state_root") or ""))
+    if (not root.is_absolute() or root.is_symlink() or not root.is_dir()
+            or root.resolve() != (pool / instance_id).resolve()):
+        raise RuntimeError("BattlEye directory is not the Agent instance private root")
+    before = materializer.inspect(old)
+    if not before.get("exists") or not before.get("owned") or not before.get("matches"):
+        raise RuntimeError("BattlEye managed unit differs from persisted baseline")
+    owner = _validate_runtime_user(str(old["user"]))
+    target = root
+    new_folders=[]
+    for part in Path(spec["battleye_directory"]).parts:
+        target = target / part
+        if target.is_symlink() or (target.exists() and not target.is_dir()):
+            raise RuntimeError("BattlEye private path is unsafe")
+        if target.exists():
+            if target.stat().st_uid != owner.pw_uid:
+                raise RuntimeError("BattlEye private directory owner mismatch")
+        else:
+            new_folders.append(target)
+    for directory in new_folders:
+        directory.mkdir(mode=0o700)
+        os.chown(directory,owner.pw_uid,owner.pw_gid)
+        os.chmod(directory,0o700)
+    if expected["arguments"]==old["arguments"]:
+        return {"action":"apply-dayz-battleye","changed":False,"idempotent":True}
+    changed_unit=False
+    try:
+        # Recheck the persisted baseline before any unit/state mutation.
+        current_stat=old_path.stat()
+        if (current_stat.st_ino!=old_stat.st_ino or
+                current_stat.st_mtime_ns!=old_stat.st_mtime_ns or
+                old_path.read_bytes()!=old_bytes):
+            raise RuntimeError("BattlEye RuntimeSpec baseline changed during apply")
+        result=materializer.apply(spec)
+        changed_unit=bool(result.get("changed"))
+        new_record={**spec,"materialized":True}
+        _write_dayz_battleye_runtime(old_path,new_record,old_stat)
+    except Exception as exc:
+        try:
+            # Restore the exact previous configuration and unit, even if a
+            # fsync failure occurred after os.replace.
+            if old_path.exists() and old_path.read_bytes()!=old_bytes:
+                _write_dayz_battleye_runtime(old_path,json.loads(old_bytes),old_stat)
+            if changed_unit or not materializer.inspect(old).get("matches"):
+                materializer.apply(old)
+        except Exception as rollback:
+            raise RuntimeError("BattlEye unit/state rollback failed; manual recovery required") from rollback
+        raise RuntimeError("BattlEye unit/state apply failed; original configuration restored") from exc
+    return {"action":"apply-dayz-battleye","changed":changed_unit,
+            "idempotent":False,"runtime_spec_persisted":True}
+
+
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged materializer helper must run as root")
@@ -627,8 +1261,15 @@ def run(instance_id: str) -> dict[str, Any]:
     working_file_copies: list[dict[str, Any]] = []
     dayz_mod_aliases: list[dict[str, Any]] = []
     removed_dayz_mod_aliases: list[str] = []
+    content_files: list[str] = []
+    if (action in {"minecraft-serverpack-prepare-inputs", "minecraft-serverpack-build-candidate"}
+            or (action == "minecraft-serverpack-swap-phase"
+                and request.get("phase") in {"prepare", "switch", "recover", "archive-committed"})):
+        _serverpack_require_inactive(instance_id)
     if action == "apply":
         _ensure_runtime_identity(spec, config)
+        _ensure_dayz_runtime_root_acl(spec)
+        _normalize_dayz_dlc_ownership(spec)
         working_file_copies = _sync_working_file_copies(spec)
         dayz_mod_aliases = _sync_dayz_mod_aliases(spec)
         templates = materialize_templates(spec)
@@ -641,6 +1282,10 @@ def run(instance_id: str) -> dict[str, Any]:
             materialize_minecraft_rcon_password(spec)
         server_settings = materialize_server_settings(spec)
         server_settings.extend(materialize_dynamic_values(spec))
+        if str(spec.get("game_id") or "").lower() == "minecraft" and str(
+            spec.get("environment_id") or ""
+        ).lower().startswith("minecraft.java."):
+            content_files = _sync_private_minecraft_content(spec, config)
         operation = materializer.apply(spec)
     elif action in {"relocation-disable-unit", "relocation-restore-unit"}:
         import subprocess
@@ -669,9 +1314,43 @@ def run(instance_id: str) -> dict[str, Any]:
             raise RuntimeError((result.stderr or result.stdout or "systemctl failed")[:500])
         operation = {"unit": unit, "disabled": action == "relocation-disable-unit",
                      "restore_enabled": request.get("restore_enabled")}
+    elif action == "apply-dayz-battleye":
+        operation = _apply_dayz_battleye_private(spec, config, materializer)
+    elif action == "repair-dayz-dlc-ownership":
+        if str(spec.get("game_id") or "").lower() != "dayz":
+            raise RuntimeError("DayZ DLC repair requires a DayZ instance")
+        root_acl_checked = _ensure_dayz_runtime_root_acl(spec)
+        updated = _normalize_dayz_dlc_ownership(spec)
+        operation = {"action": action, "changed": updated > 0, "updated_paths": updated,
+                     "runtime_root_acl_checked": root_acl_checked}
+    elif action == "sync-minecraft-content":
+        installed = materializer.inspect(spec)
+        if not installed.get("exists") or not installed.get("owned"):
+            raise RuntimeError("Minecraft content synchronization requires an owned runtime")
+        content_files = _sync_private_minecraft_content(spec, config)
+        operation = {"action": action, "changed": bool(content_files), "content_files": content_files}
+
     elif action == "remove":
         operation = materializer.remove(spec)
         removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)
+        private_state_cleanup = _remove_instance_private_state(spec, config)
+        operation = {**operation, "private_state_cleanup": private_state_cleanup}
+    elif action == "minecraft-serverpack-prepare-inputs":
+        operation = _serverpack_prepare_inputs(spec, config, migration_value=request.get("migration"), selection=request.get("selection"))
+    elif action == "minecraft-serverpack-build-candidate":
+        operation = _serverpack_build_candidate(
+            spec, config,
+            loader_seed_value=request.get("loader_seed"),
+            target_loader_version=request.get("target_loader_version"),
+        )
+    elif action == "minecraft-serverpack-swap-phase":
+        operation = _serverpack_swap_phase(
+            spec, config, phase=request.get("phase"),
+            migration_plan_sha256=request.get("migration_plan_sha256"),
+            target_loader_version=request.get("target_loader_version"),
+            backup=request.get("backup"),
+            readiness_evidence=request.get("readiness_evidence"),
+        )
     elif action == "migrate-storage-copy":
         operation = _migrate_storage_copy(
             config,
@@ -687,7 +1366,10 @@ def run(instance_id: str) -> dict[str, Any]:
               "server_settings": server_settings if action == "apply" else [],
               "working_file_copies": working_file_copies,
               "dayz_mod_aliases": dayz_mod_aliases,
-              "removed_dayz_mod_aliases": removed_dayz_mod_aliases}
+              "removed_dayz_mod_aliases": removed_dayz_mod_aliases,
+              "content_files": content_files}
+    if action == "apply":
+        _grant_customer_files_access(spec)
     _write_result(result_path, result)
     return result
 
@@ -703,6 +1385,17 @@ def main() -> int:
         print(json.dumps(result, sort_keys=True), flush=True)
         return 0
     except Exception as exc:
+        try:
+            request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
+            request = json.loads(request_path.read_text(encoding="utf-8"))
+            if str(request.get("action") or "").strip().lower() == "apply":
+                config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                local_agent_id = str(config.get("agent_id") or "").strip()
+                spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
+                if spec.get("instance_id") == _token(instance_id):
+                    _grant_customer_files_access(spec)
+        except Exception:
+            pass
         _write_result(result_path, {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]})
         print(f"privileged materialization failed: {exc}", file=sys.stderr, flush=True)
         return 1

@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import shutil
+import hashlib
+import json
+import os
+import subprocess
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,6 +15,7 @@ import instance_runtime
 from backup_client import _create as create_backup
 from server_update_provider import _manifest_candidates, detect_update
 from server_update_transaction import activate, cleanup_staging, commit, prepare_staging, restore_files, rollback, snapshot_files
+from prepared_game_data_guard import reject_prepared_dayz_transaction
 
 
 class ServerUpdateError(RuntimeError):
@@ -42,8 +48,34 @@ def _context(selection: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     return iid, record
 
 
-def _affected(config: dict[str, Any], game: str) -> list[str]:
-    return [str(item["instance_id"]) for item in instance_runtime.list_instances(config) if str(item.get("game_id") or "") == game]
+def _affected(config: dict[str, Any], game: str, target: Path, instance_id: str) -> list[str]:
+    """Limit a transactional update to instances with the same proven installation."""
+    target = Path(target).resolve(strict=True)
+    owner = instance_runtime.get_instance(instance_id)
+    if not isinstance(owner, dict) or str(owner.get("agent_id") or "") != str(config.get("agent_id") or ""):
+        raise ServerUpdateError("server update instance ownership mismatch")
+    if str(owner.get("game_id") or "") != game:
+        raise ServerUpdateError("server update game identity mismatch")
+    affected = []
+    for item in instance_runtime.list_instances(config):
+        current = str(item.get("instance_id") or "")
+        if str(item.get("game_id") or "") != game or not current:
+            continue
+        record = instance_runtime.get_instance(current)
+        if not isinstance(record, dict) or str(record.get("agent_id") or "") != str(config.get("agent_id") or ""):
+            raise ServerUpdateError("cannot establish instance ownership for shared update")
+        directory = str(record.get("working_directory") or "").strip()
+        if not directory or not Path(directory).is_absolute():
+            raise ServerUpdateError("cannot establish shared installation path for "+current)
+        try:
+            resolved = Path(directory).resolve(strict=True)
+        except OSError as exc:
+            raise ServerUpdateError("cannot resolve installation path for "+current) from exc
+        if resolved == target:
+            affected.append(current)
+    if instance_id not in affected:
+        raise ServerUpdateError("update owner is not bound to the selected installation")
+    return affected
 
 
 def _tree_size(root: Path) -> int:
@@ -76,6 +108,8 @@ def _provider_metadata_snapshot(selection: dict[str, Any], target: Path) -> dict
     appid = str(install.get("package_id") or "").strip()
     if not appid.isdigit():
         return {}
+    if isinstance(selection.get("_server_update"), dict):
+        return snapshot_files([target / "steamapps" / f"appmanifest_{appid}.acf"])
     return snapshot_files(_manifest_candidates(target, appid))
 
 
@@ -90,21 +124,72 @@ def _stop_running(config: dict[str, Any], instance_ids: list[str]) -> None:
 
 
 def _restart_and_validate(config: dict[str, Any], instance_ids: list[str]) -> tuple[list[str], list[str]]:
+    """Require sustained running and doctor readiness, not one transient observation."""
     restarted: list[str] = []
     failures: list[str] = []
     for current in instance_ids:
         try:
             instance_runtime.lifecycle(config, current, "start")
             restarted.append(current)
-            doctor = instance_runtime.doctor(config, current)
-            if not doctor.get("ready"):
+            consecutive = 0
+            # Sixteen successful one-second-spaced observations imply 15s stability.
+            for attempt in range(31):
+                doctor = instance_runtime.doctor(config, current)
+                running = instance_runtime.status(config, current).get("observed_state") == "running"
+                consecutive = consecutive + 1 if doctor.get("ready") and running else 0
+                if consecutive >= 16:
+                    break
+                if attempt < 30:
+                    time.sleep(1)
+            else:
                 failures.append(current)
         except Exception:
             failures.append(current)
     return restarted, failures
 
 
-def perform_update(
+def _local_agent_config(record: dict[str, Any]) -> dict[str, str]:
+        config_path = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
+        try:
+            local_config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ServerUpdateError("cannot establish local Agent identity") from exc
+        local_agent_id = str(local_config.get("agent_id") or "").strip()
+        if not local_agent_id or local_agent_id != str(record.get("agent_id") or ""):
+            raise ServerUpdateError("server update instance belongs to another Agent")
+        return {"agent_id": local_agent_id}
+
+
+def _ensure_dayz_staging_root_access(staging: Path, game: str) -> None:
+    """Grant DayZ runtime only root-directory access before atomic activation.
+
+    Do not recurse into binaries, mods or instance-private storage.
+    """
+    if game != "dayz":
+        return
+    if staging.is_symlink() or not staging.is_dir():
+        raise ServerUpdateError("DayZ staging root must be a real directory")
+    try:
+        subprocess.run(
+            ["setfacl", "-m", "u:capivara-instance:rwx", str(staging)],
+            check=True, capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        raise ServerUpdateError("cannot configure DayZ runtime staging permissions") from exc
+
+
+def _validate_dayz_staged_dlc(staging: Path, game: str) -> None:
+    """Validate DLC candidates before activation; privileged materializer owns them."""
+    if game != "dayz":
+        return
+    from dayz_dlc_ownership import discover_dayz_dlc_paths
+    try:
+        discover_dayz_dlc_paths(staging)
+    except (OSError, ValueError) as exc:
+        raise ServerUpdateError("unsafe DayZ DLC staging structure") from exc
+
+
+def _perform_update_locked(
     selection: dict[str, Any],
     target: Path,
     installer: Callable[[Path], None],
@@ -112,12 +197,14 @@ def perform_update(
 ) -> dict[str, Any]:
     """Stage, validate, atomically activate and rollback shared game data when needed."""
     _, record = _context(selection)
-    config = {"agent_id": str(record.get("agent_id") or "")}
+    config = _local_agent_config(record)
     game = str(record.get("game_id") or "")
     meta = selection.get("_server_update") or {}
-    backup_enabled = bool(meta.get("backup_before_update", True))
-    affected = _affected(config, game)
+    # DayZ updates must never bypass the verified pre-activation backup, even
+    # when an older controller or client explicitly requests opt-out.
+    backup_enabled = game == "dayz" or bool(meta.get("backup_before_update", True))
     target = Path(target).resolve()
+    affected = _affected(config, game, target, str(meta.get('instance_id') or ''))
     running: list[str] = []
     backups: list[dict[str, Any]] = []
     restarted: list[str] = []
@@ -126,7 +213,11 @@ def perform_update(
     activated = False
     provider_snapshot: dict[str, tuple[bool, bytes | None, int | None]] = {}
 
+    if game == "dayz":
+        reject_prepared_dayz_transaction(target)
     before = detect_update(selection, target, steamcmd)
+    if not before.get("detector_supported") or before.get("state") not in {"up_to_date", "update_available"}:
+        raise VersionValidationError("server version detection is unsupported or incomplete")
     if before.get("state") == "up_to_date":
         return {
             "update_status_before": before,
@@ -144,35 +235,79 @@ def perform_update(
         provider_snapshot = _provider_metadata_snapshot(selection, target)
         staging = prepare_staging(target)
         installer(staging)
+        _ensure_dayz_staging_root_access(staging, game)
+        _validate_dayz_staged_dlc(staging, game)
 
         staged_status = detect_update(selection, staging, steamcmd, force_refresh=True)
-        if staged_status.get("detector_supported") and staged_status.get("state") != "up_to_date":
+        if not staged_status.get("detector_supported") or staged_status.get("state") != "up_to_date":
             raise VersionValidationError("staged server version validation failed")
 
         for current in affected:
             if instance_runtime.status(config, current).get("observed_state") == "running":
-                instance_runtime.lifecycle(config, current, "stop")
                 running.append(current)
+                instance_runtime.lifecycle(config, current, "stop")
+
+        for current in affected:
+            observed = instance_runtime.status(config, current).get("observed_state")
+            if observed != "stopped":
+                raise ServerUpdateError(
+                    "instance did not stop before game-data activation: " + current + " (" + str(observed) + ")"
+                )
 
         if backup_enabled:
             for current in affected:
                 detail = create_backup(
                     config,
-                    {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "live"}},
+                    {"instance_id": current, "policy": {"mode": "full", "compression": "gzip", "retention_count": 7, "consistency": "stopped"}},
                 )
+                backup_id = detail.get("backup_id") if isinstance(detail, dict) else None
+                checksum = detail.get("sha256") if isinstance(detail, dict) else None
+                size = detail.get("size_bytes") if isinstance(detail, dict) else None
+                artifact = detail.get("artifact_path") if isinstance(detail, dict) else None
+                if (
+                    not isinstance(backup_id, str) or not backup_id.strip()
+                    or not isinstance(checksum, str) or len(checksum) != 64
+                    or any(char not in "0123456789abcdefABCDEF" for char in checksum)
+                    or not isinstance(size, int) or isinstance(size, bool) or size <= 0
+                ):
+                    raise ServerUpdateError("instance backup returned incomplete integrity evidence: " + current)
+                if not isinstance(artifact, str) or not artifact.strip():
+                    raise ServerUpdateError("instance backup has no artifact path: " + current)
+                artifact_path = Path(artifact)
+                try:
+                    if not artifact_path.is_file() or artifact_path.stat().st_size != size:
+                        raise ServerUpdateError("instance backup artifact is missing or has unexpected size: " + current)
+                except OSError as exc:
+                    raise ServerUpdateError("cannot inspect instance backup artifact: " + current) from exc
+                try:
+                    digest = hashlib.sha256()
+                    with artifact_path.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                except OSError as exc:
+                    raise ServerUpdateError("cannot read instance backup artifact: " + current) from exc
+                if digest.hexdigest().lower() != checksum.lower():
+                    raise ServerUpdateError("instance backup checksum mismatch: " + current)
                 backups.append({
                     "instance_id": current,
-                    "backup_id": detail.get("backup_id"),
-                    "sha256": detail.get("sha256"),
-                    "size_bytes": detail.get("size_bytes"),
+                    "backup_id": backup_id,
+                    "sha256": checksum,
+                    "size_bytes": size,
                 })
+
+        for current in affected:
+            observed = instance_runtime.status(config, current).get("observed_state")
+            if observed != "stopped":
+                raise ServerUpdateError(
+                    "instance became active before game-data activation: " + current + " (" + str(observed) + ")"
+                )
 
         previous = activate(target, staging)
         staging = None
         activated = True
 
         after = detect_update(selection, target, steamcmd, force_refresh=True)
-        if after.get("detector_supported") and after.get("state") != "up_to_date":
+        if not after.get("detector_supported") or after.get("state") != "up_to_date":
             raise VersionValidationError("activated server version validation failed")
 
         restarted, failures = _restart_and_validate(config, running)
@@ -197,23 +332,47 @@ def perform_update(
         try:
             if activated:
                 _stop_running(config, running)
+                for current in affected:
+                    observed = instance_runtime.status(config, current).get("observed_state")
+                    if observed != "stopped":
+                        raise RollbackError(
+                            "instance not stopped before rollback: " + current + " (" + str(observed) + ")"
+                        )
                 if not rollback(target, previous):
                     raise RollbackError("previous game-data tree is unavailable")
                 previous = None
             restore_files(provider_snapshot)
-            cleanup_staging(staging)
-            staging = None
             _, recovery_failures = _restart_and_validate(config, running)
             if recovery_failures:
                 raise RollbackError("rollback restored files but runtime recovery failed: " + ",".join(recovery_failures))
         except Exception as recovery_exc:
             rollback_error = recovery_exc
         finally:
-            cleanup_staging(staging)
+            # Preserve the staged candidate when rollback failed: it may be
+            # required for forensic inspection or manual recovery.
+            if rollback_error is None:
+                cleanup_staging(staging)
 
         if rollback_error is not None:
             raise RollbackError(f"server update failed ({exc}); rollback failed ({rollback_error})") from exc
         raise ServerUpdateError(f"server update failed and rollback completed: {exc}") from exc
+
+
+def perform_update(selection: dict[str, Any], target: Path,
+                   installer: Callable[[Path], None],
+                   steamcmd: str | None = None) -> dict[str, Any]:
+    """Serialize DayZ game-data writes without changing other games."""
+    _, record = _context(selection)
+    config = _local_agent_config(record)
+    game = str(record.get("game_id") or "")
+    meta = selection.get("_server_update") or {}
+    target = Path(target).resolve(strict=True)
+    _affected(config, game, target, str(meta.get("instance_id") or ""))
+    if game != "dayz":
+        return _perform_update_locked(selection, target, installer, steamcmd)
+    from game_data_update_lock import game_data_update_lock
+    with game_data_update_lock(target, timeout=3):
+        return _perform_update_locked(selection, target, installer, steamcmd)
 
 
 __all__ = [

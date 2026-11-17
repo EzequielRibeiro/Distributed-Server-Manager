@@ -64,5 +64,8 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
   normalized[name]=text
  r["environment"]=normalized;desired=str(r.get("desired_state") or "stopped").lower()
  if desired not in VALID_DESIRED_STATES:raise RuntimeSpecError("invalid desired_state")
- r["desired_state"]=desired;r["path"]=r["working_directory"];return r
+ r["desired_state"]=desired
+ for key in ("catalog_server_settings","server_settings_values","server_settings_dynamic_values","server_settings_secret_refs","server_settings_cleared_protected_fields"):
+  if key in spec:r[key]=spec[key]
+ r["path"]=r["working_directory"];return r
 __all__=["RuntimeSpecError","VALID_DESIRED_STATES","VALID_EXECUTABLE_SCOPES","validate_runtime_spec"]

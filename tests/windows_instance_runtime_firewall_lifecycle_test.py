@@ -30,6 +30,12 @@ def _load_runtime(monkeypatch):
     metrics.increment = lambda _name: None
     monkeypatch.setitem(sys.modules, "runtime_metrics", metrics)
 
+    # Firewall tests run the Windows runtime as a standalone module; provide
+    # a safe, unfenced fixture so relocation imports do not depend on PYTHONPATH.
+    relocation = types.ModuleType("relocation_fence")
+    relocation.locked = lambda _instance_id: False
+    monkeypatch.setitem(sys.modules, "relocation_fence", relocation)
+
     operations = types.ModuleType("runtime_operations")
 
     @contextmanager

@@ -17,6 +17,11 @@ _UPDATE_FIELDS=frozenset({"activation_state","activation_order","version","provi
 _ENVELOPE_FIELDS=frozenset({"instance_id","content_id","action"})
 
 class CustomerContentWorkspaceService:
+ def _customer_guard_options(self):
+  # Test fakes and internal repository work retain their existing interface;
+  # only authenticated customer writes request the transactional gate.
+  return {"customer_install_guard":True} if isinstance(self.content,ContentRepository) else {}
+
  def __init__(self,backend,root):
   self.workspace=CustomerInstanceWorkspaceService(backend,root);self.content=ContentRepository(backend);self.workshop_resolver=resolve_workshop_item;self.minecraft_resolver=resolve_minecraft_content;self.minecraft_discovery=discover_minecraft_content;self.modpack_resolver=resolve_minecraft_modpack
  def _context_policy_details(self,user,instance_id,permission):
@@ -254,7 +259,8 @@ class CustomerContentWorkspaceService:
     history=self.content.bundle_history(instance_id,str(item.get("content_id") or ""));rollback_revision=int(history[1]["revision"]) if len(history)>1 else None
    else:
     previous=self.content.previous_revision(instance_id,str(item.get("content_id") or ""));rollback_revision=int(previous["revision"]) if previous else None
-   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":provider_supports(provider,"update",self.workspace.root),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision}
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {};revision_source=metadata.get("revision_source") if isinstance(metadata.get("revision_source"),Mapping) else {};external_revision=ctype=="modpack" and str(revision_source.get("kind") or "").strip().lower()=="external-upload"
+   item["provider_capabilities"]=provider_capabilities(provider,self.workspace.root);item["update"]={"supported":bool(provider_supports(provider,"update",self.workspace.root) and not external_revision),"rollback_available":rollback_revision is not None,"rollback_revision":rollback_revision,"revision_source":str(revision_source.get("kind") or "") or None,"preview_required":bool(ctype=="modpack" and not external_revision)}
    activation_config=self._activation_configuration(context,item)
    if activation_config is not None:item["activation_config"]=activation_config
    self._customer_security_projection(item)
@@ -272,6 +278,13 @@ class CustomerContentWorkspaceService:
   current_row=history[0];current_manifest=manifest(current_row);members={str(item.get("content_id") or ""):item for item in current_manifest.get("members") or [] if isinstance(item,Mapping) and str(item.get("content_id") or "").strip()}
   assignments={str(item.get("content_id") or ""):item for item in self.content.list(instance_id=instance_id,limit=2000)}
   reasons=[];visible=[]
+  expected_manifest_sha=str(current_row.get("manifest_sha256") or "")
+  parent_metadata=parent.get("metadata") if isinstance(parent.get("metadata"),Mapping) else {}
+  parent_marker=parent_metadata.get("bundle") if isinstance(parent_metadata.get("bundle"),Mapping) else {}
+  if (not expected_manifest_sha or
+      str(parent_marker.get("parent_content_id") or "")!=content_id or
+      str(parent_marker.get("manifest_sha256") or "")!=expected_manifest_sha):
+   reasons.append({"content_id":content_id,"reason":"parent_manifest_drift"})
   for cid in sorted(members):
    declared=members[cid];item=assignments.get(cid)
    if not item:
@@ -279,11 +292,13 @@ class CustomerContentWorkspaceService:
    marker=(item.get("metadata") or {}).get("bundle") if isinstance(item.get("metadata"),Mapping) else None
    owned=isinstance(marker,Mapping) and str(marker.get("parent_content_id") or "")==content_id
    artifact_matches=(item.get("artifact") or {})==(declared.get("artifact") or {})
+   revision_matches=bool(expected_manifest_sha and isinstance(marker,Mapping) and str(marker.get("manifest_sha256") or "")==expected_manifest_sha)
    active=str(item.get("desired_state") or "installed")!="absent"
    if not owned:reasons.append({"content_id":cid,"reason":"ownership_drift"})
    elif not artifact_matches:reasons.append({"content_id":cid,"reason":"artifact_drift"})
+   elif not revision_matches:reasons.append({"content_id":cid,"reason":"manifest_revision_drift"})
    elif not active:reasons.append({"content_id":cid,"reason":"member_absent"})
-   visible.append({"content_id":cid,"content_type":str(item.get("content_type") or "mod"),"provider":str(item.get("provider") or ""),"version":str(item.get("version") or ""),"desired_state":str(item.get("desired_state") or "installed"),"activation_state":str(item.get("activation_state") or "enabled"),"security_state":str(item.get("security_state") or "unscanned"),"state":"managed" if owned and artifact_matches and active else "customized"})
+   visible.append({"content_id":cid,"content_type":str(item.get("content_type") or "mod"),"provider":str(item.get("provider") or ""),"version":str(item.get("version") or ""),"desired_state":str(item.get("desired_state") or "installed"),"activation_state":str(item.get("activation_state") or "enabled"),"security_state":str(item.get("security_state") or "unscanned"),"state":"managed" if owned and artifact_matches and revision_matches and active else "customized"})
   extras=[]
   for cid,item in assignments.items():
    if cid==content_id or cid in members or str(item.get("desired_state") or "installed")=="absent":continue
@@ -323,7 +338,7 @@ class CustomerContentWorkspaceService:
   allowed=[str(value).strip().lower() for value in ((capabilities.get("providers") or {}).get(ctype) or []) if str(value).strip()]
   chain=[name for name in ("modrinth","curseforge") if name in allowed]
   if not chain:raise PermissionError("no searchable provider is available for this runtime/content type")
-  attempts=[]
+  attempts=[];combined=[];contributors=[];seen=set()
   for name in chain:
    try:
     results=self.search(user,instance_id,name,ctype,query,limit)
@@ -331,9 +346,103 @@ class CustomerContentWorkspaceService:
     attempts.append({"provider":name,"status":"unavailable","message":str(exc)[:300]})
     continue
    attempts.append({"provider":name,"status":"success" if results else "empty"})
-   if results:
-    return {"results":results,"count":len(results),"provider_used":name,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":False,"github_official_supported":True}}
-  return {"results":[],"count":0,"provider_used":None,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":True,"github_official_supported":True}}
+   if results:contributors.append(name)
+   for item in results:
+    identity=str(item.get("content_id") or "").strip() if isinstance(item,dict) else ""
+    if not identity or identity in seen:continue
+    seen.add(identity);combined.append(item)
+  # Search both catalogs: a loosely matching Modrinth result must not suppress
+  # an exact CurseForge match (e.g. All the Mods vs MrCrayfish modpacks).
+  normalized=lambda value:" ".join(str(value or "").casefold().split())
+  needle=normalized(query)
+  def relevance(item):
+   title=normalized(item.get("name"));slug=normalized(item.get("slug"))
+   if title==needle or slug==needle:return 0
+   if title.startswith(needle+" ") or slug.startswith(needle+"-"):return 1
+   if needle in title or needle in slug:return 2
+   return 3
+  combined.sort(key=lambda item:(relevance(item),-int(item.get("downloads") or 0),normalized(item.get("name"))))
+  try:max_results=max(1,min(int(limit),50))
+  except (TypeError,ValueError):max_results=20
+  selected=combined[:max_results]
+  source="multiple" if len(contributors)>1 else contributors[0] if contributors else None
+  return {"results":selected,"count":len(selected),"provider_used":source,"fallback":{"automatic":True,"attempts":attempts,"upload_recommended":not bool(selected),"github_official_supported":True,"degraded":any(x["status"]=="unavailable" for x in attempts)}}
+
+ def dayz_community_workshop_dependencies(self,user,instance_id,workshop_items,activation_order=100):
+  context,policy=self._context_policy(user,instance_id,"content.install")
+  if str(context.get("game_id") or "").strip().lower()!="dayz":raise PermissionError("community map installation is available only for DayZ")
+  try:order=max(0,min(int(activation_order or 100),1000000))
+  except (TypeError,ValueError) as exc:raise ValueError("invalid activation_order") from exc
+  workshop_raw=workshop_items or []
+  if not isinstance(workshop_raw,list) or len(workshop_raw)>32:raise ValueError("workshop_items must be a list of at most 32 items")
+  workshop_ids=[]
+  for value in workshop_raw:
+   text=str(value or "").strip()
+   if text.startswith("steam-workshop:"):text=text.split(":",1)[1]
+   if not text.isdigit() or len(text)>20:raise ValueError("invalid Steam Workshop item")
+   if text not in workshop_ids:workshop_ids.append(text)
+  # Contract checks apply to reused Workshop items as well as newly installed ones.
+  # Do not reattach content that is forbidden by the current effective policy.
+  if workshop_ids and not policy.workshop_allowed:raise PermissionError("workshop content is not allowed by this contract")
+  dependencies=[];item_index={};existing_items={}
+  for index,published_id in enumerate(workshop_ids):
+   content_id=f"steam-workshop:{published_id}";existing=self.content.get(instance_id,content_id)
+   if existing is not None and str(existing.get("desired_state") or "installed")=="installed":
+    dependencies.append(content_id);existing_items[content_id]={**existing,"content_id":content_id}
+    continue
+   item={"instance_id":instance_id,"content_id":content_id,"content_type":"workshop","provider":"steam-workshop","desired_state":"installed","activation_state":"disabled","activation_order":order+index,"artifact":{"provider":"steam-workshop","published_file_id":published_id}}
+   self._enforce_policy(item,policy);self._resolve_workshop(context,item);nested=self._resolve_workshop_dependencies(context,item);self._prepare_activation_defaults(context,item)
+   for dependency in nested:
+    dependency_id=str(dependency.get("content_id") or "");existing_dependency=self.content.get(instance_id,dependency_id)
+    if existing_dependency is not None and str(existing_dependency.get("desired_state") or "installed")=="installed":
+     existing_items[dependency_id]={**existing_dependency,"content_id":dependency_id}
+     continue
+    dependency["activation_state"]="disabled";self._enforce_policy(dependency,policy);item_index[dependency_id]=dependency
+   item_index[item["content_id"]]=item;dependencies.append(item["content_id"])
+  return {"context":context,"policy":policy,"items":list(item_index.values()),"existing_items":list(existing_items.values()),"dependencies":dependencies,"activation_order":order+len(item_index)}
+
+ def install_dayz_community_map(self,user,instance_id,body):
+  if not isinstance(body,Mapping):raise ValueError("community map payload must be an object")
+  allowed={"content_id","source","workshop_items","activation_order","name","mission_path"}
+  unknown=sorted(set(body)-allowed-{"instance_id"})
+  if unknown:raise ValueError("unsupported community map fields: "+", ".join(unknown))
+  context,policy=self._context_policy(user,instance_id,"content.install")
+  if str(context.get("game_id") or "").strip().lower()!="dayz":raise PermissionError("community map installation is available only for DayZ")
+  content_id=str(body.get("content_id") or "").strip()
+  if not content_id:raise ValueError("content_id is required")
+  source=body.get("source")
+  if not isinstance(source,Mapping):raise ValueError("community map source must be an object")
+  provider=str(source.get("provider") or "").strip().lower()
+  if provider not in {"github","http-archive"}:raise ValueError("community map source provider must be github or http-archive")
+  prepared=self.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
+  order=int(prepared["activation_order"])
+  artifact={"provider":provider,"archive":True}
+  provenance={"community_map":{"provider":provider}}
+  if provider=="github":
+   repository=str(source.get("repository") or "").strip()
+   ref=str(source.get("ref") or "main").strip()
+   if not repository or len(repository)>191 or repository.count("/")!=1 or any(not part or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for ch in part) for part in repository.split("/")):raise ValueError("invalid GitHub repository")
+   if not ref or len(ref)>191 or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-" for ch in ref) or ".." in ref.split("/"):raise ValueError("invalid GitHub ref")
+   artifact.update({"url":f"https://codeload.github.com/{repository}/zip/{ref}","filename":"community-map.zip"})
+   provenance["community_map"].update({"repository":repository,"ref":ref})
+  else:
+   url=str(source.get("url") or "").strip()
+   if not url.startswith("https://"):raise ValueError("community map archive requires HTTPS")
+   artifact.update({"url":url,"filename":"community-map.archive"})
+   provenance["community_map"]["url"]=url
+  items=list(prepared["items"]);dependencies=list(prepared["dependencies"])
+  mission_path=str(body.get("mission_path") or "").strip().replace("\\","/")
+  parts=mission_path.split("/") if mission_path else []
+  if mission_path and (len(mission_path)>512 or mission_path.startswith("/") or any(part in {"",".",".."} for part in parts)):raise ValueError("invalid DayZ community mission path")
+  community_meta={"name":str(body.get("name") or content_id).strip()[:191]}
+  if mission_path:community_meta["mission_path"]=mission_path
+  payload={"instance_id":instance_id,"content_id":content_id,"content_type":"map","provider":provider,"desired_state":"installed","activation_state":"disabled","activation_order":order,"artifact":artifact,"provenance":provenance,"metadata":{"community_map":community_meta},"dependencies":dependencies}
+  self._enforce_policy(payload,policy)
+  actor=str(user.get("username") or "customer")
+  result=self.content.put_many([*items,payload],requested_by=actor,**self._customer_guard_options())
+  result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id)
+  result["dependencies"]=[*prepared.get("existing_items",[]),*[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id]]
+  return result
 
  def install(self,user,instance_id,body):
   context,policy=self._context_policy(user,instance_id,"content.install");payload=self._customer_payload(body);payload["instance_id"]=instance_id;payload["desired_state"]="installed";provider=str(payload.get("provider") or (payload.get("artifact") or {}).get("provider") or "").strip().lower()
@@ -341,24 +450,76 @@ class CustomerContentWorkspaceService:
   self._enforce_policy(payload,policy);self._enforce_structured_provider(context,payload)
   modpack=self._resolve_minecraft_modpack(context,payload)
   if modpack is not None:
-   parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"))
+   parent,bundle,children=modpack;return self.content.put_bundle(parent,bundle,children,requested_by=str(user.get("username") or "customer"),**self._customer_guard_options())
   self._resolve_workshop(context,payload);dependencies=self._resolve_workshop_dependencies(context,payload);self._resolve_minecraft_provider(context,payload);self._prepare_activation_defaults(context,payload);actor=str(user.get("username") or "customer")
   if dependencies:
-   result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
-  return self.content.put(payload,requested_by=actor)
+   result=self.content.put_many([*dependencies,payload],requested_by=actor,**self._customer_guard_options());result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==str(payload.get("content_id") or ""));result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=str(payload.get("content_id") or "")];return result
+  return self.content.put(payload,requested_by=actor,**self._customer_guard_options())
+
+ def prepare_clean_for_version_change(self,user,instance_id):
+  """Remove customer-managed Minecraft content while preserving instance data."""
+  context=self.workspace.require(user,instance_id,"content.remove")
+  if str(context.get("game_id") or "").strip().lower()!="minecraft":raise PermissionError("clean version-change preparation is available only for Minecraft")
+  rows=self.content.list(instance_id=instance_id,limit=2000);candidates=[]
+  for item in rows:
+   if str(item.get("desired_state") or "installed").strip().lower()!="installed":continue
+   ctype=str(item.get("content_type") or "").strip().lower()
+   if ctype not in {"mod","plugin","modpack","datapack"}:continue
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
+   marker=metadata.get("bundle") if isinstance(metadata.get("bundle"),Mapping) else {}
+   if str(marker.get("parent_content_id") or "").strip() and ctype!="modpack":continue
+   content_id=str(item.get("content_id") or "").strip()
+   if content_id:candidates.append(content_id)
+  # All-or-nothing safety preflight: do not remove standalone content first
+  # if this operation would eventually encounter an unsupported Server Pack.
+  protected=[]
+  for item in rows:
+   if str(item.get("content_id") or "") not in candidates:continue
+   artifact=item.get("artifact") if isinstance(item.get("artifact"),Mapping) else {}
+   metadata=item.get("metadata") if isinstance(item.get("metadata"),Mapping) else {}
+   activation=metadata.get("activation") if isinstance(metadata.get("activation"),Mapping) else {}
+   if artifact.get("serverpack_v1") is True or (str(item.get("content_type") or "")=="modpack" and str(activation.get("mode") or "")=="bundle-parent-preserve-config"):
+    protected.append(str(item["content_id"]))
+  if protected:
+   return {"kind":"MinecraftCleanContentPreparation","instance_id":str(instance_id),"removed":[],
+           "failed":[{"content_id":cid,"error":"Server Pack removal requires committed transactional evidence"} for cid in protected],
+           "completed":False,
+           "preserved":["instance","world","ports","resource_profile","backups","permissions"]}
+  removed=[];failed=[]
+  for content_id in candidates:
+   try:self.mutate(user,instance_id,content_id,"remove",{});removed.append(content_id)
+   except Exception as exc:failed.append({"content_id":content_id,"error":str(exc)[:500]})
+  return {"kind":"MinecraftCleanContentPreparation","instance_id":str(instance_id),"removed":removed,"failed":failed,"completed":not failed,"preserved":["instance","world","ports","resource_profile","backups","permissions"]}
+
+
+ def _required_by_installed_content(self,instance_id,content_id):
+  required_by=[]
+  for item in self.content.list(instance_id=instance_id,desired_state="installed",limit=2000):
+   dependencies=item.get("dependencies") if isinstance(item.get("dependencies"),list) else []
+   if content_id in {str(value or "").strip() for value in dependencies}:required_by.append(str(item.get("content_id") or ""))
+  return sorted(value for value in required_by if value)
+
  def mutate(self,user,instance_id,content_id,action,body=None):
   action=str(action or "").strip().lower();required="content.remove" if action=="remove" else "content.install";context,policy=self._context_policy(user,instance_id,required);current=self._existing(instance_id,content_id);actor=str(user.get("username") or "customer");ctype=str(current.get("content_type") or "").lower();provider=str(current.get("provider") or "").strip().lower()
   marker=(current.get("metadata") or {}).get("bundle") if isinstance(current.get("metadata"),Mapping) else None
+  if action=="remove":
+   required_by=self._required_by_installed_content(instance_id,content_id)
+   if required_by:raise PermissionError("content is required by installed content: "+", ".join(required_by))
   parent_content_id=str(marker.get("parent_content_id") or "").strip() if isinstance(marker,Mapping) else ""
   if parent_content_id and ctype!="modpack":raise PermissionError("bundle child content must be changed through its parent modpack")
   if ctype=="modpack":
    (self._enforce_type_policy if action=="remove" else self._enforce_policy)(current,policy)
-   if action=="remove":return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
+   if action=="remove":
+    artifact=current.get("artifact") if isinstance(current.get("artifact"),Mapping) else {}
+    activation=(current.get("metadata") or {}).get("activation") if isinstance(current.get("metadata"),Mapping) else {}
+    if artifact.get("serverpack_v1") is True or (isinstance(activation,Mapping) and str(activation.get("mode") or "")=="bundle-parent-preserve-config"):
+     raise PermissionError("Server Pack removal requires committed transactional evidence")
+    return self.content.set_bundle_state(instance_id,content_id,desired_state="absent",activation_state="disabled",requested_by=actor)
    if action=="disable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="disabled",requested_by=actor)
    if action=="enable":return self.content.set_bundle_state(instance_id,content_id,desired_state="installed",activation_state="enabled",requested_by=actor)
    if action=="rollback":
     revision=(body or {}).get("revision");return self.content.rollback_bundle(instance_id,content_id,revision,requested_by=actor,reason="customer")
-   if action=="update":
+   if action in {"preview-update","update"}:
     self._validate_update_request(body)
     if not provider_supports(provider,"update",self.workspace.root):raise ValueError("automatic modpack update is unavailable for this provider")
     if provider not in {"modrinth","curseforge"}:raise ValueError("automatic modpack update is unavailable for this provider")
@@ -366,7 +527,11 @@ class CustomerContentWorkspaceService:
     if not project:raise ValueError("modpack provider project identity is unavailable")
     payload=self._desired(current);payload["instance_id"]=instance_id;payload["artifact"]={"provider":provider,"package_id":project};payload["desired_state"]="installed";self._enforce_structured_provider(context,payload);resolved=self._resolve_minecraft_modpack(context,payload)
     if resolved is None:raise ValueError("modpack resolver is unavailable")
-    parent,bundle,children=resolved;history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None;self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);diff=self.content.bundle_diff(instance_id,content_id,bundle);result=self.content.put_bundle(parent,bundle,children,requested_by=actor);result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
+    parent,bundle,children=resolved;diff=self.content.bundle_diff(instance_id,content_id,bundle)
+    history_before=self.content.bundle_history(instance_id,content_id);current_bundle_revision=int(history_before[0]["revision"]) if history_before else None
+    if action=="preview-update":
+     return {"preview":True,"changed":bool(diff["added"] or diff["removed"] or diff["updated"]),"assignment":current,"target":{"provider":provider,"project":project,"version":parent.get("version"),"provider_version_id":bundle.get("provider_version_id"),"minecraft_version":bundle.get("minecraft_version"),"loader_id":bundle.get("loader_id"),"loader_version":bundle.get("loader_version")},"manifest_diff":diff,"current_bundle_revision":current_bundle_revision}
+    self._mark_update_checkpoint(current,parent,bundle_revision=current_bundle_revision);result=self.content.put_bundle(parent,bundle,children,requested_by=actor,**self._customer_guard_options());result["manifest_diff"]=diff;result["previous_bundle_revision"]=current_bundle_revision if result.get("changed") else None;return result
    raise ValueError("modpack reorder is not supported")
   payload=self._desired(current);payload["instance_id"]=instance_id
   if action=="remove":payload["desired_state"]="absent";payload["activation_state"]="disabled"
@@ -389,11 +554,24 @@ class CustomerContentWorkspaceService:
    self._mark_update_checkpoint(current,payload)
   else:raise ValueError("invalid content action")
   (self._enforce_type_policy if action=="remove" else self._enforce_policy)(payload,policy)
+  if action=="remove":
+   orphaned=[]
+   for dependency_id in current.get("dependencies") or []:
+    dependency_id=str(dependency_id or "").strip()
+    if not dependency_id:continue
+    dependency=self.content.get(instance_id,dependency_id)
+    if dependency is None or str(dependency.get("desired_state") or "installed")!="installed":continue
+    required_by=[value for value in self._required_by_installed_content(instance_id,dependency_id) if value!=content_id]
+    if required_by:continue
+    dependency_payload=self._desired(dependency);dependency_payload["instance_id"]=instance_id;dependency_payload["desired_state"]="absent";dependency_payload["activation_state"]="disabled"
+    self._enforce_type_policy(dependency_payload,policy);orphaned.append(dependency_payload)
+   if orphaned:
+    result=self.content.put_many([payload,*orphaned],requested_by=actor,**self._customer_guard_options());result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["removed_dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
   if action=="update" and provider in {"steam","steam-workshop"}:
    dependencies=self._resolve_workshop_dependencies(context,payload)
    if dependencies:
-    result=self.content.put_many([*dependencies,payload],requested_by=actor);result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
-  return self.content.put(payload,requested_by=actor)
+    result=self.content.put_many([*dependencies,payload],requested_by=actor,**self._customer_guard_options());result["assignment"]=next(item for item in result["assignments"] if str(item.get("content_id") or "")==content_id);result["dependencies"]=[item for item in result["assignments"] if str(item.get("content_id") or "")!=content_id];return result
+  return self.content.put(payload,requested_by=actor,**self._customer_guard_options())
 
 
 __all__=["CustomerContentWorkspaceService"]

@@ -5,10 +5,15 @@ from datetime import datetime,timezone
 from urllib.parse import parse_qs,urlparse
 from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
+from customer_content_workspace import CustomerContentWorkspaceService
+from customer_content_upload_service import CustomerContentUploadService
+from content_repository import ContentRepository
 from dayz_management_repository import DayZManagementRepository,DayZOperationConflict
 from json_serialization import to_json_compatible
 
 PATH="/api/customer/instance/dayz"
+COMMUNITY_MAP=PATH+"/community-map"
+COMMUNITY_MAP_UPLOAD_FINALIZE=COMMUNITY_MAP+"/upload-finalize"
 DISCOVERY_SCHEMA_VERSION=2
 
 def _discovery_payload(op):
@@ -20,6 +25,71 @@ def _discovery_payload(op):
     required={"id","official","community","active","installed","available","can_activate","state","source"}
     if any(not isinstance(item,dict) or not required.issubset(item) for item in missions):return None
     return payload
+
+def _as_utc(value):
+    if value in {None,""}:return None
+    if isinstance(value,datetime):dt=value
+    else:
+        try:dt=datetime.fromisoformat(str(value).replace("Z","+00:00"))
+        except (TypeError,ValueError):return None
+    if dt.tzinfo is None:dt=dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+def _community_display_names(content,instance_id,maps):
+    if not isinstance(maps,dict):return maps
+    missions=maps.get("missions")
+    if not isinstance(missions,list):return maps
+    # Discovery is asynchronous. Never expose a stale managed community map after
+    # its authoritative assignment has already been removed.
+    filtered=[];assignment_cache={}
+    assignments=content.list(instance_id=instance_id,limit=2000)
+    managed_maps=[item for item in assignments if isinstance(item,dict) and str(item.get("content_type") or "").strip().lower()=="map"]
+    removed_map_ids={str(item.get("content_id") or "").strip() for item in managed_maps if str(item.get("desired_state") or "installed").strip().lower()=="absent"}
+    removed_missions=set()
+    for item in managed_maps:
+        if str(item.get("content_id") or "").strip() not in removed_map_ids:continue
+        metadata=item.get("metadata") if isinstance(item.get("metadata"),dict) else {}
+        community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
+        mission_path=str(community.get("mission_path") or "").strip().replace("\\","/")
+        if mission_path:removed_missions.add(mission_path.rstrip("/").rsplit("/",1)[-1].casefold())
+    for raw in missions:
+        if isinstance(raw,dict) and raw.get("community"):
+            content_id=str(raw.get("content_id") or "").strip()
+            if content_id:
+                if content_id not in assignment_cache:assignment_cache[content_id]=content.get(instance_id,content_id)
+                assignment=assignment_cache[content_id]
+                if isinstance(assignment,dict) and str(assignment.get("desired_state") or "installed").strip().lower()=="absent":continue
+            else:
+                mission_id=str(raw.get("id") or "").strip().casefold()
+                if mission_id in removed_missions:continue
+        filtered.append(raw)
+    missions=filtered
+    result=dict(maps);enriched=[];content_counts={}
+    for raw in missions:
+        if isinstance(raw,dict) and raw.get("community") and raw.get("content_id"):
+            cid=str(raw["content_id"]);content_counts[cid]=content_counts.get(cid,0)+1
+    assignments={}
+    for raw in missions:
+        item=dict(raw) if isinstance(raw,dict) else raw
+        if isinstance(item,dict) and item.get("community") and item.get("content_id"):
+            current=str(item.get("name") or "").strip();mission_id=str(item.get("id") or "").strip();content_id=str(item["content_id"])
+            if not current or current==mission_id:
+                if content_id not in assignments:assignments[content_id]=content.get(instance_id,content_id)
+                assignment=assignments[content_id]
+                metadata=assignment.get("metadata") if isinstance(assignment,dict) and isinstance(assignment.get("metadata"),dict) else {}
+                community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
+                display=str(community.get("name") or metadata.get("display_name") or "").strip()
+                if display:
+                    if content_counts.get(content_id,0)>1 and mission_id:
+                        variant=mission_id.split(".",1)[0].replace("_"," ").replace("-"," ").strip()
+                        if variant and variant.casefold() not in display.casefold():display=f"{display} — {variant.title()}"
+                    item["name"]=display
+        enriched.append(item)
+    result["missions"]=enriched
+    current_id=str(result.get("current") or "").strip()
+    active=next((item for item in enriched if isinstance(item,dict) and (item.get("active") or str(item.get("id") or "")==current_id)),None)
+    if active and active.get("name"):result["current_name"]=active["name"]
+    return result
 
 def install_customer_dayz_http(legacy,authenticate):
     previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST
@@ -47,13 +117,21 @@ def install_customer_dayz_http(legacy,authenticate):
         latest_change=next((op for op in ops if op.get("action")=="change_mission" and op.get("status")=="completed"),None)
         discovery_created=(discovery[0].get("created_at") if discovery else None)
         change_completed=(latest_change.get("completed_at") if latest_change else None)
-        stale_after_change=bool(latest_change and (discovery is None or (change_completed and discovery_created and change_completed>discovery_created)))
-        if (discovery is None or stale_after_change) and active_discovery is None:
+        stale_after_change=bool(latest_change and (discovery is None or (_as_utc(change_completed) and _as_utc(discovery_created) and _as_utc(change_completed)>_as_utc(discovery_created))))
+        content=ContentRepository(backend())
+        content_updated=content.latest_updated_at(instance_id,{"map","workshop"})
+        stale_after_content=bool(discovery and _as_utc(content_updated) and _as_utc(discovery_created) and _as_utc(content_updated)>_as_utc(discovery_created))
+        if (discovery is None or stale_after_change or stale_after_content) and active_discovery is None:
             actor=str((user or {}).get("username") or (user or {}).get("id") or "customer")
             repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             ops=repo.list_for_instance(instance_id,25)
         discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
-        maps=discovery[1] if discovery else {}
+        discovery=next(((op,_discovery_payload(op)) for op in ops if _discovery_payload(op) is not None),None)
+        discovery_created=(discovery[0].get("created_at") if discovery else None)
+        content_updated=content.latest_updated_at(instance_id,{"map","workshop"})
+        discovery_is_stale=bool(discovery and _as_utc(content_updated) and _as_utc(discovery_created) and _as_utc(content_updated)>_as_utc(discovery_created))
+        maps={} if discovery_is_stale else (discovery[1] if discovery else {})
+        maps=_community_display_names(content,instance_id,maps)
         return {"instance_id":instance_id,"editable":"instance.restart" in workspace.permissions(user,instance_id) and "settings.write" in workspace.permissions(user,instance_id),"maps":maps,"operations":[{k:op.get(k) for k in ("operation_id","action","status","scheduled_at","last_error","created_at","delivered_at","completed_at","canceled_at","payload","result")} for op in ops[:15]]}
     def error(self,exc):
         if isinstance(exc,PermissionError):return send(self,403,{"error":"forbidden","message":str(exc)})
@@ -70,11 +148,27 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     def post(self):
         parsed=urlparse(self.path)
-        if parsed.path!=PATH:return previous_post(self)
+        if parsed.path not in {PATH,COMMUNITY_MAP,COMMUNITY_MAP_UPLOAD_FINALIZE}:return previous_post(self)
         user=require_user(self)
         if user is None:return
         try:
-            body=self.read_json_body();instance_id=iid(parsed,body);workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
+            body=self.read_json_body();instance_id=iid(parsed,body)
+            if parsed.path==COMMUNITY_MAP:
+                result=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT).install_dayz_community_map(user,instance_id,body)
+                return send(self,202,{"community_map":result,"view":view(user,instance_id)})
+            if parsed.path==COMMUNITY_MAP_UPLOAD_FINALIZE:
+                content=CustomerContentWorkspaceService(backend(),legacy.DSM_ROOT)
+                prepared=content.dayz_community_workshop_dependencies(user,instance_id,body.get("workshop_items") or [],body.get("activation_order") or 100)
+                upload=CustomerContentUploadService(backend(),legacy.DSM_ROOT)
+                mission_path=str(body.get("mission_path") or "").strip().replace("\\","/")
+                parts=mission_path.split("/") if mission_path else []
+                if mission_path and (len(mission_path)>512 or mission_path.startswith("/") or any(part in {"",".",".."} for part in parts)):raise ValueError("invalid DayZ community mission path")
+                community_meta={"name":str(body.get("name") or body.get("content_id") or "")[:191]}
+                if mission_path:community_meta["mission_path"]=mission_path
+                finalize_body={"instance_id":instance_id,"transfer_id":str(body.get("transfer_id") or ""),"content_id":str(body.get("content_id") or ""),"activation_order":int(prepared["activation_order"]),"metadata":{"display_name":community_meta["name"],"community_map":community_meta}}
+                result=upload.finalize_dayz_community_map(user,finalize_body["transfer_id"],finalize_body,prepared["items"],dependency_content_ids=prepared["dependencies"])
+                return send(self,202,{"community_map":result,"view":view(user,instance_id)})
+            workspace,context,repo=service(user,instance_id,"instance.restart");workspace.require(user,instance_id,"settings.write");repo.initialize()
             action=str(body.get("action") or "").strip().lower();actor=str(user.get("username") or user.get("id") or "customer")
             if action=="refresh_maps":queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="discover_missions",requested_by=actor)
             elif action=="change_mission":
@@ -85,6 +179,25 @@ def install_customer_dayz_http(legacy,authenticate):
                 persistence_mode=str(body.get("persistence_mode") or "fresh").strip().lower()
                 if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
                 queued=repo.enqueue(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,action="change_mission",payload={"mission":mission,"content_mode":content_mode,"persistence_mode":persistence_mode},requested_by=actor)
+            elif action=="apply_battleye_directory":
+                # Separate explicit action; saving startup preferences never
+                # enqueues a runtime mutation or restarts the server.
+                if set(body) - {"instance_id", "action"}:
+                    raise ValueError("BattlEye apply does not accept client-supplied paths")
+                caps=workspace.startup(user,instance_id)
+                preference=(caps.get("values") or {}).get("battleye_directory","battleye")
+                from instance_workspace_policy import validate_startup_values
+                normalized=validate_startup_values(
+                    {"battleye_directory":preference},
+                    (caps.get("declaration") or {}),
+                )
+                queued=repo.enqueue(
+                    agent_id=str(context.get("agent_id") or ""),
+                    instance_id=instance_id,
+                    action="apply_battleye_directory",
+                    payload={"battleye_directory":normalized["battleye_directory"]},
+                    requested_by=actor,
+                )
             elif action=="wipe":
                 scheduled_at=body.get("scheduled_at")
                 if scheduled_at:
@@ -102,4 +215,4 @@ def install_customer_dayz_http(legacy,authenticate):
         except Exception as exc:return error(self,exc)
     legacy.DashboardHandler.do_GET=get;legacy.DashboardHandler.do_POST=post
 
-__all__=["PATH","install_customer_dayz_http"]
+__all__=["COMMUNITY_MAP","COMMUNITY_MAP_UPLOAD_FINALIZE","PATH","install_customer_dayz_http"]

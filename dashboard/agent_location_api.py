@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import json
+
+from alert_repository import AlertSession, dialect_for_backend
 from infrastructure_repository import InfrastructureRepository
 from location_repository import LocationRepository
 
@@ -159,6 +162,34 @@ def set_agent_location_for_user(
         public_host=public_host,
         status=status,
     )
+
+    # Explicit administration always wins over future GeoIP observations.
+    dialect = dialect_for_backend(backend)
+    ph = dialect.placeholder
+    with backend.transaction() as connection:
+        session = AlertSession(backend, connection)
+        try:
+            row = session.execute(
+                f"SELECT metadata_json FROM agents WHERE id={ph}",
+                (agent["id"],),
+            ).fetchone()
+            raw = row["metadata_json"] if row else None
+            if isinstance(raw, dict):
+                metadata = dict(raw)
+            else:
+                try:
+                    metadata = json.loads(str(raw or "{}"))
+                except (ValueError, TypeError):
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["capivara_location_mode"] = "manual"
+            session.execute(
+                f"UPDATE agents SET metadata_json={ph} WHERE id={ph}",
+                (json.dumps(metadata, separators=(",", ":")), agent["id"]),
+            )
+        finally:
+            session.close()
 
     return {
         "agent_id": agent["id"],

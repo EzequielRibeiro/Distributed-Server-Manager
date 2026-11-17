@@ -39,8 +39,8 @@ class MinecraftVersionUpdateService:
             raise ValueError("explicit compatibility-risk confirmation is required")
 
         preflight = self.preflight_service.preflight(user, instance_id, version, build)
-        if preflight.get("has_known_incompatibilities"):
-            raise ValueError("known incompatible content must be disabled or updated before changing Minecraft version")
+        if not preflight.get("can_request_update"):
+            raise ValueError("incompatible or unverified managed content must be removed, updated or disabled before changing Minecraft version")
 
         context = self.workspace.require(user, instance_id, "instance.update")
         runtime_id = str(context.get("runtime_id") or "").strip()
@@ -90,6 +90,14 @@ class MinecraftVersionUpdateService:
             desired_state=desired_state,
             requested_by=str(user.get("username") or user.get("id") or "customer"),
         )
+        queued = state.get("request") if isinstance(state.get("request"), dict) else {}
+        actual_configuration = queued.get("configuration") if isinstance(queued.get("configuration"), dict) else {}
+        actual_update = actual_configuration.get("minecraft_version_update")
+        if not isinstance(actual_update, dict) or any(
+            str(actual_update.get(key) or "") != str(update_meta[key])
+            for key in ("runtime_id", "from_version", "target_version", "target_build", "isolated_install_dir")
+        ):
+            raise ValueError("instance already has a different active provisioning operation")
         return {
             "accepted": True,
             "instance_id": str(instance_id),

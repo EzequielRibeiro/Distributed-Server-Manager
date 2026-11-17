@@ -374,7 +374,7 @@ class CustomerManagementRepository:
                     (customer_id,),
                 ).fetchall()
                 instances = session.execute(
-                    "SELECT i.id,i.name,i.game_id,i.status,i.agent_id,i.runtime_id,ic.contract_id "
+                    "SELECT i.id,i.name,i.game_id,i.status,i.agent_id,i.node_id,i.runtime_id,ic.contract_id "
                     "FROM instances i "
                     "LEFT JOIN instance_contracts ic ON ic.instance_id=i.id "
                     f"WHERE i.customer_id={ph} ORDER BY i.name,i.id",

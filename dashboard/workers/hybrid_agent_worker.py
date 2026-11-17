@@ -39,6 +39,8 @@ from agent_public_network import AgentPublicNetworkRepository
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from backup_repository import BackupRepository
 from configuration_repository import ConfigurationRepository
+from runtime_secret_integration import install_runtime_secret_transport
+install_runtime_secret_transport()
 from content_repository import ContentRepository
 from hybrid_game_data_client import process_hybrid_game_data_cycle
 from hybrid_instance_provisioning_client import process_hybrid_instance_provisioning_cycle
@@ -65,6 +67,21 @@ _ALLOWED_DB_KEYS = {
     "DSM_DATABASE_TLS",
 }
 _SAFE_INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
+
+
+def _held_content_instance_ids() -> frozenset[str]:
+    """Reversible operator hold for one instance during unsafe content drift.
+
+    Suppress both pending commands and stale Agent reports: old reports can
+    trigger rollback of a separately committed Server Pack revision.
+    """
+    raw = os.environ.get("DSM_CONTENT_HOLD_INSTANCE_IDS", "").strip()
+    if not raw:
+        return frozenset()
+    names = [item.strip() for item in raw.split(",")]
+    if any(not _SAFE_INSTANCE_ID.fullmatch(name) for name in names):
+        raise RuntimeError("invalid content-hold instance identifier")
+    return frozenset(names)
 
 
 def _hybrid_agent_log_path(root: Path) -> Path:
@@ -356,7 +373,9 @@ def process_hybrid_instance_reconcile_cycle(root: Path, agent_id: str) -> dict[s
         }
 
     reconciler = _runtime_reconciler_module(root)
-    results = reconciler.reconcile_all(config)
+    held = _held_content_instance_ids()
+    results = (reconciler.reconcile_all(config, skip_instance_ids=held)
+               if held else reconciler.reconcile_all(config))
     if not isinstance(results, list):
         raise RuntimeError("Hybrid runtime reconciler returned an invalid payload")
 
@@ -697,18 +716,28 @@ def process_hybrid_content_cycle(
     previous = client.content_state()
     if not isinstance(previous, list):
         raise RuntimeError("Hybrid content client returned an invalid state payload")
-    previous = [item for item in previous if isinstance(item, dict)]
+    protected,transacting = repository.serverpack_content_fence(agent_id)
+    held = _held_content_instance_ids() | transacting
+    def allowed(item):
+        key=(str(item.get("instance_id") or ""),str(item.get("content_id") or ""))
+        return key[0] not in held and key not in protected
+    previous = [item for item in previous if isinstance(item, dict) and allowed(item)]
     reported = repository.record_agent_state(agent_id, previous)
 
     commands = repository.desired_for_agent(agent_id)
     if not isinstance(commands, list):
         raise RuntimeError("Hybrid content repository returned an invalid command payload")
-    commands = [item for item in commands if isinstance(item, dict)]
+    # Double-check the fence after readback: a migration can be queued
+    # between reporting the prior state and dispatching desired work.
+    fresh_protected,fresh_transacting=repository.serverpack_content_fence(agent_id)
+    protected |= fresh_protected
+    held |= fresh_transacting
+    commands = [item for item in commands if isinstance(item, dict) and allowed(item)]
 
     reports = client.apply_content_commands(config, commands)
     if not isinstance(reports, list):
         raise RuntimeError("Hybrid content client returned an invalid result payload")
-    reports = [item for item in reports if isinstance(item, dict)]
+    reports = [item for item in reports if isinstance(item, dict) and allowed(item)]
     accepted = repository.record_agent_state(agent_id, reports)
 
     return {
@@ -802,6 +831,89 @@ def process_hybrid_backup_cycle(
     }
 
 
+def process_hybrid_minecraft_recovery_audit_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Audit verified journal statements without changing provisioning or runtime."""
+    try:
+        runtime = _instance_runtime_module(root)
+        from runtime_operations import read_recovered_migration
+        from minecraft_recovery_heartbeat_collector import collect_recovery_observations
+        from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
+        from minecraft_recovery_event_persistence import persist_recovery_claims
+        state_dir = root / "runtime" / "hybrid-agent-state" / "instances"
+        instance_ids = []
+        for entry in sorted(state_dir.glob("*.json"))[:512]:
+            instance_id = entry.stem
+            if _SAFE_INSTANCE_ID.fullmatch(instance_id):
+                instance_ids.append(instance_id)
+        claims = collect_recovery_observations(
+            instance_ids, agent_id=agent_id, read_operation=read_recovered_migration,
+            read_instance=runtime.get_instance,
+        )
+        if not claims:
+            return {"status": "idle", "accepted": 0, "created": 0}
+        validated = validated_heartbeat_recovery_claims(
+            backend, {"minecraft_recovery_observations": claims},
+            authenticated_agent_id=agent_id,
+        )
+        stats = persist_recovery_claims(backend, validated)
+        return {"status": "audited", **stats}
+    except Exception:
+        return {"status": "unavailable", "accepted": 0, "created": 0}
+
+
+
+def process_hybrid_current_neoforge_attestation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    """Collect and ownership-check current loader proof without persisting or clearing failures."""
+    try:
+        runtime = _instance_runtime_module(root)
+        from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
+        from minecraft_current_neoforge_heartbeat_claims import current_attestations_from_heartbeat
+        from minecraft_recovery_heartbeat_claims import owned_instance_ids_for_agent
+        state_dir = root / "runtime" / "hybrid-agent-state" / "instances"
+        instance_ids = [entry.stem for entry in sorted(state_dir.glob("*.json"))[:512]
+                        if _SAFE_INSTANCE_ID.fullmatch(entry.stem)]
+        collected = collect_current_neoforge_attestations(
+            instance_ids, agent_id=agent_id, read_instance=runtime.get_instance)
+        verified = current_attestations_from_heartbeat(
+            {"minecraft_current_neoforge_attestations": collected},
+            authenticated_agent_id=agent_id,
+            owned_instance_ids=owned_instance_ids_for_agent(backend, agent_id=agent_id))
+        if verified:
+            from minecraft_current_neoforge_event_persistence import persist_current_neoforge_attestations
+            stats = persist_current_neoforge_attestations(backend, verified)
+            return {"status": "audited", "verified": len(verified), **stats}
+        return {"status": "collected", "verified": 0}
+    except Exception:
+        return {"status": "unavailable", "verified": 0}
+
+
+# Slow, read-only scan: never hash large modpacks every 30-second heartbeat.
+_SERVERPACK_OBSERVATION_LAST_RUN = 0.0
+
+
+def process_hybrid_serverpack_observation_cycle(backend, root: Path, agent_id: str) -> dict[str, Any]:
+    global _SERVERPACK_OBSERVATION_LAST_RUN
+    now=time.monotonic()
+    if _SERVERPACK_OBSERVATION_LAST_RUN and now-_SERVERPACK_OBSERVATION_LAST_RUN<3600:
+        return {"status":"throttled","checked":0,"verified":0}
+    _SERVERPACK_OBSERVATION_LAST_RUN=now
+    try:
+        from minecraft_serverpack_hybrid_observer import collect_hybrid_serverpack_observations
+        runtime=_instance_runtime_module(root)
+        observed=collect_hybrid_serverpack_observations(
+            backend,agent_id=agent_id,read_instance=runtime.get_instance,limit=1)
+        from datetime import datetime, timezone
+        from minecraft_serverpack_observation_events import persist_serverpack_runtime_observations
+        stamp=datetime.now(timezone.utc).isoformat().replace('+00:00','Z')
+        stored=persist_serverpack_runtime_observations(
+            backend,agent_id=agent_id,observations=observed,observed_at=stamp)
+        return {"status":"observed","checked":len(observed),
+                "verified":sum(x.get("status")=="physical_runtime_verified" for x in observed),
+                "persisted":stored["created"],"observations":observed}
+    except Exception:
+        return {"status":"unavailable","checked":0,"verified":0}
+
+
 def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
@@ -875,6 +987,9 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
 
     instance_telemetry = process_hybrid_instance_telemetry_cycle(effective_backend, root, agent_id)
     instance_health = process_hybrid_instance_health_cycle(effective_backend, root, agent_id)
+    minecraft_recovery_audit = process_hybrid_minecraft_recovery_audit_cycle(effective_backend, root, agent_id)
+    minecraft_current_neoforge = process_hybrid_current_neoforge_attestation_cycle(effective_backend, root, agent_id)
+    minecraft_serverpack_observation = process_hybrid_serverpack_observation_cycle(effective_backend, root, agent_id)
     backup = process_hybrid_backup_cycle(effective_backend, root, agent_id)
     response = {
         "active": True,
@@ -890,6 +1005,9 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "dayz_operation": dayz_operation,
         "instance_telemetry": instance_telemetry,
         "instance_health": instance_health,
+        "minecraft_recovery_audit": minecraft_recovery_audit,
+        "minecraft_current_neoforge": minecraft_current_neoforge,
+        "minecraft_serverpack_observation": minecraft_serverpack_observation,
         "backup": backup,
         "provisioning": provisioning,
         "game_data": game_data,

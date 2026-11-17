@@ -52,6 +52,81 @@ def main() -> int:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": "runtime selection missing"})
         return 1
 
+    # Instance-scoped checks and updates must resolve the registered installation.
+    # Never let the generic Steam probe inspect an unrelated install_dir.
+    meta = selection.get("_server_update")
+    if str(command.get("action") or "").strip().lower() in {"verify", "update"} and isinstance(meta, dict):
+        agent_executor = root / "agents/linux/runtime/game_data_executor.py"
+        if not agent_executor.is_file():
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": "hybrid_instance_update_transaction_unavailable",
+            })
+            return 1
+        # The Hybrid worker may run under a distinct service environment.
+        # Match the embedded Agent context before importing its runtime modules.
+        state_dir = root / "runtime" / "hybrid-agent-state"
+        environment = {
+            **os.environ,
+            "DSM_ROOT": str(root),
+            "CAPIVARA_AGENT_MODE": "hybrid",
+            "CAPIVARA_DSM_ROOT": str(root),
+            "CAPIVARA_AGENT_ROOT": str(root / "agents" / "linux"),
+            "CAPIVARA_AGENT_STATE_DIR": str(state_dir),
+            "CAPIVARA_GAME_DATA_ROOT": str(state_dir / "game-data"),
+            "CAPIVARA_AGENT_CONFIG": str(state_dir / "agent.json"),
+            "CAPIVARA_AGENT_SERVICE": "dsm-dashboard-worker.service",
+        }
+        steam_user = _steam_user(root)
+        if steam_user and not environment.get("DSM_STEAM_USER"):
+            environment["DSM_STEAM_USER"] = steam_user
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(agent_executor), str(request_path), str(result_path)],
+                cwd=str(root), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True, timeout=7200, check=False,
+                env=environment,
+            )
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            if not isinstance(result, dict) or result.get("job_id") != job_id:
+                raise RuntimeError("invalid transactional executor response")
+            if completed.returncode != 0 or result.get("status") != "completed":
+                if result.get("status") == "completed":
+                    _write_result(result_path, {
+                        "job_id": job_id, "status": "failed", "progress": 100,
+                        "error": "hybrid_instance_update_transaction_failed",
+                    })
+                return 1
+            return 0
+        except Exception:
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": "hybrid_instance_update_transaction_failed",
+            })
+            return 1
+
+    # Verification must never enter install-json, which mutates game files.
+    if str(command.get("action") or "").strip().lower() == "verify":
+        try:
+            provider = str(selection.get("provider") or "").strip().lower()
+            if provider != "steam":
+                raise ValueError("read_only_version_probe_unsupported_provider")
+            from hybrid_steam_version_probe import probe
+            status = probe(selection)
+            target = Path(str(selection.get("install_dir")))
+            _write_result(result_path, {
+                "job_id": job_id, "status": "completed", "progress": 100,
+                "provider": provider, "game": selection.get("game"),
+                "target_path": str(target), "update_status": status,
+            })
+            return 0
+        except Exception as exc:
+            _write_result(result_path, {
+                "job_id": job_id, "status": "failed", "progress": 100,
+                "error": str(exc)[:2000],
+            })
+            return 1
+
     _write_result(result_path, {"job_id": job_id, "status": "running", "progress": 5})
     installer = root / "installer" / "install_selection.sh"
     environment = {**os.environ, "DSM_ROOT": str(root)}
@@ -82,9 +157,32 @@ def main() -> int:
             except OSError:
                 pass
         output = completed.stdout or ""
-        print(output, end="" if output.endswith("\n") else "\n", flush=True)
+        # Only DSM-controlled diagnostics/progress may enter the job log.
+        # Do not forward untrusted installer/SteamCMD transcript verbatim.
+        safe_lines = [line for line in output.splitlines()
+                      if line.startswith("[DSM][STEAM][ERRO]")
+                      or line.startswith("[DSM][INSTALL][ERRO]")]
+        for line in safe_lines:
+            if re.search(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization|cookie|steamguard|steam guard code)", line):
+                print("[DSM][INSTALL][ERRO] provider error redacted", flush=True)
+            else:
+                print(line, flush=True)
         if completed.returncode != 0:
-            detail = output.strip().splitlines()[-1] if output.strip() else f"installer exit {completed.returncode}"
+            # Preserve the actionable provider error, rather than only the
+            # generic final INSTALL-ERROR status line. Do not persist the full
+            # SteamCMD transcript (it can contain account/session details).
+            lines = [line.strip() for line in output.splitlines() if line.strip()]
+            provider_errors = [
+                line for line in lines
+                if "[DSM][STEAM][ERRO]" in line or "[DSM][INSTALL][ERRO]" in line
+            ]
+            generic = next((line for line in reversed(lines)
+                if re.fullmatch(r"\[DSM\]\[INSTALL-ERROR\] action=[a-z_-]+ error=[a-z_-]+ status=[a-z_-]+", line)), None)
+            detail = provider_errors[-1] if provider_errors else (generic or f"installer exit {completed.returncode}")
+            # Fail closed if the selected diagnostic contains possible secrets.
+            # The full installer transcript is available only in the local job log.
+            if re.search(r"(?i)(password|passwd|token|secret|api[_-]?key|authorization|cookie|steamguard|steam guard code)", detail):
+                detail = f"installer failed (exit {completed.returncode}); inspect protected job log"
             raise RuntimeError(detail[:2000])
     except Exception as exc:
         _write_result(result_path, {"job_id": job_id, "status": "failed", "progress": 100, "error": str(exc)[:2000]})

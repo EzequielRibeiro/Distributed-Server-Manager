@@ -63,9 +63,19 @@ def _safe_extract(archive,dest):
   tar.extractall(base,members=members,filter="data")
  if manifest is not None and (manifest.get("kind")!="CapivaraInstanceBackup" or manifest.get("backup_format")!="capivara-instance"):raise ValueError("unsupported backup manifest")
  return manifest
-def _retention(instance_dir,keep):
- archives=sorted([p for p in instance_dir.glob("*.tar*") if p.is_file()],key=lambda p:p.stat().st_mtime,reverse=True)
- for old in archives[max(1,int(keep)):]:old.unlink(missing_ok=True)
+def _retained_backup_capacity(instance_dir,policy):
+ if "retention_days" not in policy:return
+ days=policy["retention_days"]
+ if type(days) is not int or not 1<=days<=365:raise ValueError("invalid retention_days in backup command")
+ prior=sorted((p for p in instance_dir.glob("*.tar*") if p.is_file()),
+              key=lambda p:p.stat().st_mtime,reverse=True)
+ estimate=prior[0].stat().st_size if prior else 0
+ required=max(8*1024**3,estimate*2+4*1024**3)
+ disk_root=instance_dir.parent
+ while not disk_root.exists() and disk_root!=disk_root.parent:disk_root=disk_root.parent
+ if shutil.disk_usage(disk_root).free<required:
+  raise OSError("backup age retention capacity preflight failed: preserve existing backups")
+
 def _create(config,cmd):
  iid=str(cmd["instance_id"]);record,root=_owned(config,iid);policy=dict(cmd.get("policy") or {});cons=str(policy.get("consistency") or "live");was_running=False
  if cons=="quiesced":raise RuntimeError("quiesced backup requires a game-specific consistency hook")
@@ -73,7 +83,17 @@ def _create(config,cmd):
   was_running=status(config,iid).get("observed_state")=="running"
   if was_running:lifecycle(config,iid,"stop")
  try:
-  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid);_create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"),manifest);size=path.stat().st_size;sha=_digest(path);manifest["files_checksum"]=sha;_retention(idir,int(policy.get("retention_count") or 7));return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha,"manifest":manifest}
+  bid=str(uuid.uuid4());idir=BACKUP_ROOT/_safe(iid);suffix=".tar.gz" if str(policy.get("compression") or "gzip")=="gzip" else ".tar";_retained_backup_capacity(idir,policy);path=idir/f"{bid}{suffix}";manifest=_manifest(record,bid)
+  if path.exists():raise FileExistsError(f"backup destination already exists: {path}")
+  try:
+   _create_archive(root,_selected(root,policy),path,str(policy.get("compression") or "gzip"),manifest)
+   size=path.stat().st_size;sha=_digest(path)
+  except Exception:
+   path.unlink(missing_ok=True)
+   raise
+  manifest["files_checksum"]=sha
+  # Retention never deletes existing files during creation. All historical archives stay preserved.
+  return {"backup_id":bid,"artifact_path":str(path),"size_bytes":size,"sha256":sha,"manifest":manifest}
  finally:
   if cons=="stopped" and was_running:lifecycle(config,iid,"start")
 def _artifact(iid,bid):
@@ -112,6 +132,11 @@ def _restore(config,cmd):
  finally:shutil.rmtree(stage,ignore_errors=True)
  return {"backup_id":str(cmd.get("backup_id")),"artifact_path":str(artifact),"size_bytes":artifact.stat().st_size,"sha256":_digest(artifact)}
 def _delete(config,cmd):
+ # Scheduled/legacy deletes are disabled unless explicitly opted in.
+ # Explicit customer/manual deletion keeps the existing permission workflow.
+ if (str(cmd.get("reason") or "").strip().lower() not in {"manual", "customer"}
+     and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION","").strip()!="1"):
+  raise ValueError("automatic backup deletion is disabled")
  iid=str(cmd["instance_id"]);_owned(config,iid);bid=str(cmd.get("backup_id") or "")
  try:artifact=_artifact(iid,bid)
  except FileNotFoundError:return {"backup_id":bid,"artifact_path":None,"already_absent":True}

@@ -67,6 +67,19 @@ def _runtime_spec():
     }
 
 
+def test_optional_votifier_is_never_public_until_explicitly_reserved():
+    firewall = _load_firewall()
+    spec = _runtime_spec()
+    spec["catalog_runtime_policy"]["network_exposure"].append(
+        {"name": "votifier", "protocol": "tcp", "exposure": "public", "optional": True}
+    )
+    assert all(x["name"] != "votifier" for x in firewall.public_rules(spec))
+    spec["ports"]["votifier"] = {"port": 24041, "protocol": "tcp"}
+    assert firewall.public_rules(spec)[-1] == {
+        "name": "votifier", "protocol": "tcp", "port": 24041,
+    }
+
+
 def test_catalog_network_exposure_survives_windows_policy_application(tmp_path):
     module = _load()
 

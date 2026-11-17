@@ -18,12 +18,15 @@ def _require_admin(user: dict[str, Any] | None) -> dict[str, Any]:
 def queue_instance_observation(payload: dict[str, Any] | None, *, user, backend) -> dict[str, Any]:
     actor = _require_admin(user)
     body = payload if isinstance(payload, dict) else {}
+    action = str(body.get("action") or "").strip().lower()
+    if action == "systemd_lifecycle_evidence":
+        raise PermissionError("internal lifecycle evidence command cannot be queued via administrative API")
     repository = AgentInstanceRuntimeRepository(backend)
     repository.initialize()
     return repository.enqueue(
         agent_id=str(body.get("agent_id") or ""),
         instance_id=str(body.get("instance_id") or ""),
-        action=str(body.get("action") or ""),
+        action=action,
         requested_by=str(actor.get("username") or actor.get("id") or "admin"),
     )
 

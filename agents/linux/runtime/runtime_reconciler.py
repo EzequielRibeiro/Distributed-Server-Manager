@@ -89,7 +89,16 @@ def _failure(config: dict[str, Any], record: dict[str, Any], exc: Exception, *, 
     next_retry = _stamp(_now() + timedelta(seconds=delay))
     status = "degraded" if retries >= threshold else "retry_wait"
     error = str(exc)[:2000]
-    updated = _save(record, status=status, drift=drift, retry_count=retries, next_retry_at=next_retry, error=error)
+    # A failed reconciliation must not preserve a historic "running" observation.
+    # Query the adapter for fresh evidence, failing closed when it is unavailable.
+    observed = "unknown"
+    try:
+        adapter_state = instance_runtime._adapter_state(record)
+        observed = instance_runtime._observed_state(adapter_state, "unknown")
+    except Exception:
+        pass
+    updated = _save(record, status=status, observed_state=observed, drift=drift,
+                    retry_count=retries, next_retry_at=next_retry, error=error)
     increment("reconcile_failed")
     if status == "degraded":
         increment("instance_degraded")
@@ -166,6 +175,21 @@ def _reconcile_locked(config: dict[str, Any], record: dict[str, Any], normalized
 
         result = runtime_materialization.reconcile(config, normalized["instance_id"])
         observed = str(result.get("observed_state") or "unknown")
+        if recovery_action == "start" and desired == "running" and observed == "running":
+            runtime_id = str(normalized.get("runtime_id") or "").strip().lower()
+            default_seconds = 20 if runtime_id.startswith("dayz.") else 0
+            try:
+                stabilize_seconds = max(0, min(int(config.get("reconcile_start_stabilize_seconds", default_seconds)), 300))
+            except (TypeError, ValueError):
+                stabilize_seconds = default_seconds
+            if stabilize_seconds:
+                deadline = time.monotonic() + stabilize_seconds
+                while time.monotonic() < deadline:
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+                    confirmation = adapter.status(normalized)
+                    observed = instance_runtime._observed_state(confirmation, observed)
+                    if observed != "running":
+                        raise RuntimeError(f"runtime failed during start stabilization: observed={observed}")
         converged = (desired == "running" and observed == "running") or (desired == "stopped" and observed == "stopped")
         if not converged:
             raise RuntimeError(f"runtime did not converge: desired={desired} observed={observed}")
@@ -208,11 +232,14 @@ def reconcile_instance(config: dict[str, Any], instance_id: str, *, force: bool 
     return result
 
 
-def reconcile_all(config: dict[str, Any], *, force: bool = False) -> list[dict[str, Any]]:
+def reconcile_all(config: dict[str, Any], *, force: bool = False, skip_instance_ids: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for item in instance_runtime.list_instances(config):
         instance_id = str(item.get("instance_id") or "")
         if not instance_id:
+            continue
+        if instance_id in skip_instance_ids:
+            results.append({"instance_id": instance_id, "status": "held", "reason": "operator_content_activation_quiescence"})
             continue
         try:
             results.append(reconcile_instance(config, instance_id, force=force))

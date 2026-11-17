@@ -238,10 +238,25 @@ def put_secret(
     }
 
 
+def revoke_secret(ref: Any, *, expected_instance_id: str | None = None) -> dict[str, Any]:
+    instance_id, secret_name = parse_secret_ref(ref, expected_instance_id=expected_instance_id)
+    path = credential_path(ref, expected_instance_id=instance_id, require_present=False)
+    existed = False
+    if _is_link(path):
+        raise RuntimeSecretError("runtime secret must not be a link or junction")
+    try:
+        path.unlink()
+        existed = True
+    except FileNotFoundError:
+        pass
+    return {"ref": f"instance/{instance_id}/{secret_name}", "instance_id": instance_id, "name": secret_name, "present": False, "revoked": existed}
+
+
 __all__ = [
     "RuntimeSecretError",
     "credential_path",
     "parse_secret_ref",
     "put_secret",
+    "revoke_secret",
     "secret_root",
 ]

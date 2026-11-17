@@ -241,7 +241,7 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         self.assertIsNone(telemetry._storage_used("/path/that/does/not/exist"))
         self.assertIsNone(telemetry._storage_used(None))
 
-    def test_collect_prefers_files_root_for_storage_measurement(self):
+    def test_collect_prefers_complete_state_root_for_storage_measurement(self):
         record = {
             "instance_id": "bedrock-001",
             "agent_id": "agent-test",
@@ -256,7 +256,29 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         with patch.object(telemetry.instance_runtime, "list_instances", return_value=[{"instance_id": "bedrock-001"}]),              patch.object(telemetry.instance_runtime, "get_instance", return_value=record),              patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}),              patch.object(telemetry, "_systemd_main_pid", return_value=None),              patch.object(telemetry, "_systemd_resources", return_value=(None, None)),              patch.object(telemetry, "_systemd_network", return_value=(None, None)),              patch.object(telemetry, "_bedrock_query", return_value={"latency_ms": 1.2}),              patch.object(telemetry, "_storage_used", return_value=1234) as storage:
             samples = telemetry.collect_instance_telemetry({})
         self.assertEqual(samples[0]["storage_used_bytes"], 1234)
-        storage.assert_called_once_with("/instance/runtime")
+        self.assertEqual(["/instance", "/instance/runtime"], [call.args[0] for call in storage.call_args_list])
+
+    def test_collect_does_not_report_partial_storage_when_state_root_unreadable(self):
+        record = {
+            "instance_id": "dayz-002",
+            "game_id": "dayz",
+            "profile": "dayz",
+            "adapter": "systemd",
+            "files_root": "/instance/files",
+            "instance_state_root": "/instance",
+        }
+        def measure(path):
+            return None if path == "/instance" else 122400000
+        with patch.object(telemetry.instance_runtime, "list_instances", return_value=[{"instance_id": "dayz-002"}]), \
+             patch.object(telemetry.instance_runtime, "get_instance", return_value=record), \
+             patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}), \
+             patch.object(telemetry, "_systemd_main_pid", return_value=None), \
+             patch.object(telemetry, "_systemd_resources", return_value=(None, None)), \
+             patch.object(telemetry, "_systemd_network", return_value=(None, None)), \
+             patch.object(telemetry, "_dayz_query", return_value={}), \
+             patch.object(telemetry, "_storage_used", side_effect=measure):
+            samples = telemetry.collect_instance_telemetry({})
+        self.assertIsNone(samples[0]["storage_used_bytes"])
 
     def test_storage_scan_error_is_unknown_not_partial(self):
         with tempfile.TemporaryDirectory() as directory:

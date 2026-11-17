@@ -47,6 +47,13 @@ class CustomerInstanceLifecycleControlsTest(unittest.TestCase):
         self.assertIn('pr||!running||busy', self.source)
         self.assertIn('action==="start"&&!startable', self.source)
 
+    def test_completed_provision_history_does_not_lock_lifecycle(self):
+        self.assertIn('provisionStatus=String(overview.provision?.status||overview.provision?.stage||"")', self.source)
+        self.assertIn('pr=!!overview.provision&&["queued","delivered","running","provisioning","installing","pending_install"].includes(provisionStatus)', self.source)
+        self.assertNotIn('pr=!!overview.provision,state=runtimeState()', self.source)
+        self.assertIn('pr||!running||busy', self.source)
+        self.assertIn('pending||!p.has("instance.stop")||pr', self.source)
+
     def test_pending_action_has_visible_progress_label(self):
         self.assertIn('start:"Iniciando…"', self.source)
         self.assertIn('restart:"Reiniciando…"', self.source)

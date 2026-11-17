@@ -99,7 +99,8 @@ class MaintenanceContentCoalescingTest(unittest.TestCase):
   second=worker.tick(now=now);self.assertEqual(second['content_aligned'],1);self.assertEqual([x['action'] for x in life.enqueued],['status','stop','start']);self.assertEqual(content.dispatch_calls,2)
  def test_agent_content_paths_do_not_restart_when_maintenance_has_already_stopped_instance(self):
   client=(ROOT/'agents/linux/runtime/content_client.py').read_text();activation=(ROOT/'agents/linux/runtime/content_activation_apply.py').read_text()
-  self.assertIn('was_running=instance_runtime.status(config,iid).get("observed_state")=="running"',client)
+  self.assertIn('was_running=restart_runtime and instance_runtime.status(config,iid).get("observed_state")=="running"',client)
+  self.assertIn('restart_runtime=str(cmd.get("activation_state") or "enabled").strip().lower()=="enabled"',client)
   self.assertIn('was_running=instance_runtime.status(config,iid).get("observed_state")=="running"',activation)
   self.assertRegex(client,r'if was_running:\s*\n\s*instance_runtime\.lifecycle\(config,iid,"start"\)')
   self.assertIn('if was_running:',activation)

@@ -1,0 +1,79 @@
+name: Steam Session Authentication Safety
+
+on:
+  pull_request:
+    paths:
+      - 'core/steam_auth.sh'
+      - 'update.sh'
+      - 'tests/update_steam_home_preservation_test.sh'
+      - 'tests/update_backup_retention_days_test.sh'
+      - 'tests/update_manager_test.sh'
+      - 'agents/linux/runtime/server_update_provider.py'
+      - 'agents/linux/runtime/game_data_executor.py'
+      - 'agents/linux/runtime/capabilities.py'
+      - 'tests/agent_steamcmd_bootstrap_home_test.py'
+      - 'agents/linux/runtime/content_provider_steam_workshop.py'
+      - 'tests/workshop_steam_anonymous_home_test.py'
+      - 'tests/agent_steam_install_session_isolation_test.py'
+      - 'dashboard/workers/hybrid_steam_version_probe.py'
+      - 'installer/provider_versions/steam.sh'
+      - 'installer/providers/steam.sh'
+      - 'installer/providers/steam-workshop.sh'
+      - 'tests/steam_workshop_content_provider_test.sh'
+      - 'tests/steam_provider_install_log_safety_test.sh'
+      - 'tests/generic_update_monitor_test.sh'
+      - 'tests/hybrid_game_data_verify_read_only_test.py'
+      - 'tests/universal_server_update_test.py'
+      - 'core/steam_session_audit.py'
+      - 'core/steam_session_probe_once.py'
+      - 'tests/steam_session_probe_once_test.py'
+      - 'tests/steam_auth_runtime_context_test.py'
+      - 'tests/steam_session_audit_test.py'
+      - 'tests/steam_provider_auth_log_safety_test.sh'
+      - '.github/workflows/steam-session-auth.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  steam-session:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependency
+        run: python3 -m pip install pytest==8.3.5
+      - name: Shell syntax and Python audit compilation
+        run: |
+          bash -n core/steam_auth.sh update.sh tests/update_steam_home_preservation_test.sh tests/update_backup_retention_days_test.sh installer/providers/steam-workshop.sh installer/providers/steam.sh installer/provider_versions/steam.sh tests/generic_update_monitor_test.sh tests/steam_provider_auth_log_safety_test.sh tests/steam_provider_install_log_safety_test.sh
+          python3 -m py_compile dashboard/workers/hybrid_steam_version_probe.py core/steam_session_probe_once.py core/steam_session_audit.py agents/linux/runtime/server_update_provider.py agents/linux/runtime/game_data_executor.py agents/linux/runtime/capabilities.py agents/linux/runtime/content_provider_steam_workshop.py tests/steam_session_audit_test.py tests/steam_auth_runtime_context_test.py
+      - name: Session safety and persistence regression tests
+        run: python3 -m pytest tests/steam_auth_runtime_context_test.py tests/steam_session_audit_test.py -q
+      - name: Opt-in one-shot authenticated probe (simulated only)
+        run: python3 -m pytest tests/steam_session_probe_once_test.py -q
+      - name: Anonymous Steam metadata isolation regression
+        run: python3 -m pytest tests/universal_server_update_test.py -q -k steam_metadata_probe
+      - name: Agent anonymous installs do not share authenticated Steam HOME
+        run: python3 -m pytest tests/agent_steam_install_session_isolation_test.py -q
+      - name: Agent SteamCMD bootstrap and capability probe isolation
+        run: python3 -m pytest tests/agent_steamcmd_bootstrap_home_test.py -q
+      - name: Anonymous Workshop download HOME and cache isolation
+        run: python3 -m pytest tests/workshop_steam_anonymous_home_test.py -q
+      - name: Hybrid anonymous Steam version probe isolation
+        run: python3 -m pytest tests/hybrid_game_data_verify_read_only_test.py -q
+      - name: DSM updater preserves persistent Steam login across releases
+        run: bash tests/update_steam_home_preservation_test.sh
+      - name: DSM update backup retention 14 days plus latest valid
+        run: bash tests/update_backup_retention_days_test.sh
+      - name: Legacy Steam anonymous version probe isolation
+        run: bash tests/generic_update_monitor_test.sh
+      - name: Anonymous install isolation and log redaction
+        run: bash tests/steam_provider_install_log_safety_test.sh
+      - name: Legacy Workshop session isolation and fail-closed authentication
+        run: bash tests/steam_workshop_content_provider_test.sh
+      - name: Steam provider log secret redaction
+        run: bash tests/steam_provider_auth_log_safety_test.sh

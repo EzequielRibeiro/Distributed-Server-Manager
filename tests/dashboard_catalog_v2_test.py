@@ -138,10 +138,18 @@ class CatalogV2DashboardTest(unittest.TestCase):
         customer = {"username":"customer","role":"customer","scope_id":"CLI-TEST-001"}
         outsider = {"username":"outsider","role":"controller","scope_id":"controller-other"}
         admin = {"username":"admin","role":"admin","scope_id":""}
-        self.assertTrue(SERVER.can_access_instance(admin, instance, write=True))
-        self.assertTrue(SERVER.can_access_instance(controller, instance, write=True))
-        self.assertTrue(SERVER.can_access_instance(customer, instance, write=True))
-        self.assertFalse(SERVER.can_access_instance(outsider, instance, write=True))
+        # A legacy-only fixture has no registered DB row. Explicitly model
+        # a successful registry lookup returning None; a DB outage must still
+        # fail closed instead of trusting editable filesystem metadata.
+        class LegacyOnlyRepository:
+            def instance_context(self, instance_id):
+                return None
+
+        with patch.object(SERVER, "dashboard_repository", return_value=LegacyOnlyRepository()):
+            self.assertTrue(SERVER.can_access_instance(admin, instance, write=True))
+            self.assertTrue(SERVER.can_access_instance(controller, instance, write=True))
+            self.assertTrue(SERVER.can_access_instance(customer, instance, write=True))
+            self.assertFalse(SERVER.can_access_instance(outsider, instance, write=True))
 
     def test_instance_config_path_cannot_escape_instance(self):
         instance = ROOT / "instances/node01/minecraft/instance01"

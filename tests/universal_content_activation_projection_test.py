@@ -26,6 +26,12 @@ class ActivationProjectionTest(unittest.TestCase):
    self.assertEqual([x["content_id"] for x in snapshot["entries"]],["a-first","b-tie","z-last"])
    self.assertEqual(snapshot["entries"][0]["activation"],{"mode":"mod"})
    self.assertEqual(module.activation_snapshot("i1")["checksum"],snapshot["checksum"])
+   _state(root,"maps","dayz-map:deerisle",content_type="map",activation_state="disabled",community_map={"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
+   map_snapshot=module.activation_snapshot_with("maps",["dayz-map:deerisle"])
+   self.assertEqual(map_snapshot["entries"][0]["metadata"]["community_map"],{"name":"Deer Isle","mission_path":"V5.9/empty.deerisle"})
+   _state(root,"unsafe-map","dayz-map:unsafe",content_type="map",community_map={"name":"Unsafe","mission_path":"../empty.deerisle"})
+   with self.assertRaisesRegex(ValueError,"invalid DayZ community mission path"):
+    module.refresh_activation_snapshot("unsafe-map")
    before=snapshot["checksum"];_state(root,"i1","a-first",activation_order=30);after=module.refresh_activation_snapshot("i1")
    self.assertNotEqual(before,after["checksum"]);self.assertEqual([x["content_id"] for x in after["entries"]],["b-tie","z-last","a-first"])
 
@@ -59,3 +65,27 @@ class ActivationProjectionTest(unittest.TestCase):
  def test_windows_projection(self):self._exercise(ROOT/"agents/windows/runtime/content_activation_projection.py","windows_content_activation_projection")
 
 if __name__=="__main__":unittest.main()
+
+class DayZConfiguredMapDependencyProjectionTest(unittest.TestCase):
+ def test_disabled_dayz_content_reincludes_configured_map_dependency(self):
+  import tempfile,os,json
+  old=os.environ.get('CAPIVARA_AGENT_STATE_DIR')
+  with tempfile.TemporaryDirectory() as tmp:
+   os.environ['CAPIVARA_AGENT_STATE_DIR']=tmp
+   module=_load(ROOT/'agents/linux/runtime/content_activation_projection.py','dayz_required_projection_tested',Path(tmp))
+   iid='i1';root=Path(tmp)/'instance';(root/'config').mkdir(parents=True)
+   (root/'config'/'serverDZ.cfg').write_text('class Missions { class DayZ { template="empty.deerisle"; }; };\n')
+   state=Path(tmp)/'managed-content'/iid;state.mkdir(parents=True)
+   mission=root/'content/maps/deer/V5.9/empty.deerisle';mission.mkdir(parents=True);(mission/'init.c').write_text('// test');(mission/'cfgeconomycore.xml').write_text('<economy/>')
+   (state/'dayz-map:deerisle.json').write_text(json.dumps({'content_id':'dayz-map:deerisle','game_id':'dayz','content_type':'map','desired_state':'installed','status':'applied','installed_version':'latest','security_state':'clean','managed_path':str(root/'content/maps/deer'),'dependencies':['steam-workshop:1602372402'],'community_map':{'mission_path':'V5.9/empty.deerisle'}}))
+   (state/'steam-workshop:1559212036.json').write_text(json.dumps({'content_id':'steam-workshop:1559212036','game_id':'dayz','content_type':'workshop','desired_state':'installed','status':'applied','installed_version':'1','security_state':'clean','managed_path':str(root/'content/workshop/cf'),'package_id':'221100:1559212036','activation':{'adapter':'dayz','mode':'mod'}}))
+   (state/'steam-workshop:1602372402.json').write_text(json.dumps({'content_id':'steam-workshop:1602372402','game_id':'dayz','content_type':'workshop','desired_state':'installed','status':'applied','installed_version':'1','security_state':'clean','managed_path':str(root/'content/workshop/deer'),'package_id':'221100:1602372402','activation':{'adapter':'dayz','mode':'mod'}}))
+   base={'schema_version':1,'kind':'CapivaraContentActivationSnapshot','instance_id':iid,'entries':[],'checksum':'disabled-only'}
+   enriched=module.activation_snapshot_for_runtime(iid,{'game_id':'dayz','dayz_content_enabled':False,'instance_state_root':str(root)},base)
+   ids=[e['content_id'] for e in enriched['entries']]
+   self.assertCountEqual(ids,['steam-workshop:1559212036','steam-workshop:1602372402','dayz-map:deerisle'])
+   prepared,enriched2=module.runtime_projection_inputs(iid,{'game_id':'dayz','dayz_content_enabled':False,'instance_state_root':str(root)},base)
+   self.assertEqual(prepared['dayz_required_content_ids'],['steam-workshop:1602372402','steam-workshop:1559212036'])
+   self.assertCountEqual([e['content_id'] for e in enriched2['entries']],['steam-workshop:1559212036','steam-workshop:1602372402','dayz-map:deerisle'])
+  if old is None:os.environ.pop('CAPIVARA_AGENT_STATE_DIR',None)
+  else:os.environ['CAPIVARA_AGENT_STATE_DIR']=old

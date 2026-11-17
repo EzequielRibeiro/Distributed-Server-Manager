@@ -13,7 +13,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from content_provider import register_provider
 from content_cache_inventory import record_cache_event
@@ -38,40 +38,85 @@ def _retention_limit() -> int | None:
     return max(2, min(value, 20))
 
 
+def preview_revision_cache_cleanup(
+    revisions_root: Path,
+    *,
+    keep_revision: str,
+    protected_revisions: set[str] | None = None,
+) -> dict[str, Any]:
+    """Read-only retention preview; never remove or mutate revision directories."""
+    if not _REVISION.fullmatch(str(keep_revision)):
+        raise ValueError("Steam Workshop keep_revision must be numeric")
+    protected = set(protected_revisions or ())
+    if any(not _REVISION.fullmatch(str(value)) for value in protected):
+        raise ValueError("Steam Workshop protected revisions must be numeric")
+    root = Path(revisions_root)
+    if root.is_symlink():
+        raise ValueError("Steam Workshop revision root must not be a symlink")
+    limit = _retention_limit()
+    if not root.is_dir():
+        return {"enabled": limit is not None, "keep": [], "prune": []}
+    candidates = [
+        path for path in root.iterdir()
+        if path.is_dir() and not path.is_symlink() and _REVISION.fullmatch(path.name)
+    ]
+    candidates.sort(key=lambda path: int(path.name), reverse=True)
+    if limit is None:
+        return {"enabled": False, "keep": [path.name for path in candidates], "prune": []}
+    protected.add(str(keep_revision))
+    keep = set(protected)
+    # Protected rollback revisions are additive, not deducted from the normal cache window.
+    normal_slots = max(0, limit - 1)
+    for path in candidates:
+        if path.name in keep:
+            continue
+        if normal_slots <= 0:
+            break
+        keep.add(path.name)
+        normal_slots -= 1
+    return {
+        "enabled": True,
+        "keep": [path.name for path in candidates if path.name in keep],
+        "prune": [path.name for path in candidates if path.name not in keep],
+    }
+
+
 def _prune_revision_cache(
     revisions_root: Path,
     *,
     keep_revision: str,
     protected_revisions: set[str] | None = None,
 ) -> list[str]:
-    if not revisions_root.is_dir():
+    plan = preview_revision_cache_cleanup(
+        revisions_root, keep_revision=keep_revision,
+        protected_revisions=protected_revisions,
+    )
+    if not plan["enabled"]:
         return []
-    candidates = [
-        path
-        for path in revisions_root.iterdir()
-        if path.is_dir() and _REVISION.fullmatch(path.name)
-    ]
-    candidates.sort(key=lambda path: int(path.name), reverse=True)
-    limit = _retention_limit()
-    if limit is None:
-        return []
-
-    protected = set(protected_revisions or ())
-    protected.add(keep_revision)
-    keep = set(protected)
-    for path in candidates:
-        if path.name in keep:
+    removed = []
+    root = Path(revisions_root)
+    if root.is_symlink():
+        raise ValueError("Steam Workshop revision root must not be a symlink")
+    # All materialize_steam_workshop consumers hold the same per-revision flock
+    # until their staged payload has been consumed. Do not remove an in-use
+    # revision, including one currently being promoted by another worker.
+    lock_root = root.parent / "locks"
+    lock_root.mkdir(parents=True, exist_ok=True)
+    for revision in plan["prune"]:
+        path = root / revision
+        if path.is_symlink() or not path.is_dir():
             continue
-        if len(keep - protected) >= limit:
-            break
-        keep.add(path.name)
-
-    removed: list[str] = []
-    for path in candidates:
-        if path.name in keep:
-            continue
-        shutil.rmtree(path)
-        removed.append(path.name)
+        with (lock_root / f"{revision}.lock").open("a+") as lease:
+            try:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                continue
+            try:
+                if path.is_dir() and not path.is_symlink():
+                    shutil.rmtree(path)
+                    removed.append(revision)
+            finally:
+                fcntl.flock(lease.fileno(), fcntl.LOCK_UN)
     return removed
 
 
@@ -181,28 +226,43 @@ def _snapshot_revision(
     revision: str,
     protected_revisions: set[str] | None = None,
 ) -> Path:
-    destination = _revision_cache_path(
-        game_data_root,
-        app_id,
-        item_id,
-        revision,
-    )
+    destination = _revision_cache_path(game_data_root, app_id, item_id, revision)
     if destination.is_dir():
         return destination
-
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.parent / f".{revision}.{os.getpid()}.tmp"
-    if temporary.exists():
-        shutil.rmtree(temporary, ignore_errors=True)
+    if source.is_symlink():
+        raise RuntimeError("Steam Workshop revision source must be a real directory")
+    source = source.resolve(strict=True)
+    # Exact Workshop revisions are promoted out of Steam's mutable live cache.
+    # A same-filesystem rename is metadata-only, so a multi-gigabyte item is
+    # never duplicated merely to freeze the revision. SteamCMD can recreate
+    # its live item on a later update; the managed revision remains immutable.
     try:
-        shutil.copytree(source, temporary)
-        if destination.exists():
-            shutil.rmtree(temporary, ignore_errors=True)
-        else:
-            os.replace(temporary, destination)
-    finally:
-        if temporary.exists():
-            shutil.rmtree(temporary, ignore_errors=True)
+        same_device = source.stat().st_dev == destination.parent.stat().st_dev
+    except OSError as exc:
+        raise RuntimeError(f"Cannot inspect Steam Workshop revision storage: {exc}") from exc
+    if not same_device:
+        raise RuntimeError(
+            "Steam Workshop revision cache must share a filesystem with the Steam cache; "
+            "refusing a full artifact copy"
+        )
+    if not source.is_dir():
+        raise RuntimeError("Steam Workshop revision source must be a real directory")
+    for item in source.rglob("*"):
+        if item.is_symlink():
+            raise RuntimeError("Steam Workshop revision source contains a symlink")
+    # Keep SteamCMD's live Workshop tree intact. Its shared appworkshop manifest
+    # continues to declare this item installed and later downloads may validate
+    # every declared item. Moving the live directory out from under SteamCMD
+    # leaves that manifest pointing at missing files and can block unrelated
+    # Workshop installs. Freeze the revision with same-filesystem hardlinks
+    # instead: no payload bytes are duplicated and later live-cache updates
+    # cannot mutate the frozen tree because SteamCMD replaces changed files.
+    try:
+        shutil.copytree(source, destination, copy_function=os.link)
+    except OSError as exc:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise RuntimeError(f"Steam Workshop revision cache promotion failed: {exc}") from exc
     if not destination.is_dir():
         raise RuntimeError("Steam Workshop revision cache materialization failed")
     _prune_revision_cache(
@@ -228,7 +288,16 @@ def _validate_revision_source(source: Path, app_id: str, item_id: str, revision:
         )
 
 
-def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str) -> list[Path]:
+def _workshop_steam_env(login: str) -> dict[str, str]:
+    """Never run an anonymous Workshop SteamCMD in authenticated HOME."""
+    if login == "anonymous":
+        from server_update_provider import _anonymous_steam_env
+        return _anonymous_steam_env(purpose="install")
+    session_home = str(Path(os.environ.get("CAPIVARA_STEAM_HOME") or os.environ.get("HOME") or "/var/lib/capivara-agent").resolve())
+    return {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
+
+
+def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_id: str, *, steam_home: Path | None = None) -> list[Path]:
     state_root = Path(game_data_root).resolve().parent
     agent_state_root = Path(
         os.environ.get("CAPIVARA_AGENT_STATE_DIR") or str(state_root)
@@ -242,7 +311,14 @@ def _cache_candidates(executable: str, game_data_root: Path, app_id: str, item_i
     # Capivara-managed bootstrap, a distro package, or an existing user Steam
     # installation. Keep discovery bounded to explicit approved roots instead of
     # scanning the host filesystem.
+    # A fresh anonymous download is stored under its isolated HOME; ensure
+    # we can locate that cache rather than searching only authenticated HOME.
+    private = Path(steam_home) if steam_home is not None else home
     roots = [
+        private / ".steam" / "steamcmd",
+        private / ".steam" / "steam",
+        private / ".local" / "share" / "Steam" / "steamcmd",
+        private / ".local" / "share" / "Steam",
         executable_dir,
         executable_dir.parent,
         agent_state_root / "tools" / "steamcmd",
@@ -273,14 +349,7 @@ def _download_and_resolve(
 ) -> Path:
     executable = _steamcmd()
     login = _login(artifact)
-    session_home = str(
-        Path(
-            os.environ.get("CAPIVARA_STEAM_HOME")
-            or os.environ.get("HOME")
-            or str(Path(game_data_root).resolve().parent)
-        ).resolve()
-    )
-    env = {**os.environ, "HOME": session_home, "CAPIVARA_STEAM_HOME": session_home}
+    env = _workshop_steam_env(login)
     completed = subprocess.run(
         [executable, "+login", login, "+workshop_download_item", app_id, item_id, "validate", "+quit"],
         stdin=subprocess.DEVNULL,
@@ -302,7 +371,7 @@ def _download_and_resolve(
         reason = failure.group(1).strip()
         raise RuntimeError(f"Steam Workshop download failed: {reason}")
     revision_errors: list[str] = []
-    for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
+    for candidate in _cache_candidates(executable, game_data_root, app_id, item_id, steam_home=Path(env["HOME"])):
         if not candidate.is_dir():
             continue
         if revision:
@@ -366,9 +435,72 @@ def resolve_steam_workshop(artifact: dict[str, Any], stage: Path, game_data_root
         return result
 
 
+
+def materialize_steam_workshop(artifact: dict[str, Any], game_data_root: Path, consume: Callable[[Path], Any]) -> Any:
+    """Consume an exact Workshop revision while holding its revision lease."""
+    app_id, item_id = _identity(artifact)
+    revision = _revision(artifact)
+    if not revision:
+        return consume(_download_and_resolve(artifact, game_data_root, app_id, item_id, None, set()))
+    lock_path = _revision_lock_path(game_data_root, app_id, item_id, revision)
+    with _RevisionLock(lock_path):
+        cached = _revision_cache_path(game_data_root, app_id, item_id, revision)
+        if cached.is_dir():
+            record_cache_event("hit")
+            return consume(cached)
+        executable = _steamcmd()
+        # SteamCMD may already have the exact immutable revision in its managed
+        # cache. Validate it under the revision lock and consume it directly;
+        # this avoids both a redundant SteamCMD validation pass and the former
+        # provider-cache snapshot copy.
+        live_errors = []
+        for candidate in _cache_candidates(executable, game_data_root, app_id, item_id):
+            if not candidate.is_dir():
+                continue
+            try:
+                _validate_revision_source(candidate, app_id, item_id, revision)
+            except RuntimeError as exc:
+                live_errors.append(str(exc))
+                continue
+            frozen = _snapshot_revision(candidate, game_data_root, app_id, item_id, revision, _protected_revisions(artifact))
+            record_cache_event("hit")
+            return consume(frozen)
+        login = _login(artifact)
+        env = _workshop_steam_env(login)
+        completed = subprocess.run(
+            [executable, "+login", login, "+workshop_download_item", app_id, item_id, "validate", "+quit"],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, timeout=_TIMEOUT_SECONDS, check=False, env=env,
+        )
+        output_text = completed.stdout or ""
+        if completed.returncode != 0:
+            output = output_text.lower()
+            if "password" in output or "steam guard" in output or "two-factor" in output:
+                raise RuntimeError("Steam authentication is required or expired on this Agent")
+            raise RuntimeError(f"Steam Workshop download failed with exit code {completed.returncode}")
+        failure = _DOWNLOAD_FAILURE.search(output_text)
+        if failure:
+            raise RuntimeError(f"Steam Workshop download failed: {failure.group(1).strip()}")
+        errors = []
+        for candidate in _cache_candidates(executable, game_data_root, app_id, item_id, steam_home=Path(env["HOME"])):
+            if not candidate.is_dir():
+                continue
+            try:
+                _validate_revision_source(candidate, app_id, item_id, revision)
+            except RuntimeError as exc:
+                errors.append(str(exc))
+                continue
+            frozen = _snapshot_revision(candidate, game_data_root, app_id, item_id, revision, _protected_revisions(artifact))
+            record_cache_event("download")
+            return consume(frozen)
+        if errors:
+            raise RuntimeError("SteamCMD completed but no managed Workshop cache matched the requested revision: " + "; ".join(errors[:3]))
+        raise RuntimeError("SteamCMD completed but the Workshop item was not found in a managed Steam cache")
+
+
 # `steam-workshop` is canonical. `steam` remains accepted for previously stored
 # Workshop assignments while callers migrate to the explicit provider name.
 register_provider("steam-workshop", resolve_steam_workshop)
 register_provider("steam", resolve_steam_workshop)
 
-__all__ = ["resolve_steam_workshop"]
+__all__ = ["resolve_steam_workshop", "materialize_steam_workshop", "preview_revision_cache_cleanup"]

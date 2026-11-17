@@ -56,6 +56,51 @@ class ContentContractTest(unittest.TestCase):
    with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"require_clean",return_value={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}),patch.object(content_client.instance_runtime,"status",return_value={"observed_state":"running"}),patch.object(content_client.instance_runtime,"lifecycle",side_effect=life),patch.object(content_client.instance_runtime,"doctor",side_effect=[{"ready":False},{"ready":True}]):
     with self.assertRaises(content_client.ContentActivationError):content_client._install({"agent_id":"agent-c4"},cmd)
    self.assertTrue((target/"old.bin").is_file());self.assertFalse((target/"new.bin").exists());self.assertEqual(lifecycle,["stop","start","stop","start"]);self.assertFalse(target.with_name(target.name+".c4-old").exists())
+ def test_disabled_content_materializes_without_runtime_restart(self):
+  with tempfile.TemporaryDirectory() as td:
+   instance=Path(td)/"instance";instance.mkdir();source=Path(td)/"map";mission=source/"empty.test";mission.mkdir(parents=True);(mission/"init.c").write_text("void main(){}",encoding="utf-8");(mission/"cfgeconomycore.xml").write_text("<economy/>",encoding="utf-8")
+   cmd={"instance_id":"instance-c4","content_id":"dayz-map:test","game_id":"dayz","content_type":"map","activation_state":"disabled","target":"maps/dayz-map:test","provider":"local","artifact":{}}
+   lifecycle=[]
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client,"_source",return_value=source),patch.object(content_client,"require_clean",return_value={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}),patch.object(content_client.instance_runtime,"status") as status,patch.object(content_client.instance_runtime,"lifecycle",side_effect=lambda config,iid,action:lifecycle.append(action)):
+    path,_=content_client._install({"agent_id":"agent-c4"},cmd)
+   self.assertTrue((Path(path)/"empty.test"/"init.c").is_file());self.assertEqual(lifecycle,[]);status.assert_not_called()
+
+ def test_workshop_install_materializes_directly_into_private_instance_transaction(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);instance=root/"instance";instance.mkdir();source=root/"steam"/"1602372402";source.mkdir(parents=True);(source/"map.pbo").write_bytes(b"tiny")
+   cmd={"instance_id":"instance-c4","content_id":"steam-workshop:1602372402","target":"workshop/steam-workshop:1602372402","provider":"steam-workshop","artifact":{"package_id":"221100:1602372402","revision":"1749060012"}}
+   seen={}
+   def materialize(artifact,game_data_root,consume):
+    seen["source"]=source;return consume(source)
+   def activate(config,iid,target,payload,**kwargs):
+    seen["target"]=target;seen["payload_files"]=[x.relative_to(payload).as_posix() for x in payload.rglob("*") if x.is_file()]
+    target.parent.mkdir(parents=True,exist_ok=True);import shutil;shutil.copytree(payload,target)
+   clean={"security_state":"clean","engine":"yara-x","policy_version":1,"matches":[]}
+   with patch.object(content_client,"_owned",return_value=({"instance_id":"instance-c4","agent_id":"agent-c4"},instance)),patch.object(content_client.content_provider_steam_workshop,"materialize_steam_workshop",side_effect=materialize) as lease,patch.object(content_client,"require_clean",return_value=clean) as scan,patch.object(content_client,"validate_external_content_payload") as validate,patch.object(content_client,"_activate_target",side_effect=activate):
+    path,security=content_client._install({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(Path(path),instance/"content"/"workshop"/"steam-workshop:1602372402")
+   self.assertEqual(seen["payload_files"],["map.pbo"]);self.assertTrue((Path(path)/"map.pbo").is_file())
+   lease.assert_called_once();scan.assert_called_once_with(source,context=content_client._security_context({"agent_id":"agent-c4"},cmd));validate.assert_called_once()
+   self.assertEqual(security["engine"],"yara-x")
+
+ def test_workshop_private_transaction_uses_hardlinks_without_symlink_managed_path(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);source=root/"steam";payload=root/"instance"/"content"/".workshop.c4"/"payload";source.mkdir();payload.mkdir(parents=True)
+   (source/"Addons").mkdir();original=source/"Addons"/"map.pbo";original.write_bytes(b"large-workshop-payload")
+   content_client._materialize_workshop_tree(source,payload)
+   materialized=payload/"Addons"/"map.pbo"
+   self.assertTrue(materialized.is_file());self.assertFalse(payload.is_symlink());self.assertFalse(materialized.is_symlink())
+   self.assertEqual(original.stat().st_ino,materialized.stat().st_ino)
+   self.assertGreaterEqual(original.stat().st_nlink,2)
+
+ def test_workshop_cross_device_preflight_refuses_insufficient_space_before_copy(self):
+  with tempfile.TemporaryDirectory() as td:
+   root=Path(td);source=root/"steam";payload=root/"payload";source.mkdir();payload.mkdir();(source/"map.pbo").write_bytes(b"x"*1024)
+   usage=type("Usage",(),{"total":10*1024**3,"used":9*1024**3,"free":1024})()
+   with patch.object(content_client,"_same_filesystem",return_value=False),patch.object(content_client.shutil,"disk_usage",return_value=usage),patch.object(content_client.shutil,"copytree") as copytree:
+    with self.assertRaisesRegex(ValueError,"Espaço insuficiente"):content_client._materialize_workshop_tree(source,payload)
+   copytree.assert_not_called()
+
  def test_security_rejection_never_activates_content(self):
   with tempfile.TemporaryDirectory() as td:
    instance=Path(td)/"instance";instance.mkdir();source=Path(td)/"blocked.jar";source.write_bytes(b"blocked")
@@ -88,6 +133,36 @@ class ContentContractTest(unittest.TestCase):
    for game in ("dayz","projectzomboid","arma3","rust","minecraft"):self.assertNotIn(game,text)
   windows_metrics=(ROOT/"agents/windows/runtime/runtime_metrics.py").read_text(encoding="utf-8");linux_metrics=(ROOT/"agents/linux/runtime/runtime_metrics.py").read_text(encoding="utf-8")
   self.assertIn('content_updates',windows_metrics);self.assertIn('content_updates',linux_metrics)
+
+class ContentOperationalBackoffTest(unittest.TestCase):
+ def test_operational_failure_backs_off_same_revision_but_new_revision_retries(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   previous={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":3,"desired_checksum":"d"*64,"status":"failed","security_state":"unscanned","operational_retry_after_epoch":9999999999}
+   state.write_text(json.dumps(previous))
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install") as install:
+    same=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(same["status"],"failed");install.assert_not_called()
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install",return_value=("/tmp/applied",{"security_state":"clean","engine":"none","matches":[]})) as install:
+    newer=content_client._apply({"agent_id":"agent-c4"},{**cmd,"revision":4,"checksum":"e"*64})
+   install.assert_called_once();self.assertEqual(newer["status"],"applied")
+
+ def test_legacy_enospc_failure_backs_off_from_state_mtime(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   previous={"instance_id":"instance-c4","content_id":"mod-one","desired_revision":3,"desired_checksum":"d"*64,"status":"failed","security_state":"unscanned","last_error":"[Errno 28] No space left on device"}
+   state.write_text(json.dumps(previous));import os;os.utime(state,(1000,1000))
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install") as install,patch.object(content_client.time,"time",return_value=1001):
+    result=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(result["status"],"failed");install.assert_not_called()
+
+ def test_operational_exception_records_retry_deadline(self):
+  with tempfile.TemporaryDirectory() as td:
+   state=Path(td)/"state.json";cmd={"instance_id":"instance-c4","content_id":"mod-one","revision":3,"checksum":"d"*64,"version":"1","provider":"local","target":"mods/mod-one","artifact":{}}
+   with patch.object(content_client,"_state_path",return_value=state),patch.object(content_client,"_install",side_effect=OSError(28,"No space left on device")),patch.object(content_client.time,"time",return_value=1000):
+    result=content_client._apply({"agent_id":"agent-c4"},cmd)
+   self.assertEqual(result["status"],"failed");self.assertEqual(result["operational_retry_after_epoch"],1000+content_client.ENOSPC_RETRY_SECONDS)
+
 
 class ContentRepositoryTest(unittest.TestCase):
  def setUp(self):

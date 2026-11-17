@@ -42,16 +42,29 @@ from instance_runtime import clear_result as clear_instance_result
 from instance_runtime import handle_command as handle_instance_command
 from instance_runtime import inventory as instance_inventory
 from instance_runtime import read_result as read_instance_result
+from instance_runtime import get_instance as get_registered_instance
 from instance_telemetry import collect_instance_telemetry
 from network_inventory import collect_network_inventory
 from public_ip import observe_public_ipv4
+from host_geolocation import observe_host_geolocation
 from provisioning_client import clear_provisioning_result, read_provisioning_result, stage_provisioning_command
 from resource_profile_client import apply as apply_resource_profile
 from resource_profile_client import clear_result as clear_resource_result, read_result as read_resource_result
 from runtime_events import acknowledge_runtime_events, read_runtime_events
 from runtime_health import health_inventory
 from runtime_metrics import increment, snapshot as runtime_metrics_snapshot
-from runtime_operations import recover_interrupted_operations
+from runtime_operations import recover_interrupted_operations, read_operation, read_recovered_migration
+from minecraft_serverpack_finalization_scheduler import scan_pending_finalizations
+from minecraft_serverpack_finalization_supervisor import FinalizationWorkerSupervisor
+from runtime_lock import instance_lock
+from minecraft_recovery_heartbeat_collector import collect_recovery_observations
+from minecraft_serverpack_recovery_probe_collector import latest_serverpack_recovery_probe
+from minecraft_serverpack_report_outbox import (
+    read_serverpack_report_delivery, acknowledge_serverpack_report_delivery,
+)
+from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
+from game_uptime_agent_wire import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
+from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
 from uninstall_client import clear_result as clear_uninstall_result, handle_command as handle_uninstall_command, read_result as read_uninstall_result
@@ -63,6 +76,8 @@ DEFAULT_HEARTBEAT_SECONDS = 30
 DEFAULT_RECONCILE_SECONDS = 15
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 HOST_IDENTITY_PATH = Path(os.environ.get("CAPIVARA_AGENT_HOST_IDENTITY", str(STATE_DIR / "host-identity")))
+_SERVERPACK_OBSERVATION_PENDING: dict[str,object] | None = None
+_SERVERPACK_LAST_SCANNED = 0.0
 AGENT_LOG = STATE_DIR / "agent-runtime.log"
 
 
@@ -139,8 +154,58 @@ def _inventory(config):
     disk=shutil.disk_usage("/");version_path=Path(__file__).resolve().parents[1]/"VERSION"
     try:installed_version=version_path.read_text().strip()
     except OSError:installed_version=str(config.get("capivara_version","unknown"))
-    network=collect_network_inventory();network["public_ipv4_observation"]=observe_public_ipv4()
+    network=collect_network_inventory()
+    public_ipv4_observation=observe_public_ipv4()
+    network["public_ipv4_observation"]=public_ipv4_observation
+    network["geo_location_observation"]=observe_host_geolocation(public_ipv4_observation)
     payload={"agent_id":config["agent_id"],"hostname":socket.gethostname(),"os":platform.system().lower(),"architecture":platform.machine(),"capivara_version":installed_version,"address":config.get("advertise_address"),"fingerprint":config["fingerprint"],"host_identity":_host_identity(),"capabilities":detect_capabilities(),"cpu":{"logical_cores":os.cpu_count(),"machine":platform.machine()},"ram_total_bytes":_memory_total_bytes(),"storage":{"root_total_bytes":disk.total,"root_free_bytes":disk.free},"network":network,"instances":instance_inventory(config),"instance_reconciliation":reconciliation_inventory(config),"instance_runtime_health":health_inventory(config),"instance_telemetry":collect_instance_telemetry(config),"instance_console_state":console_state(config),"instance_runtime_metrics":runtime_metrics_snapshot(queue_depth=_queue_depth()),"runtime_events":read_runtime_events(STATE_DIR,limit=int(config.get("event_batch_size",200))),"configuration_state":configuration_state(),"content_state":content_state(),"content_cache_inventory":content_cache_inventory(),"content_update_inventory":content_update_inventory(),"backup_state":backup_state(),"broadcast_state":broadcast_state(),"heartbeat_interval_seconds":int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)),"degraded_after_seconds":int(config.get("degraded_after_seconds",60)),"offline_after_seconds":int(config.get("offline_after_seconds",120))}
+    if os.environ.get("DSM928_COMPAT_DIAGNOSTIC") == "1":
+        # Bounded optional, authenticated heartbeat metadata only.
+        # The Controller might be older and safely ignore this field.
+        try:
+            payload["no_drain_compatibility_probe"] = build_no_drain_probe(
+                str(config["agent_id"]))
+        except (KeyError, ValueError, TypeError):
+            pass
+    # Every inventory record is Agent-owned and supplies instance_id.
+    # Keep malformed inventory entries fail-closed without blocking heartbeat.
+    try:
+        instances = payload.get("instances")
+        ids = [entry["instance_id"] for entry in instances
+               if isinstance(entry, dict) and isinstance(entry.get("instance_id"), str)
+               and entry["instance_id"]]
+        payload["minecraft_recovery_observations"] = collect_recovery_observations(
+            ids, agent_id=str(config["agent_id"]), read_operation=read_recovered_migration,
+            read_instance=get_registered_instance,
+        )
+    except (TypeError, ValueError, OSError):
+        payload["minecraft_recovery_observations"] = []
+    try:
+        payload["minecraft_current_neoforge_attestations"] = collect_current_neoforge_attestations(
+            ids, agent_id=str(config["agent_id"]), read_instance=get_registered_instance)
+    except (TypeError, ValueError, OSError, NameError):
+        payload["minecraft_current_neoforge_attestations"] = []
+    if _SERVERPACK_OBSERVATION_PENDING is not None:
+        payload["minecraft_serverpack_observations"] = _SERVERPACK_OBSERVATION_PENDING
+    if os.environ.get("DSM_SERVERPACK_RECOVERY_PROBE_ENABLED") == "1":
+        # Probe is strictly read-only. Sending does not authorize or execute
+        # recovery and can be disabled without affecting Agent heartbeat.
+        try:
+            from provisioning_state import PROVISION_ROOT
+            probe = latest_serverpack_recovery_probe(PROVISION_ROOT)
+            if probe is not None:
+                payload["serverpack_recovery_probe"] = probe
+        except Exception:
+            pass
+    if os.environ.get("DSM_SERVERPACK_REPORT_DELIVERY_ENABLED") == "1":
+        # Never generate a report from pending/staged files. The outbox
+        # rechecks committed local activation before each delivery attempt.
+        try:
+            outbound = read_serverpack_report_delivery(STATE_DIR)
+            if outbound is not None:
+                payload["serverpack_report_delivery"] = outbound[0]
+        except Exception:
+            pass
     payload["agent_logs"]=_recent_logs()
     result_readers=(("update_result",read_update_result),("provisioning_result",read_provisioning_result),("storage_pool_migration_result",read_storage_pool_migration_result),("game_data_result",read_game_data_result),("instance_result",read_instance_result),("native_restart_result",read_native_restart_result),("dayz_operation_result",read_dayz_operation_result),("console_result",read_console_result),("file_result",read_file_result),("resource_result",read_resource_result),("artifact_result",read_artifact_result),("doctor_result",read_doctor_result),("yarax_admin_result",read_yarax_admin_result),("uninstall_result",read_uninstall_result))
     for key,reader in result_readers:
@@ -199,8 +264,45 @@ def _flush_command_results(config):
     return response
 
 def heartbeat(config):
+    global _SERVERPACK_OBSERVATION_PENDING, _SERVERPACK_LAST_SCANNED
     base=str(config["controller_url"]).rstrip("/")
-    result=_post(base+"/api/agent/heartbeat",_inventory(config),headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    payload=_inventory(config)
+    result=_post(base+"/api/agent/heartbeat",payload,headers={"X-Capivara-Agent-Credential":str(config["credential_id"]),"X-Capivara-Agent-Secret":str(config["credential_secret"]),"X-Capivara-Agent-Fingerprint":str(config["fingerprint"])})
+    if "no_drain_compatibility_probe" in payload:
+        # Never start, stop, restart, drain or update games based on this result.
+        result["no_drain_wire_diagnostic"] = verify_no_drain_offer(
+            payload["no_drain_compatibility_probe"],
+            result.get("no_drain_compatibility_offer"),
+        )
+    # Controller coordinates are received independently of the Agent's own GeoIP.
+    received_controller_location=result.get("controller_location")
+    if isinstance(received_controller_location,dict) and config.get("controller_location")!=received_controller_location:
+        config["controller_location"]=dict(received_controller_location)
+        _write_config(config)
+    if "serverpack_report_delivery" in payload:
+        try:
+            sent=payload["serverpack_report_delivery"]
+            acknowledge_serverpack_report_delivery(
+                STATE_DIR,str(sent["provisioning_id"])+".json",
+                sent,result.get("serverpack_report_delivery") or {},
+            )
+        except Exception:
+            pass
+    # The physical observation is advisory and independent of durable report ACK.
+    _SERVERPACK_OBSERVATION_PENDING=None
+    now=time.monotonic()
+    if not _SERVERPACK_LAST_SCANNED or now-_SERVERPACK_LAST_SCANNED>=3600:
+        requests=result.get('serverpack_observation_requests')
+        if isinstance(requests,list) and requests:
+            _SERVERPACK_LAST_SCANNED=now
+            try:
+                observed=observe_remote_requests(
+                    requests,agent_id=str(config['agent_id']),
+                    read_instance=get_registered_instance,limit=1)
+                if observed['observations']:
+                    _SERVERPACK_OBSERVATION_PENDING=observed
+            except (OSError,ValueError,TypeError,KeyError):
+                pass
     ids=result.get("accepted_event_ids")
     if isinstance(ids,list):acknowledge_runtime_events(STATE_DIR,ids)
     commands=result.get("configuration_commands")
@@ -306,11 +408,48 @@ def run_forever():
     start_console_stream(config)
     start_content_update_inventory(config,logger=lambda message:_log(message,True))
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
+    finalization_supervisor=FinalizationWorkerSupervisor()
     while True:
         now=time.monotonic()
         if now>=next_reconcile:
             try:reconcile_all(config)
             except Exception as exc:_log(f"reconcile loop failed: {exc}",True)
+            # Explicitly opt-in to *read-only* discovery. Mutating recovery
+            # requires a separate supervised gate; never dispatch from heartbeat.
+            audit=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1"
+            permitted_instance=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE","")
+            reconcile=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE")=="1"
+                       and bool(permitted_instance))
+            recover=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER")=="1"
+                     and os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK")=="AUTHORIZED"
+                     and bool(permitted_instance))
+            if audit or reconcile or recover:
+                try:
+                    def queue_finalization(outer, result):
+                        if not (reconcile or recover) or outer.get("instance_id")!=permitted_instance:
+                            return False
+                        if result.get("status")=="running" and not recover:
+                            return False
+                        launched=finalization_supervisor.launch(
+                            instance_id=permitted_instance,
+                            config_path=CONFIG_PATH, state_dir=STATE_DIR)
+                        return launched=="started"
+                    observations=scan_pending_finalizations(
+                        state_root=STATE_DIR,
+                        agent_id=str(config["agent_id"]),
+                        lock_instance=lambda iid:instance_lock(
+                            iid,"minecraft_serverpack_finalization_discovery",timeout_seconds=0.25),
+                        read_operation=read_operation,
+                        dispatch=queue_finalization if (reconcile or recover) else None,
+                        enabled=reconcile or recover,
+                        max_candidates=4,
+                        target_instance_id=permitted_instance if (reconcile or recover) else None,
+                    )
+                    for observation in observations:
+                        if observation.get("status") in {"pending","pending_journal_reconciliation","rejected","dispatched"}:
+                            _log("serverpack finalization observation: "+json.dumps(observation,sort_keys=True))
+                except Exception as exc:
+                    _log(f"serverpack finalization discovery failed: {type(exc).__name__}",True)
             next_reconcile=now+reconcile_interval
         if now>=next_heartbeat:
             try:

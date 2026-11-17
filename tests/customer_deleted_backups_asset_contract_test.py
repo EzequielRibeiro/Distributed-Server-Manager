@@ -22,6 +22,14 @@ class CustomerDeletedBackupsAssetContractTest(unittest.TestCase):
         self.assertIn("return part8.integrated_controller_authenticate(headers)", text)
         self.assertIn("authenticate_browser_customer(", text)
 
+    def test_instance_delete_redirects_when_deleted_workspace_disappears(self):
+        text = (ROOT / "dashboard" / "web" / "customer-instance-delete.js").read_text(encoding="utf-8")
+        self.assertIn("if(e.status===404)", text)
+        self.assertIn("if(e.status===403){status(\"Não foi possível confirmar", text)
+        self.assertNotIn("e.status===403||e.status===404", text)
+        self.assertIn('location.href="/customer.html"', text)
+
+
     def test_asset_exists_as_javascript_source(self):
         path = ROOT / "dashboard" / "web" / "customer-deleted-backups.js"
         self.assertTrue(path.is_file())

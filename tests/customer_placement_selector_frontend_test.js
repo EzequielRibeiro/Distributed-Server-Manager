@@ -54,7 +54,7 @@ assert.doesNotMatch(
 );
 assert.match(
   html,
-  /customer-placement-client\.js\?v=3/,
+  /customer-placement-client\.js\?v=6/,
   "customer page must load the explicit placement client"
 );
 assert.match(
@@ -87,6 +87,13 @@ assert.match(
   /el\.submit\.disabled = !state\.placementReady/,
   "creation must remain disabled until runtime-aware placement succeeds"
 );
+assert.match(selector, /server_ref: state\.serverRef \|\| null/,
+  "selected server must be passed to backend placement");
+assert.match(selector, /serverLocationLabel\(region, server\)/,
+  "region selector must show individual servers in location");
+assert.doesNotMatch(selector.match(/function serverLocationLabel\([\s\S]*?\n    }/)?.[0] || "",
+  /server\.label/, "public labels must not include Agent names");
+
 const placementClientIndex = html.search(/\/customer-placement-client\.js\?v=\d+/);
 const runtimeSelectorIndex = html.search(/\/runtime-selector\.js\?v=\d+/);
 assert.ok(

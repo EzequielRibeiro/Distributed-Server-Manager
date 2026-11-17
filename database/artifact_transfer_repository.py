@@ -3,16 +3,17 @@
 from __future__ import annotations
 from contextlib import contextmanager
 from datetime import datetime,timedelta,timezone
-import hashlib,os
+import hashlib,os,shutil
 from pathlib import Path
 import uuid
 from alert_repository import AlertSession,dialect_for_backend
+from artifact_cleanup_policy import classify_expired_upload
 
 FINAL={"completed","failed","cancelled","expired"};ACTIVE={"staging","queued","delivered","transferring"}
 _ARTIFACT_CHUNK_BYTES=1024*1024
 _MAX_ARTIFACT_BYTES=64*1024*1024*1024
 
-def _copy_artifact_stream(source,out,content_length=None):
+def _copy_artifact_stream(source,out,content_length=None,*,reserve_free_bytes=0):
  expected=None if content_length is None else int(content_length)
  if expected is not None and (expected<0 or expected>_MAX_ARTIFACT_BYTES):raise ValueError("artifact exceeds 64 GiB transfer limit")
  h=hashlib.sha256();total=0;remaining=expected
@@ -27,6 +28,8 @@ def _copy_artifact_stream(source,out,content_length=None):
   if remaining is not None:
    if len(chunk)>remaining:raise ValueError("artifact content length mismatch")
    remaining-=len(chunk)
+  if reserve_free_bytes and shutil.disk_usage(out.name).free < reserve_free_bytes + len(chunk):
+   raise OSError("Espaço livre insuficiente no Controller para receber o upload sem comprometer o sistema.")
   h.update(chunk);out.write(chunk)
  if expected is not None and total!=expected:raise ValueError("artifact content length mismatch")
  return total,h.hexdigest()
@@ -78,17 +81,87 @@ class ArtifactTransferRepository:
   with self.session() as s:row=s.execute(f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}",(str(transfer_id),)).fetchone()
   if row is None:raise KeyError(transfer_id)
   return dict(row)
+ def list_completed_backup_imports(self,instance_id,limit=10):
+  """Find non-expired verified backup imports for an authorized instance.
+
+  The HTTP caller must separately authorize backup.restore on the instance.
+  Do not expose spool paths or other tenant's transfer metadata.
+  """
+  iid=self._token(instance_id,"instance_id")
+  count=max(1,min(int(limit),50))
+  ph=self.dialect.placeholder
+  now=datetime.now(timezone.utc)
+  with self.session() as session:
+   rows=session.execute(
+    f"SELECT * FROM artifact_transfers WHERE instance_id={ph} "
+    "AND direction='controller_to_agent' AND purpose='backup_import' "
+    "AND status='completed' ORDER BY created_at DESC LIMIT 200", (iid,)
+   ).fetchall()
+  valid=[]
+  for row in rows:
+   transfer=dict(row)
+   expires=transfer.get("expires_at")
+   if expires is not None:
+    try:
+     expiry=(expires if isinstance(expires,datetime) else
+             datetime.fromisoformat(str(expires).replace("Z","+00:00")))
+     if expiry.tzinfo is None:expiry=expiry.replace(tzinfo=timezone.utc)
+     if expiry<=now:continue
+    except (TypeError,ValueError):continue
+   if not str(transfer.get("destination_ref") or "").strip():continue
+   valid.append(transfer)
+   if len(valid)>=count:break
+  return valid
+
  def command_for_agent(self,agent_id):
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:
    row=s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE agent_id={ph} AND status='queued' ORDER BY created_at ASC LIMIT 1",(str(agent_id),)).fetchone()
    if row is None:return None
-   tid=str(row["transfer_id"]);s.execute(f"UPDATE artifact_transfers SET status='delivered',delivered_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='queued'",(tid,))
+   tid=str(row["transfer_id"])
+   cleanup=s.execute(f"SELECT source_ref FROM artifact_transfers WHERE transfer_id={ph} AND purpose='content_upload_cleanup'",(tid,)).fetchone()
+   if cleanup is not None:
+    original=str(cleanup["source_ref"] or "")
+    if original:
+     lock=" FOR UPDATE" if ph=="%s" else ""
+     s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE transfer_id={ph}{lock}",(original,)).fetchone()
+    if not original or self._content_upload_is_referenced(s,original):
+     s.execute(f"UPDATE artifact_transfers SET status='cancelled',last_error='content upload became referenced',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='queued'",(tid,))
+     return None
+   s.execute(f"UPDATE artifact_transfers SET status='delivered',delivered_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='queued'",(tid,))
   item=self.get(tid);return {k:item.get(k) for k in ("transfer_id","direction","purpose","instance_id","source_ref","destination_ref","filename","size_bytes","sha256")}
  def mark_transferring(self,transfer_id):
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='transferring',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status IN ('queued','delivered','transferring')",(transfer_id,))
   return self.get(transfer_id)
+ def record_controller_delivery_progress(self,transfer_id,agent_id,bytes_sent):
+  """Store bytes streamed to an authenticated Agent, not an Agent checksum ACK.
+
+  Status remains transferring, even at 100%. Only apply_agent_result may
+  complete the transfer after the Agent verifies its downloaded artifact.
+  """
+  tid=self._token(transfer_id,"transfer_id")
+  amount=int(bytes_sent)
+  if amount<0 or amount>_MAX_ARTIFACT_BYTES:raise ValueError("invalid streamed byte count")
+  item=self.get(tid)
+  if str(item.get("agent_id"))!=str(agent_id) or item.get("direction")!="controller_to_agent":
+   raise PermissionError("artifact transfer ownership mismatch")
+  if str(item.get("status")) not in {"delivered","transferring"}:return item
+  size=item.get("size_bytes")
+  if size is None or amount>int(size):raise ValueError("streamed bytes exceed artifact size")
+  ph=self.dialect.placeholder
+  with self.session(transaction=True) as s:
+   s.execute(
+    f"UPDATE artifact_transfers SET transferred_bytes="
+    f"CASE WHEN transferred_bytes<{ph} THEN {ph} ELSE transferred_bytes END,"
+    f"updated_at={self.dialect.current_timestamp} "
+    f"WHERE transfer_id={ph} AND agent_id={ph} "
+    f"AND direction='controller_to_agent' AND status IN ('delivered','transferring') "
+    f"AND size_bytes>={ph}",
+    (amount,amount,tid,str(agent_id),amount),
+   )
+  return self.get(tid)
+
  def receive_from_agent(self,transfer_id,agent_id,source,content_length=None):
   item=self.get(transfer_id)
   if item["direction"]!="agent_to_controller" or str(item["agent_id"])!=str(agent_id):raise PermissionError("artifact transfer ownership mismatch")
@@ -108,13 +181,24 @@ class ArtifactTransferRepository:
   if item["direction"]!="controller_to_agent":raise ValueError("transfer direction does not accept Controller upload")
   path=self._path(transfer_id,item["filename"]);path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+".part");total=0;digest=""
   try:
-   with tmp.open("wb") as out:total,digest=_copy_artifact_stream(source,out,content_length)
+   with tmp.open("wb") as out:total,digest=_copy_artifact_stream(source,out,content_length,reserve_free_bytes=2*1024**3 if item.get("purpose")=="content_upload" else 0)
    os.replace(tmp,path)
   finally:
    try:tmp.unlink()
    except FileNotFoundError:pass
   ph=self.dialect.placeholder
   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET size_bytes={ph},transferred_bytes=0,sha256={ph},controller_path={ph},status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(total,digest,str(path),transfer_id))
+  return self.get(transfer_id)
+ def fail_staging_upload(self,transfer_id,reason):
+  """Persist an interrupted Controller-side upload without touching Agent data."""
+  item=self.get(transfer_id)
+  if item.get("purpose")!="content_upload" or item.get("direction")!="controller_to_agent":
+   raise ValueError("transfer is not a content upload")
+  if item.get("status")!="staging":return item
+  ph=self.dialect.placeholder
+  message=str(reason or "Upload interrompido antes da conclusão.")[:1024]
+  with self.session(transaction=True) as s:
+   s.execute(f"UPDATE artifact_transfers SET status='failed',last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status='staging'",(message,transfer_id))
   return self.get(transfer_id)
  def controller_artifact(self,transfer_id):
   item=self.get(transfer_id);path=Path(str(item.get("controller_path") or "")).resolve();path.relative_to(self.spool)
@@ -132,27 +216,62 @@ class ArtifactTransferRepository:
    try:destination_ref=_validated_content_upload_destination(item,report)
    except ValueError as exc:status="failed";error=str(exc)[:1024];destination_ref=None
   ph=self.dialect.placeholder
-  with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,int(report.get("transferred_bytes") or item.get("size_bytes") or 0),destination_ref,error,item["transfer_id"]))
+  # Failure is not an Agent acknowledgement. Preserve the latest observed
+  # streamed byte count instead of incorrectly presenting 100% on failure.
+  transferred=(int(report.get("transferred_bytes") or item.get("size_bytes") or 0)
+               if status=="completed" else int(item.get("transferred_bytes") or 0))
+  with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status={ph},transferred_bytes={ph},destination_ref={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(status,transferred,destination_ref,error,item["transfer_id"]))
   return self.get(item["transfer_id"])
+ def _content_upload_is_referenced(self,s,transfer_id):
+  ph=self.dialect.placeholder
+  pattern="%"+str(transfer_id).replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
+  return any(s.execute(
+   f"SELECT 1 FROM {table} WHERE artifact_json LIKE {ph} OR provenance_json LIKE {ph} LIMIT 1",
+   (pattern,pattern),
+  ).fetchone() for table in ("content_assignments","content_assignment_revisions"))
  def reject_content_upload(self,transfer_id,reason):
-  item=self.get(transfer_id)
-  if str(item.get("purpose") or "")!="content_upload":raise ValueError("transfer is not a content upload")
+  """Reject an upload and enqueue at most one Agent cleanup atomically."""
   message=str(reason or "content upload rejected").strip()[:1024] or "content upload rejected"
   ph=self.dialect.placeholder
+  with self.session(transaction=True) as s:
+   lock=" FOR UPDATE" if ph=="%s" else ""
+   item=s.execute(f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}{lock}",(transfer_id,)).fetchone()
+   if item is None:raise KeyError(transfer_id)
+   if str(item["purpose"] or "")!="content_upload":raise ValueError("transfer is not a content upload")
+   if self._content_upload_is_referenced(s,transfer_id):
+    raise ValueError("cannot reject referenced content upload")
+   s.execute(
+    f"UPDATE artifact_transfers SET status='failed',last_error={ph},"
+    f"completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} "
+    f"WHERE transfer_id={ph} AND status<>'expired'",
+    (message,transfer_id),
+   )
+   existing=s.execute(
+    f"SELECT 1 FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={ph} LIMIT 1",
+    (transfer_id,),
+   ).fetchone()
+   if existing is None and item["agent_id"] and item["instance_id"]:
+    cleanup_id="transfer-"+uuid.uuid4().hex
+    filename=Path(str(item["filename"] or "artifact.bin")).name
+    expires=(datetime.now(timezone.utc)+timedelta(hours=24)).isoformat().replace("+00:00","Z")
+    s.execute(
+     "INSERT INTO artifact_transfers"
+     "(transfer_id,agent_id,instance_id,customer_id,direction,purpose,"
+     "source_ref,filename,status,controller_path,requested_by,expires_at) "
+     f"VALUES ({self.dialect.parameters(12)})",
+     (cleanup_id,item["agent_id"],item["instance_id"],item["customer_id"],
+      "controller_to_agent","content_upload_cleanup",transfer_id,filename,"queued",
+      str(self._path(cleanup_id,filename)),item["requested_by"],expires),
+    )
+  # The database decision is durable before removing the Controller-side staging file.
   try:
-   path=self._path(transfer_id,item.get("filename"))
+   path=self._path(transfer_id,item["filename"])
    path.unlink(missing_ok=True)
    path.with_suffix(path.suffix+".part").unlink(missing_ok=True)
    try:path.parent.rmdir()
    except OSError:pass
   except (OSError,ValueError):
    pass
-  with self.session(transaction=True) as s:
-   s.execute(f"UPDATE artifact_transfers SET status='failed',last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(message,transfer_id))
-   existing=s.execute(f"SELECT transfer_id FROM artifact_transfers WHERE purpose='content_upload_cleanup' AND source_ref={ph} AND status<>'expired' ORDER BY created_at DESC LIMIT 1",(transfer_id,)).fetchone()
-  if existing is None and item.get("agent_id") and item.get("instance_id"):
-   cleanup=self.create(agent_id=item["agent_id"],instance_id=item["instance_id"],customer_id=item.get("customer_id"),direction="controller_to_agent",purpose="content_upload_cleanup",filename=item.get("filename") or "artifact.bin",source_ref=transfer_id,requested_by=item.get("requested_by"),ttl_hours=24)
-   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='queued',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(cleanup["transfer_id"],))
   return self.get(transfer_id)
 
  def cancel(self,transfer_id):
@@ -178,11 +297,113 @@ class ArtifactTransferRepository:
   with self.session() as s:rows=s.execute(f"SELECT transfer_id,controller_path FROM artifact_transfers WHERE expires_at IS NOT NULL AND expires_at<{ph} AND status<>'expired'",(now,)).fetchall()
   count=0
   for row in rows:
-   try:
-    path=Path(str(row["controller_path"] or "")).resolve();path.relative_to(self.spool);path.unlink(missing_ok=True);path.parent.rmdir()
-   except OSError:pass
-   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='expired',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph}",(str(row["transfer_id"]),))
+   # Only remove paths inside the managed spool. A missing file is already clean;
+   # an actual filesystem error must be retried, not silently marked expired.
+   raw_path=str(row["controller_path"] or "").strip()
+   if raw_path:
+    try:
+     path=Path(raw_path).resolve();path.relative_to(self.spool)
+     path.unlink(missing_ok=True)
+     try:path.parent.rmdir()
+     except OSError:pass  # Other transfer files may still occupy the directory.
+    except (OSError,ValueError):
+     continue
+   with self.session(transaction=True) as s:s.execute(f"UPDATE artifact_transfers SET status='expired',updated_at={self.dialect.current_timestamp} WHERE transfer_id={ph} AND status<>'expired'",(str(row["transfer_id"]),))
    count+=1
   return count
+
+ def audit_expired_content_uploads(self,limit=200):
+  """Read-only preflight for cleanup backlog: never dispatch or delete.
+
+  Historical revision references remain protected. Report separate counts so
+  cleanup improvements do not silently weaken rollback/reference safeguards.
+  """
+  batch=max(1,min(int(limit),1000));ph=self.dialect.placeholder
+  with self.session() as s:
+   rows=s.execute(
+    "SELECT transfer_id,status,COALESCE(size_bytes,0) AS size_bytes "
+    "FROM artifact_transfers WHERE purpose='content_upload' "
+    "AND direction='controller_to_agent' AND status='expired' "
+    "AND destination_ref IS NOT NULL ORDER BY updated_at ASC LIMIT "
+    f"{batch}"
+   ).fetchall()
+   counts={"scanned":0,"unreferenced_expired":0,"current_reference":0,
+           "historical_reference":0,"not_expired":0,
+           "unreferenced_bytes":0,"protected_bytes":0}
+   for row in rows:
+    tid=str(row["transfer_id"])
+    pattern="%"+tid.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"
+    current=s.execute(
+     f"SELECT 1 FROM content_assignments WHERE artifact_json LIKE {ph} "
+     f"OR provenance_json LIKE {ph} LIMIT 1",(pattern,pattern)
+    ).fetchone() is not None
+    historical=False
+    if not current:
+     historical=s.execute(
+      f"SELECT 1 FROM content_assignment_revisions WHERE artifact_json LIKE {ph} "
+      f"OR provenance_json LIKE {ph} LIMIT 1",(pattern,pattern)
+     ).fetchone() is not None
+    category=classify_expired_upload(
+     transfer_status=str(row["status"]),
+     has_current_reference=current,has_historical_reference=historical,
+    )
+    size=max(0,int(row["size_bytes"] or 0))
+    counts["scanned"]+=1
+    counts[category]+=1
+    if category=="unreferenced_expired":counts["unreferenced_bytes"]+=size
+    else:counts["protected_bytes"]+=size
+   return counts
+
+ def enqueue_expired_content_upload_cleanup(self):
+  """Queue at most one cleanup for each expired, unreferenced upload.
+
+  Lock the source transfer row until the reference check and cleanup insert
+  commit. This serializes competing workers on PostgreSQL; SQLite writers
+  serialize through the database transaction. Never enqueue from a stale
+  snapshot without rechecking assignments.
+  """
+  ph=self.dialect.placeholder
+  with self.session() as s:
+   rows=s.execute(
+    "SELECT transfer_id FROM artifact_transfers WHERE purpose='content_upload' "
+    "AND direction='controller_to_agent' AND status='expired' "
+    "AND destination_ref IS NOT NULL AND agent_id IS NOT NULL AND instance_id IS NOT NULL"
+   ).fetchall()
+  queued=0
+  for row in rows:
+   tid=str(row["transfer_id"])
+   try:
+    with self.session(transaction=True) as s:
+     lock=" FOR UPDATE" if ph=="%s" else ""
+     source=s.execute(
+      f"SELECT * FROM artifact_transfers WHERE transfer_id={ph}{lock}",(tid,)
+     ).fetchone()
+     if source is None or source["status"]!="expired" or not source["destination_ref"]:
+      continue
+     if self._content_upload_is_referenced(s,tid):
+      continue
+     if s.execute(
+      f"SELECT 1 FROM artifact_transfers WHERE purpose='content_upload_cleanup' "
+      f"AND source_ref={ph} LIMIT 1",(tid,)
+     ).fetchone():
+      continue
+     cleanup_id="transfer-"+uuid.uuid4().hex
+     expires=(datetime.now(timezone.utc)+timedelta(hours=24)).isoformat().replace("+00:00","Z")
+     filename=Path(str(source["filename"] or "artifact.bin")).name
+     path=str(self._path(cleanup_id,filename))
+     s.execute(
+      "INSERT INTO artifact_transfers"
+      "(transfer_id,agent_id,instance_id,customer_id,direction,purpose,"
+      "source_ref,filename,status,controller_path,requested_by,expires_at) "
+      f"VALUES ({self.dialect.parameters(12)})",
+      (cleanup_id,source["agent_id"],source["instance_id"],source["customer_id"],
+       "controller_to_agent","content_upload_cleanup",tid,filename,"queued",
+       path,source["requested_by"],expires),
+     )
+     queued+=1
+   except Exception:
+    # Let the caller/worker log and retry failures instead of hiding them.
+    raise
+  return queued
 
 __all__=["ACTIVE","FINAL","ArtifactTransferRepository"]

@@ -231,7 +231,9 @@ def render_shutdown_messages_xml(message: DayZShutdownMessage, *, existing_xml: 
     else:
         root = ET.Element("messages")
     for node in list(root.findall("message")):
-        if str(node.findtext("text") or "").strip() == MANAGED_TEXT:
+        text = str(node.findtext("text") or "").strip()
+        shutdown = str(node.findtext("shutdown") or "0").strip()
+        if text == MANAGED_TEXT or shutdown == "1":
             root.remove(node)
     root.append(_new_message(message))
     ET.indent(root, space="  ")

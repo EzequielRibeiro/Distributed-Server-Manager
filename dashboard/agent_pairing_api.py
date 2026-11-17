@@ -15,6 +15,7 @@ for path in (ROOT_DIR, DATABASE_DIR):
 
 from agent_install_command import linux_agent_install_command
 from agent_pairing_repository import AgentPairingRepository
+from agent_geolocation import controller_location_for_agent
 
 
 def _role(user: dict[str, Any] | None) -> str:
@@ -93,6 +94,7 @@ def enroll_remote_agent(backend, payload: dict[str, Any] | None) -> dict[str, An
         "agent_id": identity.agent_id,
         "node_id": identity.node_id,
         "controller_id": identity.controller_id,
+        "controller_location": controller_location_for_agent(identity.agent_id, backend=backend),
         "status": identity.status,
         "identity": {
             "credential_id": identity.credential_id,

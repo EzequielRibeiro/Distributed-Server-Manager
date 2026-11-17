@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 import unittest
@@ -93,9 +94,12 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
    self.assertIn(f'id="{chart_id}"',html)
   telemetry_js=(ROOT/"dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
   self.assertIn('overview.runtime?.state||inst.status||"unknown"',telemetry_js)
-  self.assertIn('$("start").disabled=!can("instance.start")||!!pr||!startable||busy',telemetry_js)
-  self.assertIn('$("stop").disabled=!can("instance.stop")||!!pr||!running||busy',telemetry_js)
-  for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window',"Runtime sem query de latência","Não suportada",'return"< 1 ms"','t.latency_ms!=null?fmtMs(t.latency_ms)'):
+  self.assertIn('$("start").disabled=!can("instance.start")||provisionBlocksControls||!startable||busy',telemetry_js)
+  self.assertIn('$("stop").disabled=!can("instance.stop")||provisionBlocksControls||!running||busy',telemetry_js)
+  self.assertIn('historicalFailedWhileRunning=running&&String(inst.game_id||"").toLowerCase()==="minecraft"&&provisionStatus==="failed"',telemetry_js)
+  self.assertIn('&&!historicalFailedWhileRunning)retryActions.classList.remove("hidden")',telemetry_js)
+  self.assertIn('última tentativa de atualização falhou e permanece no histórico',telemetry_js)
+  for marker in ("networkRate",'network_rx_bytes','network_tx_bytes','sampled_at','telemetry-window',"Sem amostras de latência","Sem dados",'return"< 1 ms"','t.latency_ms!=null?fmtMs(t.latency_ms)'):
    self.assertIn(marker,telemetry_js)
   transfer=(ROOT/"dashboard/web/customer-backup-transfer.js").read_text(encoding="utf-8")
   for route in ("/api/customer/artifacts/backup-export","/api/customer/artifacts/backup-import","/api/customer/artifacts/upload","/api/customer/artifacts/restore-import"):
@@ -188,7 +192,7 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
    "list_for_agent":lambda self,agent_id:[{
     "instance_id":"instance-1","desired_state":"running","observed_state":"stopped",
     "reconcile_status":"healthy","health":"offline","operation_status":"idle",
-    "reported_at":"2026-09-14T22:55:00Z",
+    "reported_at":datetime.now(timezone.utc).isoformat(),
    }]
   })()
   service.agent_runtime=type("Agent",(),{
@@ -333,6 +337,22 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   self.assertIn("@keyframes content-scan-spin",css)
   self.assertIn("@keyframes content-scan-sweep",css)
   self.assertIn("prefers-reduced-motion",css)
+
+ def test_customer_provisioning_uses_indeterminate_construction_animation(self):
+  detail=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")
+  detail_css=(ROOT/"dashboard"/"web"/"customer-instance-v2.css").read_text(encoding="utf-8")
+  detail_html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
+  overview=(ROOT/"dashboard"/"web"/"customer.js").read_text(encoding="utf-8")
+  overview_css=(ROOT/"dashboard"/"web"/"customer.css").read_text(encoding="utf-8")
+  self.assertIn('["queued","delivered","running","provisioning","installing"].includes(provisionStatus)',detail)
+  self.assertIn('Construindo servidor…',detail)
+  self.assertIn('id="provision-builder"',detail_html)
+  self.assertIn(".provision-builder",detail_css)
+  self.assertIn("@keyframes provision-build",detail_css)
+  self.assertIn("prefers-reduced-motion",detail_css)
+  self.assertIn("server-provision-builder",overview)
+  self.assertIn("Construindo servidor…",overview)
+  self.assertIn("@keyframes server-provision-build",overview_css)
 
  def test_customer_content_ui_hides_transient_yarax_error_while_scanning(self):
   script=(ROOT/"dashboard"/"web"/"customer-instance-v2.js").read_text(encoding="utf-8")

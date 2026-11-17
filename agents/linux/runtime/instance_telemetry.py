@@ -18,6 +18,21 @@ import time
 from typing import Any
 
 import instance_runtime
+import sys
+
+# Shared protocol reader works in the source tree and packaged Agent layout.
+_HERE = Path(__file__).resolve()
+_COMMON = next((
+    candidate for candidate in (
+        _HERE.parents[2] / "common",
+        _HERE.parents[1] / "common",
+    ) if candidate.is_dir()
+), _HERE.parents[2] / "common")
+if str(_COMMON) not in sys.path:
+    sys.path.insert(0, str(_COMMON))
+from minecraft_java_status import query_reserved_java_game_port
+from backup_storage_accounting import backup_inventory
+
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 SAMPLE_STATE_DIR = STATE_DIR / "instance-telemetry"
@@ -469,6 +484,10 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
             game = _dayz_query(record, telemetry_config)
         elif profile == "minecraft-bedrock" or environment_id == "minecraft.bedrock.vanilla":
             game = _bedrock_query(record, telemetry_config)
+        elif game_id == "minecraft" and (
+            profile == "minecraft-java" or environment_id.startswith("minecraft.java.")
+        ):
+            game = query_reserved_java_game_port(record, telemetry_config) or _game_query(telemetry_config)
         else:
             game = _game_query(telemetry_config)
 
@@ -479,16 +498,74 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         except Exception:
             health = "unknown"
 
-        # Measure the customer-manageable tree first. Hybrid prepares files_root
-        # for capivara-agent group access, while the parent instance_state_root may
-        # intentionally remain traversal-restricted (notably Minecraft Bedrock).
-        storage_root = record.get("files_root") or record.get("instance_state_root") or record.get("path")
+        # Prefer the instance-owned state tree: files_root can contain only
+        # customer-editable files and omit logs, profiles and other owned data.
+        # Never add both roots (files_root may be nested under state_root).
+        # Shared game installations outside state_root are not customer usage.
+        state_root = record.get("instance_state_root")
+        files_root = record.get("files_root")
+        state_usage = _storage_used(state_root) if state_root else None
+        files_usage = _storage_used(files_root) if files_root else None
+        if state_usage is not None:
+            storage_used = state_usage
+            if files_usage is not None and files_root:
+                try:
+                    state_path = Path(str(state_root)).resolve()
+                    files_path = Path(str(files_root)).resolve()
+                    files_path.relative_to(state_path)
+                except ValueError:
+                    # Separate customer-owned trees cannot be safely combined
+                    # without an explicit ownership contract.
+                    storage_used = None
+        elif state_root:
+            # A restricted or unreadable state tree must not silently report
+            # the smaller customer-editable tree as the full instance usage.
+            storage_used = None
+        else:
+            storage_used = files_usage if files_root else _storage_used(record.get("path"))
+        # #1066: archived backups are stored outside the instance state
+        # tree. Count physical archives, including historical/unindexed files.
+        # Report unknown rather than a misleading partial quota when scanning
+        # fails (permission, symlink, hardlink, or incomplete tree).
+        private_usage = storage_used
+        backup_usage = None
+        backup_count = None
+        manifest_only_count = None
+        invalid_count = None
+        inventory_status = "unknown"
+        try:
+            backup_base = Path(os.environ.get(
+                "CAPIVARA_BACKUP_ROOT", str(STATE_DIR / "backups")
+            ))
+            inventory = backup_inventory(backup_base, instance_id)
+            backup_usage = inventory["bytes"]
+            backup_count = inventory["file_count"]
+            manifest_only_count = inventory["manifest_only_count"]
+            invalid_count = inventory["invalid_count"]
+            inventory_status = "ok"
+            if storage_used is not None:
+                backup_directory = (backup_base / instance_id).resolve()
+                private_directory = Path(str(state_root or files_root or record.get("path") or "")).resolve()
+                if backup_directory.is_relative_to(private_directory):
+                    private_usage = max(0, storage_used - backup_usage)
+                else:
+                    storage_used += backup_usage
+        except (OSError, ValueError, RuntimeError):
+            inventory_status = "unknown"
+            backup_usage = None
+            storage_used = None
         results.append({
             "instance_id": instance_id,
+            "instance_storage_used_bytes": private_usage,
+            "backup_storage_used_bytes": backup_usage,
+            "backup_storage_file_count": backup_count,
+            "backup_manifest_only_count": manifest_only_count,
+            "backup_invalid_count": invalid_count,
+            "backup_inventory_status": inventory_status,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
-            "storage_used_bytes": _storage_used(storage_root),
+            "storage_used_bytes": storage_used,
             "network_rx_bytes": rx,
             "network_tx_bytes": tx,
             "players_online": game.get("players_online"),

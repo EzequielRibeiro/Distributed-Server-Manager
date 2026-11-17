@@ -73,6 +73,7 @@ class ControllerJournalReaderTest(unittest.TestCase):
             command[index + 1],
         )
         self.assertIn("--show-cursor", command)
+        self.assertEqual("cat", command[command.index("-o") + 1])
 
     @mock.patch("dashboard.controller_journal_reader.subprocess.run")
     def test_instance_snapshot_uses_current_activation_timestamp(self, run):
@@ -109,6 +110,7 @@ class ControllerJournalReaderTest(unittest.TestCase):
         self.assertIn("--after-cursor", command)
         self.assertIn(cursor, command)
         self.assertIn("capivara-instance-cli-000001-dayz-001.service", command)
+        self.assertEqual("cat", command[command.index("-o") + 1])
         self.assertNotIn("sh", command)
         self.assertNotIn("bash", command)
 

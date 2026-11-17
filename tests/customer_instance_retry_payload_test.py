@@ -18,7 +18,16 @@ def test_customer_workspace_retry_still_targets_retry_endpoint() -> None:
     assert "async function retryProvision()" in source
 
 
+def test_customer_workspace_retry_is_exposed_after_runtime_failure() -> None:
+    source = FRONTEND.read_text(encoding="utf-8")
+    assert 'persistedStatus=String(inst.persisted_status||"").toLowerCase()' in source
+    assert 'retryablePersisted=["failed","pending_steam_auth"].includes(persistedStatus)' in source
+    assert 'showProvision=!!pr||(retryablePersisted&&retryAllowed)' in source
+    assert 'retryable||retryablePersisted' in source
+
+
 if __name__ == "__main__":
     test_retry_endpoint_accepts_customer_workspace_instance_key()
     test_customer_workspace_retry_still_targets_retry_endpoint()
+    test_customer_workspace_retry_is_exposed_after_runtime_failure()
     print("customer instance retry payload regression: OK")

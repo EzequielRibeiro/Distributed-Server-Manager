@@ -96,6 +96,22 @@ class AgentGameDataRepository:
         current=self.snapshot(job_id)
         if str(current.get("agent_id"))!=str(agent_id):raise PermissionError("game-data job belongs to another Agent")
         status=str(result.get("status") or "").strip().lower()
+        # An Agent transport completion is not an instance-update completion.
+        # Reject incomplete scoped update evidence before persisting the job.
+        selection=current.get("selection") if isinstance(current.get("selection"),dict) else {}
+        meta=selection.get("_server_update") if isinstance(selection.get("_server_update"),dict) else {}
+        if status=="completed" and meta.get("operation")=="update":
+            detail=result.get("update_status_after")
+            installed=detail.get("installed_version") if isinstance(detail,dict) else None
+            available=detail.get("available_version") if isinstance(detail,dict) else None
+            valid_builds=(isinstance(installed,str) and installed.isdecimal()
+                          and isinstance(available,str) and available.isdecimal()
+                          and installed==available)
+            valid_activation=(result.get("activation")=="atomic-swap" and result.get("readiness")=="healthy")
+            valid_noop=(result.get("readiness")=="unchanged" and not result.get("activation"))
+            if not (valid_builds and isinstance(detail,dict) and detail.get("state")=="up_to_date" and (valid_activation or valid_noop)):
+                result={**result,"status":"failed","progress":100,"error":"invalid_update_result"}
+                status="failed"
         if status not in {"running","completed","failed"}:raise ValueError("invalid game-data result status")
         try:progress=int(result.get("progress",100 if status=="completed" else current.get("progress",0)))
         except (TypeError,ValueError):progress=int(current.get("progress",0) or 0)
@@ -106,6 +122,8 @@ class AgentGameDataRepository:
                 selection_json=json.dumps(_redacted_selection(current.get("selection")),separators=(",",":"),sort_keys=True)
                 s.execute("UPDATE agent_game_data_jobs SET "+f"status={ph},progress={ph},selection_json={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} WHERE job_id={ph} AND status NOT IN ('completed','failed')",(status,progress,selection_json,result_json,error,now,now,job_id))
         updated=self.snapshot(job_id)
+        if str(current.get("status") or "") in FINAL_STATES:
+            return updated
         if str(current.get("action") or "") not in MAINTENANCE_ACTIONS:
             try:
                 from server_update_repository import ServerUpdateRepository

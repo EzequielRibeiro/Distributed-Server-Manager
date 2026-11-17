@@ -69,6 +69,9 @@ class _FakeRepository:
         self.recorded.append((agent_id, list(reports)))
         return len(reports)
 
+    def serverpack_content_fence(self,agent_id):
+        return set(),set()
+
     def desired_for_agent(self, agent_id):
         return [
             {
@@ -110,6 +113,33 @@ class HybridManagedContentParityTest(unittest.TestCase):
             client.commands[1][0]["content_id"],
             "steam-workshop:1828439124",
         )
+
+    def test_serverpack_owned_children_are_never_dispatched_or_reported(self):
+        class GuardedRepo(_FakeRepository):
+            def serverpack_content_fence(self, agent_id):
+                return {("inst-1", "steam-workshop:old"),
+                        ("inst-1", "steam-workshop:1828439124")}, set()
+        client = _FakeClient()
+        with (patch.object(worker, "_hybrid_agent_config", return_value={"agent_id":"agent-hybrid"}),
+              patch.object(worker, "_content_client_module", return_value=client),
+              patch.object(worker, "ContentRepository", GuardedRepo)):
+            result=worker.process_hybrid_content_cycle(object(), ROOT, "agent-hybrid")
+        self.assertEqual(result["commands"],0)
+        self.assertEqual(result["reported"],0)
+        self.assertEqual(result["accepted"],0)
+        self.assertEqual(client.commands[1],[])
+        self.assertTrue(all(not reports for _,reports in GuardedRepo.instance.recorded))
+
+    def test_queued_migration_holds_only_its_instance(self):
+        class GuardedRepo(_FakeRepository):
+            def serverpack_content_fence(self,agent_id):
+                return set(), {"inst-1"}
+        with (patch.object(worker, "_hybrid_agent_config", return_value={"agent_id":"agent-hybrid"}),
+              patch.object(worker, "_content_client_module", return_value=_FakeClient()),
+              patch.object(worker, "ContentRepository", GuardedRepo)):
+            result=worker.process_hybrid_content_cycle(object(), ROOT, "agent-hybrid")
+        self.assertEqual(result["commands"],0)
+        self.assertEqual(result["reported"],0)
 
     def test_hybrid_content_cycle_fails_closed_when_config_is_missing(self):
         with patch.object(worker, "_hybrid_agent_config", return_value=None):

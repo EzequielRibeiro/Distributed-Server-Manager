@@ -99,7 +99,8 @@ atomic_progress_install_wrapper()
 {
     if ! declare -F atomic_install >/dev/null 2>&1
     then
-        return 1
+        # Loading event helpers standalone must not fail under set -e.
+        return 0
     fi
 
     if declare -F atomic_install_base >/dev/null 2>&1

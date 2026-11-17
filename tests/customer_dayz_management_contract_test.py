@@ -4,10 +4,20 @@ import unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class CustomerDayZManagementContractTest(unittest.TestCase):
+ def test_mobile_datetime_selects_are_preserved_and_pending_wipe_is_restored(self):
+  source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
+  self.assertNotIn("nativePickerActive",source)
+  self.assertNotIn("showPicker",source)
+  self.assertIn("document.activeElement",source)
+  self.assertIn("&&!wipeFormDirty&&!editing)load()",source)
+  self.assertIn('const pendingWipe=operations.find(op=>op.action==="wipe"',source)
+  self.assertIn('wipeDay.value=String(due.getDate()).padStart(2,"0")',source)
+  self.assertIn('wipeMinute.value=String(due.getMinutes()).padStart(2,"0")',source)
+
  def test_customer_surface_is_composed(self):
   html=(ROOT/"dashboard"/"web"/"customer-instance.html").read_text(encoding="utf-8")
-  self.assertIn("/customer-maintenance.js?v=3",html)
-  self.assertIn("/customer-dayz.js?v=5",html)
+  self.assertRegex(html,r"/customer-maintenance\.js\?v=\d+")
+  self.assertRegex(html,r"/customer-dayz\.js\?v=\d+")
   layer=(ROOT/"dashboard"/"server_part20.py").read_text(encoding="utf-8")
   self.assertIn("install_customer_dayz_http",layer)
   self.assertIn('"/customer-dayz.js"',layer)
@@ -26,6 +36,37 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn("Iniciar novo mapa com mods desabilitados (recomendado)",dayz_js)
   self.assertIn("Manter mods ativos (preflight de compatibilidade)",dayz_js)
   self.assertIn("content_mode:mapContentMode",dayz_js)
+  self.assertIn('"Adicionar / reparar mapa"',dayz_js)
+  self.assertIn("Preparação/reparo do mapa solicitado.",dayz_js)
+  self.assertIn("sem alterar ou reiniciar o mapa ativo",dayz_js)
+  self.assertIn('COMMUNITY_API=API+"/community-map"',dayz_js)
+  self.assertIn('workshop_items:ids',dayz_js)
+  self.assertIn('"Upload direto","upload"',dayz_js)
+  self.assertIn('COMMUNITY_API+"/upload-finalize"',dayz_js)
+  self.assertIn("uploadCommunityArchive",dayz_js)
+  self.assertIn("communityFormDirty",dayz_js)
+  self.assertIn('if(communityFormDirty&&document.getElementById("dayz-community-map-id"))return',dayz_js)
+  self.assertIn("markCommunityDirty",dayz_js)
+ def test_generic_community_map_flow_honors_content_entitlements(self):
+  source=(ROOT/"dashboard"/"web"/"customer-dayz.js").read_text(encoding="utf-8")
+  self.assertIn('"Adicionar / reparar mapa comunitário"',source)
+  self.assertIn('"Nome do mapa comunitário"',source)
+  self.assertIn('"dayz-community-map-mission-scope"',source)
+  self.assertIn('"Descobrir todas as missões (padrão)"',source)
+  self.assertIn('"Apenas uma missão específica"',source)
+  self.assertIn('missionPath=missionScope.value==="single"?missionPathInput.value.trim():""',source)
+  self.assertIn('if(missionScope.value==="single"&&!missionPath)',source)
+  self.assertIn('const suggestedMapId=()',source)
+  self.assertIn('const contentId=idInput.value.trim()||suggestedMapId()',source)
+  self.assertIn('contentPermissions.has("content.install")',source)
+  self.assertIn('contentPolicy.mods_allowed',source)
+  self.assertIn('contentPolicy.workshop_allowed',source)
+  self.assertIn('contentPolicy.external_upload_allowed',source)
+  self.assertIn('installMap.disabled=!allowed||mapInstallBusy',source)
+  self.assertIn('workshop_items:ids',source)
+  self.assertNotIn('installMap.disabled=!editable',source)
+  self.assertNotIn("namalsk",source.lower())
+  self.assertNotIn("hardcore.",source.lower())
  def test_dayz_api_supports_map_and_scheduled_wipe(self):
   source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
   for token in ('"refresh_maps"','"change_mission"','"wipe"','"cancel"',"scheduled_at"):
@@ -35,7 +76,14 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
   self.assertIn('"content_mode":content_mode',source)
   self.assertIn('content_mode not in {"disable","keep"}',source)
   self.assertIn("stale_after_change",source)
+  self.assertIn("stale_after_content",source)
+  self.assertIn('latest_updated_at(instance_id,{"map","workshop"})',source)
+  self.assertIn("maps={} if discovery_is_stale",source)
   self.assertIn('op.get("action")=="change_mission" and op.get("status")=="completed"',source)
+  self.assertIn('COMMUNITY_MAP=PATH+"/community-map"',source)
+  self.assertIn("install_dayz_community_map",source)
+  self.assertIn('COMMUNITY_MAP_UPLOAD_FINALIZE=COMMUNITY_MAP+"/upload-finalize"',source)
+  self.assertIn("finalize_dayz_community_map",source)
   for platform in ("linux","windows"):
    operation=(ROOT/"agents"/platform/"runtime"/"dayz_operation_client.py").read_text(encoding="utf-8")
    runtime=(ROOT/"agents"/platform/"runtime"/"content_activation_runtime.py").read_text(encoding="utf-8")
@@ -46,10 +94,37 @@ class CustomerDayZManagementContractTest(unittest.TestCase):
    self.assertIn("project_runtime_spec(updated,snapshot)",operation)
    self.assertIn("dayz_content_enabled",runtime)
    self.assertIn("dayz_map_compatibility",projection)
+   self.assertIn("_record_with_prepared_maps",operation)
+   self.assertIn("discover_community_missions",operation)
  def test_upgrade_is_registered(self):
   source=(ROOT/"database"/"baseline_upgrade_engine.py").read_text(encoding="utf-8")
   self.assertIn('BaselineUpgrade(21, "dayz_management_operations"',source)
   schema=(ROOT/"database"/"schema_baseline.py").read_text(encoding="utf-8")
   self.assertIn("ensure_dayz_management_schema",schema)
+
+ def test_legacy_community_map_display_name_enrichment_contract(self):
+  source=(ROOT/"dashboard"/"customer_dayz_http.py").read_text(encoding="utf-8")
+  self.assertIn("def _community_display_names",source)
+  self.assertIn("ContentRepository(backend())",source)
+  self.assertIn('community.get("name") or metadata.get("display_name")',source)
+  self.assertIn("content_counts",source)
+  self.assertIn('display=f"{display} — {variant.title()}"',source)
+  self.assertIn("assignments[content_id]",source)
+  self.assertIn("assignment_cache",source)
+  self.assertIn('assignment.get("desired_state") or "installed"',source)
+  self.assertIn('=="absent":continue',source)
+  self.assertIn("removed_missions",source)
+  self.assertIn('community.get("mission_path")',source)
+  self.assertIn("if mission_id in removed_missions:continue",source)
+
+
+class DayzFutureOperationConflictContractTest(unittest.TestCase):
+ def test_future_queued_mutation_does_not_block_current_mutation(self):
+  source=(ROOT/"database/dayz_management_repository.py").read_text(encoding="utf-8")
+  self.assertIn("future=_stamp(due)>_stamp(now)",source)
+  self.assertIn("\"(status='delivered' OR (status='queued' AND scheduled_at<={0}))\".format(ph)",source)
+  self.assertNotIn("\"(status='delivered' OR scheduled_at<={0})\".format(ph)",source)
+  self.assertIn("\"status IN ('queued','delivered')\"",source)
+  self.assertIn("ORDER BY scheduled_at,created_at",source)
 
 if __name__=="__main__":unittest.main()

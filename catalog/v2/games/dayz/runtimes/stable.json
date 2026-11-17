@@ -40,6 +40,9 @@
       "app_id": "221100",
       "auth": "required",
       "required_items": {
+        "1602372402": [
+          "1559212036"
+        ],
         "1828439124": [
           "1559212036"
         ]
@@ -169,6 +172,53 @@
         "min": 1,
         "max": 200,
         "description": "Limitado também pelo plano contratado."
+      },
+      "join_password": {
+        "label": "Senha para jogadores",
+        "type": "string",
+        "customer_editable": true,
+        "secret_policy": "customer-editable",
+        "binding": {
+          "kind": "property",
+          "path": "serverDZ.cfg",
+          "key": "password",
+          "syntax": "semicolon",
+          "quote": "double"
+        },
+        "max_length": 128,
+        "description": "Senha opcional exigida para jogadores entrarem no servidor."
+      },
+      "admin_password": {
+        "label": "Senha de administrador",
+        "type": "string",
+        "customer_editable": true,
+        "secret_policy": "customer-editable",
+        "binding": {
+          "kind": "property",
+          "path": "serverDZ.cfg",
+          "key": "passwordAdmin",
+          "syntax": "semicolon",
+          "quote": "double"
+        },
+        "max_length": 128,
+        "description": "Senha administrativa do servidor DayZ. O valor atual nunca é exibido."
+      },
+      "perspective_mode": {
+        "label": "Perspectiva da câmera",
+        "type": "select",
+        "allowed": [
+          0,
+          1,
+          2
+        ],
+        "customer_editable": true,
+        "binding": {
+          "kind": "property",
+          "path": "serverDZ.cfg",
+          "key": "thirdPersonView",
+          "syntax": "semicolon"
+        },
+        "description": "DayZ 1.30+: 0 = apenas primeira pessoa, 1 = primeira e terceira pessoa, 2 = terceira pessoa somente em veículos."
       }
     }
   }

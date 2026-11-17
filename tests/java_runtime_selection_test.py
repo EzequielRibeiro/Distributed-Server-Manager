@@ -70,6 +70,30 @@ class JavaRuntimeSelectionTest(unittest.TestCase):
         )
         self.assertTrue(result.eligible, result.reasons)
 
+    def test_youer_26_2_requires_java_25_for_placement(self):
+        from core.placement_requirements import requirements_for_instance
+
+        requirements = requirements_for_instance(
+            game_id="minecraft",
+            runtime_id="minecraft.java.youer",
+            version="26.2",
+            catalog_root=ROOT / "catalog" / "v2",
+        )
+        self.assertEqual(requirements.java_min_major, 25)
+        self.assertEqual(requirements.java_max_major, 25)
+
+    def test_youer_1_21_1_keeps_java_21_requirement(self):
+        from core.placement_requirements import requirements_for_instance
+
+        requirements = requirements_for_instance(
+            game_id="minecraft",
+            runtime_id="minecraft.java.youer",
+            version="1.21.1",
+            catalog_root=ROOT / "catalog" / "v2",
+        )
+        self.assertEqual(requirements.java_min_major, 21)
+        self.assertEqual(requirements.java_max_major, 21)
+
     def test_placement_falls_back_to_legacy_single_java_status(self):
         from core.placement_requirements import PlacementRequirements
         from core.agent_eligibility import evaluate_agent_eligibility

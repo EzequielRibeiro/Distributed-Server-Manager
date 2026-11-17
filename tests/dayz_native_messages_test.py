@@ -64,20 +64,25 @@ class DayZNativeMessagesTest(unittest.TestCase):
         with self.assertRaises(DayZMessagesError):
             render_shutdown_messages_xml(DayZShutdownMessage(15, 'x' * 161))
 
-    def test_preserves_community_messages_and_replaces_only_capivara_entry(self) -> None:
+    def test_preserves_community_notices_and_replaces_shutdown_authority(self) -> None:
         existing = f'''<?xml version="1.0" encoding="UTF-8"?>
 <messages>
   <message><delay>5</delay><repeat>30</repeat><deadline>0</deadline><onConnect>1</onConnect><shutdown>0</shutdown><text>Community notice</text></message>
+  <message><delay>0</delay><repeat>0</repeat><deadline>480</deadline><onConnect>0</onConnect><shutdown>1</shutdown><text>This server will restart in #tmin minutes.</text></message>
   <message><delay>0</delay><repeat>0</repeat><deadline>5</deadline><onConnect>0</onConnect><shutdown>1</shutdown><text>{MANAGED_TEXT}</text></message>
 </messages>
 '''
         payload = render_shutdown_messages_xml(DayZShutdownMessage(120), existing_xml=existing)
         root = ET.fromstring(payload)
-        texts = [str(node.findtext('text') or '') for node in root.findall('message')]
+        messages = list(root.findall('message'))
+        texts = [str(node.findtext('text') or '') for node in messages]
         self.assertEqual(texts.count('Community notice'), 1)
+        self.assertNotIn('This server will restart in #tmin minutes.', texts)
         self.assertEqual(texts.count(MANAGED_TEXT), 1)
-        managed = next(node for node in root.findall('message') if node.findtext('text') == MANAGED_TEXT)
-        self.assertEqual(managed.findtext('deadline'), '120')
+        shutdowns = [node for node in messages if str(node.findtext('shutdown') or '0').strip() == '1']
+        self.assertEqual(len(shutdowns), 1)
+        self.assertEqual(shutdowns[0].findtext('text'), MANAGED_TEXT)
+        self.assertEqual(shutdowns[0].findtext('deadline'), '120')
 
     def test_rejects_invalid_deadline_target_and_existing_xml(self) -> None:
         with self.assertRaises(DayZMessagesError):

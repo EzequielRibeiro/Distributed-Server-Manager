@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from content_repository import ContentRepository
@@ -11,6 +12,32 @@ from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from minecraft_content_resolver import MinecraftContentResolverError, resolve_minecraft_content
 from minecraft_modpack_resolver import resolve_minecraft_modpack
 from catalog_provisioning_resolver import resolve_catalog_provisioning
+
+
+def _version_tuple(value: Any) -> tuple[int, ...] | None:
+    text = str(value or "").strip()
+    match = re.fullmatch(r"[vV]?(\d+(?:\.\d+){1,3})(?:[-+].*)?", text)
+    if not match:
+        return None
+    parts = tuple(int(piece) for piece in match.group(1).split("."))
+    while len(parts) > 1 and parts[-1] == 0:
+        parts = parts[:-1]
+    return parts
+
+
+def _version_direction(current: Any, target: Any) -> str:
+    before = _version_tuple(current)
+    after = _version_tuple(target)
+    if before is None or after is None:
+        return "unknown"
+    width = max(len(before), len(after))
+    left = before + (0,) * (width - len(before))
+    right = after + (0,) * (width - len(after))
+    if right < left:
+        return "downgrade"
+    if right > left:
+        return "upgrade"
+    return "same"
 
 
 class MinecraftVersionUpdatePreflightService:
@@ -65,6 +92,13 @@ class MinecraftVersionUpdatePreflightService:
                 continue
             ctype = str(item.get("content_type") or "").strip().lower()
             provider = str(item.get("provider") or "").strip().lower()
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            bundle_marker = metadata.get("bundle") if isinstance(metadata.get("bundle"), dict) else {}
+            parent_content_id = str(bundle_marker.get("parent_content_id") or "").strip()
+            # Modpack children are owned by their parent bundle and cannot be
+            # independently changed. Evaluate the modpack as one update unit.
+            if parent_content_id and ctype != "modpack":
+                continue
             activation = str(item.get("activation_state") or "enabled").strip().lower()
             base = {
                 "content_id": str(item.get("content_id") or ""),
@@ -73,7 +107,8 @@ class MinecraftVersionUpdatePreflightService:
                 "version": str(item.get("version") or ""),
                 "activation_state": activation,
                 "revision": int(item.get("revision") or 0),
-                "can_disable": activation == "enabled" and ctype in {"mod", "plugin", "modpack"},
+                "can_disable": activation == "enabled" and ctype in {"mod", "plugin", "modpack", "datapack"},
+                "can_remove": ctype in {"mod", "plugin", "modpack", "datapack"},
             }
             if activation == "disabled":
                 result.append({**base, "compatibility": "disabled", "reason": "Conteúdo já está desativado."})
@@ -91,6 +126,47 @@ class MinecraftVersionUpdatePreflightService:
                         raise MinecraftContentResolverError("project reference is unavailable")
                     resolve_minecraft_content(provider, project, target_version, definition, ctype)
                     result.append({**base, "compatibility": "compatible", "reason": "Existe versão compatível no provider."})
+                elif ctype == "modpack" and provider == "local":
+                    # A local Server Pack is not automatically compatible with a
+                    # new runtime. Its recorded bundle revision can, however,
+                    # explain precisely what has to be verified before a staged
+                    # loader + content migration. Never infer compatibility from
+                    # project identity or from a manually entered loader alone.
+                    history = self.content.bundle_history(instance_id, base["content_id"])
+                    current = history[0] if history else {}
+                    if str(current.get("manifest_kind") or "") == "serverpack-local-v1":
+                        recorded_mc = str(current.get("minecraft_version") or "").strip()
+                        recorded_loader = str(current.get("loader_id") or "").strip()
+                        recorded_build = str(current.get("loader_version") or "").strip()
+                        if recorded_mc and recorded_loader and recorded_build:
+                            reason = (
+                                f"Server Pack registrado: Minecraft {recorded_mc}, "
+                                f"{recorded_loader} {recorded_build}. "
+                                "Para trocar o loader, valide um novo ZIP oficial "
+                                "e prepare uma migração conjunta com backup; "
+                                "a revisão atual não comprova compatibilidade com o destino."
+                            )
+                            if recorded_mc != target_version:
+                                reason = (
+                                    f"Server Pack registrado para Minecraft {recorded_mc}, "
+                                    f"mas o destino usa {target_version}. " + reason
+                                )
+                            result.append({
+                                **base, "compatibility": "unknown",
+                                "reason": reason,
+                                "recorded_serverpack": {
+                                    "minecraft_version": recorded_mc,
+                                    "loader_id": recorded_loader,
+                                    "loader_version": recorded_build,
+                                    "bundle_revision": int(current.get("revision") or 0),
+                                },
+                                "requires_staged_migration": True,
+                                "can_remove": False,
+                            })
+                        else:
+                            result.append({**base, "compatibility": "unknown", "reason": "A revisão local não possui metadados suficientes; validar o ZIP original antes de qualquer migração.", "can_remove": False})
+                    else:
+                        result.append({**base, "compatibility": "unknown", "reason": "Modpack local sem revisão de Server Pack verificável; não é seguro removê-lo automaticamente para atualizar o runtime.", "can_remove": False})
                 else:
                     result.append({**base, "compatibility": "unknown", "reason": "Compatibilidade não pode ser confirmada automaticamente para este conteúdo."})
             except MinecraftContentResolverError as exc:
@@ -121,13 +197,16 @@ class MinecraftVersionUpdatePreflightService:
         resolved_build = str(selection.get("build") or build)
         content = self._content_compatibility(str(instance_id), resolved_version, definition)
         counts = {name: sum(1 for item in content if item["compatibility"] == name) for name in ("compatible", "incompatible", "unknown", "disabled")}
-        blocking = counts["incompatible"]
+        blocking = counts["incompatible"] + counts["unknown"]
+        current_version = str(context.get("game_version") or "")
+        direction = _version_direction(current_version, resolved_version)
+        downgrade = direction == "downgrade"
         return {
             "kind": "MinecraftVersionUpdatePreflight",
             "instance_id": str(instance_id),
             "runtime_id": runtime_id,
             "current": {
-                "version": str(context.get("game_version") or ""),
+                "version": current_version,
                 "build": str(context.get("build_id") or ""),
             },
             "target": {
@@ -138,9 +217,18 @@ class MinecraftVersionUpdatePreflightService:
             "content": content,
             "summary": counts,
             "requires_confirmation": True,
-            "has_known_incompatibilities": blocking > 0,
-            "can_request_update": blocking == 0,
-            "warning": "Alterar a versão do Minecraft pode tornar mods, plugins, modpacks, mundos ou configurações incompatíveis. Faça backup e valide o servidor após a mudança.",
+            "has_known_incompatibilities": counts["incompatible"] > 0,
+            "has_unverified_content": counts["unknown"] > 0,
+            "has_blocking_content": blocking > 0,
+            "blocking_content_count": blocking,
+            "version_direction": direction,
+            "has_blocking_version": downgrade,
+            "can_request_update": blocking == 0 and not downgrade,
+            "warning": (
+                "Downgrade de Minecraft bloqueado: mundos criados por versões mais novas podem não ser compatíveis com versões anteriores."
+                if downgrade
+                else "A troca de versão só é liberada quando todo conteúdo ativo possui compatibilidade confirmada. Conteúdo incompatível ou não verificável deve ser removido, atualizado ou desativado antes da operação."
+            ),
         }
 
 

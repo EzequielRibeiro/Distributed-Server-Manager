@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute typed DayZ map and wipe operations on Linux Agent."""
 from __future__ import annotations
-import json,os,subprocess,sys,time
+import json,os,re,subprocess,sys,time
 from datetime import datetime,timezone
 from pathlib import Path
 from typing import Any
@@ -10,7 +10,8 @@ COMMON_DIR=RUNTIME_DIR.parent.parent/"common"
 for item in (RUNTIME_DIR,COMMON_DIR):
     if str(item) not in sys.path:sys.path.insert(0,str(item))
 from dayz_management import apply_mission,discover_missions,mod_compatibility_preflight,prepare_mission_persistence,restore_mission_persistence,wipe
-from content_activation_projection import activation_snapshot
+from dayz_community_missions import discover_community_missions
+from content_activation_projection import CONTENT_STATE,activation_snapshot,activation_snapshot_with
 from content_activation_runtime import project_runtime_spec
 from instance_runtime import get_instance,lifecycle,status
 import privileged_materialization
@@ -103,8 +104,46 @@ def _repair_hybrid_file_access(iid):
         raise RuntimeError((completed.stderr or completed.stdout or "Hybrid file-access helper failed")[:1000])
     return unit
 
+def _record_with_prepared_maps(record,iid):
+    result=dict(record);prepared=[];root=CONTENT_STATE/_token(iid,"instance_id")
+    try:paths=sorted(root.glob("*.json"))
+    except OSError:paths=[]
+    for path in paths:
+        state=_read(path)
+        if not isinstance(state,dict):continue
+        if str(state.get("status") or "")!="applied" or str(state.get("desired_state") or "installed")!="installed":continue
+        if str(state.get("game_id") or "").strip().lower()!="dayz" or str(state.get("content_type") or "").strip().lower()!="map":continue
+        if str(state.get("security_state") or "unscanned")!="clean" or not state.get("installed_version"):continue
+        managed=str(state.get("managed_path") or "").strip()
+        if not managed:continue
+        community=state.get("community_map") if isinstance(state.get("community_map"),dict) else {}
+        mission_path=str(community.get("mission_path") or "").strip() or None
+        try:missions=discover_community_missions(Path(managed),mission_path=mission_path)
+        except (OSError,ValueError):continue
+        for mission in missions:
+            relative=str(mission.get("relative_path") or "").strip();mission_id=str(mission.get("id") or "").strip()
+            if not relative or not mission_id:continue
+            source=(Path(managed)/relative).resolve(strict=False)
+            item={"id":mission_id,"source":str(source),"content_id":str(state.get("content_id") or ""),"dependencies":[str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]}
+            display_name=str(community.get("name") or "").strip()
+            if display_name:item["name"]=display_name
+            prepared.append(item)
+    existing=result.get("content_dayz_community_missions") if isinstance(result.get("content_dayz_community_missions"),list) else []
+    # Managed community-map state is authoritative. Entries carrying content_id
+    # must disappear from discovery after their assignment is removed.
+    merged={str(item.get("id") or "").casefold():dict(item) for item in existing if isinstance(item,dict) and item.get("id") and not str(item.get("content_id") or "").strip()}
+    for item in prepared:merged[str(item["id"]).casefold()]=item
+    if merged:
+        values=[merged[key] for key in sorted(merged)]
+        result["content_dayz_community_missions"]=[{k:v for k,v in item.items() if k!="dependencies"} for item in values]
+        result["_dayz_prepared_map_content"]={str(item["id"]):[str(item.get("content_id") or ""),*list(item.get("dependencies") or [])] for item in values}
+    else:
+        result.pop("content_dayz_community_missions",None)
+        result.pop("_dayz_prepared_map_content",None)
+    return result
+
 def _change_mission(config,record,iid,payload):
-    before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
+    record=_record_with_prepared_maps(record,iid);before_view=discover_missions(record);previous_mission=before_view["current"];target=str(payload.get("mission") or "").strip()
     target_item=next((item for item in before_view["missions"] if item.get("id")==target),None)
     if target_item is None or not target_item.get("can_activate"):
         raise FileNotFoundError(f"DayZ mission is not installed or available: {target}")
@@ -112,19 +151,37 @@ def _change_mission(config,record,iid,payload):
     if content_mode not in {"disable","keep"}:raise ValueError("invalid DayZ map content mode")
     persistence_mode=str(payload.get("persistence_mode") or "fresh").strip().lower()
     if persistence_mode not in {"fresh","keep"}:raise ValueError("invalid DayZ map persistence mode")
-    snapshot=activation_snapshot(iid);preflight=mod_compatibility_preflight(snapshot,target)
+    prepared_ids=(record.get("_dayz_prepared_map_content") or {}).get(target) or []
+    snapshot=activation_snapshot_with(iid,prepared_ids) if prepared_ids else activation_snapshot(iid);preflight=mod_compatibility_preflight(snapshot,target)
     if content_mode=="keep" and preflight.get("blocking"):
         blocked=[str(item.get("content_id") or item.get("package_id") or "content") for item in preflight.get("items") or [] if item.get("status")=="incompatible"]
         raise RuntimeError("DayZ mod compatibility preflight blocked mission "+target+": "+", ".join(blocked[:10]))
-    if target==previous_mission:
-        return {"previous_mission":previous_mission,"mission":target,"restarted":False,"rollback":False,"changed":False,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot)}
     before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"};previous_content_enabled=_content_enabled(record)
+    if target==previous_mission:
+        should_run=was_running or str(record.get("desired_state") or "").strip().lower()=="running"
+        if was_running:lifecycle(config,iid,"stop")
+        try:
+            updated=dict(record)
+            updated["dayz_content_enabled"]=content_mode=="keep"
+            updated["dayz_required_content_ids"]=[value for value in prepared_ids if value and value!=str((target_item or {}).get("content_id") or "")]
+            updated=project_runtime_spec(updated,snapshot)
+            privileged_materialization.materialize(config,updated)
+            stabilization=None
+            if should_run:
+                lifecycle(config,iid,"start");stabilization=_stabilize(config,iid)
+        except Exception as exc:
+            if was_running:
+                try:lifecycle(config,iid,"start")
+                except Exception:pass
+            raise RuntimeError(f"mission reconciliation failed: {exc}") from exc
+        return {"previous_mission":previous_mission,"mission":target,"restarted":should_run,"rollback":False,"changed":False,"reconciled":True,"map":target_item,"content_mode":content_mode,"mods_enabled":content_mode=="keep","persistence_mode":persistence_mode,"mod_preflight":preflight,"activation_order":_activation_order(snapshot),"stabilization":stabilization}
     if was_running:lifecycle(config,iid,"stop")
     persistence=None
     try:
         persistence=prepare_mission_persistence(record,target,persistence_mode)
         updated=apply_mission(record,target)
         updated["dayz_content_enabled"]=content_mode=="keep"
+        updated["dayz_required_content_ids"]=[value for value in prepared_ids if value and value!=str((target_item or {}).get("content_id") or "")]
         updated=project_runtime_spec(updated,snapshot)
         privileged_materialization.materialize(config,updated)
         stabilization=None
@@ -158,6 +215,25 @@ def _change_mission(config,record,iid,payload):
                 rollback_error=(rollback_error+"; " if rollback_error else "")+f"restart after rollback failed: {start_exc}"
         detail=f"mission change failed and was rolled back: {exc}" if rollback_error is None else f"mission change failed: {exc}; rollback error: {rollback_error}"
         raise RuntimeError(detail) from exc
+from dayz_bepath_config import _prepare_battleye_spec
+
+
+def _apply_battleye_directory(config,record,iid,payload):
+    if set(payload)!={"battleye_directory"}:
+        raise ValueError("BattlEye operation accepts only the structured directory")
+    current=status(config,iid)
+    if current.get("observed_state")!="stopped" or str(record.get("desired_state") or "")!="stopped":
+        raise RuntimeError("DayZ must be stopped before applying BattlEye settings; no restart attempted")
+    prepared=_prepare_battleye_spec(record,payload.get("battleye_directory"))
+    # No false-positive "already applied": the privileged helper must verify
+    # the installed unit even when the requested directory is unchanged.
+    if status(config,iid).get("observed_state")!="stopped":
+        raise RuntimeError("DayZ became active before BattlEye materialization")
+    operation=privileged_materialization.apply_dayz_battleye(config,prepared)
+    return {"changed":bool(operation.get("changed")),"applied":True,"restarted":False,
+            "battleye_directory":prepared["battleye_directory"]}
+
+
 def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
     oid=_token(command.get("operation_id"),"operation_id");previous=_read(_history(oid))
     if previous is not None:_write(_result(oid),previous);return previous
@@ -168,8 +244,10 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         if record is None:raise LookupError(f"instance not found: {iid}")
         if str(record.get("agent_id") or "")!=str(config.get("agent_id") or ""):raise PermissionError("instance belongs to another Agent")
         if str(record.get("game_id") or "").lower()!="dayz":raise ValueError("DayZ operation requires DayZ instance")
-        if action=="discover_missions":result=discover_missions(record)
+        if action=="discover_missions":result=discover_missions(_record_with_prepared_maps(record,iid))
         elif action=="change_mission":result=_change_mission(config,record,iid,payload)
+        elif action=="apply_battleye_directory":
+            result=_apply_battleye_directory(config,record,iid,payload)
         elif action=="wipe":
             before=status(config,iid);was_running=before.get("observed_state") in {"running","starting"}
             if was_running:lifecycle(config,iid,"stop")

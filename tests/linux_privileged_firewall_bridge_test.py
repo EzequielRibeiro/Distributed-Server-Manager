@@ -52,6 +52,18 @@ def legacy_dayz_spec():
     }
 
 
+def test_optional_votifier_rule_is_emitted_only_when_reserved():
+    record = spec()
+    record["catalog_runtime_policy"]["network_exposure"].append(
+        {"name": "votifier", "protocol": "tcp", "exposure": "public", "optional": True}
+    )
+    assert all(x["name"] != "votifier" for x in privileged_firewall.public_rules(record))
+    record["ports"]["votifier"] = {"port": 24031, "protocol": "tcp"}
+    assert privileged_firewall.public_rules(record)[-1] == {
+        "name": "votifier", "protocol": "tcp", "port": 24031,
+    }
+
+
 def test_only_explicit_public_ports_become_firewall_rules():
     assert privileged_firewall.public_rules(spec()) == [
         {"name": "game", "protocol": "udp", "port": 24000},
@@ -144,12 +156,17 @@ def test_lifecycle_reconciles_firewall_before_start():
                 calls.append("firewall") or {"backend": "ufw", "changed": True, "rules": []}
             )
             instance_runtime.register_instance(legacy_dayz_spec())
-            result = instance_runtime.lifecycle(
-                {"agent_id": "agent-horizon-server"},
-                "cli-000001-dayz-001",
-                "start",
-            )
-            assert calls == ["firewall", "start"]
+            from unittest.mock import patch
+            with patch(
+                "privileged_materialization.repair_dayz_dlc_ownership",
+                side_effect=lambda config, record: calls.append("dlc-owner"),
+            ):
+                result = instance_runtime.lifecycle(
+                    {"agent_id": "agent-horizon-server"},
+                    "cli-000001-dayz-001",
+                    "start",
+                )
+            assert calls == ["firewall", "dlc-owner", "start"]
             assert result["observed_state"] == "running"
             assert result["firewall"]["backend"] == "ufw"
         finally:

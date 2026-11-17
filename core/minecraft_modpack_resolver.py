@@ -66,6 +66,14 @@ def _loader(runtime:Mapping[str,Any])->str:
  return loaders[0]
 
 def _loader_dependency(loader:str)->str:return {"fabric":"fabric-loader","forge":"forge","neoforge":"neoforge","quilt":"quilt-loader"}[loader]
+def _require_runtime_loader_compatibility(runtime:Mapping[str,Any],game_version:str,loader:str,loader_version:str)->None:
+ compatibility=runtime.get("compatibility") if isinstance(runtime.get("compatibility"),Mapping) else {}
+ declared=compatibility.get("embedded_mod_loaders") if isinstance(compatibility.get("embedded_mod_loaders"),Mapping) else {}
+ effective=declared.get(str(game_version)) if isinstance(declared,Mapping) else None
+ if not isinstance(effective,Mapping):return
+ effective_id=str(effective.get("id") or "").strip().lower();effective_version=str(effective.get("version") or "").strip()
+ if effective_id and effective_id!=str(loader).strip().lower():raise MinecraftContentResolverError(f"runtime embedded loader is {effective_id}, but modpack requires {loader}")
+ if effective_version and effective_version!=str(loader_version).strip():raise MinecraftContentResolverError(f"modpack requires {loader} {loader_version}, but runtime provides {effective_version}")
 def _child_id(parent_content_id:str,path:str)->str:return "mb-"+hashlib.sha256((str(parent_content_id)+"\0"+path).encode()).hexdigest()[:32]
 def _rank(item:Mapping[str,Any])->tuple[int,str]:return ({"release":3,"beta":2,"alpha":1}.get(str(item.get("version_type") or "").lower(),0),str(item.get("date_published") or item.get("fileDate") or ""))
 
@@ -98,6 +106,7 @@ def resolve_modrinth_modpack(project:str,parent_content_id:str,game_version:str,
  if str(deps.get("minecraft") or "")!=game_version:raise MinecraftContentResolverError("Modrinth modpack Minecraft version does not match the instance")
  loader_version=str(deps.get(_loader_dependency(loader)) or "").strip()
  if not loader_version:raise MinecraftContentResolverError("Modrinth modpack loader does not match the instance runtime")
+ _require_runtime_loader_compatibility(runtime,game_version,loader,loader_version)
  members=[];children=[]
  for item in index.get("files") or []:
   if not isinstance(item,Mapping):raise MinecraftContentResolverError("invalid Modrinth modpack file entry")
@@ -117,15 +126,17 @@ def resolve_modrinth_modpack(project:str,parent_content_id:str,game_version:str,
  roots=[root for root in ("overrides","server-overrides") if root in names]
  return {"parent":{"version":str(version.get("version_number") or version.get("id")),"artifact":parent_artifact,"provenance":{"provider":"modrinth","project_id":str(version.get("project_id") or project_data.get("id")),"version_id":str(version.get("id"))}},"bundle":{"provider":"modrinth","provider_project_id":str(version.get("project_id") or project_data.get("id")),"provider_version_id":str(version.get("id")),"minecraft_version":game_version,"loader_id":loader,"loader_version":loader_version,"manifest_kind":"mrpack-v1","members":members,"override_roots":roots},"children":children}
 
-def _curseforge_classes(key:str,requester:JsonRequester)->tuple[set[int],set[int]]:
+def _curseforge_classes(key:str,requester:JsonRequester)->tuple[set[int],set[int],set[int]]:
  payload=requester(f"{CURSEFORGE_API_BASE}/categories?{urlencode({'gameId':CURSEFORGE_MINECRAFT_GAME_ID,'classesOnly':'true'})}",{"x-api-key":key});rows=payload.get("data") if isinstance(payload,Mapping) else []
- mods=set();packs=set()
+ mods=set();packs=set();client_only=set()
  for item in rows or []:
   if not isinstance(item,Mapping) or not bool(item.get("isClass")):continue
-  text=(str(item.get("slug") or "")+" "+str(item.get("name") or "")).lower();ident=int(item.get("id") or 0)
+  slug=str(item.get("slug") or "").strip().lower();name=str(item.get("name") or "").strip().lower();text=slug+" "+name;ident=int(item.get("id") or 0)
   if "modpack" in text:packs.add(ident)
-  elif text.strip() in {"mods mods","mc-mods mods"} or str(item.get("name") or "").strip().lower()=="mods":mods.add(ident)
- return mods,packs
+  elif text.strip() in {"mods mods","mc-mods mods"} or name=="mods":mods.add(ident)
+  # Validate category against the provider catalog; do not allow unknown classes.
+  elif slug in {"shaders","texture-packs","resource-packs"} and name in {"shaders","resource packs","texture packs"}:client_only.add(ident)
+ return mods,packs,client_only
 
 def _cf_sha1(file:Mapping[str,Any])->str:
  for item in file.get("hashes") or []:
@@ -134,22 +145,49 @@ def _cf_sha1(file:Mapping[str,Any])->str:
    if len(value)==40:return value
  raise MinecraftContentResolverError("CurseForge file is missing SHA-1")
 
-def _cf_download(mod_id:int,file:Mapping[str,Any],key:str,requester:JsonRequester)->str:
- url=str(file.get("downloadUrl") or "").strip();file_id=int(file.get("id") or 0)
+def _cf_game_version_matches(game_version:str,game_versions:Any)->bool:
+ """Accept an exact tag or an unambiguous 26.x release-series tag.
+
+ CurseForge may advertise a 26.1.x mod file with the general `26.1` tag.
+ Do not infer compatibility for old 1.x versions, another release series,
+ or files declaring an explicit but different patch within this series.
+ """
+ expected=str(game_version or "").strip().lower();tags={str(value).strip().lower() for value in (game_versions or [])}
+ if expected in tags:return True
+ parts=expected.split(".")
+ if len(parts)!=3 or not all(part.isdigit() for part in parts) or int(parts[0])<26:return False
+ series=".".join(parts[:2])
+ if series not in tags:return False
+ return not any(tag.startswith(series+".") and tag[len(series)+1:].isdigit() and tag!=expected for tag in tags)
+
+def _cf_download(mod_id:int,file:Mapping[str,Any],key:str,requester:JsonRequester,project:Mapping[str,Any]|None=None)->str:
+ # A mod author may explicitly disallow distribution by third-party tools.
+ # Do not guess a CDN URL, use mirrors, or omit required server dependencies.
+ info=project if isinstance(project,Mapping) else {};file_id=int(file.get("id") or 0);name=str(info.get("name") or f"projeto {mod_id}")[:120]
+ label=f"{name} (projeto {mod_id}, arquivo {file_id})"
+ if info.get("allowModDistribution") is False:
+  raise MinecraftContentResolverError(f"Instalação automática indisponível: o autor de {label} bloqueou a distribuição por aplicativos externos no CurseForge. Consulte o arquivo no site/app oficial. Dependência obrigatória não pode ser ignorada.")
+ url=str(file.get("downloadUrl") or "").strip()
  if not url:
-  payload=requester(f"{CURSEFORGE_API_BASE}/mods/{mod_id}/files/{file_id}/download-url",{"x-api-key":key});url=str(payload.get("data") if isinstance(payload,Mapping) else "")
+  try:
+   payload=requester(f"{CURSEFORGE_API_BASE}/mods/{mod_id}/files/{file_id}/download-url",{"x-api-key":key})
+  except MinecraftContentResolverError as exc:
+   if getattr(exc.__cause__,"code",None)==403:
+    raise MinecraftContentResolverError(f"CurseForge recusou o download de {label} (HTTP 403). O projeto pode restringir distribuição por terceiros; consulte o arquivo no site/app oficial. Não é possível concluir o modpack sem essa dependência.") from exc
+   raise
+  url=str(payload.get("data") if isinstance(payload,Mapping) else "")
  return _https_url(url,"CurseForge download URL")
 
 def resolve_curseforge_modpack(project:str,parent_content_id:str,game_version:str,runtime:Mapping[str,Any],*,api_key:str|None=None,api_key_file:str|None=None,requester:JsonRequester=_request_json,bytes_requester:BytesRequester=_request_bytes)->dict[str,Any]:
  try:mod_id=int(str(project).strip())
  except (TypeError,ValueError) as exc:raise MinecraftContentResolverError("CurseForge modpack reference must be numeric") from exc
- key=str(api_key or "").strip() or _secret_file(api_key_file);headers={"x-api-key":key};loader=_loader(runtime);mod_classes,pack_classes=_curseforge_classes(key,requester)
+ key=str(api_key or "").strip() or _secret_file(api_key_file);headers={"x-api-key":key};loader=_loader(runtime);mod_classes,pack_classes,client_only_classes=_curseforge_classes(key,requester)
  project_payload=requester(f"{CURSEFORGE_API_BASE}/mods/{mod_id}",headers);project_data=project_payload.get("data") if isinstance(project_payload,Mapping) else None
  if not isinstance(project_data,Mapping) or int(project_data.get("gameId") or 0)!=CURSEFORGE_MINECRAFT_GAME_ID or int(project_data.get("classId") or 0) not in pack_classes:raise MinecraftContentResolverError("CurseForge project is not a Minecraft modpack")
  files_payload=requester(f"{CURSEFORGE_API_BASE}/mods/{mod_id}/files?{urlencode({'gameVersion':game_version,'pageSize':50})}",headers);files=files_payload.get("data") if isinstance(files_payload,Mapping) else []
  compatible=[f for f in files or [] if isinstance(f,Mapping) and bool(f.get("isAvailable",True)) and game_version in (f.get("gameVersions") or []) and str(f.get("fileName") or "").lower().endswith(".zip")]
  if not compatible:raise MinecraftContentResolverError("no compatible CurseForge modpack file")
- file=sorted(compatible,key=lambda v:(1 if int(v.get("releaseType") or 0)==1 else 0,str(v.get("fileDate") or "")),reverse=True)[0];file_id=int(file.get("id") or 0);parent_artifact={"provider":"curseforge","package_id":f"{mod_id}:{file_id}","url":_cf_download(mod_id,file,key,requester),"filename":str(file.get("fileName") or f"{file_id}.zip"),"sha1":_cf_sha1(file),"archive":True}
+ file=sorted(compatible,key=lambda v:(1 if int(v.get("releaseType") or 0)==1 else 0,str(v.get("fileDate") or "")),reverse=True)[0];file_id=int(file.get("id") or 0);parent_artifact={"provider":"curseforge","package_id":f"{mod_id}:{file_id}","url":_cf_download(mod_id,file,key,requester,project_data),"filename":str(file.get("fileName") or f"{file_id}.zip"),"sha1":_cf_sha1(file),"archive":True}
  if file.get("fileLength") is not None:parent_artifact["size_bytes"]=int(file["fileLength"])
  blob=bytes_requester(parent_artifact["url"],{},_MAX_PACK_BYTES);_verify_bytes(blob,parent_artifact)
  with _zip(blob) as handle:manifest=_json_member(handle,"manifest.json");top={item.filename.split("/",1)[0] for item in handle.infolist() if "/" in item.filename}
@@ -162,28 +200,35 @@ def resolve_curseforge_modpack(project:str,parent_content_id:str,game_version:st
  if not raw_loader.lower().startswith(prefix):raise MinecraftContentResolverError("CurseForge modpack loader does not match the instance runtime")
  loader_version=raw_loader[len(prefix):]
  if not loader_version:raise MinecraftContentResolverError("CurseForge modpack loader version is missing")
- members=[];children=[]
+ _require_runtime_loader_compatibility(runtime,game_version,loader,loader_version)
+ members=[];children=[];skipped_client_members=[]
  for index,entry in enumerate(manifest.get("files") or []):
   if not isinstance(entry,Mapping):raise MinecraftContentResolverError("invalid CurseForge modpack member")
   if not bool(entry.get("required",True)):continue
   project_id=int(entry.get("projectID") or 0);child_file_id=int(entry.get("fileID") or 0)
   if project_id<=0 or child_file_id<=0:raise MinecraftContentResolverError("invalid CurseForge modpack file reference")
   cp=requester(f"{CURSEFORGE_API_BASE}/mods/{project_id}",headers);cd=cp.get("data") if isinstance(cp,Mapping) else None
-  if not isinstance(cd,Mapping) or int(cd.get("gameId") or 0)!=CURSEFORGE_MINECRAFT_GAME_ID or int(cd.get("classId") or 0) not in mod_classes:raise MinecraftContentResolverError("CurseForge modpack member is not a Minecraft mod")
+  if not isinstance(cd,Mapping) or int(cd.get("gameId") or 0)!=CURSEFORGE_MINECRAFT_GAME_ID:raise MinecraftContentResolverError("CurseForge modpack member is not a Minecraft project")
+  class_id=int(cd.get("classId") or 0)
+  if class_id in client_only_classes:
+   # CurseForge manifests can mark client-side shaders/resource packs as required.
+   # They are not server mods: never stage them into the server mods directory.
+   skipped_client_members.append({"project_id":str(project_id),"class_id":class_id});continue
+  if class_id not in mod_classes:raise MinecraftContentResolverError(f"CurseForge modpack member {project_id} uses unsupported class {class_id} (not a server mod)")
   fp=requester(f"{CURSEFORGE_API_BASE}/mods/{project_id}/files/{child_file_id}",headers);fd=fp.get("data") if isinstance(fp,Mapping) else None
   if not isinstance(fd,Mapping) or int(fd.get("id") or 0)!=child_file_id or not bool(fd.get("isAvailable",True)):raise MinecraftContentResolverError("CurseForge modpack member file is unavailable")
   versions=[str(v).lower() for v in fd.get("gameVersions") or []]
-  if game_version.lower() not in versions or loader not in versions:raise MinecraftContentResolverError("CurseForge modpack member is incompatible with runtime")
+  if not _cf_game_version_matches(game_version,versions) or loader not in versions:raise MinecraftContentResolverError(f"CurseForge modpack member {project_id} file {child_file_id} is incompatible with Minecraft {game_version}/{loader} (provider tags: {', '.join(versions[:12])})")
   filename=str(fd.get("fileName") or "").strip()
   if not filename.lower().endswith(".jar"):raise MinecraftContentResolverError("CurseForge modpack member is not a JAR mod")
-  path=f"mods/{filename}";cid=_child_id(parent_content_id,path);artifact={"provider":"curseforge","package_id":f"{project_id}:{child_file_id}","url":_cf_download(project_id,fd,key,requester),"filename":filename,"sha1":_cf_sha1(fd)}
+  path=f"mods/{filename}";cid=_child_id(parent_content_id,path);artifact={"provider":"curseforge","package_id":f"{project_id}:{child_file_id}","url":_cf_download(project_id,fd,key,requester,cd),"filename":filename,"sha1":_cf_sha1(fd)}
   if fd.get("fileLength") is not None:artifact["size_bytes"]=int(fd["fileLength"])
   members.append({"content_id":cid,"path":path,"required":True,"artifact":artifact});children.append({"content_id":cid,"content_type":"mod","provider":"curseforge","version":str(fd.get("displayName") or child_file_id),"artifact":artifact,"target":f"mods/{cid}","provenance":{"bundle_provider":"curseforge","bundle_project_id":str(mod_id),"bundle_file_id":str(file_id),"project_id":str(project_id),"file_id":str(child_file_id)}})
  if not members:raise MinecraftContentResolverError("CurseForge modpack has no required managed mods")
  override=str(manifest.get("overrides") or "overrides").strip();override=_safe_relative(override,"CurseForge override root")
  if "/" in override:raise MinecraftContentResolverError("CurseForge override root must be top-level")
  roots=[override] if override in top else []
- return {"parent":{"version":str(file.get("displayName") or file_id),"artifact":parent_artifact,"provenance":{"provider":"curseforge","project_id":str(mod_id),"file_id":str(file_id)}},"bundle":{"provider":"curseforge","provider_project_id":str(mod_id),"provider_version_id":str(file_id),"minecraft_version":game_version,"loader_id":loader,"loader_version":loader_version,"manifest_kind":"curseforge-v1","members":members,"override_roots":roots},"children":children}
+ return {"parent":{"version":str(file.get("displayName") or file_id),"artifact":parent_artifact,"provenance":{"provider":"curseforge","project_id":str(mod_id),"file_id":str(file_id),"skipped_client_members":skipped_client_members}},"bundle":{"provider":"curseforge","provider_project_id":str(mod_id),"provider_version_id":str(file_id),"minecraft_version":game_version,"loader_id":loader,"loader_version":loader_version,"manifest_kind":"curseforge-v1","members":members,"override_roots":roots},"children":children}
 
 def resolve_minecraft_modpack(provider:str,project:str,parent_content_id:str,game_version:str,runtime:Mapping[str,Any],**kwargs)->dict[str,Any]:
  provider=str(provider or "").strip().lower()

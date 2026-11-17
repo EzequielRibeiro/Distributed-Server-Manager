@@ -186,7 +186,8 @@ def execute(config,command):
  instance_id=str(command.get("instance_id") or "");record=_owned(config,instance_id);root=_root(record);policy=command.get("policy") if isinstance(command.get("policy"),dict) else {};action=str(command.get("action") or "").lower();path=command.get("path");target=command.get("target_path");payload=command.get("payload") if isinstance(command.get("payload"),dict) else {};security_context=_security_context(config,record,instance_id,str(path or action))
  if action=="settings_surface":
   declaration=record.get("catalog_server_settings") if isinstance(record.get("catalog_server_settings"),dict) else {};supplied=payload.get("declaration") if isinstance(payload.get("declaration"),dict) else {};surface_spec=dict(record)
-  if not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
+  if isinstance(supplied.get("fields"),dict) and supplied.get("fields"):surface_spec["catalog_server_settings"]=supplied
+  elif not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
   return observed_surface(surface_spec)
  if action=="list":return _list(root,path,policy)
  if action=="usage":return {"usage_bytes":_usage(root),"limit_bytes":_limit(policy)}

@@ -74,6 +74,28 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
         self.assertIn('$("file-up").disabled=filePath==="."', source)
         self.assertNotIn('fileCommand("mkdir",filePath,null,{name})', source)
 
+    def test_customer_ui_downloads_files_only_with_permission(self):
+        source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn('!item.directory&&can("files.download")', source)
+        self.assertIn('download.textContent="Baixar"', source)
+        self.assertIn('fileCommand("download",path)', source)
+        self.assertIn('result?.content_base64', source)
+        self.assertIn('URL.createObjectURL(blob)', source)
+        self.assertIn('link.download=name', source)
+        self.assertIn('URL.revokeObjectURL(url)', source)
+
+    def test_linux_agent_download_preserves_binary_content_and_blocks_directories(self):
+        import base64
+        module = load("linux_instance_files_download", ROOT / "agents/linux/runtime/instance_files_client.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "log.ADM").write_bytes(b"Player\\x00\\xff\\n")
+            result = module._download(root, "log.ADM", {})
+            self.assertEqual(base64.b64decode(result["content_base64"]), b"Player\\x00\\xff\\n")
+            self.assertEqual(result["name"], "log.ADM")
+            with self.assertRaises(ValueError):
+                module._download(root, ".", {})
+
     def test_customer_ui_exposes_extract_only_with_permission(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn('can("files.extract")', source)

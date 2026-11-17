@@ -15,7 +15,7 @@ import traceback
 from typing import Any
 
 from game_data_executor import _execute as execute_game_data
-from backup_client import _create as create_backup
+from backup_client import _create as create_backup, _restore as restore_backup
 import game_runtime
 import instance_runtime
 import privileged_materialization
@@ -27,6 +27,8 @@ from runtime_events import emit_runtime_event
 from runtime_limits import runtime_limits
 from runtime_metrics import increment, observe_duration
 from runtime_operations import runtime_operation
+from minecraft_serverpack_migration_contract import validate_minecraft_serverpack_migration
+from minecraft_serverpack_migration_provisioning import enabled_for as serverpack_migration_enabled, execute_homologated_migration as execute_serverpack_migration
 
 
 _SECRET_PATTERNS = (
@@ -62,6 +64,24 @@ def _failure_diagnostics(request: dict[str, Any], exc: Exception) -> dict[str, A
         "failed_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
         "correlation_id": str(request.get("provisioning_id") or "")[:256],
     }
+
+
+def _serverpack_completion_state(detail: Any) -> str:
+    """Fail closed: only a finalized migration may publish completion."""
+    if not isinstance(detail, dict):
+        raise ValueError("Server Pack result must be a mapping")
+    status = str(detail.get("status") or "")
+    if status == "finalization_pending":
+        return status
+    if status != "completed":
+        raise ValueError("Server Pack migration did not complete")
+    trace = detail.get("trace")
+    if not isinstance(trace, list) or "committed" not in trace or "finalized" not in trace:
+        raise ValueError("Server Pack migration lacks finalization evidence")
+    final = detail.get("finalization")
+    if not isinstance(final, dict) or final.get("status") not in {"archived", "already_archived"}:
+        raise ValueError("Server Pack archival evidence is missing")
+    return "completed"
 
 
 def _workspace(instance_id: str) -> Path:
@@ -107,13 +127,21 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
     content_result: dict[str, Any] | None = None
     compensation: list[str] = []
     configuration = dict(request.get("configuration") or {})
-    update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
+    if "minecraft_serverpack_migration" in configuration:
+        validate_minecraft_serverpack_migration(
+            configuration["minecraft_serverpack_migration"],
+            instance_id=str(request.get("instance_id") or ""),
+        )
+        raise RuntimeError("staged Minecraft loader and Server Pack migration executor is not yet homologated; refusing to modify the instance")
+    version_update_meta = configuration.get("minecraft_version_update") if isinstance(configuration.get("minecraft_version_update"), dict) else None
+    migration_meta = configuration.get("minecraft_runtime_migration") if isinstance(configuration.get("minecraft_runtime_migration"), dict) else None
+    update_meta = migration_meta or version_update_meta
     previous_runtime = instance_runtime.get_instance(request["instance_id"]) if update_meta else None
     update_was_running = False
     update_backup: dict[str, Any] | None = None
     update_stopped = False
     if update_meta and previous_runtime is None:
-        raise RuntimeError("Minecraft version update requires an existing instance runtime")
+        raise RuntimeError("Minecraft runtime change requires an existing instance runtime")
     _result(result_path, request, status="running", current_step=step, progress=5)
     _event("INSTANCE_PROVISIONING_STARTED", request, step=step, progress=5)
     try:
@@ -151,6 +179,13 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                         },
                     },
                 )
+            if bool(update_meta.get("backup_before_update", True)) and not (
+                isinstance(update_backup, dict)
+                and str(update_backup.get("backup_id") or "").strip()
+                and str(update_backup.get("sha256") or "").strip()
+                and int(update_backup.get("size_bytes") or 0) > 0
+            ):
+                raise RuntimeError("Minecraft update requires a verified pre-update backup")
             if update_was_running:
                 instance_runtime.lifecycle(config, request["instance_id"], "stop")
                 update_stopped = True
@@ -201,7 +236,7 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
             _result(result_path, request, status="running", current_step=step, progress=96)
             update_readiness = instance_runtime.doctor(config, request["instance_id"])
             if not bool(update_readiness.get("ready")):
-                raise RuntimeError("updated Minecraft runtime failed readiness validation")
+                raise RuntimeError("changed Minecraft runtime failed readiness validation")
             _event("INSTANCE_PROVISIONING_STEP", request, step=step, progress=97, data={"readiness": update_readiness.get("status")})
         final = _result(result_path, request, status="completed", current_step="completed", progress=100,
                         desired_state=request["desired_state"], observed_state=observed_state, workspace=workspace,
@@ -211,12 +246,21 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                                  "adapter": spec.get("adapter"), "runtime_id": spec.get("runtime_id"),
                                  "materialized_changed": bool((materialization.get("operation") or {}).get("changed"))},
                         minecraft_version_update={
-                            "target_version": update_meta.get("target_version"),
-                            "target_build": update_meta.get("target_build"),
+                            "target_version": version_update_meta.get("target_version"),
+                            "target_build": version_update_meta.get("target_build"),
                             "backup_id": (update_backup or {}).get("backup_id"),
-                            "isolated_install_dir": update_meta.get("isolated_install_dir"),
+                            "isolated_install_dir": version_update_meta.get("isolated_install_dir"),
                             "readiness": (update_readiness or {}).get("status"),
-                        } if update_meta else None)
+                        } if version_update_meta else None,
+                        minecraft_runtime_migration={
+                            "from_runtime_id": migration_meta.get("from_runtime_id"),
+                            "target_runtime_id": migration_meta.get("target_runtime_id"),
+                            "target_version": migration_meta.get("target_version"),
+                            "target_build": migration_meta.get("target_build"),
+                            "backup_id": (update_backup or {}).get("backup_id"),
+                            "isolated_install_dir": migration_meta.get("isolated_install_dir"),
+                            "readiness": (update_readiness or {}).get("status"),
+                        } if migration_meta else None)
         increment("provisioning_completed")
         _event("INSTANCE_PROVISIONING_COMPLETED", request, step="completed", progress=100,
                data={"desired_state": request["desired_state"], "observed_state": observed_state})
@@ -236,6 +280,11 @@ def _execute_locked(config: dict[str, Any], request: dict[str, Any], result_path
                     privileged_materialization.materialize(config, restored)
                     if isinstance(restored.get("catalog_runtime_policy"), dict):
                         privileged_firewall.reconcile(restored)
+                    if update_backup:
+                        restore_backup(config, {"instance_id": request["instance_id"],
+                                                "backup_id": update_backup["backup_id"],
+                                                "command_id": request["provisioning_id"] + "-rollback"})
+                        compensation.append("previous_world_restored")
                     runtime_materialization.reconcile(config, request["instance_id"])
                     compensation.append("previous_runtime_restored")
                 elif update_stopped and update_was_running:
@@ -299,6 +348,86 @@ def execute(config: dict[str, Any], request: dict[str, Any], result_path: Path) 
         return failed
     limits = runtime_limits(config)
     deadline = started + limits.provisioning_timeout_seconds
+    migration_cfg = request.get("configuration") if isinstance(request.get("configuration"), dict) else {}
+    if "minecraft_serverpack_migration" in migration_cfg and serverpack_migration_enabled(request):
+        execution_mode=str(migration_cfg.get("minecraft_serverpack_execution_mode") or "homologation").strip().lower()
+        mode_event={
+            "execution_mode":execution_mode,
+            "homologation_only":execution_mode=="homologation",
+            "production_authorized":execution_mode=="production",
+        }
+        try:
+            _result(result_path, request, status="running", current_step="minecraft_serverpack_migration", progress=10)
+            _event(
+                "INSTANCE_PROVISIONING_STEP",
+                request,
+                step="minecraft_serverpack_migration",
+                progress=10,
+                data=dict(mode_event),
+            )
+            detail = execute_serverpack_migration(config, request)
+            completion = _serverpack_completion_state(detail)
+            if completion == "finalization_pending":
+                result = _result(
+                    result_path, request,
+                    # Persist as running: Controller and supported DB schemas
+                    # currently accept only queued/delivered/running/completed/failed.
+                    status="running",
+                    current_step="minecraft_serverpack_finalization",
+                    progress=99,
+                    finalization_state="pending",
+                    minecraft_serverpack_migration=detail,
+                    # A committed runtime must not be rolled back because of
+                    # a post-commit archival failure.
+                    recovery_required="retry_committed_finalization",
+                )
+                _event(
+                    "INSTANCE_PROVISIONING_FINALIZATION_PENDING", request,
+                    step="minecraft_serverpack_finalization", progress=99,
+                    data={**mode_event, "recovery_required": "retry_committed_finalization"},
+                )
+                observe_duration("provisioning", int((time.monotonic() - started) * 1000))
+                return result
+            result = _result(
+                result_path,
+                request,
+                status="completed",
+                current_step="completed",
+                progress=100,
+                desired_state=str((detail.get("finalization") or {}).get("observed_state") or "stopped"),
+                observed_state=str((detail.get("finalization") or {}).get("observed_state") or "stopped"),
+                minecraft_serverpack_migration=detail,
+            )
+            increment("provisioning_completed")
+            _event(
+                "INSTANCE_PROVISIONING_COMPLETED",
+                request,
+                step="completed",
+                progress=100,
+                data={**mode_event, "observed_state": str((detail.get("finalization") or {}).get("observed_state") or "stopped")},
+            )
+        except Exception as exc:
+            increment("provisioning_failed")
+            diagnostics = _failure_diagnostics(request, exc)
+            result = _result(
+                result_path,
+                request,
+                status="failed",
+                current_step="minecraft_serverpack_migration",
+                progress=99,
+                compensation=["migration_journal_preserved", "content_preserved_for_retry", "port_reservations_preserved"],
+                **diagnostics,
+            )
+            _event(
+                "INSTANCE_PROVISIONING_FAILED",
+                request,
+                step="minecraft_serverpack_migration",
+                progress=99,
+                data={"error": diagnostics["error"], "exception_type": diagnostics["exception_type"],
+                      "correlation_id": diagnostics["correlation_id"], **mode_event},
+            )
+        observe_duration("provisioning", int((time.monotonic() - started) * 1000))
+        return result
     try:
         with runtime_operation(config, request["instance_id"], "provision", lock_timeout_seconds=limits.lock_timeout_seconds):
             result = _execute_locked(config, request, result_path, deadline)

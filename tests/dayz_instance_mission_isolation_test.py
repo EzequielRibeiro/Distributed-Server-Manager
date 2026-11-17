@@ -21,6 +21,7 @@ class DayZInstanceMissionIsolationTest(unittest.TestCase):
         self.ports = {
             "game": {"port": 2302, "protocol": "udp"},
             "game_aux": {"port": 2304, "protocol": "udp"},
+            "battleye": {"port": 2306, "protocol": "udp"},
             "steam_query": {"port": 2305, "protocol": "udp"},
         }
 
@@ -41,9 +42,9 @@ class DayZInstanceMissionIsolationTest(unittest.TestCase):
             expected_agent_id="agent-test",
         )
 
-    def test_profile_v11_keeps_shared_game_base_and_private_mission(self) -> None:
+    def test_profile_keeps_shared_game_base_and_private_mission(self) -> None:
         spec = self.build("instance-a")
-        self.assertEqual(11, spec["profile_version"])
+        self.assertEqual(self.profile.profile_version, spec["profile_version"])
         self.assertEqual(self.install_path, spec["working_directory"])
         self.assertEqual(
             f"{self.install_path}/mpmissions/dayzOffline.chernarusplus",

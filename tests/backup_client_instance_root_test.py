@@ -17,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _load_backup_client():
     module_path = ROOT / "agents/linux/runtime/backup_client.py"
+    # Load the runtime's local accounting dependency in isolated imports.
+    if str(module_path.parent) not in sys.path:
+        sys.path.insert(0, str(module_path.parent))
 
     runtime_stub = types.ModuleType("instance_runtime")
     runtime_stub.get_instance = lambda instance_id: None
@@ -88,6 +91,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
             # Canonical instance-private state.
             "files_root": str(self.private),
             "instance_state_root": str(self.private),
+            "storage_limit_bytes": 128 * 1024 * 1024,
         }
 
         self.config = {
@@ -96,6 +100,8 @@ class BackupClientInstanceRootTest(unittest.TestCase):
 
         self.old_backup_root = backup_client.BACKUP_ROOT
         self.old_result_root = backup_client.RESULT_ROOT
+        self.old_state_root = backup_client.STATE_ROOT
+        backup_client.STATE_ROOT = self.root / "agent-state"
 
         backup_client.BACKUP_ROOT = self.root / "backups"
         backup_client.RESULT_ROOT = self.root / "backup-results"
@@ -103,6 +109,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
     def tearDown(self):
         backup_client.BACKUP_ROOT = self.old_backup_root
         backup_client.RESULT_ROOT = self.old_result_root
+        backup_client.STATE_ROOT = self.old_state_root
         self.temp.cleanup()
 
     def command(self):
@@ -155,6 +162,67 @@ class BackupClientInstanceRootTest(unittest.TestCase):
 
         self.assertIn("save.txt", names)
         self.assertNotIn("shared-only.txt", names)
+
+    def test_single_operational_defers_pruning_until_controller_ack(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        command["policy"]["retention_count"] = 1
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            first = backup_client._create(self.config, command)
+            second = backup_client._create(self.config, command)
+        self.assertTrue(Path(first["artifact_path"]).is_file())
+        self.assertTrue(Path(second["artifact_path"]).is_file())
+        self.assertNotEqual(first["backup_id"], second["backup_id"])
+
+    def test_age_retention_policy_never_count_prunes_at_agent(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = False
+        command["policy"]["retention_count"] = 1
+        command["policy"]["retention_days"] = 14
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            first = backup_client._create(self.config, command)
+            second = backup_client._create(self.config, command)
+        self.assertTrue(Path(first["artifact_path"]).exists())
+        self.assertTrue(Path(second["artifact_path"]).exists())
+
+    def test_age_retention_refuses_backup_when_storage_is_low(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            first = backup_client._create(self.config, command)
+            command["policy"]["retention_days"] = 14
+            with patch.object(backup_client.shutil, "disk_usage") as disk:
+                disk.return_value = type("Disk", (), {"free": 1024 ** 3})()
+                with self.assertRaisesRegex(OSError, "capacity preflight failed"):
+                    backup_client._create(self.config, command)
+        self.assertTrue(Path(first["artifact_path"]).is_file())
+        files = list((self.root / "backups" / "instance-safe").glob("*.tar*"))
+        self.assertEqual([Path(first["artifact_path"])], files)
+
+    def test_failed_replacement_keeps_previous_archive(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            first = backup_client._create(self.config, command)
+            with patch.object(backup_client, "_create_archive", side_effect=PermissionError("read denied")):
+                with self.assertRaises(PermissionError):
+                    backup_client._create(self.config, command)
+        self.assertTrue(Path(first["artifact_path"]).is_file())
+
+    def test_failed_creation_does_not_leave_partial_archive(self):
+        command = self.command()
+        command["policy"]["keep_single_operational"] = True
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            prior = backup_client._create(self.config, command)
+            def fail_mid_write(root, paths, destination, compression, manifest):
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(b"incomplete archive")
+                raise PermissionError("failed during archive read")
+            with patch.object(backup_client, "_create_archive", side_effect=fail_mid_write):
+                with self.assertRaises(PermissionError):
+                    backup_client._create(self.config, command)
+        archived = list((self.root / "backups" / "instance-safe").glob("*.tar*"))
+        self.assertEqual([Path(prior["artifact_path"])], archived)
 
     def test_restore_replaces_private_state_without_touching_shared_content(self):
         with patch.object(
@@ -226,6 +294,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
                 {
                     "instance_id": "instance-safe",
                     "backup_id": "already-gone",
+                    "reason": "manual",
                 },
             )
 
@@ -252,6 +321,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
                     {
                         "instance_id": "instance-safe",
                         "backup_id": "duplicate",
+                        "reason": "manual",
                     },
                 )
 

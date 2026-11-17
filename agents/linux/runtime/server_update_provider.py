@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Typed, secret-free upstream version detection for game servers."""
 from __future__ import annotations
-import re, subprocess, time
+import os, re, stat, subprocess, time
 from pathlib import Path
 from typing import Any, Callable
 _CACHE:dict[tuple[str,str],tuple[float,str]]={}
@@ -17,40 +17,63 @@ def parse_manifest_buildid(text:str)->str|None:
  m=_BUILD.search(str(text or ''));return m.group(1) if m else None
 
 def parse_app_info_buildid(text:str,branch:str='public')->str|None:
- branch=_safe(branch,'Steam branch');lines=str(text or '').splitlines();needle='"'+branch+'"';inside=False;depth=0;seen=False
+ branch=_safe(branch,'Steam branch');lines=str(text or '').splitlines()
+ # Steam depot manifests also contain branch names. Only inspect depots.branches.
+ path=[];pending=None
  for raw in lines:
-  s=raw.strip()
-  if not inside and s==needle:seen=True;continue
-  if seen and not inside:
-   if s=='{':inside=True;depth=1;seen=False
-   elif s:seen=False
-   continue
-  if inside:
-   depth+=s.count('{')-s.count('}')
-   m=_BUILD.search(s)
-   if m:return m.group(1)
-   if depth<=0:return None
+  token=raw.strip()
+  if token=='{':
+   path.append(pending);pending=None
+  elif token=='}':
+   if path:path.pop()
+   pending=None
+  elif token.startswith('"'):
+   m=re.fullmatch(r'"([^"]+)"(?:\s+"([^"]*)")?',token)
+   if not m:continue
+   key,value=m.groups()
+   if path[-1:]==['branches'] and key==branch and value is None:
+    pending=key
+   elif path[-2:]==['branches',branch] and key=='buildid' and value and value.isdigit():
+    return value
+   else:pending=key if value is None else None
  return None
 
 def _manifest_candidates(target:Path,appid:str)->list[Path]:
  name=f'appmanifest_{appid}.acf';home=Path.home();state=Path(__import__('os').environ.get('CAPIVARA_AGENT_STATE_DIR','/var/lib/capivara-agent'))
  return [target/'steamapps'/name,target.parent/'steamapps'/name,home/'.steam/steam/steamapps'/name,home/'.local/share/Steam/steamapps'/name,state/'tools/steamcmd/steamapps'/name]
 
-def installed_steam_build(target:Path,appid:str)->str|None:
+def installed_steam_build(target:Path,appid:str,*,strict_target:bool=False)->str|None:
  appid=_safe(appid,'Steam AppID')
  if not appid.isdigit():raise ValueError('invalid Steam AppID')
- for p in _manifest_candidates(target,appid):
+ for p in ([target/'steamapps'/f'appmanifest_{appid}.acf'] if strict_target else _manifest_candidates(target,appid)):
   try:v=parse_manifest_buildid(p.read_text(encoding='utf-8',errors='replace'))
   except OSError:continue
   if v:return v
  return None
+
+def _anonymous_steam_env(state_root:Path|None=None,*,purpose:str="metadata")->dict[str,str]:
+ """Use dedicated state for anonymous Steam operations, never authenticated HOME.
+
+ SteamCMD uses both HOME and XDG_DATA_HOME; setting only HOME could still
+ direct its configuration into the authenticated user's shared Steam path.
+ """
+ if purpose not in {'metadata','install'}:raise ValueError('unsupported anonymous Steam purpose')
+ state=Path(state_root or os.environ.get('CAPIVARA_AGENT_STATE_DIR') or '/var/lib/capivara-agent').resolve()
+ home=state/('steam-anonymous-'+purpose+'-home')
+ home.mkdir(mode=0o700,parents=True,exist_ok=True)
+ # Reject a pre-existing redirect, foreign owner or non-private directory.
+ metadata=home.lstat()
+ if not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid!=os.geteuid() or stat.S_IMODE(metadata.st_mode)&0o077:
+  raise RuntimeError('Private Steam metadata HOME is not secure')
+ env={**os.environ,'HOME':str(home),'XDG_DATA_HOME':str(home/'.local/share'),'CAPIVARA_STEAM_HOME':str(home)}
+ return env
 
 def upstream_steam_build(appid:str,branch:str,steamcmd:str,*,ttl:int=300,runner:Callable[...,Any]=subprocess.run,force_refresh:bool=False)->str:
  appid=_safe(appid,'Steam AppID');branch=_safe(branch or 'public','Steam branch')
  if not appid.isdigit():raise ValueError('invalid Steam AppID')
  key=(appid,branch);now=time.monotonic();cached=_CACHE.get(key)
  if cached and not force_refresh and now-cached[0]<ttl:return cached[1]
- cp=runner([steamcmd,'+login','anonymous','+app_info_update','1','+app_info_print',appid,'+quit'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180,check=False)
+ cp=runner([steamcmd,'+login','anonymous','+app_info_update','1','+app_info_print',appid,'+quit'],stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180,check=False,env=_anonymous_steam_env())
  if cp.returncode!=0:raise RuntimeError('Steam update metadata lookup failed')
  build=parse_app_info_buildid(cp.stdout or '',branch)
  if not build:raise RuntimeError('Steam branch build metadata unavailable')
@@ -63,7 +86,7 @@ def detect_update(selection:dict[str,Any],target:Path,steamcmd:str|None=None,*,r
  if steamcmd is None:
   from game_data_executor import _steamcmd
   steamcmd=_steamcmd()
- installed=installed_steam_build(target,appid);available=upstream_steam_build(appid,branch,steamcmd,runner=runner,force_refresh=force_refresh)
+ installed=installed_steam_build(target,appid,strict_target=isinstance(selection.get('_server_update'),dict));available=upstream_steam_build(appid,branch,steamcmd,runner=runner,force_refresh=force_refresh)
  state='unknown' if not installed else 'up_to_date' if installed==available else 'update_available'
  return {'schema_version':1,'provider':'steam','detector_supported':True,'app_id':appid,'branch':branch,'installed_version':installed,'available_version':available,'state':state,'rollback_supported':True}
 

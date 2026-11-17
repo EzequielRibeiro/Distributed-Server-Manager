@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import re
+import json
+from pathlib import Path
 import subprocess
+import time
 from typing import Any, Callable
 
 from .base import AdapterError, InstanceRuntimeAdapter
@@ -13,11 +16,12 @@ from native_maintenance import NativeMaintenanceError, broadcast as native_broad
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
 Runner = Callable[[list[str], int], tuple[int, str, str]]
 
-# Capivara materializes instance units with TimeoutStopSec=60.  The client-side
-# systemctl budget must be strictly longer than systemd's stop budget; otherwise
-# a legitimate stop can be reported as failed before systemd reaches its final
-# inactive/failed state and the explicit-stop normalization can run.
+# Capivara currently materializes instance units with TimeoutStopSec=60.
+# Client-side timeout must exceed that bound, so a stop has time to complete
+# before checking whether systemd timed out or signalled the process.
 _SYSTEMD_STOP_COMMAND_TIMEOUT_SECONDS = 75
+_SYSTEMD_START_SETTLE_SECONDS = 2.0
+_SYSTEMD_START_SETTLE_POLL_SECONDS = 0.25
 
 
 def _default_runner(command: list[str], timeout: int) -> tuple[int, str, str]:
@@ -65,6 +69,11 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 "--property=MainPID",
                 "--property=NRestarts",
                 "--property=Result",
+                "--property=ExecMainCode",
+                "--property=ExecMainStatus",
+                "--property=InvocationID",
+                "--property=ActiveEnterTimestamp",
+                "--property=InactiveExitTimestamp",
                 "--no-pager",
             ],
             10,
@@ -95,7 +104,12 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             "running": active_state == "active",
             "main_pid": main_pid or None,
             "restart_count": max(0, restart_count),
+            "invocation_id": values.get("InvocationID") or None,
+            "active_enter_timestamp": values.get("ActiveEnterTimestamp") or None,
+            "inactive_exit_timestamp": values.get("InactiveExitTimestamp") or None,
             "result": values.get("Result", "unknown"),
+            "exec_main_code": values.get("ExecMainCode") or None,
+            "exec_main_status": values.get("ExecMainStatus") or None,
             "error": stderr[:2000] or None,
         }
 
@@ -119,9 +133,65 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(detail)
         return self._show(instance)
 
+    @staticmethod
+    def _forced_stop_reason(state: dict[str, Any]) -> str | None:
+        """Never reinterpret systemd timeout or SIGKILL as a graceful stop.
+
+        A successful `systemctl stop` return code alone cannot prove that the
+        game had time to persist its world. Preserve systemd's failure evidence
+        rather than clearing it with reset-failed.
+        """
+        if str(state.get("result") or "").lower() == "timeout":
+            return "instance stop timed out in systemd; world save not confirmed"
+        code = str(state.get("exec_main_code") or "").lower()
+        status = str(state.get("exec_main_status") or "")
+        if code in {"2", "3", "killed", "dumped"} and status == "9":
+            return "instance process received SIGKILL; world save not confirmed"
+        return None
+
+    @staticmethod
+    def _verify_committed_neoforge_launcher(instance: dict[str, Any]) -> None:
+        """Refuse stale launcher args after a committed Server Pack migration."""
+        if str(instance.get("environment_id") or "").lower() != "minecraft.java.neoforge":
+            return
+        # Runtime specs can omit instance_state_root; the committed journal
+        # belongs to the instance parent of the working runtime directory.
+        state = str(instance.get("instance_state_root") or "").strip()
+        working = str(instance.get("working_directory") or "").strip()
+        if state:
+            root = Path(state)
+        elif working and Path(working).name == "runtime":
+            root = Path(working).parent
+        else:
+            return
+        journal = root / ".dsm" / "minecraft-serverpack-migration.json"
+        if not journal.exists():
+            return
+        if journal.is_symlink() or not journal.is_file():
+            raise AdapterError("unsafe Minecraft migration journal")
+        try:
+            record = json.loads(journal.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise AdapterError("unreadable Minecraft migration journal") from exc
+        if not isinstance(record, dict) or record.get("phase") != "committed":
+            return
+        version = str(record.get("target_loader_version") or "")
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}(?:[-+][A-Za-z0-9.-]+)?", version):
+            raise AdapterError("invalid committed NeoForge loader version")
+        runtime = Path(str(instance.get("working_directory") or root / "runtime"))
+        args = runtime / "capivara-launch.args"
+        canonical = runtime / "libraries" / "net" / "neoforged" / "neoforge" / version / "unix_args.txt"
+        if (args.is_symlink() or canonical.is_symlink() or not args.is_file()
+                or not canonical.is_file() or args.stat().st_size > 32768
+                or canonical.stat().st_size > 32768
+                or args.read_bytes() != canonical.read_bytes()):
+            raise AdapterError(f"NeoForge launcher does not match committed Server Pack loader {version}")
+
     def _lifecycle(self, action: str, instance: dict[str, Any]) -> dict[str, Any]:
         if action not in {"start", "stop", "restart"}:
             raise AdapterError("unsupported systemd lifecycle action")
+        if action in {"start", "restart"}:
+            self._verify_committed_neoforge_launcher(instance)
         before = self._show(instance)
         if not before["available"]:
             raise AdapterError(f"instance systemd unit is unavailable: {before['unit']}")
@@ -147,6 +217,9 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(detail)
         after = self._show(instance)
         if action == "stop":
+            unsafe = self._forced_stop_reason(after)
+            if unsafe:
+                raise AdapterError(unsafe)
             after = self._clear_failed_after_stop(unit, instance, after)
         expected_running = action != "stop"
         if not after["available"]:
@@ -155,6 +228,16 @@ class SystemdAdapter(InstanceRuntimeAdapter):
             raise AdapterError(f"instance did not reach expected state after {action}")
         if action == "stop" and after.get("active_state") == "failed":
             raise AdapterError("instance remained failed after stop normalization")
+        if expected_running:
+            deadline = time.monotonic() + _SYSTEMD_START_SETTLE_SECONDS
+            while time.monotonic() < deadline:
+                time.sleep(_SYSTEMD_START_SETTLE_POLL_SECONDS)
+                after = self._show(instance)
+                if not after["available"]:
+                    raise AdapterError("instance systemd unit became unavailable during startup")
+                if not after["running"]:
+                    detail = after.get("active_state") or after.get("sub_state") or "not-running"
+                    raise AdapterError(f"instance failed during startup settle window: {detail}")
         return {"action": action, "changed": True, "idempotent": False, "state": after}
 
     def start(self, instance: dict[str, Any]) -> dict[str, Any]:
@@ -164,6 +247,13 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         return self._lifecycle("stop", instance)
 
     def restart(self, instance: dict[str, Any]) -> dict[str, Any]:
+        if str(instance.get("stop_signal") or "SIGTERM").strip().upper() == "SIGINT":
+            # systemctl restart would start a new process even if the previous
+            # game process was killed after TimeoutStopSec. Split the steps
+            # so that a failed/forced stop blocks the subsequent start.
+            self._lifecycle("stop", instance)
+            started = self._lifecycle("start", instance)
+            return {**started, "action": "restart", "idempotent": False}
         return self._lifecycle("restart", instance)
 
     def broadcast(

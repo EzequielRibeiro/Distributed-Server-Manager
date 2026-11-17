@@ -163,5 +163,12 @@ class AgentConfigurationClientTest(unittest.TestCase):
         self.assertTrue(applied.is_file())
 
 
+    def test_secret_named_catalog_declaration_is_metadata_but_raw_value_is_rejected(self):
+        declaration={"fields":{"join_password":{"label":"Senha","secret_policy":"customer-editable","binding":{"key":"password"}}}}
+        raw={"scope_type":"instance","scope_id":"instance-1","namespace":"capivara.instance.server-settings","value":{"declaration":declaration,"protected_refs":{"join_password_ref":"instance/instance-1/SERVER_SETTING_JOIN_PASSWORD"}}}
+        self.assertEqual(normalize_configuration(raw)["value"]["declaration"],declaration)
+        raw["value"]["settings"]={"join_password":"plaintext"}
+        with self.assertRaises(ConfigurationValidationError):normalize_configuration(raw)
+
 if __name__ == "__main__":
     unittest.main()

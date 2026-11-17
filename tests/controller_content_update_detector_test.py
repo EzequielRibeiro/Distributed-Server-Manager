@@ -53,6 +53,12 @@ class ControllerContentUpdateDetectorTest(unittest.TestCase):
   detector,state=self.detector([pack],lambda *args,**kwargs:(_ for _ in ()).throw(AssertionError('individual resolver must not run')),modpack_resolver)
   with patch('content_update_detector.runtime_definition',return_value={'loader':'fabric'}):result=detector.scan(force=True)
   self.assertEqual(result['available'],1);self.assertEqual(calls,[('modrinth','pack-project','1.21.1')]);report=state.calls[0][1]['content'][0];self.assertEqual(report['content_type'],'modpack');self.assertEqual(report['available_revision'],'new-pack');self.assertEqual(_project_reference(pack),'pack-project')
+ def test_external_upload_modpack_is_revision_managed_not_provider_auto_updated(self):
+  pack=_item(content_id='pack-a',content_type='modpack',artifact={'provider':'modrinth','package_id':'upload:pack-a'},provenance={'kind':'customer-mrpack-upload'},metadata={'revision_source':{'kind':'external-upload'}});called=[]
+  def resolver(*args,**kwargs):called.append(True);return {}
+  detector,state=self.detector([pack],resolver,lambda *args,**kwargs:called.append(True) or {})
+  result=detector.scan(force=True);self.assertEqual(result['skipped'],1);self.assertEqual(result['checked'],0);self.assertEqual(called,[]);self.assertEqual(state.calls,[])
+
  def test_bundle_child_is_not_updated_independently(self):
   child=_item(metadata={'bundle':{'parent_content_id':'pack-a'}});called=[]
   def resolver(*args,**kwargs):called.append(True);return {}

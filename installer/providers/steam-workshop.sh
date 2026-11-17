@@ -55,25 +55,49 @@ workshop_provider_install()
     LOGIN="$(workshop_login_args "${STEAM_USER}")"
 
     if [[ "${LOGIN}" != "anonymous" ]]; then
-        # Fail fast when the cached Steam session is missing/expired. Credentials
-        # are never supplied by this provider.
-        local AUTH_STATUS=0
+        # SteamCMD can exit zero on a rejected or anonymous login. Fail closed
+        # unless the requested account explicitly authenticated. Never log raw
+        # output: it may contain Steam Guard/account/session material.
+        local AUTH_STATUS=0 AUTH_OUTPUT="" AUTH_NORMALIZED=""
         if command -v timeout >/dev/null 2>&1; then
-            timeout 60 "${STEAMCMD_BIN}" +login "${LOGIN}" +quit </dev/null >/dev/null 2>&1 || AUTH_STATUS=$?
+            AUTH_OUTPUT="$(timeout 60 "${STEAMCMD_BIN}" +login "${LOGIN}" +quit </dev/null 2>&1)" || AUTH_STATUS=$?
         else
-            "${STEAMCMD_BIN}" +login "${LOGIN}" +quit </dev/null >/dev/null 2>&1 || AUTH_STATUS=$?
+            AUTH_OUTPUT="$("${STEAMCMD_BIN}" +login "${LOGIN}" +quit </dev/null 2>&1)" || AUTH_STATUS=$?
         fi
-        if (( AUTH_STATUS != 0 )); then
-            workshop_error "Steam authentication required. Run 'dsm steam auth' on the Agent."
+        AUTH_NORMALIZED="$(printf '%s' "${AUTH_OUTPUT}" | sed -E 's/\x1B\[[0-9;]*[[:alpha:]]//g; s/\r/\n/g')"
+        if printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq 'Logging in user .* to Steam Public'; then
+            printf '%s\n' "${AUTH_NORMALIZED}" | grep -Fiq \
+                "Logging in user '${LOGIN}' to Steam Public...OK" || AUTH_STATUS=42
+        elif ! printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq 'Logged in OK'; then
+            AUTH_STATUS=42
+        fi
+        if (( AUTH_STATUS != 0 )) || \
+            printf '%s\n' "${AUTH_NORMALIZED}" | grep -Eiq \
+              'ERROR!|Login Failure|authentication failed|Invalid Password|Steam Guard.*(required|failed)|two-factor.*(required|failed)|No connection|Access Denied'; then
+            workshop_error "Steam authentication required or expired on the Agent."
             return 42
         fi
     fi
 
     workshop_log "AppID=${APP_ID} PublishedFileId=${ITEM_ID}"
-    steamcmd_run_with_progress \
-        +login "${LOGIN}" \
-        +workshop_download_item "${APP_ID}" "${ITEM_ID}" validate \
-        +quit || return 1
+    if [[ "${LOGIN}" == "anonymous" ]]; then
+        # Reuse the legacy Steam provider private anonymous session directory.
+        local STATE_ROOT="${CAPIVARA_AGENT_STATE_DIR:-${DSM_ROOT}/runtime/hybrid-agent-state}"
+        local ANON_HOME="${STATE_ROOT}/steam-anonymous-install-home"
+        [[ -d "${STATE_ROOT}" && ! -L "${STATE_ROOT}" && -O "${STATE_ROOT}" ]] || return 1
+        [[ ! -L "${ANON_HOME}" ]] || return 1
+        if [[ ! -e "${ANON_HOME}" ]]; then
+            (umask 077; mkdir -m 700 -- "${ANON_HOME}") || return 1
+        fi
+        [[ -d "${ANON_HOME}" && ! -L "${ANON_HOME}" && -O "${ANON_HOME}" ]] || return 1
+        [[ "$(stat -c '%a' -- "${ANON_HOME}")" == "700" ]] || return 1
+        HOME="${ANON_HOME}" XDG_DATA_HOME="${ANON_HOME}/.local/share" \
+            CAPIVARA_STEAM_HOME="${ANON_HOME}" steamcmd_run_with_progress \
+            +login anonymous +workshop_download_item "${APP_ID}" "${ITEM_ID}" validate +quit || return 1
+    else
+        steamcmd_run_with_progress \
+            +login "${LOGIN}" +workshop_download_item "${APP_ID}" "${ITEM_ID}" validate +quit || return 1
+    fi
 
     SOURCE="$(workshop_cache_path "${APP_ID}" "${ITEM_ID}")"
     [[ -d "${SOURCE}" ]] || {

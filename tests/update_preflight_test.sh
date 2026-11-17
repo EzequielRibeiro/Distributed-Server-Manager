@@ -62,6 +62,10 @@ grep -Fq 'process_guard_pre_update_allow_managed' "${TARGET_PREFLIGHT}" \
     || fail "target preflight does not allow managed instances for automatic drain"
 grep -Fq 'UPDATE PREFLIGHT READY' "${TARGET_PREFLIGHT}" \
     || fail "target preflight success contract is missing"
+grep -Fq 'game-uptime-preflight.py' "${TARGET_PREFLIGHT}" \
+    || fail "read-only per-instance no-drain diagnostics missing from target preflight"
+grep -Fq 'instance drain remains mandatory' "${TARGET_PREFLIGHT}" \
+    || fail "failed diagnostic could silently authorize skipping instance drain"
 grep -Fq 'cap update preflight' "${CAP_CLI}" \
     || fail "preflight is not exposed by the canonical cap update CLI"
 

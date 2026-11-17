@@ -14,6 +14,18 @@ import re
 import shutil
 from pathlib import Path
 from typing import Any
+import sys
+
+# The repository stores shared modules at agents/common, whereas the
+# installed Linux Agent uses <root>/common alongside <root>/runtime. Importing
+# only the source-tree path breaks the privileged materializer at startup.
+_RUNTIME_FILE = Path(__file__).resolve()
+for COMMON_DIR in (_RUNTIME_FILE.parents[1] / "common", _RUNTIME_FILE.parents[2] / "common"):
+    if (COMMON_DIR / "dayz_community_missions.py").is_file():
+        if str(COMMON_DIR) not in sys.path:
+            sys.path.insert(0, str(COMMON_DIR))
+        break
+from dayz_community_missions import discover_community_missions
 
 _MAX_KEYS = 512
 _MAX_KEY_BYTES = 2 * 1024 * 1024
@@ -131,6 +143,33 @@ def _discover_bikeys(root: Path) -> list[dict[str, str]]:
     return result
 
 
+
+def project_dayz_community_maps(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    missions: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        source_root = _managed_path(spec, entry)
+        content_id = str(entry.get("content_id") or "").strip()
+        metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+        marker = metadata.get("community_map") if isinstance(metadata.get("community_map"), dict) else {}
+        mission_path = str(marker.get("mission_path") or "").strip() or None
+        display_name = str(marker.get("name") or "").strip()
+        try:
+            discovered = discover_community_missions(source_root, mission_path=mission_path)
+        except ValueError as exc:
+            raise DayZContentActivationError(str(exc)) from exc
+        for item in discovered:
+            mission_id = str(item.get("id") or "").strip()
+            relative = str(item.get("relative_path") or "").strip()
+            source = _within(source_root, source_root / relative, "DayZ community mission")
+            folded = mission_id.casefold()
+            current = missions.get(folded)
+            candidate = {"id": mission_id, "source": str(source), "content_id": content_id}
+            if display_name: candidate["name"] = display_name
+            if current and current["source"] != candidate["source"]:
+                raise DayZContentActivationError(f"conflicting DayZ community mission: {mission_id}")
+            missions[folded] = candidate
+    return [missions[key] for key in sorted(missions)]
+
 def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]]) -> dict[str, Any]:
     mods: list[str] = []
     server_mods: list[str] = []
@@ -229,9 +268,7 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
         raise DayZContentActivationError("DayZ signature keyring has too many entries")
     keyring.parent.mkdir(parents=True, exist_ok=True)
     staging = keyring.with_name(f".{keyring.name}.{os.getpid()}.tmp")
-    backup = keyring.with_name(f".{keyring.name}.{os.getpid()}.old")
     shutil.rmtree(staging, ignore_errors=True)
-    shutil.rmtree(backup, ignore_errors=True)
     staging.mkdir(mode=0o755)
     try:
         written: list[str] = []
@@ -245,15 +282,27 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
         if keyring.exists():
             if _is_link(keyring) or not keyring.is_dir():
                 raise DayZContentActivationError("existing DayZ keyring is unsafe")
-            os.replace(keyring, backup)
-        os.replace(staging, keyring)
-        shutil.rmtree(backup, ignore_errors=True)
+            existing = {path.name: path for path in keyring.iterdir()}
+            if any(_is_link(path) or not path.is_file() for path in existing.values()):
+                raise DayZContentActivationError("existing DayZ keyring contains unsafe entries")
+            # The directory is a live systemd BindPaths source. Replacing its
+            # inode strands running instances on a stale/deleted mount, often
+            # with no usable signature keys. Keep the directory inode stable.
+            wanted = {item["name"]: item["sha256"] for item in combined.values()}
+            for name, digest in wanted.items():
+                target = existing.get(name)
+                if target is None or _sha256(target) != digest:
+                    os.replace(staging / name, keyring / name)
+            for name, target in existing.items():
+                if name not in wanted:
+                    target.unlink()
+            shutil.rmtree(staging)
+        else:
+            os.replace(staging, keyring)
         return written
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
-        if backup.exists() and not keyring.exists():
-            os.replace(backup, keyring)
         raise
 
 
-__all__ = ["DayZContentActivationError", "materialize_dayz_keyring", "project_dayz_activation"]
+__all__ = ["DayZContentActivationError", "materialize_dayz_keyring", "project_dayz_activation", "project_dayz_community_maps"]

@@ -61,7 +61,7 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
         capture_output=True,
         text=True,
         check=False,
-        timeout=3600 if action == "migrate-storage-copy" else 60,
+        timeout=3600 if action in {"migrate-storage-copy", "minecraft-serverpack-build-candidate", "minecraft-serverpack-prepare-inputs", "minecraft-serverpack-swap-phase"} else 60,
     )
     if completed.returncode != 0:
         helper_error = None
@@ -83,6 +83,66 @@ def _invoke(action: str, spec: dict[str, Any], **extra: Any) -> dict[str, Any]:
     if not isinstance(operation, dict):
         raise RuntimeError("privileged materializer returned invalid operation")
     return operation
+
+
+def sync_private_content(config: dict[str, Any], spec: dict[str, Any]) -> list[str]:
+    """Delegate isolated Minecraft content writes to the checked root helper."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if str(normalized.get("game_id") or "").lower() != "minecraft" or not str(
+        normalized.get("environment_id") or ""
+    ).lower().startswith("minecraft.java."):
+        raise ValueError("privileged content synchronization requires Minecraft Java")
+    result = _invoke("sync-minecraft-content", normalized)
+    files = result.get("content_files")
+    if not isinstance(files, list) or any(not isinstance(item, str) for item in files):
+        raise RuntimeError("privileged Minecraft content synchronization returned invalid files")
+    return files
+
+
+def prepare_minecraft_serverpack_inputs(
+    config: dict[str, Any], spec: dict[str, Any], *,
+    migration: dict[str, Any], selection: dict[str, Any],
+) -> dict[str, Any]:
+    """Prepare customer content through the constrained materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if (str(normalized.get("game_id") or "").lower() != "minecraft"
+            or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
+        raise ValueError("Server Pack input preparation requires Minecraft Java NeoForge")
+    return _invoke("minecraft-serverpack-prepare-inputs", normalized,
+                   migration=migration, selection=selection)
+
+
+def build_minecraft_serverpack_candidate(
+    config: dict[str, Any], spec: dict[str, Any], *,
+    loader_seed: str, target_loader_version: str,
+) -> dict[str, Any]:
+    """Build a Server Pack candidate through the validated root materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if (str(normalized.get("game_id") or "").lower() != "minecraft"
+            or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
+        raise ValueError("Server Pack candidate requires Minecraft Java NeoForge")
+    return _invoke(
+        "minecraft-serverpack-build-candidate", normalized,
+        loader_seed=str(loader_seed),
+        target_loader_version=str(target_loader_version),
+    )
+
+
+def minecraft_serverpack_swap_phase(
+    config: dict[str, Any], spec: dict[str, Any], phase: str, **evidence: Any,
+) -> dict[str, Any]:
+    """Run a fixed journal/swap phase in the privileged materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if (str(normalized.get("game_id") or "").lower() != "minecraft"
+            or str(normalized.get("environment_id") or "").lower() != "minecraft.java.neoforge"):
+        raise ValueError("Server Pack swap requires Minecraft Java NeoForge")
+    if phase not in {"prepare", "switch", "commit", "recover", "archive-committed"}:
+        raise ValueError("unsupported Server Pack migration phase")
+    return _invoke("minecraft-serverpack-swap-phase", normalized, phase=phase, **evidence)
 
 
 def migrate_storage_copy(config: dict[str, Any], spec: dict[str, Any], *, target_root: str) -> dict[str, Any]:
@@ -108,6 +168,26 @@ def migrate_storage_pool_copy(
         target_storage_pool_id=_token(target_storage_pool_id, "target_storage_pool_id", 64),
         migration_id=_token(migration_id, "migration_id"),
     )
+
+
+def repair_dayz_dlc_ownership(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """Delegate managed DayZ DLC ownership to the validated root materializer."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if str(normalized.get("game_id") or "").lower() != "dayz":
+        raise ValueError("DayZ DLC repair requires a DayZ instance")
+    return _invoke("repair-dayz-dlc-ownership", normalized)
+
+
+def apply_dayz_battleye(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
+    """Only update the private BattlEye directory and owned unit of a stopped DayZ."""
+    agent_id = str(config.get("agent_id") or "").strip()
+    normalized = validate_runtime_spec(spec, expected_agent_id=agent_id)
+    if str(normalized.get("game_id") or "").lower() != "dayz":
+        raise ValueError("BattlEye apply requires DayZ")
+    # The narrow helper owns the unit + RuntimeSpec transaction together so
+    # a failed state write cannot leave the unit changed and state stale.
+    return _invoke("apply-dayz-battleye", normalized)
 
 
 def materialize(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
@@ -168,8 +248,6 @@ def remove(config: dict[str, Any], instance_id: str) -> dict[str, Any]:
     }
 
 
-__all__ = ["materialize", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]
-
 
 def disable_relocation_source(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     normalized = validate_runtime_spec(spec, expected_agent_id=str(config.get("agent_id") or ""))
@@ -180,3 +258,5 @@ def restore_relocation_source(config: dict[str, Any], spec: dict[str, Any], *,
                               restore_enabled: bool) -> dict[str, Any]:
     normalized = validate_runtime_spec(spec, expected_agent_id=str(config.get("agent_id") or ""))
     return _invoke("relocation-restore-unit", normalized, restore_enabled=bool(restore_enabled))
+
+__all__ = ["materialize", "sync_private_content", "migrate_storage_copy", "migrate_storage_pool_copy", "remove"]

@@ -38,6 +38,16 @@ def test_working_directory_is_rendered_as_absolute_path_without_quotes():
     assert 'ExecStart="/var/lib/capivara-agent/game-data/dayz/serverfiles/DayZServer"' in unit
 
 
+def test_cpu_quota_uses_systemd_compatible_percent_format():
+    unit = render_unit(_spec(cpu_limit_cores=6))
+    assert "CPUQuota=600%\n" in unit
+    assert "CPUQuota=600.000%" not in unit
+    fractional = render_unit(_spec(cpu_limit_cores=1.255))
+    assert "CPUQuota=125.5%\n" in fractional
+    precise = render_unit(_spec(cpu_limit_cores=1.2345))
+    assert "CPUQuota=123.45%\n" in precise
+
+
 def test_working_directory_rejects_relative_path():
     with pytest.raises(MaterializerError, match="absolute path"):
         render_unit(_spec(working_directory="relative/serverfiles"))

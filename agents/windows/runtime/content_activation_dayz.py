@@ -11,6 +11,12 @@ import hashlib
 import os
 from pathlib import Path
 from typing import Any
+import sys
+
+COMMON_DIR = Path(__file__).resolve().parent.parent.parent / "common"
+if str(COMMON_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_DIR))
+from dayz_community_missions import discover_community_missions
 
 _MAX_KEYS = 512
 
@@ -107,6 +113,33 @@ def _discover_bikeys(root: Path) -> list[dict[str, str]]:
     return result
 
 
+
+def project_dayz_community_maps(spec: dict[str, Any], entries: list[dict[str, Any]]) -> list[dict[str, str]]:
+    missions: dict[str, dict[str, str]] = {}
+    for entry in entries:
+        source_root = _managed_path(spec, entry)
+        content_id = str(entry.get("content_id") or "").strip()
+        metadata = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+        marker = metadata.get("community_map") if isinstance(metadata.get("community_map"), dict) else {}
+        mission_path = str(marker.get("mission_path") or "").strip() or None
+        display_name = str(marker.get("name") or "").strip()
+        try:
+            discovered = discover_community_missions(source_root, mission_path=mission_path)
+        except ValueError as exc:
+            raise DayZContentActivationError(str(exc)) from exc
+        for item in discovered:
+            mission_id = str(item.get("id") or "").strip()
+            relative = str(item.get("relative_path") or "").strip()
+            source = _within(source_root, source_root / relative, "DayZ community mission")
+            folded = mission_id.casefold()
+            current = missions.get(folded)
+            candidate = {"id": mission_id, "source": str(source), "content_id": content_id}
+            if display_name: candidate["name"] = display_name
+            if current and current["source"] != candidate["source"]:
+                raise DayZContentActivationError(f"conflicting DayZ community mission: {mission_id}")
+            missions[folded] = candidate
+    return [missions[key] for key in sorted(missions)]
+
 def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]]) -> dict[str, Any]:
     mods: list[str] = []
     server_mods: list[str] = []
@@ -139,4 +172,4 @@ def project_dayz_activation(spec: dict[str, Any], entries: list[dict[str, Any]])
     return {"arguments": arguments, "key_sources": [keys[name] for name in sorted(keys)]}
 
 
-__all__ = ["DayZContentActivationError", "project_dayz_activation"]
+__all__ = ["DayZContentActivationError", "project_dayz_activation", "project_dayz_community_maps"]

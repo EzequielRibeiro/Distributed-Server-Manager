@@ -23,10 +23,62 @@ from hybrid_agent_worker import (
     process_hybrid_configuration_cycle,
     process_hybrid_native_restart_cycle,
     process_hybrid_runtime_event_cycle,
+    process_hybrid_minecraft_recovery_audit_cycle,
+    _instance_runtime_module,
 )
 from infrastructure_role_cli import promote_local_controller
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
+
+
+class HybridContentHoldTest(unittest.TestCase):
+    def test_hold_filter_validates_ids_and_defaults_to_empty(self):
+        import hybrid_agent_worker as worker
+        with patch.dict("os.environ", {}, clear=False):
+            from os import environ
+            environ.pop("DSM_CONTENT_HOLD_INSTANCE_IDS", None)
+            self.assertEqual(worker._held_content_instance_ids(), frozenset())
+        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005, dayz01"}):
+            self.assertEqual(worker._held_content_instance_ids(), frozenset({"mc005", "dayz01"}))
+        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "../unsafe"}):
+            with self.assertRaises(RuntimeError):
+                worker._held_content_instance_ids()
+
+    def test_content_hold_filters_reports_and_commands_not_other_instances(self):
+        import hybrid_agent_worker as worker
+        previous = [{"instance_id": "mc005", "content_id": "parent"},
+                    {"instance_id": "dayz01", "content_id": "map"}]
+        desired = [{"instance_id": "mc005", "content_id": "mod"},
+                   {"instance_id": "dayz01", "content_id": "map"}]
+        client = Mock()
+        client.content_state.return_value = previous
+        client.apply_content_commands.return_value = [{"instance_id": "dayz01", "status": "applied"}]
+        repository = Mock()
+        repository.desired_for_agent.return_value = desired
+        repository.record_agent_state.return_value = 1
+        repository.serverpack_content_fence.return_value = (set(),set())
+        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \
+             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \
+             patch.object(worker, "_content_client_module", return_value=client), \
+             patch.object(worker, "ContentRepository", return_value=repository):
+            outcome = worker.process_hybrid_content_cycle(None, Path("/tmp"), "test")
+        self.assertEqual(outcome["commands"], 1)
+        self.assertEqual(client.apply_content_commands.call_args.args[1], [desired[1]])
+        self.assertEqual(repository.record_agent_state.call_args_list[0].args[1], [previous[1]])
+
+    def test_reconcile_hold_uses_skip_set_and_preserves_other_instances(self):
+        import hybrid_agent_worker as worker
+        reconciler = Mock()
+        reconciler.reconcile_all.return_value = [
+            {"instance_id": "mc005", "status": "held"},
+            {"instance_id": "dayz01", "status": "healthy"}]
+        with patch.dict("os.environ", {"DSM_CONTENT_HOLD_INSTANCE_IDS": "mc005"}), \
+             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "test"}), \
+             patch.object(worker, "_runtime_reconciler_module", return_value=reconciler), \
+             patch.object(worker, "_prepare_hybrid_customer_files_access", return_value=None):
+            result = worker.process_hybrid_instance_reconcile_cycle(Path("/tmp"), "test")
+        self.assertEqual(result["healthy"], 1)
+        self.assertEqual(reconciler.reconcile_all.call_args.kwargs["skip_instance_ids"], frozenset({"mc005"}))
 
 
 class HybridAgentWorkerTest(unittest.TestCase):
@@ -52,6 +104,32 @@ class HybridAgentWorkerTest(unittest.TestCase):
     def tearDown(self):
         self.backend.close()
         self.temp.cleanup()
+
+    def test_recovery_audit_is_nonfatal_when_agent_runtime_unavailable(self):
+        with patch("hybrid_agent_worker._instance_runtime_module", side_effect=ImportError("unavailable")):
+            state = process_hybrid_minecraft_recovery_audit_cycle(
+                self.backend, self.root, "hybrid-test-agent",
+            )
+        self.assertEqual(state, {"status": "unavailable", "accepted": 0, "created": 0})
+
+    def test_hybrid_recovery_audit_validated_path(self):
+        state_dir = self.root / "runtime" / "hybrid-agent-state" / "instances"
+        state_dir.mkdir(parents=True)
+        (state_dir / "mc005.json").write_text("{}", encoding="utf-8")
+        claim = {"instance_id": "mc005", "agent_id": "hybrid-agent",
+                 "status": "recovered", "recovered_at": "2026-10-23T23:28:00Z"}
+        _instance_runtime_module(self.root)
+        with patch("runtime_operations.read_operation", return_value={}), \
+             patch("minecraft_recovery_heartbeat_collector.collect_recovery_observations", return_value=[claim]) as collect, \
+             patch("minecraft_recovery_heartbeat_claims.validated_heartbeat_recovery_claims", return_value=[claim]) as validate, \
+             patch("minecraft_recovery_event_persistence.persist_recovery_claims", return_value={"accepted": 1, "created": 1}) as persist:
+            result = process_hybrid_minecraft_recovery_audit_cycle(
+                self.backend, self.root, "hybrid-agent",
+            )
+        self.assertEqual(result, {"status": "audited", "accepted": 1, "created": 1})
+        self.assertEqual(collect.call_args.args[0], ["mc005"])
+        self.assertEqual(validate.call_args.kwargs["authenticated_agent_id"], "hybrid-agent")
+        persist.assert_called_once()
 
     def test_controller_node_is_inert(self):
         result = heartbeat_cycle(self.root, backend=self.backend)

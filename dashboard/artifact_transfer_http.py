@@ -11,7 +11,7 @@ from controller_session import session_user_from_headers
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from json_serialization import to_json_compatible
 
-AGENT_UPLOAD="/api/agent/artifacts/upload";AGENT_DOWNLOAD="/api/agent/artifacts/download";CUSTOMER_PREFIX="/api/customer/artifacts";CUSTOMER_STATUS=CUSTOMER_PREFIX+"/status";CUSTOMER_DOWNLOAD=CUSTOMER_PREFIX+"/download";CUSTOMER_EXPORT=CUSTOMER_PREFIX+"/backup-export";CUSTOMER_IMPORT=CUSTOMER_PREFIX+"/backup-import";CUSTOMER_UPLOAD=CUSTOMER_PREFIX+"/upload";CUSTOMER_RESTORE=CUSTOMER_PREFIX+"/restore-import"
+AGENT_UPLOAD="/api/agent/artifacts/upload";AGENT_DOWNLOAD="/api/agent/artifacts/download";CUSTOMER_PREFIX="/api/customer/artifacts";CUSTOMER_STATUS=CUSTOMER_PREFIX+"/status";CUSTOMER_IMPORTS=CUSTOMER_PREFIX+"/imports";CUSTOMER_DOWNLOAD=CUSTOMER_PREFIX+"/download";CUSTOMER_EXPORT=CUSTOMER_PREFIX+"/backup-export";CUSTOMER_IMPORT=CUSTOMER_PREFIX+"/backup-import";CUSTOMER_UPLOAD=CUSTOMER_PREFIX+"/upload";CUSTOMER_RESTORE=CUSTOMER_PREFIX+"/restore-import"
 
 def install_artifact_transfer_http(legacy,authenticate):
  previous_get=legacy.DashboardHandler.do_GET;previous_post=legacy.DashboardHandler.do_POST;previous_put=getattr(legacy.DashboardHandler,"do_PUT",None)
@@ -35,14 +35,24 @@ def install_artifact_transfer_http(legacy,authenticate):
   length=int(value)
   if length<0 or length>64*1024*1024*1024:raise ValueError("artifact exceeds 64 GiB transfer limit")
   return length
- def send_binary(self,path,item):
+ def send_binary(self,path,item,*,agent_id=None):
   size=path.stat().st_size;name=Path(str(item.get("filename") or path.name)).name
   self.send_response(200);self.send_header("Content-Type","application/octet-stream");self.send_header("Content-Length",str(size));self.send_header("Content-Disposition",f'attachment; filename="{name.replace(chr(34),"")}"');self.send_header("Cache-Control","no-store");self.end_headers()
+  streamed=0;last_report=0;progress_available=agent_id is not None
   with path.open("rb") as handle:
    while True:
     chunk=handle.read(1024*1024)
     if not chunk:break
-    self.wfile.write(chunk)
+    self.wfile.write(chunk);streamed+=len(chunk)
+    # Report only after writing bytes to the HTTP response. This is
+    # Controller-side transmission telemetry, not Agent verification.
+    if progress_available and (streamed-last_report>=4*1024*1024 or streamed==size):
+     try:repo().record_controller_delivery_progress(item["transfer_id"],agent_id,streamed)
+     except Exception as exc:
+      # Telemetry must not corrupt an otherwise valid backup download.
+      self.log_error("artifact progress unavailable: %s",str(exc)[:180])
+      progress_available=False
+     last_report=streamed
  def customer_transfer(user,transfer_id,permission):
   item=repo().get(transfer_id);iid=str(item.get("instance_id") or "")
   if not iid:raise PermissionError("transfer is not attached to an instance")
@@ -56,13 +66,24 @@ def install_artifact_transfer_http(legacy,authenticate):
    try:
     artifact,item=repo().controller_artifact(one(parsed,"transfer_id"))
     if str(item.get("agent_id"))!=str(identity.get("agent_id")) or item.get("direction")!="controller_to_agent":raise PermissionError("artifact transfer ownership mismatch")
-    return send_binary(self,artifact,item)
+    repo().mark_transferring(item["transfer_id"])
+    return send_binary(self,artifact,item,agent_id=identity["agent_id"])
    except PermissionError:return send(self,403,{"error":"forbidden"})
    except (KeyError,FileNotFoundError,ValueError):return send(self,404,{"error":"artifact_not_ready"})
-  if path not in {CUSTOMER_STATUS,CUSTOMER_DOWNLOAD}:return previous_get(self)
+  if path not in {CUSTOMER_STATUS,CUSTOMER_DOWNLOAD,CUSTOMER_IMPORTS}:return previous_get(self)
   user=actor(self)
   if user is None:return self.unauthorized()
   try:
+   if path==CUSTOMER_IMPORTS:
+    iid=one(parsed,"instance_id")
+    context=workspace().require(user,iid,"backup.restore")
+    imports=repo().list_completed_backup_imports(iid,limit=10)
+    imports=[
+     item for item in imports
+     if str(item.get("agent_id") or "")==str(context.get("agent_id") or "")
+     and str(item.get("customer_id") or "")==str(context.get("customer_id") or "")
+    ]
+    return send(self,200,{"imports":[transfer_view(item) for item in imports]})
    tid=one(parsed,"transfer_id");item=repo().get(tid);purpose=str(item.get("purpose") or "");permission="backup.restore" if purpose in {"backup_import","backup_clone"} else "backup.download";customer_transfer(user,tid,permission)
    if path==CUSTOMER_STATUS:return send(self,200,transfer_view(item))
    if str(item.get("status"))!="completed" or item.get("direction")!="agent_to_controller":raise FileNotFoundError("artifact not ready")

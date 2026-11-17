@@ -44,6 +44,10 @@ class _Workspace:
 class _Content:
     def __init__(self):
         self.puts = []
+        self.existing = {}
+
+    def get(self, instance_id, content_id):
+        return self.existing.get((instance_id, content_id))
 
     def put(self, payload, requested_by=None):
         self.puts.append((dict(payload), requested_by))
@@ -130,6 +134,153 @@ class CustomerWorkshopIntegrationTest(unittest.TestCase):
         self.assertEqual(cf["artifact"]["package_id"], "221100:1559212036")
         self.assertTrue(cf["metadata"]["dependency"]["auto_managed"])
         self.assertEqual(cf["metadata"]["dependency"]["required_by"], "1828439124")
+
+    def test_dayz_deerisle_installs_cf_dependency_server_owned(self):
+        seen = []
+        def resolver(reference, *, expected_app_id):
+            published = str(reference).split(":")[-1]
+            seen.append((published, expected_app_id))
+            return {
+                "provider": "steam-workshop",
+                "package_id": f"{expected_app_id}:{published}",
+                "published_file_id": published,
+                "consumer_app_id": expected_app_id,
+                "metadata": {"published_file_id": published, "consumer_app_id": expected_app_id, "title": "Deer Isle" if published == "1602372402" else "CF"},
+            }
+        service = _service(resolver=resolver)
+        result = service.install({"username": "u"}, "i1", {
+            "content_id": "steam-workshop:1602372402",
+            "content_type": "workshop",
+            "provider": "steam-workshop",
+            "artifact": {"package_id": "1602372402"},
+        })
+        self.assertEqual(seen, [("1602372402", "221100"), ("1559212036", "221100")])
+        self.assertEqual(result["assignment"]["dependencies"], ["steam-workshop:1559212036"])
+        cf = result["dependencies"][0]
+        self.assertEqual(cf["content_id"], "steam-workshop:1559212036")
+        self.assertTrue(cf["metadata"]["dependency"]["auto_managed"])
+        self.assertEqual(cf["metadata"]["dependency"]["required_by"], "1602372402")
+
+    def test_dayz_community_map_composes_github_source_and_workshop_dependencies(self):
+        seen = []
+        def resolver(reference, *, expected_app_id):
+            published = str(reference).split(":")[-1]
+            seen.append((published, expected_app_id))
+            return {
+                "provider": "steam-workshop",
+                "package_id": f"{expected_app_id}:{published}",
+                "published_file_id": published,
+                "consumer_app_id": expected_app_id,
+                "metadata": {
+                    "published_file_id": published,
+                    "consumer_app_id": expected_app_id,
+                    "title": f"Workshop {published}",
+                },
+            }
+        service = _service(resolver=resolver)
+        service.workspace.policy.mods_allowed = True
+        result = service.install_dayz_community_map(
+            {"username": "u"},
+            "i1",
+            {
+                "content_id": "dayz-map:namalsk",
+                "name": "Namalsk",
+                "source": {
+                    "provider": "github",
+                    "repository": "SumrakDZN/Namalsk-Server",
+                    "ref": "main",
+                },
+                "workshop_items": ["2289456201", "2289461232"],
+                "activation_order": 40,
+            },
+        )
+        self.assertEqual(seen, [("2289456201", "221100"), ("2289461232", "221100")])
+        self.assertEqual(
+            [item["content_id"] for item in result["assignments"]],
+            [
+                "steam-workshop:2289456201",
+                "steam-workshop:2289461232",
+                "dayz-map:namalsk",
+            ],
+        )
+        community = result["assignment"]
+        self.assertEqual(community["content_type"], "map")
+        self.assertEqual(community["provider"], "github")
+        self.assertEqual(
+            community["artifact"]["url"],
+            "https://codeload.github.com/SumrakDZN/Namalsk-Server/zip/main",
+        )
+        self.assertTrue(community["artifact"]["archive"])
+        self.assertEqual(
+            community["dependencies"],
+            ["steam-workshop:2289456201", "steam-workshop:2289461232"],
+        )
+        self.assertEqual(community["activation_order"], 42)
+        self.assertEqual(community["provenance"]["community_map"]["repository"], "SumrakDZN/Namalsk-Server")
+        self.assertEqual(community["activation_state"], "disabled")
+        self.assertTrue(all(item["activation_state"] == "disabled" for item in result["dependencies"]))
+
+    def test_dayz_community_map_preserves_existing_active_workshop_dependency(self):
+        service = _service();service.workspace.policy.mods_allowed = True
+        service.content.existing[("i1","steam-workshop:1602372402")]={"desired_state":"installed","activation_state":"enabled"}
+        result=service.install_dayz_community_map({"username":"u"},"i1",{"content_id":"dayz-map:deerisle","name":"DeerIsle","source":{"provider":"github","repository":"johnmclane666/Deerisle-Stable","ref":"master"},"workshop_items":["1602372402"]})
+        dep=next(item for item in result["dependencies"] if item["content_id"]=="steam-workshop:1602372402")
+        self.assertEqual(dep["activation_state"],"enabled");self.assertEqual(result["assignment"]["activation_state"],"disabled")
+        written=[payload["content_id"] for payload,_ in service.content.puts]
+        self.assertNotIn("steam-workshop:1602372402",written)
+        self.assertIn("dayz-map:deerisle",written)
+
+    def test_dayz_community_map_reinstall_repairs_absent_required_workshop_dependency(self):
+        service=_service();service.workspace.policy.mods_allowed=True
+        service.content.existing[("i1","steam-workshop:1602372402")]={"desired_state":"absent","activation_state":"disabled"}
+        result=service.install_dayz_community_map({"username":"u"},"i1",{"content_id":"dayz-map:deerisle","name":"Deer Isle","mission_path":"V5.9/empty.deerisle","source":{"provider":"github","repository":"johnmclane666/Deerisle-Stable","ref":"master"},"workshop_items":["1602372402"]})
+        self.assertEqual(result["assignment"]["dependencies"],["steam-workshop:1602372402"])
+        repaired=next(payload for payload,_ in service.content.puts if payload["content_id"]=="steam-workshop:1602372402")
+        self.assertEqual(repaired["desired_state"],"installed");self.assertEqual(repaired["activation_state"],"disabled")
+
+    def test_dayz_community_map_persists_mission_path_selector(self):
+        service = _service()
+        service.workspace.policy.mods_allowed = True
+        result = service.install_dayz_community_map(
+            {"username": "u"}, "i1", {
+                "content_id": "dayz-map:deerisle",
+                "name": "DeerIsle",
+                "mission_path": "V5.9/empty.deerisle",
+                "source": {"provider": "github", "repository": "johnmclane666/Deerisle-Stable", "ref": "master"},
+                "workshop_items": ["1602372402"],
+            })
+        community = result["assignment"]
+        self.assertEqual(community["metadata"]["community_map"]["mission_path"], "V5.9/empty.deerisle")
+
+    def test_dayz_community_map_rejects_unsafe_mission_path(self):
+        service = _service()
+        service.workspace.policy.mods_allowed = True
+        with self.assertRaisesRegex(ValueError, "invalid DayZ community mission path"):
+            service.install_dayz_community_map(
+                {"username": "u"}, "i1", {
+                    "content_id": "dayz-map:deerisle",
+                    "mission_path": "../escape",
+                    "source": {"provider": "github", "repository": "johnmclane666/Deerisle-Stable", "ref": "master"},
+                    "workshop_items": [],
+                })
+
+    def test_dayz_community_map_rejects_unsafe_github_ref(self):
+        service = _service()
+        service.workspace.policy.mods_allowed = True
+        with self.assertRaisesRegex(ValueError, "invalid GitHub ref"):
+            service.install_dayz_community_map(
+                {"username": "u"},
+                "i1",
+                {
+                    "content_id": "dayz-map:test",
+                    "source": {
+                        "provider": "github",
+                        "repository": "owner/repo",
+                        "ref": "../main",
+                    },
+                    "workshop_items": [],
+                },
+            )
 
     def test_project_zomboid_uses_its_consumer_app_id(self):
         seen = []

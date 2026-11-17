@@ -116,3 +116,16 @@ if grep -Fq 'Banco validado com os parâmetros exatos informados.' <<<"${DB_OUTP
 fi
 
 echo "Installer preflight regression tests passed."
+
+# Dry-run must not require runtime-state files that would only be
+# materialized by a real installation.
+(
+    source "${CORE_INSTALLER}"
+    DRY_RUN=1
+    DSM_ROOT="$(mktemp -d)/not-installed"
+
+    [[ ! -e "${DSM_ROOT}/dashboard/state/init_state.sh" ]] \
+        || fail "dry-run regression fixture unexpectedly contains init_state.sh"
+
+    initialize_runtime_state >/dev/null
+) || fail "dry-run requires dashboard runtime state before installation"

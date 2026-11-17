@@ -4,8 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 import instance_runtime
+import privileged_materialization
 from adapters import resolve_adapter
-from content_activation_projection import activation_snapshot
+from content_activation_projection import activation_snapshot,runtime_projection_inputs
 from content_activation_runtime import materialize_content_activation,project_runtime_spec
 from materializers import resolve_materializer
 from runtime_events import emit_runtime_event
@@ -14,7 +15,10 @@ from runtime_spec import validate_runtime_spec
 def _state_dir()->Path:return Path(instance_runtime.STATE_DIR)
 def _project(spec:dict[str,Any])->dict[str,Any]:
  iid=str(spec.get("instance_id") or "").strip()
- return project_runtime_spec(spec,activation_snapshot(iid)) if iid else dict(spec)
+
+ if not iid:return dict(spec)
+ prepared,snapshot=runtime_projection_inputs(iid,spec,activation_snapshot(iid))
+ return project_runtime_spec(prepared,snapshot)
 
 def materialize(config:dict[str,Any],spec:dict[str,Any])->dict[str,Any]:
  agent_id=str(config.get("agent_id") or "").strip();projected=_project(spec);normalized=validate_runtime_spec(projected,expected_agent_id=agent_id);emit_runtime_event(_state_dir(),"INSTANCE_RUNTIME_MATERIALIZING",instance_id=normalized["instance_id"],agent_id=agent_id);materializer=resolve_materializer(normalized)
@@ -29,9 +33,13 @@ def reconcile(config:dict[str,Any],instance_id:str)->dict[str,Any]:
   raise PermissionError("runtime reconciliation is disabled while relocation source is fenced")
  record=instance_runtime._owned(config,instance_id);projected=_project(record)
  if projected!=record:record=instance_runtime.register_instance(projected)
- normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));materializer=resolve_materializer(normalized);content_files=materialize_content_activation(normalized);materialized=materializer.inspect(normalized)
+ normalized=validate_runtime_spec(record,expected_agent_id=str(config.get("agent_id") or ""));materializer=resolve_materializer(normalized);materialized=materializer.inspect(normalized)
  if not materialized.get("exists") or not materialized.get("owned"):raise RuntimeError("instance runtime is not safely materialized")
- if not materialized.get("matches"):materializer.apply(normalized)
+ private_content=("content_projection" in normalized)
+ if not materialized.get("matches"):
+  if private_content:privileged_materialization.materialize(config,normalized)
+  else:materializer.apply(normalized)
+ content_files=(privileged_materialization.sync_private_content(config,normalized) if private_content else materialize_content_activation(normalized))
  adapter=resolve_adapter(normalized);before=adapter.status(normalized);desired=normalized["desired_state"];running=bool(before.get("running"));operation=None
  if desired=="running" and not running:operation=adapter.start(normalized)
  elif desired=="stopped" and running:operation=adapter.stop(normalized)

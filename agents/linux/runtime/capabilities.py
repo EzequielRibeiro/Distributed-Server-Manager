@@ -131,12 +131,13 @@ def _steamcmd_status() -> dict[str, object]:
             text=True,
             timeout=30,
             check=False,
-            env={**os.environ, "HOME": str(state_root)},
+            env=__import__("server_update_provider", fromlist=["_anonymous_steam_env"])._anonymous_steam_env(state_root, purpose="metadata"),
         )
         result["functional"] = completed.returncode == 0
         result["state"] = "ready" if completed.returncode == 0 else "error"
         if completed.returncode != 0:
-            result["error"] = (completed.stdout or f"SteamCMD terminou com código {completed.returncode}")[-1000:]
+            # SteamCMD can echo account/session material even for +quit.
+            result["error"] = f"SteamCMD probe failed (exit={completed.returncode})"
     except Exception as exc:
         result["error"] = str(exc)[:1000]
     try:

@@ -1,0 +1,29 @@
+name: Backup Age Retention Capacity
+on:
+  pull_request:
+    paths:
+      - 'scripts/backup_age_retention_capacity_gate.py'
+      - 'tests/backup_age_retention_capacity_gate_test.py'
+      - 'docs/runbooks/backup-age-retention-safe-rollout.md'
+      - '.github/workflows/backup-age-retention-capacity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/backup_age_retention_capacity_gate.py'
+      - 'tests/backup_age_retention_capacity_gate_test.py'
+      - 'docs/runbooks/backup-age-retention-safe-rollout.md'
+      - '.github/workflows/backup-age-retention-capacity.yml'
+  workflow_dispatch:
+
+jobs:
+  retention-budget-readonly:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate read-only gate
+        run: |
+          python3 -m py_compile scripts/backup_age_retention_capacity_gate.py
+          python3 -m unittest discover -s tests -p 'backup_age_retention_capacity_gate_test.py' -v

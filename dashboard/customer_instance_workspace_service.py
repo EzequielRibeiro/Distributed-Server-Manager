@@ -9,10 +9,15 @@ from agent_instance_provisioning_repository import AgentInstanceProvisioningRepo
 from agent_instance_runtime_health_repository import AgentInstanceRuntimeHealthRepository
 from agent_runtime_repository import AgentRuntimeRepository
 from instance_provisioning_projection import dashboard_provision_state
+from minecraft_recovery_assessment import recovery_assessment
+from minecraft_current_neoforge_assessment import current_neoforge_assessment
+from minecraft_recovery_customer_projection import visible_provision_after_recovery
 from backup_repository import BackupRepository
+from backup_history_projection import annotate_backup_jobs
 from catalog_resource_profiles_http import catalog_resource_profiles
 from instance_file_repository import InstanceFileRepository
 from configuration_repository import ConfigurationRepository
+from runtime_secret_repository import RuntimeSecretOutbox
 from instance_workspace_policy import INSTANCE_PERMISSIONS,content_ui_sections,effective_content_policy,enforce_managed_content_mutation,require_permission,validate_server_settings,validate_startup_values
 from instance_workspace_repository import InstanceWorkspaceRepository
 from instance_agent_relocation_gate import require_unlocked
@@ -53,6 +58,58 @@ class CustomerInstanceWorkspaceService:
    finally:s.close()
   if row is None:return {}
   value=dict(row);value["agent_metadata"]=_json(value.pop("metadata_json",None),{});return value
+ def _customer_storage_summary(self,user,context):
+  """Only account owners see the combined tenant usage, not invited teammates."""
+  customer_id=context.get("customer_id")
+  if customer_id is None:return None
+  role=str((user or {}).get("role") or "").lower()
+  if role not in {"admin","controller","customer"}:return None
+  ph=self.dialect.placeholder
+  with self.backend.connect() as c:
+   session=self._session(c)
+   try:
+    if role=="customer":
+     allowed=session.execute(
+      f"SELECT 1 FROM customer_account_members WHERE customer_id={ph} AND username={ph} AND account_role='owner'",
+      (customer_id,str((user or {}).get("username") or "").lower()),
+     ).fetchone()
+     if allowed is None:return None
+    instances=[dict(row) for row in session.execute(
+     f"SELECT id,agent_id FROM instances WHERE customer_id={ph} ORDER BY id",(customer_id,)
+    ).fetchall()]
+    agent_ids=sorted({str(i.get("agent_id") or "") for i in instances if i.get("agent_id")})
+    agents={}
+    if agent_ids:
+     rows=session.execute(
+      f"SELECT id,metadata_json FROM agents WHERE id IN ({self.dialect.parameters(len(agent_ids))})",
+      tuple(agent_ids),
+     ).fetchall()
+     agents={str(row["id"]):_json(row["metadata_json"],{}) for row in rows}
+   finally:session.close()
+  instance_total=backup_total=0
+  complete=True
+  for item in instances:
+   metadata=agents.get(str(item.get("agent_id") or ""),{})
+   matches=[entry for entry in metadata.get("instance_telemetry") or []
+            if isinstance(entry,dict) and str(entry.get("instance_id") or "")==str(item["id"])]
+   sample=matches[-1] if matches else {}
+   instance_value=sample.get("instance_storage_used_bytes")
+   backup_value=sample.get("backup_storage_used_bytes")
+   if (sample.get("backup_inventory_status")!="ok"
+       or type(instance_value) is not int or instance_value<0
+       or type(backup_value) is not int or backup_value<0):
+    complete=False
+    continue
+   instance_total+=instance_value
+   backup_total+=backup_value
+  return {
+   "status":"ok" if complete else "incomplete",
+   "instance_count":len(instances),
+   "instance_used_bytes":instance_total if complete else None,
+   "backup_used_bytes":backup_total if complete else None,
+   "total_used_bytes":(instance_total+backup_total) if complete else None,
+  }
+
  def _runtime_projection(self,context):
   agent_id=str(context.get("agent_id") or "").strip();instance_id=str(context.get("id") or context.get("instance_id") or "").strip();observation=None;agent_health="unknown"
   if agent_id:
@@ -107,10 +164,29 @@ class CustomerInstanceWorkspaceService:
   context=self.require(user,instance_id,"instance.view");runtime=self._runtime_projection(context);policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
   for item in agent_meta.get("instance_telemetry") or []:
    if isinstance(item,dict) and str(item.get("instance_id"))==instance_id:latest=item
-  telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
+  telemetry={**latest,**telemetry};storage_limit=policy.get("storage_limit_bytes");used=telemetry.get("storage_used_bytes");storage_pct=(float(used)/float(storage_limit)*100) if used is not None and storage_limit else None;inventory_ok=telemetry.get("backup_inventory_status")=="ok" and isinstance(telemetry.get("backup_storage_used_bytes"),int);customer_storage=self._customer_storage_summary(user,context) if context.get("customer_id") is not None else None;metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};legacy_provision=metadata.get("provision") if isinstance(metadata,dict) else None;distributed_provision=self.provisioning.latest_for_instance(instance_id);provision=dashboard_provision_state(distributed_provision) if distributed_provision is not None else legacy_provision
   if isinstance(provision,dict) and str(provision.get("stage") or "").lower()=="completed" and int(provision.get("progress") or 0)>=100:provision=None
+  recovery=None
+  if (str(context.get("game_id") or "").lower()=="minecraft"
+      and isinstance(distributed_provision,dict)
+      and distributed_provision.get("status")=="failed"
+      and context.get("agent_id")):
+   try:
+    recovery=recovery_assessment(self.backend,instance_id=instance_id,agent_id=str(context["agent_id"]))
+   except Exception:
+    recovery={"status":"unavailable","allow_clear_previous_failure":False}
+   # Independent present-state verification is exposed for diagnosis only.
+   # It cannot impersonate a recovered migration or hide provisioning history.
+   try:
+    current_neoforge=current_neoforge_assessment(
+     self.backend,instance_id=instance_id,agent_id=str(context["agent_id"]))
+   except Exception:
+    current_neoforge={"status":"unavailable","allow_clear_previous_failure":False}
+   if isinstance(recovery,dict):
+    recovery["current_neoforge"]=current_neoforge
+   provision=visible_provision_after_recovery(provision,recovery)
   instance={k:context.get(k) for k in ("id","name","game_id","edition","runtime_id","variant","game_version","status","agent_id","contract_id")};instance["persisted_status"]=context.get("status");instance["status"]=runtime.get("state") or "unknown"
-  return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry,"storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct},"provision":provision,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
+  return {"instance":instance,"runtime":runtime,"permissions":sorted(permissions),"policy":policy,"content_policy":content.as_dict(),"content_sections":content_ui_sections(content),"runtime_capabilities":capabilities,"ports":self._ports(instance_id),"location":{k:location.get(k) for k in ("public_host","datacenter_id","datacenter_name","city","country_code","region_id","region_name","region_country_code","agent_name")},"telemetry":telemetry, "storage":{"used_bytes":used,"limit_bytes":storage_limit,"percent":storage_pct,"accounting_status":"ok" if inventory_ok else "incomplete","instance_used_bytes":telemetry.get("instance_storage_used_bytes") if inventory_ok else None,"backup_used_bytes":telemetry.get("backup_storage_used_bytes") if inventory_ok else None,"backup_files":telemetry.get("backup_storage_file_count") if inventory_ok else None,"manifest_only_files":telemetry.get("backup_manifest_only_count") if inventory_ok else None,"invalid_files":telemetry.get("backup_invalid_count") if inventory_ok else None},"customer_storage":customer_storage,"provision":provision,"recovery":recovery,"console":{"read":"console.read" in permissions,"execute":"console.execute" in permissions,"supported":bool((capabilities.get("console") or {}).get("supported"))},"upgrade":{"allowed":"contract.upgrade" in permissions,"current_profile_id":policy.get("resource_profile_id")}}
  def telemetry(self,user,instance_id,limit=240):self.require(user,instance_id,"instance.view");return self.repo.telemetry(instance_id,limit)
  def console_output(self,user,instance_id,limit=300):self.require(user,instance_id,"console.read");return self.repo.console_output(instance_id,limit)
  def console_command_status(self,user,instance_id,command_id):
@@ -134,7 +210,7 @@ class CustomerInstanceWorkspaceService:
   if str(context.get("game_id") or "").lower()=="palworld" and token=="adminpassword":raise PermissionError("/AdminPassword não pode ser enviado pelo Console do Capivara porque credenciais não podem entrar no histórico de comandos.")
   return self.repo.enqueue_console(agent_id=str(context.get("agent_id") or ""),instance_id=instance_id,command_text=text,requested_by=str(user.get("username") or ""))
  def startup(self,user,instance_id):
-  context=self.require(user,instance_id,"startup.read");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));return {"values":policy.get("startup") or {},"declaration":caps.get("startup_parameters") or {},"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
+  context=self.require(user,instance_id,"startup.read");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=caps.get("startup_parameters") or {};stored=dict(policy.get("startup") or {});values={key:stored.get(key,spec.get("default","")) for key,spec in declaration.items() if isinstance(spec,dict)};return {"values":values,"declaration":declaration,"resource_limits":{k:policy.get(k) for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")}}
  def save_startup(self,user,instance_id,values):
   context=self.require(user,instance_id,"startup.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));policy["startup"]=validate_startup_values(values,caps.get("startup_parameters") or {});return self.repo.save_workspace_policy(instance_id,policy)
  def _server_settings_value(self,stored):
@@ -188,6 +264,17 @@ class CustomerInstanceWorkspaceService:
    candidate=PurePosixPath(str(value).replace("\\","/"))
    if candidate.is_absolute() or ".." in candidate.parts:raise ValueError("server setting path must stay relative")
   return value
+ def _enforce_dayz_surface_constraint(self,context,field,value):
+  if str(context.get("game_id") or "").lower()!="dayz" or str(field.get("path") or "")!="serverDZ.cfg":return
+  key=str(field.get("key") or "")
+  allowed={"thirdPersonView":(0,1,2),"verifySignatures":(0,1,2)}
+  minimum={"vonCodecQuality":0,"loginQueueConcurrentPlayers":1,"loginQueueMaxPlayers":1,"instanceId":1}
+  if key=="guaranteedUpdates":raise ValueError("guaranteedUpdates is fixed and cannot be edited")
+  if key not in allowed and key not in minimum:return
+  if isinstance(value,bool) or not isinstance(value,int):raise ValueError("DayZ setting must be an integer: "+key)
+  if key in allowed and value not in allowed[key]:raise ValueError("invalid DayZ setting value: "+key)
+  if key in minimum and value<minimum[key]:raise ValueError("DayZ setting below minimum: "+key)
+  if key=="vonCodecQuality" and value>30:raise ValueError("DayZ setting above maximum: "+key)
  def _validate_server_setting_relationships(self,fields,dynamic):
   by_key={}
   for field_id,value in (dynamic or {}).items():
@@ -196,24 +283,54 @@ class CustomerInstanceWorkspaceService:
   warning=by_key.get("pingwarning");critical=by_key.get("pingcritical");maximum=by_key.get("maxping")
   if warning is not None and critical is not None and float(warning)>float(critical):raise ValueError("pingWarning must be less than or equal to pingCritical")
   if critical is not None and maximum is not None and float(critical)>float(maximum):raise ValueError("pingCritical must be less than or equal to MaxPing")
- def save_server_settings(self,user,instance_id,values,surface_command_id=None):
+ def save_server_settings(self,user,instance_id,values,surface_command_id=None,secret_actions=None):
+  cleared_protected_fields=[]
   context=self.require(user,instance_id,"settings.write");policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));caps=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),str(context.get("runtime_id") or ""));declaration=dict(caps.get("server_settings") or {});repo=ConfigurationRepository(self.backend);repo.initialize();current=repo.get(scope_type="instance",scope_id=instance_id,namespace="capivara.instance.server-settings");player_limit=policy.get("player_limit");dynamic_patch={};fields={}
   if surface_command_id:
    state=self.server_settings_surface_status(user,instance_id,surface_command_id)
    if str(state.get("status") or "")!="completed":raise RuntimeError("server settings surface is not ready")
    surface=state.get("result") if isinstance(state.get("result"),dict) else {};fields={str(item.get("id") or ""):item for item in surface.get("fields") or [] if isinstance(item,dict) and item.get("id")};logical={}
+   protected_refs={}
+   secret_actions=secret_actions if isinstance(secret_actions,dict) else {}
+   for field_id,action in secret_actions.items():
+    field=fields.get(str(field_id))
+    if not field:raise PermissionError("unknown server setting")
+    if not bool(field.get("editable")) or not bool(field.get("secret")):raise PermissionError("server setting secret action is not allowed")
+    if str(action or "").strip().lower()!="remove":raise ValueError("invalid server setting secret action")
+    logical_id=str(field.get("logical_id") or "").strip()
+    if not logical_id:raise PermissionError("dynamic secret server settings require a catalog declaration")
+    name=("SERVER_SETTING_"+logical_id).upper().replace("-","_")
+    RuntimeSecretOutbox(self.backend).enqueue(instance_id=instance_id,name=name,action="revoke",requested_by=str((user or {}).get("username") or (user or {}).get("id") or "customer"))
+    protected_refs[logical_id+"_ref"]=None
+    cleared_protected_fields.append(logical_id)
    for field_id,raw in (values or {}).items():
     field=fields.get(str(field_id))
     if not field:raise PermissionError("unknown server setting")
     if not bool(field.get("editable")):raise PermissionError("server setting is managed by Capivara")
     if bool(field.get("secret")) and raw in {None,""}:continue
+    if str(context.get("game_id") or "").lower()=="dayz" and str(field.get("path") or "")=="serverDZ.cfg" and str(field.get("key") or "") in {"thirdPersonView","verifySignatures","vonCodecQuality","loginQueueConcurrentPlayers","loginQueueMaxPlayers","instanceId"}:
+     if type(raw) is not int:raise ValueError("DayZ setting must be a strict integer: "+str(field.get("key")))
     value=self._surface_value(field,raw,player_limit)
+    self._enforce_dayz_surface_constraint(context,field,value)
     logical_id=str(field.get("logical_id") or "").strip()
-    if logical_id:logical[logical_id]=value
+    if bool(field.get("secret")):
+     if not logical_id:raise PermissionError("dynamic secret server settings require a catalog declaration")
+     name=("SERVER_SETTING_"+logical_id).upper().replace("-","_")
+     job=RuntimeSecretOutbox(self.backend).enqueue(instance_id=instance_id,name=name,action="put",value=value,requested_by=str((user or {}).get("username") or (user or {}).get("id") or "customer"))
+     protected_refs[logical_id+"_ref"]=job["ref"]
+    elif logical_id:logical[logical_id]=value
     else:dynamic_patch[str(field_id)]=value
    partial=validate_server_settings(logical,declaration,player_limit=player_limit)
   else:partial=validate_server_settings(values,declaration,player_limit=player_limit)
-  merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=player_limit);dynamic={**self._server_settings_dynamic_value(current),**dynamic_patch};self._validate_server_setting_relationships(fields,dynamic);actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();payload={"runtime_id":runtime_id,"settings":merged,"dynamic_values":dynamic,"player_limit":player_limit,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"dynamic_values":dynamic,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
+  merged={**self._server_settings_value(current),**partial};merged=validate_server_settings(merged,declaration,player_limit=player_limit);dynamic={**self._server_settings_dynamic_value(current),**dynamic_patch};self._validate_server_setting_relationships(fields,dynamic);actor=str((user or {}).get("username") or (user or {}).get("id") or "customer");runtime_id=str(context.get("runtime_id") or "").strip();existing_raw=dict((current or {}).get("value") or {});cleared_protected_fields=list(existing_raw.get("cleared_protected_fields") or [])+cleared_protected_fields;protected={**(existing_raw.get("protected_refs") if isinstance(existing_raw.get("protected_refs"),dict) else {})};
+  if surface_command_id:
+   for key,ref in protected_refs.items():
+    if ref is None:protected.pop(key,None)
+    else:
+     protected[key]=ref
+     logical_key=key[:-4] if key.endswith("_ref") else key
+     cleared_protected_fields=[item for item in cleared_protected_fields if item!=logical_key]
+  payload={"runtime_id":runtime_id,"settings":merged,"dynamic_values":dynamic,"protected_refs":protected,"cleared_protected_fields":sorted(set(cleared_protected_fields)),"player_limit":player_limit,"declaration":declaration};stored=repo.put({"scope_type":"instance","scope_id":instance_id,"namespace":"capivara.instance.server-settings","value":payload},updated_by=actor);row=stored.get("configuration") or {};return {"values":merged,"dynamic_values":dynamic,"declaration":declaration,"revision":row.get("revision"),"checksum":row.get("checksum"),"changed":bool(stored.get("changed")),"restart_required":bool(declaration.get("restart_required",True))}
  def _file_command_policy(self,context,policy):
   caps,content=self._contract_policy(context,policy);return {"storage_limit_bytes":policy.get("storage_limit_bytes"),"content_policy":content.as_dict(),"file_policy":dict(caps.get("file_policy") or {})}
  def queue_file(self,user,instance_id,action,*,path=None,target_path=None,payload=None):
@@ -235,7 +352,7 @@ class CustomerInstanceWorkspaceService:
   return state
  def backup_policy(self,user,instance_id):self.require(user,instance_id,"backup.read");return self.repo.backup_policy(instance_id)
  def save_backup_policy(self,user,instance_id,body):self.require(user,instance_id,"backup.create");return self.repo.save_backup_policy(instance_id,enabled=bool(body.get("enabled",True)),schedule_time=body.get("schedule_time") or "04:00",schedule_timezone=body.get("schedule_timezone") or "UTC",healthy_only=True)
- def backup_jobs(self,user,instance_id):self.require(user,instance_id,"backup.read");self.backups.initialize();return self.backups.list_effective_jobs(instance_id=instance_id,limit=100)
+ def backup_jobs(self,user,instance_id):self.require(user,instance_id,"backup.read");self.backups.initialize();return annotate_backup_jobs(self.backups.list_effective_jobs(instance_id=instance_id,limit=100))
  def request_backup(self,user,instance_id,action,backup_id=None):
   action=str(action or "").lower();required={"create":"backup.create","restore":"backup.restore","delete":"backup.delete"}.get(action)
   if required is None:raise ValueError("invalid backup action")

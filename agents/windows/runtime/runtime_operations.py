@@ -30,12 +30,20 @@ def recover_interrupted_operations(config:dict[str,Any])->list[dict[str,Any]]:
 def runtime_operation(config:dict[str,Any],instance_id:str,operation:str,*,lock_timeout_seconds:float=5.0)->Iterator[dict[str,Any]]:
  agent_id=str(config.get("agent_id") or "").strip()
  if not agent_id:raise ValueError("agent_id is required")
- instance_id=instance_runtime._token(instance_id,"instance_id");operation=str(operation or "").strip();previous=read_operation(instance_id);started=time.monotonic()
+ instance_id=instance_runtime._token(instance_id,"instance_id");operation=str(operation or "").strip();started=time.monotonic()
  with instance_lock(instance_id,operation,timeout_seconds=lock_timeout_seconds):
+  # A failed or interrupted staged migration must retain its journal until
+  # a separately homologated recovery routine verifies its artifacts.
+  previous=read_operation(instance_id)
+  if previous is None and _path(instance_id).exists():
+   raise RuntimeError("instance operation journal is unreadable; manual recovery required")
+  if (previous and previous.get("operation")=="minecraft_serverpack_migration"
+      and previous.get("status") in {"running","interrupted","failed","finalization_pending"}):
+   raise RuntimeError("interrupted staged Minecraft migration requires manual recovery; instance operation blocked")
   journal={"schema_version":1,"kind":"CapivaraInstanceRuntimeOperation","agent_id":agent_id,"instance_id":instance_id,"operation":operation,"status":"running","started_at":_now(),"previous_interrupted":bool(previous and previous.get("status") in {"running","interrupted"})};_atomic(_path(instance_id),journal)
   try:yield journal
   except Exception as exc:
    journal["status"]="failed";journal["error"]=str(exc)[:2000];journal["finished_at"]=_now();journal["duration_ms"]=int((time.monotonic()-started)*1000);_atomic(_path(instance_id),journal);raise
   else:
-   journal["status"]="completed";journal["finished_at"]=_now();journal["duration_ms"]=int((time.monotonic()-started)*1000);_atomic(_path(instance_id),journal)
+   journal["status"]=journal["status"] if journal.get("status")=="finalization_pending" else "completed";journal["finished_at"]=_now();journal["duration_ms"]=int((time.monotonic()-started)*1000);_atomic(_path(instance_id),journal)
 __all__=["read_operation","recover_interrupted_operations","runtime_operation"]

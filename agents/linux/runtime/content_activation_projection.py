@@ -101,7 +101,25 @@ def _dayz_map_compatibility(command: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
+def _community_map(state: Mapping[str, Any]) -> dict[str, str]:
+    raw = state.get("community_map")
+    if not isinstance(raw, Mapping):
+        return {}
+    result: dict[str, str] = {}
+    name = str(raw.get("name") or "").strip()
+    if name:
+        result["name"] = name[:191]
+    mission_path = str(raw.get("mission_path") or "").strip().replace("\\", "/")
+    if mission_path:
+        relative = Path(mission_path)
+        if (mission_path.startswith("/") or relative.is_absolute()
+                or any(part in {"", ".", ".."} for part in relative.parts)):
+            raise ValueError("invalid DayZ community mission path")
+        result["mission_path"] = mission_path[:512]
+    return result
+
+
+def _entry(state: dict[str, Any], *, include_disabled: bool = False) -> dict[str, Any] | None:
     status = str(state.get("status") or "")
     active_security = str(state.get("security_state") or "unscanned")
     if status in {"security_blocked", "security_scan_failed"}:
@@ -118,7 +136,7 @@ def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if str(state.get("desired_state") or "installed") != "installed":
         return None
-    if str(state.get("activation_state") or "enabled") != "enabled":
+    if not include_disabled and str(state.get("activation_state") or "enabled") != "enabled":
         return None
     if not state.get("installed_version"):
         return None
@@ -132,10 +150,12 @@ def _entry(state: dict[str, Any]) -> dict[str, Any] | None:
         "package_id": str(state.get("package_id") or "").strip() or None,
         "target": str(state.get("target") or "").strip() or None,
         "managed_path": str(state.get("managed_path") or "").strip() or None,
+        "artifact_filename": str(state.get("artifact_filename") or "").strip() or None,
         "activation_order": _order(state.get("activation_order")),
         "dependencies": [str(value).strip() for value in (state.get("dependencies") or []) if str(value).strip()],
         "activation": activation,
         "dayz_map_compatibility": dict(state.get("dayz_map_compatibility") or {}) if isinstance(state.get("dayz_map_compatibility"), dict) else {},
+        "metadata": {"community_map": _community_map(state)} if _community_map(state) else {},
     }
 
 
@@ -176,6 +196,63 @@ def _ordered_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return ordered
 
 
+def build_activation_snapshot_from_states(
+    instance_id: str, states: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a snapshot from a complete isolated Agent state revision.
+
+    Unlike the filesystem-backed reader, this function fails closed on
+    partial, foreign, duplicated or malformed state instead of silently
+    dropping invalid members. It has no filesystem or service side effects.
+    """
+    iid = _safe_component(instance_id)
+    if not isinstance(states, list) or not states:
+        raise ValueError("an explicit nonempty Agent state batch is required")
+    ids: set[str] = set()
+    entries: list[dict[str, Any]] = []
+    expected_active: set[str] = set()
+    for state in states:
+        if not isinstance(state, dict):
+            raise ValueError("invalid Agent state record")
+        cid = _safe_component(state.get("content_id"))
+        if cid in ids:
+            raise ValueError("duplicate Agent state in isolated snapshot")
+        ids.add(cid)
+        if str(state.get("instance_id") or "") != iid:
+            raise ValueError("foreign Agent state in isolated snapshot")
+        if state.get("status") != "applied":
+            raise ValueError("uncommitted Agent state in isolated snapshot")
+        wanted = str(state.get("desired_state") or "")
+        if wanted not in {"installed", "absent"}:
+            raise ValueError("invalid desired state in isolated snapshot")
+        if wanted == "installed":
+            if (str(state.get("security_state") or "") != "clean"
+                    or str(state.get("applied_security_state") or "") != "clean"):
+                raise ValueError("unverified content in isolated snapshot")
+            if (int(state.get("applied_revision") or 0) <= 0
+                    or state.get("desired_revision") != state.get("applied_revision")
+                    or state.get("desired_checksum") != state.get("applied_checksum")
+                    or not state.get("installed_version") or not state.get("managed_path")):
+                raise ValueError("incomplete installed content in isolated snapshot")
+            if str(state.get("activation_state") or "enabled") == "enabled":
+                expected_active.add(cid)
+        else:
+            if state.get("installed_version") or state.get("managed_path"):
+                raise ValueError("removed content still owns managed source")
+        value = _entry(state)
+        if value is not None:
+            entries.append(value)
+    entries = _ordered_entries(entries)
+    if {str(entry["content_id"]) for entry in entries} != expected_active:
+        raise ValueError("an enabled content member was excluded from the snapshot")
+    identity = {"schema_version": 1, "kind": "CapivaraContentActivationSnapshot",
+                "instance_id": iid, "entries": entries}
+    checksum = hashlib.sha256(json.dumps(
+        identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    return {**identity, "checksum": checksum}
+
+
 def build_activation_snapshot(instance_id: str) -> dict[str, Any]:
     iid = _safe_component(instance_id)
     entries = [entry for state in _load_instance_states(iid) if (entry := _entry(state)) is not None]
@@ -183,6 +260,104 @@ def build_activation_snapshot(instance_id: str) -> dict[str, Any]:
     identity = {"schema_version": 1, "kind": "CapivaraContentActivationSnapshot", "instance_id": iid, "entries": entries}
     checksum = hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
     return {**identity, "checksum": checksum}
+
+
+def activation_snapshot_with(instance_id: str, content_ids: list[str]) -> dict[str, Any]:
+    iid = _safe_component(instance_id);states=_load_instance_states(iid);by_id={str(state.get("content_id") or ""):state for state in states}
+    selected={str(value).strip() for value in content_ids if str(value).strip()}
+    pending=list(selected)
+    while pending:
+        cid=pending.pop();state=by_id.get(cid) or {}
+        for dep in state.get("dependencies") or []:
+            dep=str(dep).strip()
+            if dep and dep not in selected:selected.add(dep);pending.append(dep)
+    entries=[]
+    for state in states:
+        cid=str(state.get("content_id") or "")
+        entry=_entry(state,include_disabled=cid in selected)
+        if entry is not None:entries.append(entry)
+    entries=_ordered_entries(entries)
+    identity={"schema_version":1,"kind":"CapivaraContentActivationSnapshot","instance_id":iid,"entries":entries}
+    checksum=hashlib.sha256(json.dumps(identity,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode("utf-8")).hexdigest()
+    return {**identity,"checksum":checksum}
+
+def runtime_projection_inputs(instance_id: str, spec: dict[str, Any], snapshot: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Recover configured DayZ map dependencies before runtime projection."""
+    prepared = dict(spec)
+    base = snapshot if isinstance(snapshot, dict) else build_activation_snapshot(instance_id)
+    if str(prepared.get("game_id") or "").strip().lower() != "dayz" or prepared.get("dayz_content_enabled") is not False:
+        return prepared, base
+    config_path = str(prepared.get("config_path") or "").strip()
+    if not config_path:
+        root = str(prepared.get("instance_state_root") or "").strip()
+        config_path = str(Path(root) / "config" / "serverDZ.cfg") if root else ""
+    try:
+        source = Path(config_path).read_text(encoding="utf-8", errors="replace") if config_path else ""
+    except OSError:
+        source = ""
+    import re
+    match = re.search(r"\btemplate\s*=\s*[\"']([^\"']+)[\"']\s*;", source, re.I)
+    mission = match.group(1).strip().casefold() if match else ""
+    if not mission:
+        return prepared, base
+    required: list[str] = []
+    map_id = ""
+    from dayz_community_missions import discover_community_missions
+    for state in _load_instance_states(_safe_component(instance_id)):
+        if str(state.get("status") or "") != "applied" or str(state.get("desired_state") or "installed") != "installed":
+            continue
+        if str(state.get("game_id") or "").strip().lower() != "dayz" or str(state.get("content_type") or "").strip().lower() != "map":
+            continue
+        if str(state.get("security_state") or "unscanned") != "clean" or not state.get("installed_version"):
+            continue
+        managed = str(state.get("managed_path") or "").strip()
+        if not managed:
+            continue
+        community = state.get("community_map") if isinstance(state.get("community_map"), dict) else {}
+        mission_path = str(community.get("mission_path") or "").strip() or None
+        try:
+            missions = discover_community_missions(Path(managed), mission_path=mission_path)
+        except (OSError, ValueError):
+            continue
+        if not any(str(item.get("id") or "").strip().casefold() == mission for item in missions):
+            continue
+        map_id = str(state.get("content_id") or "").strip()
+        required = [str(value).strip() for value in state.get("dependencies") or [] if str(value).strip()]
+        # Legacy map states may predate required_items metadata. Expand the
+        # installed Workshop dependency graph so runtime projection preserves
+        # mandatory transitive dependencies without mutating persisted state.
+        states_by_id = {str(item.get("content_id") or "").strip(): item for item in _load_instance_states(_safe_component(instance_id))}
+        graph: Mapping[str, Any] = {}
+        try:
+            definition = json.loads((Path(__file__).resolve().parents[3] / "catalog/v2/games/dayz/runtimes/stable.json").read_text(encoding="utf-8"))
+            workshop = ((definition.get("content") or {}).get("steam_workshop") or {}) if isinstance(definition, Mapping) else {}
+            graph = workshop.get("required_items") if isinstance(workshop.get("required_items"), Mapping) else {}
+        except (OSError, json.JSONDecodeError):
+            graph = {}
+        pending = list(required)
+        seen = set(required)
+        while pending:
+            dependency_id = pending.pop(0)
+            dependency_state = states_by_id.get(dependency_id) or {}
+            nested_values = list(dependency_state.get("dependencies") or [])
+            if dependency_id.startswith("steam-workshop:"):
+                published_id = dependency_id.split(":", 1)[1]
+                nested_values.extend(f"steam-workshop:{value}" for value in (graph.get(published_id) or []))
+            for nested in nested_values:
+                nested = str(nested).strip()
+                if nested and nested not in seen:
+                    seen.add(nested)
+                    required.append(nested)
+                    pending.append(nested)
+        break
+    if not map_id:
+        return prepared, base
+    prepared["dayz_required_content_ids"] = required
+    return prepared, activation_snapshot_with(instance_id, [map_id, *required])
+
+
+def activation_snapshot_for_runtime(instance_id: str, spec: dict[str, Any], snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    return runtime_projection_inputs(instance_id, spec, snapshot)[1]
 
 
 def refresh_activation_snapshot(instance_id: str) -> dict[str, Any]:
@@ -234,6 +409,8 @@ def synchronize_activation_state(commands: list[dict[str, Any]], reports: list[d
         state["dependencies"] = [str(value).strip() for value in (command.get("dependencies") or []) if str(value).strip()]
         state["activation"] = _activation(command)
         state["dayz_map_compatibility"] = _dayz_map_compatibility(command)
+        metadata = command.get("metadata") if isinstance(command.get("metadata"), dict) else {}
+        state["community_map"] = dict(metadata.get("community_map") or {}) if isinstance(metadata.get("community_map"), dict) else {}
         _write(path, state)
         changed_instances.add(iid)
 
@@ -252,6 +429,7 @@ def activation_snapshot(instance_id: str) -> dict[str, Any]:
 
 __all__ = [
     "activation_snapshot",
+    "activation_snapshot_with",
     "build_activation_snapshot",
     "refresh_activation_snapshot",
     "synchronize_activation_state",

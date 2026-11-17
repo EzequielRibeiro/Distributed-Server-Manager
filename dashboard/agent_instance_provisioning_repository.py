@@ -32,6 +32,7 @@ _SPEC.loader.exec_module(_BASE)
 
 from alert_repository import AlertRepository  # noqa: E402
 from core.agent_health import utc_timestamp  # noqa: E402
+from minecraft_serverpack_pending_publication import publish_pending_serverpack_bundle  # noqa: E402
 
 ACTIVE_STATES = _BASE.ACTIVE_STATES
 FINAL_STATES = _BASE.FINAL_STATES
@@ -198,9 +199,15 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             raise PermissionError("provisioning operation belongs to another Agent")
         if str(sanitized.get("instance_id") or "") != str(current.get("instance_id") or ""):
             raise ValueError("provisioning result instance_id mismatch")
+        # Replayed Agent results must not re-enter Controller publication.
+        # A terminal provisioning operation is immutable.
+        if str(current.get("status") or "").lower() in FINAL_STATES:
+            return current
         status = str(sanitized.get("status") or "").strip().lower()
         if status not in {"running", "completed", "failed"}:
             raise ValueError("invalid provisioning result status")
+        if status == "completed":
+            _BASE.reject_pending_minecraft_finalization(sanitized)
         try:
             requested_progress = int(sanitized.get("progress", current.get("progress", 0)))
         except (TypeError, ValueError):
@@ -225,17 +232,59 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
             if sanitized.get("traceback") is not None:
                 sanitized["traceback"] = _sanitize_text(sanitized["traceback"], limit=_MAX_TRACEBACK)
         now = utc_timestamp()
+        request = current.get("request") if isinstance(current.get("request"), dict) else {}
         payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
         ph = self.dialect.placeholder
+        running_updated = True
         with self.session(transaction=True) as session:
+            # Acquire the provisioning row's write lock before publication.
+            # Only one terminal result may claim a nonterminal operation.
+            # The claim and bundle publication share this transaction.
+            if status in FINAL_STATES:
+                claim = session.execute(
+                    "UPDATE agent_instance_provisioning SET "
+                    f"updated_at={ph} WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
+                    (now, provisioning_id),
+                )
+                if int(getattr(claim, "rowcount", 0) or 0) != 1:
+                    # The competing transaction has already committed its
+                    # terminal state. Avoid a second publication and events.
+                    # Read through the same transaction/session rather than
+                    # opening a second connection while holding this lock.
+                    row = session.execute(
+                        f"SELECT * FROM agent_instance_provisioning WHERE provisioning_id={ph}",
+                        (provisioning_id,),
+                    ).fetchone()
+                    if row is None or str(row["status"] or "") not in FINAL_STATES:
+                        raise RuntimeError("provisioning terminal claim lost without terminal state")
+                    terminal = dict(row)
+                    for source, target in (("request_json", "request"), ("result_json", "result")):
+                        raw = terminal.pop(source, None)
+                        try:
+                            terminal[target] = json.loads(raw) if raw else None
+                        except (TypeError, ValueError):
+                            terminal[target] = None
+                    return _public_snapshot(terminal)
+            if status == "completed":
+                publication = publish_pending_serverpack_bundle(
+                    backend=self.backend,
+                    session=session,
+                    request=request,
+                    result=sanitized,
+                    instance_id=str(current.get("instance_id") or ""),
+                )
+                if publication is not None:
+                    sanitized = {**sanitized, "controller_bundle_publication": publication}
+                    payload = json.dumps(sanitized, separators=(",", ":"), sort_keys=True)
             if status == "running":
-                session.execute(
+                update = session.execute(
                     "UPDATE agent_instance_provisioning SET "
                     f"status={ph},current_step={ph},progress={ph},result_json={ph},last_error={ph},"
                     f"started_at=CASE WHEN started_at IS NULL THEN {ph} ELSE started_at END,updated_at={ph} "
                     f"WHERE provisioning_id={ph} AND status NOT IN ('completed','failed')",
                     (status, current_step, progress, payload, error, now, now, provisioning_id),
                 )
+                running_updated = int(getattr(update, "rowcount", 0) or 0) == 1
             else:
                 session.execute(
                     "UPDATE agent_instance_provisioning SET "
@@ -245,6 +294,10 @@ class AgentInstanceProvisioningRepository(_BASE.AgentInstanceProvisioningReposit
                 )
 
         state = self.snapshot(provisioning_id)
+        if status == "running" and not running_updated:
+            # A terminal result won while this progress update was in flight.
+            # Do not emit a misleading late progress event.
+            return state
         pool_id, reserved_bytes = _request_storage_reservation(current.get("request"))
         if status == "running":
             self._publish_event(
