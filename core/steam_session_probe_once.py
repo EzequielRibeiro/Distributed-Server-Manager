@@ -23,6 +23,14 @@ _NAMED = re.compile(r'Logging in user (.+?) to Steam Public(?:\.\.\.|\s*:\s*)', 
 _SUCCESS = re.compile(r'Logged in OK|Logging in user .+? to Steam Public\.\.\.OK', re.I)
 
 
+def _normalize_login_account(raw: str) -> str:
+    # SteamCMD may append a numeric account ID after the account name.
+    # It is metadata, not part of the account being authenticated.
+    value = raw.strip()
+    value = re.sub(r'\s+\[U:[0-9]+:[0-9]+\]$', '', value, flags=re.I)
+    return value.strip("'\"").casefold()
+
+
 def classify(output: str, code: int, expected_account: str) -> str:
     """Return one reason code without retaining or displaying SteamCMD output."""
     if _AUTH_FAILURE.search(output):
@@ -33,7 +41,7 @@ def classify(output: str, code: int, expected_account: str) -> str:
         return 'steamcmd_reported_error'
     if code != 0:
         return 'steamcmd_nonzero_exit'
-    named = [name.strip().strip("'\"").casefold() for name in _NAMED.findall(output)]
+    named = [_normalize_login_account(name) for name in _NAMED.findall(output)]
     if named and any(name != expected_account.casefold() for name in named):
         return 'account_mismatch'
     if _SUCCESS.search(output):
