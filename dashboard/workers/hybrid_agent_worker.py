@@ -803,7 +803,7 @@ def process_hybrid_backup_cycle(
     previous = [item for item in previous if isinstance(item, dict)]
     reported = repository.record_agent_state(agent_id, previous)
 
-    commands = repository.commands_for_agent(agent_id)
+    commands = repository.commands_for_agent(agent_id, root=root)
     if not isinstance(commands, list):
         raise RuntimeError("Hybrid backup repository returned an invalid command payload")
     commands = [item for item in commands if isinstance(item, dict)]

@@ -15,6 +15,7 @@ from minecraft_recovery_customer_projection import visible_provision_after_recov
 from backup_repository import BackupRepository
 from backup_history_projection import annotate_backup_jobs
 from catalog_resource_profiles_http import catalog_resource_profiles
+from core.workspace_resource_policy import resolve_workspace_resource_policy
 from instance_file_repository import InstanceFileRepository
 from configuration_repository import ConfigurationRepository
 from runtime_secret_repository import RuntimeSecretOutbox
@@ -122,39 +123,7 @@ class CustomerInstanceWorkspaceService:
    entitlements["modpacks"]=False;entitlements["datapacks"]=False
   return capabilities,effective_content_policy(entitlements,capabilities)
  def _resolved_resource_policy(self,context,policy):
-  result=dict(policy or {});metadata=context.get("contract_metadata") if isinstance(context.get("contract_metadata"),dict) else {};instance_metadata=context.get("instance_metadata") if isinstance(context.get("instance_metadata"),dict) else {};resources=metadata.get("resources") if isinstance(metadata.get("resources"),dict) else {};effective=metadata.get("effective_resource_policy") if isinstance(metadata.get("effective_resource_policy"),dict) else {}
-  profile_id=str(result.get("resource_profile_id") or metadata.get("resource_profile_id") or metadata.get("profile_id") or instance_metadata.get("resource_profile_id") or "").strip().lower()
-  if profile_id and not result.get("resource_profile_id"):result["resource_profile_id"]=profile_id
-  def number(source,key,kind=int):
-   value=source.get(key) if isinstance(source,dict) else None
-   if value is None:return None
-   try:return kind(value)
-   except (TypeError,ValueError):return None
-  if result.get("cpu_limit_cores") is None:
-   result["cpu_limit_cores"]=number(effective,"cpu_cores",float) if number(effective,"cpu_cores",float) is not None else number(resources,"cpu_cores",float)
-  for target,byte_key,mb_key in (("memory_limit_bytes","memory_bytes","memory_mb"),("storage_limit_bytes","storage_bytes","storage_mb")):
-   if result.get(target) is not None:continue
-   value=number(effective,byte_key)
-   if value is None:value=number(resources,byte_key)
-   if value is None:
-    mb=number(resources,mb_key)
-    value=mb*1024*1024 if mb is not None else None
-   result[target]=value
-  if result.get("player_limit") is None:
-   result["player_limit"]=number(effective,"player_limit")
-   if result.get("player_limit") is None:result["player_limit"]=number(resources,"player_limit") if resources.get("player_limit") is not None else number(resources,"slots")
-  if not profile_id or all(result.get(k) is not None for k in ("cpu_limit_cores","memory_limit_bytes","storage_limit_bytes","player_limit")):return result
-  try:catalog=catalog_resource_profiles(self.root,str(context.get("game_id") or ""))
-  except (OSError,ValueError,json.JSONDecodeError):return result
-  profile=next((item for item in catalog.get("profiles") or [] if isinstance(item,dict) and str(item.get("id") or "").strip().lower()==profile_id),None)
-  if not isinstance(profile,dict):return result
-  if result.get("cpu_limit_cores") is None:result["cpu_limit_cores"]=number(profile,"cpu_cores",float)
-  if result.get("memory_limit_bytes") is None:
-   mb=number(profile,"memory_mb");result["memory_limit_bytes"]=mb*1024*1024 if mb is not None else None
-  if result.get("storage_limit_bytes") is None:
-   mb=number(profile,"storage_mb");result["storage_limit_bytes"]=mb*1024*1024 if mb is not None else None
-  if result.get("player_limit") is None:result["player_limit"]=number(profile,"player_limit")
-  return result
+  return resolve_workspace_resource_policy(self.root,context,policy)
  def overview(self,user,instance_id):
   context=self.require(user,instance_id,"instance.view");runtime=self._runtime_projection(context);policy=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));permissions=self.permissions(user,instance_id);telemetry=(self.repo.telemetry(instance_id,1) or [{}])[-1];location=self._location(str(context.get("agent_id") or ""));capabilities,content=self._contract_policy(context,policy);agent_meta=location.get("agent_metadata") if isinstance(location.get("agent_metadata"),dict) else {};latest={}
   for item in agent_meta.get("instance_telemetry") or []:

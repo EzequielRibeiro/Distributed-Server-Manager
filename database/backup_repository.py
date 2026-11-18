@@ -20,6 +20,7 @@ if str(CORE) not in sys.path:
 from alert_repository import AlertSession
 from backup_intelligence import aggregate_health, evaluate_policy
 from backup_platform import BackupValidationError, normalize_policy
+from core.workspace_resource_policy import resolve_workspace_resource_policy
 from event_platform import utc_now
 from instance_backup_policy_defaults import default_instance_backup_policy
 
@@ -484,7 +485,7 @@ class BackupRepository:
             excluded.add(old_id)
         return queued
 
-    def commands_for_agent(self, agent_id):
+    def commands_for_agent(self, agent_id, *, root: Path | None = None):
         self.schedule_due(agent_id);output=[]
         for job in reversed(self.list_jobs(agent_id=agent_id,status="pending",limit=100)):
             # Old queued retention jobs must not bypass the new opt-in gate.
@@ -499,7 +500,10 @@ class BackupRepository:
                 # the smaller one, so a stale Controller cannot grant space.
                 from instance_workspace_repository import InstanceWorkspaceRepository
                 workspace = InstanceWorkspaceRepository(self.backend)
-                resolved = workspace.workspace_policy(str(job["instance_id"]))
+                instance_id = str(job["instance_id"])
+                context = workspace.instance_context(instance_id)
+                stored_policy = workspace.workspace_policy(instance_id, context=context)
+                resolved = resolve_workspace_resource_policy(root or ROOT, context, stored_policy)
                 limit = resolved.get("storage_limit_bytes")
                 if limit is not None:
                     policy["storage_limit_bytes"] = int(limit)

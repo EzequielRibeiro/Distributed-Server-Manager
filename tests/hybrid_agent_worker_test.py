@@ -192,7 +192,7 @@ class HybridAgentWorkerTest(unittest.TestCase):
 
         repository.initialize.assert_called_once_with()
         repository.record_agent_state.assert_any_call(agent_id, previous)
-        repository.commands_for_agent.assert_called_once_with(agent_id)
+        repository.commands_for_agent.assert_called_once_with(agent_id, root=self.root)
         client.apply_backup_commands.assert_called_once_with(config, commands)
         repository.record_agent_state.assert_any_call(agent_id, reports)
 
