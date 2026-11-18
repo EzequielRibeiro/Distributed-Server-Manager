@@ -52,7 +52,18 @@ def _snapshot(name: str, inspect: Callable[[str], Mapping]) -> dict:
             raise ValueError("invalid PID or monotonic start timestamp")
         if state.get("state") != "active":
             raise ValueError("disposable unit not active")
-        return {"unit": name, "pid": pid, "started": started, "state": "active"}
+        # The systemd unit witness is optional for older disposable fixtures,
+        # but once supplied it becomes part of the durable original identity.
+        # An omitted, malformed or changed witness after apply/rollback is
+        # rejected as a process-preservation failure even if PID is unchanged.
+        result = {"unit": name, "pid": pid, "started": started, "state": "active"}
+        witness = state.get("unit_config_sha256")
+        if witness is not None:
+            if (not isinstance(witness, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", witness)):
+                raise ValueError("invalid systemd unit configuration witness")
+            result["unit_config_sha256"] = witness
+        return result
     except Exception as exc:
         raise TransactionSafetyError(f"cannot prove disposable unit identity: {name}") from exc
 
@@ -119,7 +130,7 @@ def execute(
         _checkpoint(path, "applied", before)
         after = [_snapshot(row["unit"], inspect) for row in before]
         if after != before:
-            raise TransactionSafetyError("PID or start identity changed during apply")
+            raise TransactionSafetyError("process or unit configuration changed during apply")
         _checkpoint(path, "verified", before)
         return {"status": "verified", "live_no_drain_authorized": False, "units": after}
     except Exception as exc:
@@ -127,7 +138,7 @@ def execute(
             rollback()
             after_rollback = [_snapshot(row["unit"], inspect) for row in before]
             if after_rollback != before:
-                raise TransactionSafetyError("PID or start identity changed during rollback")
+                raise TransactionSafetyError("process or unit configuration changed during rollback")
             _checkpoint(path, "rolled_back", before, str(exc))
         except Exception as rollback_exc:
             _checkpoint(path, "manual_recovery_required", before, str(rollback_exc))
@@ -185,14 +196,14 @@ def recover_interrupted(
     # Never invoke rollback if an observed unit was replaced while we were down.
     actual = [_snapshot(name, inspect) for name in sorted(units)]
     if recorded != actual:
-        raise TransactionSafetyError("process identity changed; manual recovery required")
+        raise TransactionSafetyError("process or unit configuration changed; manual recovery required")
     _checkpoint(path, "recovery_started", actual,
                 "explicit disposable-only recovery")
     try:
         rollback()
         after = [_snapshot(name, inspect) for name in sorted(units)]
         if after != actual:
-            raise TransactionSafetyError("process changed during recovery rollback")
+            raise TransactionSafetyError("process or unit configuration changed during recovery rollback")
         _checkpoint(path, "recovered_rollback", actual)
         return {"status": "recovered_rollback",
                 "live_no_drain_authorized": False, "units": after}
