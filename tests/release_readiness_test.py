@@ -134,6 +134,13 @@ def main():
             f"release publisher must not rerun an existing version because {forbidden_path} changed"
         )
 
+    assert "RELEASE_CHANNEL_FLAGS=(--prerelease)" in release_workflow, (
+        "orchestrator must classify standalone Agent RCs as pre-releases"
+    )
+    assert 'if [[ "${VERSION}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi' in release_workflow, (
+        "orchestrator must classify canonical release candidates as pre-releases"
+    )
+
     assert "git push --force" not in release_workflow, (
         "canonical release tags are immutable after publication; force-push is forbidden"
     )
