@@ -254,7 +254,7 @@ def record_agent_heartbeat(authenticated_agent_id,payload,*,backend,root=None):
  if isinstance(reported_updates,dict):update_inventory_result=updates.record_content_update_inventory(agent_id,reported_updates)
  backups=BackupRepository(backend);backups.initialize();reported_backups=body.get("backup_state")
  if isinstance(reported_backups,list):backups.record_agent_state(agent_id,reported_backups)
- backup_commands=backups.commands_for_agent(agent_id);automations=AutomationRepository(backend);automations.initialize();reported_broadcasts=body.get("broadcast_state")
+ backup_commands=backups.commands_for_agent(agent_id,root=root);automations=AutomationRepository(backend);automations.initialize();reported_broadcasts=body.get("broadcast_state")
  if isinstance(reported_broadcasts,list):automations.record_broadcast_state(agent_id,reported_broadcasts)
  broadcast_commands=automations.desired_for_agent(agent_id)
  for command in broadcast_commands:command["agent_id"]=agent_id

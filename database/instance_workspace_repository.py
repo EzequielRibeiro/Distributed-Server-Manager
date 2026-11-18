@@ -85,8 +85,11 @@ class InstanceWorkspaceRepository:
         return result
 
     # ------------------------------------------------------------------ policy
-    def workspace_policy(self, instance_id: str) -> dict[str, Any]:
-        context = self.instance_context(instance_id)
+    def workspace_policy(
+        self, instance_id: str, *, context: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        if context is None:
+            context = self.instance_context(instance_id)
         ph = self.dialect.placeholder
         with self.session() as session:
             row = session.execute(

@@ -312,6 +312,7 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
 
     def test_workspace_keeps_usage_separate_from_quota(self):
         service = object.__new__(CustomerInstanceWorkspaceService)
+        service.root = ROOT
         service.repo = SimpleNamespace(
             workspace_policy=lambda _instance_id: {"storage_limit_bytes": 10_000},
             telemetry=lambda _instance_id, _limit: [{"storage_used_bytes": None}],

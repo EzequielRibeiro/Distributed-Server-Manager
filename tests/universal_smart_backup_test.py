@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -14,6 +15,7 @@ from backend_factory import create_backend
 from backup_http import dispatch_backup_get,dispatch_backup_post
 from backup_platform import BackupValidationError,normalize_policy
 from backup_repository import BackupRepository
+from instance_workspace_repository import InstanceWorkspaceRepository
 class BackupContractTest(unittest.TestCase):
  def test_policy_is_deterministic_and_game_agnostic(self):
   raw={"instance_id":"instance-c5","agent_id":"agent-c5","mode":"full","consistency":"live","interval_seconds":600,"retention_count":3}
@@ -34,6 +36,34 @@ class BackupRepositoryTest(unittest.TestCase):
   self.assertTrue(first["changed"]);self.assertFalse(same["changed"]);self.assertEqual(second["policy"]["revision"],2);self.assertEqual(len(self.repo.history(second["policy"]["policy_id"])),2)
   commands=self.repo.commands_for_agent("agent-c5");self.assertEqual(len(commands),1);self.assertEqual(commands[0]["action"],"create")
   again=self.repo.commands_for_agent("agent-c5");self.assertEqual(commands[0]["command_id"],again[0]["command_id"])
+ def test_heartbeat_sends_catalog_quota_for_profile_only_instance(self):
+  root = Path(self.temp.name)
+  catalog = root / "config/catalog-resource-profiles/minecraft.json"
+  catalog.parent.mkdir(parents=True)
+  catalog.write_text(json.dumps({
+   "schema_version": 2,
+   "kind": "GameResourceProfiles",
+   "game": "minecraft",
+   "default_profile_id": "standard",
+   "profiles": [{"id": "standard", "name": "Standard", "storage_mb": 25600,
+                  "memory_mb": 8192, "cpu_cores": 4, "swap_mb": 1024, "pids_limit": 512}],
+  }))
+  with self.backend.transaction() as connection:
+   connection.execute("UPDATE instances SET game_id=?,metadata_json=? WHERE id=?",
+                      ("minecraft", json.dumps({"resource_profile_id": "standard"}), "instance-c5"))
+  self.repo.request("instance-c5", action="create", requested_by="test")
+
+  def delivered_policy():
+   result = record_agent_heartbeat("agent-c5", {}, backend=self.backend, root=root)
+   command, = result["backup_commands"]
+   return command["policy"]
+
+  self.assertEqual(25600 * 1024 * 1024, delivered_policy()["storage_limit_bytes"])
+  InstanceWorkspaceRepository(self.backend).save_workspace_policy(
+   "instance-c5", {"resource_profile_id": "standard", "storage_limit_bytes": 123456}
+  )
+  self.assertEqual(123456, delivered_policy()["storage_limit_bytes"])
+
  def test_heartbeat_ack_and_no_spoof(self):
   self.repo.put_policy(self.policy());cmd=self.repo.commands_for_agent("agent-c5")[0]
   ack={"command_id":cmd["command_id"],"status":"completed","backup_id":"backup-c5","size_bytes":42,"sha256":"a"*64,"artifact_path":"/var/lib/capivara-agent/backups/instance-c5/backup-c5.tar.gz"}
