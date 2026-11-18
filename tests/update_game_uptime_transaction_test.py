@@ -68,6 +68,69 @@ class DisposableUptimeTransactionTest(unittest.TestCase):
         self.assertEqual(self.undo_count, 0)
         self.assertEqual(self.journal()["status"], "verified")
 
+    def test_systemd_witness_persisted_with_same_processes(self):
+        for state in self.snapshots.values():
+            state["unit_config_sha256"] = "a" * 64
+        result = self.run_tx()
+        self.assertEqual(result["status"], "verified")
+        self.assertTrue(all(item["unit_config_sha256"] == "a" * 64
+                            for item in result["units"]))
+        self.assertTrue(all(item["unit_config_sha256"] == "a" * 64
+                            for item in self.journal()["original_units"]))
+
+    def test_changed_systemd_witness_with_unchanged_pid_triggers_compensation(self):
+        for state in self.snapshots.values():
+            state["unit_config_sha256"] = "a" * 64
+        def apply_modified_unit():
+            self.apply()
+            self.snapshots[self.units[0]]["unit_config_sha256"] = "b" * 64
+        def rollback_restores_unit():
+            self.rollback()
+            self.snapshots[self.units[0]]["unit_config_sha256"] = "a" * 64
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "rollback completed"):
+            self.run_tx(apply=apply_modified_unit, rollback=rollback_restores_unit)
+        self.assertEqual(self.journal()["status"], "rolled_back")
+        self.assertEqual(self.undo_count, 1)
+
+    def test_unrestored_unit_witness_requires_manual_recovery(self):
+        for state in self.snapshots.values():
+            state["unit_config_sha256"] = "a" * 64
+        def change_unit():
+            self.apply()
+            self.snapshots[self.units[0]]["unit_config_sha256"] = "b" * 64
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "manual recovery"):
+            self.run_tx(apply=change_unit)
+        self.assertEqual(self.journal()["status"], "manual_recovery_required")
+
+    def test_witness_disappearing_or_invalid_is_not_silent_success(self):
+        for invalid in (None, "invalid", "A" * 64):
+            with self.subTest(invalid=invalid):
+                self.snapshots[self.units[0]]["unit_config_sha256"] = "a" * 64
+                def lose_witness():
+                    self.apply()
+                    if invalid is None:
+                        self.snapshots[self.units[0]].pop("unit_config_sha256")
+                    else:
+                        self.snapshots[self.units[0]]["unit_config_sha256"] = invalid
+                with self.assertRaisesRegex(tx.TransactionSafetyError, "manual recovery"):
+                    self.run_tx(apply=lose_witness)
+                self.assertEqual(self.journal()["status"], "manual_recovery_required")
+                (self.root/"game-uptime-transaction.json").unlink()
+                self.snapshots[self.units[0]].pop("unit_config_sha256", None)
+                self.value = "before"
+
+    def test_interrupted_recovery_refuses_same_pid_changed_unit_config(self):
+        for state in self.snapshots.values():
+            state["unit_config_sha256"] = "a" * 64
+        with self.assertRaises(SystemExit):
+            self.run_tx(apply=lambda: (_ for _ in ()).throw(SystemExit(23)))
+        self.snapshots[self.units[0]]["unit_config_sha256"] = "b" * 64
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "configuration changed"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=lambda: self.fail("unexpected rollback"),
+                                   operator_reviewed=True)
+        self.assertEqual(self.journal()["status"], "prepared")
+
     def test_apply_failure_rolls_back_and_keeps_original_identity(self):
         def fail():
             self.apply()
