@@ -488,9 +488,12 @@ class BackupRepository:
     def commands_for_agent(self, agent_id, *, root: Path | None = None):
         self.schedule_due(agent_id);output=[]
         for job in reversed(self.list_jobs(agent_id=agent_id,status="pending",limit=100)):
-            # Old queued retention jobs must not bypass the new opt-in gate.
+            # Customer-initiated deletion is an explicit authorized request,
+            # not automatic retention. Keep historical/scheduled deletions
+            # fail-closed unless the operator has enabled auto-deletion.
             if (str(job.get("action") or "").lower() == "delete"
-                    and str(job.get("reason") or "").strip().lower() != "manual"
+                    and str(job.get("reason") or "").strip().lower()
+                    not in {"manual", "customer"}
                     and os.environ.get("DSM_BACKUP_ALLOW_AUTOMATIC_DELETION", "").strip() != "1"):
                 continue
             policy=dict(self.get_policy(job["instance_id"]) or {})
