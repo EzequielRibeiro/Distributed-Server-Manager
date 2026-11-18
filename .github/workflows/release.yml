@@ -77,6 +77,9 @@ jobs:
           VERSION=$(tr -d '\r\n' <version)
           LINUX_TAG="agent-linux-v${VERSION}"
           WINDOWS_TAG="agent-windows-v${VERSION}"
+          # Keep prerelease Agent artifacts out of stable/latest channels.
+          RELEASE_CHANNEL_FLAGS=()
+          if [[ "${VERSION}" == *-* ]]; then RELEASE_CHANNEL_FLAGS=(--prerelease); fi
 
           for STANDALONE_TAG in "${LINUX_TAG}" "${WINDOWS_TAG}"; do
             if gh release view "${STANDALONE_TAG}" >/dev/null 2>&1; then
@@ -97,6 +100,7 @@ jobs:
               --target "${GITHUB_SHA}" \
               --title "Capivara Agent Linux v${VERSION}" \
               --notes "Standalone Linux Agent installer for Capivara DSM v${VERSION}." \
+              "${RELEASE_CHANNEL_FLAGS[@]}" \
               "dist/capivara-agent-linux-${VERSION}.tar.gz" \
               "dist/capivara-agent-linux-${VERSION}.tar.gz.sha256" \
               "dist/capivara-agent-linux-${VERSION}.manifest.json"
@@ -106,6 +110,7 @@ jobs:
               --target "${GITHUB_SHA}" \
               --title "Capivara Agent Windows v${VERSION}" \
               --notes "Standalone Windows Agent installer for Capivara DSM v${VERSION}." \
+              "${RELEASE_CHANNEL_FLAGS[@]}" \
               "dist/capivara-agent-windows-${VERSION}.zip" \
               "dist/capivara-agent-windows-${VERSION}.zip.sha256" \
               "dist/capivara-agent-windows-${VERSION}.manifest.json"
@@ -154,6 +159,7 @@ jobs:
             echo "Release ${TAG} already exists for ${GITHUB_SHA}; leaving assets unchanged."
           else
             RELEASE_FLAGS=(--verify-tag --title "Capivara DSM ${TAG}" --notes-file "release/RELEASE_NOTES_${VERSION}.md")
+            if [[ "${VERSION}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
             gh release create "${TAG}" \
               dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json dist/*.minisig \
               "${RELEASE_FLAGS[@]}" 2>/dev/null || \
