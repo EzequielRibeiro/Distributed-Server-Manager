@@ -196,7 +196,7 @@ def recover_interrupted(
     # Never invoke rollback if an observed unit was replaced while we were down.
     actual = [_snapshot(name, inspect) for name in sorted(units)]
     if recorded != actual:
-        raise TransactionSafetyError("process or unit configuration changed; manual recovery required")
+        raise TransactionSafetyError("process identity changed or unit configuration changed; manual recovery required")
     _checkpoint(path, "recovery_started", actual,
                 "explicit disposable-only recovery")
     try:
