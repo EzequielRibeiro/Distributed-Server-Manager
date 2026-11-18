@@ -563,6 +563,15 @@ def process_hybrid_instance_telemetry_cycle(backend, root: Path, agent_id: str) 
             rejected += 1
 
     _ingest_hybrid_instance_observability(backend, agent_id, accepted_samples)
+    # Remote Agents publish the full backup inventory in their heartbeat
+    # metadata. The Hybrid Agent shares this collector but must explicitly
+    # publish its accepted samples as well; the customer storage summary reads
+    # agents.metadata_json rather than the narrow telemetry history table.
+    # Publish even an empty snapshot to avoid displaying stale inventory.
+    from agent_heartbeat_api import _store_agent_metadata
+    _store_agent_metadata(
+        agent_id, {"instance_telemetry": accepted_samples}, backend=backend
+    )
     return {
         "status": "completed",
         "samples": len(samples),
