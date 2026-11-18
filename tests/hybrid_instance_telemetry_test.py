@@ -42,6 +42,7 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
         }
         _FakeWorkspaceRepository.recorded = []
         self.observability_samples = []
+        self.metadata_samples = []
 
     def _run(self, samples):
         telemetry = SimpleNamespace(
@@ -52,7 +53,13 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
             self.observability_samples.extend(dict(item) for item in accepted)
             return {"accepted": len(accepted)}
 
+        def publish(agent_id, body, *, backend):
+            self.assertEqual(agent_id, "agent-hybrid")
+            self.assertEqual(set(body), {"instance_telemetry"})
+            self.metadata_samples.extend(dict(item) for item in body["instance_telemetry"])
+
         with (
+            patch("agent_heartbeat_api._store_agent_metadata", side_effect=publish),
             patch.object(worker, "_instance_telemetry_module", return_value=telemetry),
             patch.object(worker, "_hybrid_agent_config", return_value={"agent_id": "agent-hybrid"}),
             patch.object(worker, "InstanceWorkspaceRepository", _FakeWorkspaceRepository),
@@ -84,6 +91,34 @@ class HybridInstanceTelemetryTest(unittest.TestCase):
         )
         self.assertEqual(_FakeWorkspaceRepository.recorded, [("instance-owned", owned)])
         self.assertEqual(self.observability_samples, [owned])
+        self.assertEqual(self.metadata_samples, [owned])
+
+    def test_hybrid_publishes_backup_inventory_for_customer_storage(self) -> None:
+        inventory = {
+            "instance_id": "instance-owned",
+            "instance_storage_used_bytes": 1024,
+            "backup_storage_used_bytes": 4096,
+            "backup_storage_file_count": 2,
+            "backup_manifest_only_count": 1,
+            "backup_invalid_count": 0,
+            "backup_inventory_status": "ok",
+            "storage_used_bytes": 5120,
+        }
+        result = self._run([inventory])
+        self.assertEqual(result["accepted"], 1)
+        self.assertEqual(self.metadata_samples, [inventory])
+
+    def test_rejected_samples_never_leak_into_customer_inventory(self) -> None:
+        result = self._run([
+            {"instance_id": "instance-foreign",
+             "backup_inventory_status": "ok",
+             "backup_storage_used_bytes": 9999},
+            {"instance_id": "missing",
+             "backup_inventory_status": "ok",
+             "backup_storage_used_bytes": 9999},
+        ])
+        self.assertEqual(result["rejected"], 2)
+        self.assertEqual(self.metadata_samples, [])
 
     def test_rejects_unknown_instance_without_persisting(self) -> None:
         result = self._run([{"instance_id": "missing", "health": "healthy"}])
