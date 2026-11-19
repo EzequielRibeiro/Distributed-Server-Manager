@@ -8,7 +8,6 @@ DAYZ_CUSTOMER_FILE_DIRS = (
     "profiles",
     "mpmissions",
     "storage_1",
-    "battleye",
     "content",
 )
 
