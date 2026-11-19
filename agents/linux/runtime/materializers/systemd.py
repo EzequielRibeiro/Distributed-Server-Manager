@@ -7,6 +7,7 @@ from typing import Any,Callable
 from adapters.systemd import unit_for_instance
 from runtime_secret_store import RuntimeSecretError,credential_path
 from .base import InstanceRuntimeMaterializer,MaterializerError
+from .instance_state_access import reconcile_instance_root_traversal
 Runner=Callable[[list[str],int],tuple[int,str,str]];_GENERATED_BY="capivara-instance-runtime-v1";_RUNTIME_ACCOUNT_HOME="/var/lib/capivara-agent/runtime-home"
 def _default_runner(command,timeout):
  try:cp=subprocess.run(command,capture_output=True,text=True,check=False,timeout=timeout)
@@ -157,7 +158,8 @@ def render_unit(spec, *, pinned_supervisor_preview=None):
   argv=["/usr/bin/python3",str(supervisor),"--socket",console_socket,"--",*argv]
  lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}","IPAccounting=yes"]
  if bool(spec.get("private_shared_memory")):lines.append("TemporaryFileSystem=/dev/shm:rw,nosuid,nodev,mode=1777")
- if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0700"])
+ # The Agent needs group traversal for managed content; do not grant listing or writing.
+ if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0710"])
  lines.append(f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}")
  runtime_directory=spec.get("runtime_directory")
  if runtime_directory:lines.extend([f"RuntimeDirectory={runtime_directory}","RuntimeDirectoryMode=0700"])
@@ -308,9 +310,16 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   path=unit_path_for_spec(spec);before=self.inspect(spec)
   if before["exists"] and not before["owned"]:raise MaterializerError(f"refusing to replace non-Capivara unit: {path.name}")
   content=render_unit(spec)
-  if before["matches"]:return {"action":"materialize","changed":False,"idempotent":True,"state":before}
+  # Fail closed on unexpected identity/group before replacing an owned unit.
+  reconcile_instance_root_traversal(spec)
+  if before["matches"]:
+   reconcile_instance_root_traversal(spec,apply=True)
+   return {"action":"materialize","changed":False,"idempotent":True,"state":before}
   path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name(f".{path.name}.{os.getpid()}.tmp")
-  try:temp.write_text(content,encoding="utf-8");os.chmod(temp,0o644);os.replace(temp,path);self._reload()
+  try:
+   temp.write_text(content,encoding="utf-8");os.chmod(temp,0o644);os.replace(temp,path);self._reload()
+   # Existing roots can be corrected without stopping an already-running game.
+   reconcile_instance_root_traversal(spec,apply=True)
   except Exception:
    try:temp.unlink()
    except FileNotFoundError:pass
