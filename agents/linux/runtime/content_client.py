@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Safe desired-state content reconciler for the Linux Agent."""
 from __future__ import annotations
-import hashlib,json,os,shutil,stat,tarfile,tempfile,time,zipfile
+import errno,hashlib,json,os,shutil,stat,tarfile,tempfile,time,zipfile
 from pathlib import Path
 from typing import Any
 import instance_runtime
@@ -179,40 +179,48 @@ def _security_context(config,cmd):
 def _same_filesystem(a:Path,b:Path)->bool:
  return a.stat().st_dev==b.stat().st_dev
 
+def _copy_workshop_tree_with_reserve(source:Path,payload:Path)->None:
+  """Copy only when a hardlink is impossible, reserving disk space first."""
+  total=0
+  for item in source.rglob("*"):
+   if item.is_symlink():raise ValueError("Steam Workshop source contains a symlink")
+   if item.is_file():total+=item.stat().st_size
+  reserve=2*1024**3
+  if shutil.disk_usage(payload).free<total+reserve:
+   raise ValueError("Espaço insuficiente no Agent para materializar o conteúdo Steam Workshop com reserva de segurança.")
+  shutil.copytree(source,payload,dirs_exist_ok=True)
+
+
 def _materialize_workshop_tree(source:Path,payload:Path)->None:
- # Workshop payloads can be very large.  The Steam cache is immutable while
- # materialize_steam_workshop holds the exact-revision lease, so create an
- # instance-private directory tree backed by hardlinks when both paths share
- # a filesystem.  This preserves the existing no-symlink managed_path
- # contract and atomic target swap without duplicating the artifact bytes.
- original=source
- if original.is_symlink():raise ValueError("Steam Workshop source must be a real directory")
- source=original.resolve(strict=True)
- if not source.is_dir():raise ValueError("Steam Workshop source must be a real directory")
- for item in source.rglob("*"):
-  if item.is_symlink():raise ValueError("Steam Workshop source contains a symlink")
- try:same_device=_same_filesystem(source,payload)
- except OSError as exc:raise ValueError(f"Cannot inspect Steam Workshop storage: {exc}") from exc
- if same_device:
-  # Fail closed if a same-filesystem hardlink unexpectedly fails. Falling
-  # through to a physical copy here could consume the entire root filesystem
-  # after a partially linked tree was already created.
-  try:shutil.copytree(source,payload,dirs_exist_ok=True,copy_function=os.link)
-  except OSError as exc:
-   for child in list(payload.iterdir()):_remove_path(child)
-   raise ValueError(f"Cannot materialize Steam Workshop content with hardlinks: {exc}") from exc
-  return
- # Cross-filesystem storage requires a full private copy.
- # Refuse before copying unless the destination can hold the complete source
- # plus the normal 2 GiB safety reserve.
- total=0
- for item in source.rglob("*"):
-  if item.is_symlink():raise ValueError("Steam Workshop source contains a symlink")
-  if item.is_file():total+=item.stat().st_size
- reserve=2*1024**3
- if shutil.disk_usage(payload).free<total+reserve:
-  raise ValueError("Espaço insuficiente no Agent para materializar o conteúdo Steam Workshop com reserva de segurança.")
- shutil.copytree(source,payload,dirs_exist_ok=True)
+  # Freeze a per-instance tree using hardlinks whenever supported. On Linux,
+  # bind/overlay mount boundaries can reject hardlinks with EXDEV even when
+  # source and destination report the same st_dev. Permit a guarded copy only
+  # for that precise failure; other errors fail closed.
+  original=source
+  if original.is_symlink():raise ValueError("Steam Workshop source must be a real directory")
+  source=original.resolve(strict=True)
+  if not source.is_dir():raise ValueError("Steam Workshop source must be a real directory")
+  for item in source.rglob("*"):
+   if item.is_symlink():raise ValueError("Steam Workshop source contains a symlink")
+  try:same_device=_same_filesystem(source,payload)
+  except OSError as exc:raise ValueError(f"Cannot inspect Steam Workshop storage: {exc}") from exc
+  if same_device:
+   hardlink_errors=[]
+   def _hardlink(src,dst):
+    try:os.link(src,dst)
+    except OSError as exc:
+     hardlink_errors.append(exc.errno)
+     raise
+   try:shutil.copytree(source,payload,dirs_exist_ok=True,copy_function=_hardlink)
+   except OSError as exc:
+    # Never leave partially hardlinked files in the instance staging tree.
+    for child in list(payload.iterdir()):_remove_path(child)
+    if hardlink_errors and all(code==errno.EXDEV for code in hardlink_errors):
+     _copy_workshop_tree_with_reserve(source,payload)
+     return
+    raise ValueError(f"Cannot materialize Steam Workshop content with hardlinks: {exc}") from exc
+   return
+  _copy_workshop_tree_with_reserve(source,payload)
 
 def _serverpack_disk_preflight(source:Path,stage:Path):
  # Extraction is performed on the Agent's game-data volume, NOT in the ZIP's
