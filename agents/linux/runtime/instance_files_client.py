@@ -20,6 +20,7 @@ from typing import Any
 import zipfile
 
 import instance_runtime
+from dayz_customer_files_policy import DAYZ_CUSTOMER_FILE_DIRS, DAYZ_MANAGED_CONTENT_DIRS
 from server_settings_surface import observed_surface
 from content_security import require_clean
 
@@ -117,6 +118,14 @@ def _path_under(relative: Path, roots: set[str]) -> bool:
 def _guard_path_policy(relative: Path, policy: dict[str, Any], *, mutation: bool = False, upload: bool = False) -> None:
     file_policy = policy.get("file_policy") if isinstance(policy.get("file_policy"), dict) else {}
     content = policy.get("content_policy") if isinstance(policy.get("content_policy"), dict) else {}
+    if policy.get("_restricted_dayz_root"):
+        if not relative.parts:
+            if mutation:
+                raise PermissionError("physical instance root is not customer writable")
+        elif relative.parts[0] not in DAYZ_CUSTOMER_FILE_DIRS:
+            raise PermissionError("path is outside customer-visible DayZ directories")
+        if mutation and relative.parts and relative.parts[0] in DAYZ_MANAGED_CONTENT_DIRS:
+            raise PermissionError("managed content must be changed through Content workspace")
     protected = _parts_set(file_policy.get("protected_paths")) | {".dsm", "runtime"}
     if relative.parts and str(relative.parts[0]).lower() in protected:
         raise PermissionError("protected instance path")
@@ -135,16 +144,26 @@ def _guard_path_policy(relative: Path, policy: dict[str, Any], *, mutation: bool
         raise PermissionError("custom runtime artifacts are not allowed by this contract")
 
 
-def _usage(root: Path) -> int:
+def _usage(root: Path, policy: dict[str, Any] | None = None) -> int:
     total = 0
-    for base, dirs, files in os.walk(root, followlinks=False):
-        base_path = Path(base)
-        dirs[:] = [name for name in dirs if not (base_path / name).is_symlink()]
-        for name in files:
-            path = base_path / name
-            if path.is_symlink(): continue
-            try: total += path.stat().st_size
-            except OSError: pass
+    # The physical DayZ root is mode 0710. Walk only explicit customer
+    # directories; never walk private .dsm or assume root listing is allowed.
+    starts = (
+        [root / name for name in DAYZ_CUSTOMER_FILE_DIRS]
+        if (policy or {}).get("_restricted_dayz_root")
+        else [root]
+    )
+    for start in starts:
+        if start.is_symlink() or not start.is_dir():
+            continue
+        for base, dirs, files in os.walk(start, followlinks=False):
+            base_path = Path(base)
+            dirs[:] = [name for name in dirs if not (base_path / name).is_symlink()]
+            for name in files:
+                path = base_path / name
+                if path.is_symlink(): continue
+                try: total += path.stat().st_size
+                except OSError: pass
     return total
 
 
@@ -158,7 +177,7 @@ def _quota(policy: dict[str, Any]) -> int | None:
 def _ensure_quota(root: Path, policy: dict[str, Any], added: int, *, replacing: Path | None = None) -> None:
     limit = _quota(policy)
     if limit is None: return
-    current = _usage(root)
+    current = _usage(root, policy)
     previous = 0
     if replacing is not None and replacing.is_file() and not replacing.is_symlink():
         previous = replacing.stat().st_size
@@ -182,15 +201,22 @@ def _entry(root: Path, path: Path) -> dict[str, Any]:
 
 def _list(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
     directory = _resolve(root, path_value)
+    _guard_path_policy(directory.relative_to(root), policy)
     if not directory.is_dir(): raise ValueError("path is not a directory")
+    # Virtual top level: do not expose or list the physical 0710 directory.
+    children = (
+        [root / name for name in DAYZ_CUSTOMER_FILE_DIRS if (root / name).is_dir()]
+        if policy.get("_restricted_dayz_root") and directory == root
+        else directory.iterdir()
+    )
     entries = []
-    for child in sorted(directory.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+    for child in sorted(children, key=lambda p: (not p.is_dir(), p.name.lower())):
         if child.is_symlink(): continue
         rel = child.relative_to(root)
         try: _guard_path_policy(rel, policy)
         except PermissionError: continue
         entries.append(_entry(root, child))
-    return {"path": directory.relative_to(root).as_posix() or ".", "entries": entries, "usage_bytes": _usage(root), "limit_bytes": _quota(policy)}
+    return {"path": directory.relative_to(root).as_posix() or ".", "entries": entries, "usage_bytes": _usage(root, policy), "limit_bytes": _quota(policy)}
 
 
 def _read_text(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
@@ -359,7 +385,12 @@ def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str
 
 
 def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
-    instance_id = str(command.get("instance_id") or ""); record = _owned(config, instance_id); root = _files_root(record); policy = _policy(command)
+    instance_id = str(command.get("instance_id") or ""); record = _owned(config, instance_id); root = _files_root(record); policy = dict(_policy(command))
+    state_raw = str(record.get("instance_state_root") or "")
+    if (str(record.get("game_id") or "").lower() == "dayz"
+            and state_raw and Path(state_raw).resolve(strict=False) == root):
+        # Only the trusted Agent record enables the root-level restriction.
+        policy["_restricted_dayz_root"] = True
     action = str(command.get("action") or "").strip().lower(); path = command.get("path"); target = command.get("target_path"); payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
     security_context = _security_context(config, record, instance_id, content_id=str(path or action))
     if action == "settings_surface":
@@ -370,7 +401,7 @@ def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         elif not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
         return observed_surface(surface_spec)
     if action == "list": return _list(root, path, policy)
-    if action == "usage": return {"usage_bytes": _usage(root), "limit_bytes": _quota(policy)}
+    if action == "usage": return {"usage_bytes": _usage(root, policy), "limit_bytes": _quota(policy)}
     if action == "read_text": return _read_text(root, path, policy)
     if action == "write_text": return _write_text(root, path, payload, policy)
     if action == "download": return _download(root, path, policy)
