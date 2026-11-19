@@ -392,7 +392,8 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
         runtime_account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
         agent_account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
         agent_group = type("Group", (), {"gr_gid": os.getgid()})()
-        with mock.patch.object(materialize_instance.os, "chown") as chown, \
+        with mock.patch.object(materialize_instance.os, "chown"), \
+             mock.patch.object(materialize_instance.os, "fchown") as fchown, \
              mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=agent_account), \
              mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
             materialize_instance._prepare_private_state(spec, runtime_account, storage_root)
@@ -401,8 +402,9 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(instance_root.stat().st_mode), 0o710)
             self.assertEqual(stat.S_IMODE(content.stat().st_mode), 0o750)
             self.assertEqual(stat.S_IMODE(workshop.stat().st_mode), 0o750)
-            chown.assert_any_call(content, agent_account.pw_uid, agent_group.gr_gid)
-            chown.assert_any_call(workshop, agent_account.pw_uid, agent_group.gr_gid)
+            self.assertEqual(fchown.call_count, 2)
+            self.assertTrue(all(call.args[1:] == (agent_account.pw_uid, agent_group.gr_gid)
+                                for call in fchown.call_args_list))
             private = instance_root / ".dsm"
             self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
             sentinel = workshop / "preserve-legacy.pbo"
@@ -414,6 +416,7 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(content.stat().st_mode), 0o750)
             self.assertEqual(stat.S_IMODE(workshop.stat().st_mode), 0o750)
             self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+            self.assertEqual(fchown.call_count, 4)
 
     def test_dayz_content_rejects_symlink_without_touching_external_target(self):
         storage_root = self.root / "dayz-pool"
