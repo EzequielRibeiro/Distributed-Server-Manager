@@ -633,8 +633,8 @@ def _prepare_dayz_content_directories(
             os.close(fd)
             raise
 
-    with os.fdopen(os.open(state_root, flags), "rb") as root_handle:
-        root_fd = root_handle.fileno()
+    root_fd = os.open(state_root, flags)
+    try:
         content = state_root / "content"
         content_fd = ensure_child(root_fd, "content", content)
         try:
@@ -642,6 +642,8 @@ def _prepare_dayz_content_directories(
             os.close(workshop_fd)
         finally:
             os.close(content_fd)
+    finally:
+        os.close(root_fd)
 
 def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, storage_root: Path) -> None:
     raw_root = spec.get("instance_state_root")
