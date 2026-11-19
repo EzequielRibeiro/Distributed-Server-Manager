@@ -164,6 +164,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
         backend = self.backend
         db_path = self.db_path
         controller_id = self.controller_id
+        customer_id = self.customer_id
 
         class Legacy:
             DSM_ROOT = ROOT
