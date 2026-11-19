@@ -73,17 +73,20 @@ def _community_display_names(content,instance_id,maps):
         item=dict(raw) if isinstance(raw,dict) else raw
         if isinstance(item,dict) and item.get("community") and item.get("content_id"):
             current=str(item.get("name") or "").strip();mission_id=str(item.get("id") or "").strip();content_id=str(item["content_id"])
-            if not current or current==mission_id:
-                if content_id not in assignments:assignments[content_id]=content.get(instance_id,content_id)
-                assignment=assignments[content_id]
-                metadata=assignment.get("metadata") if isinstance(assignment,dict) and isinstance(assignment.get("metadata"),dict) else {}
-                community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
-                display=str(community.get("name") or metadata.get("display_name") or "").strip()
-                if display:
-                    if content_counts.get(content_id,0)>1 and mission_id:
-                        variant=mission_id.split(".",1)[0].replace("_"," ").replace("-"," ").strip()
-                        if variant and variant.casefold() not in display.casefold():display=f"{display} — {variant.title()}"
-                    item["name"]=display
+            if content_id not in assignments:assignments[content_id]=content.get(instance_id,content_id)
+            assignment=assignments[content_id]
+            metadata=assignment.get("metadata") if isinstance(assignment,dict) and isinstance(assignment.get("metadata"),dict) else {}
+            community=metadata.get("community_map") if isinstance(metadata.get("community_map"),dict) else {}
+            base_name=str(community.get("name") or metadata.get("display_name") or "").strip()
+            display=base_name or current or mission_id
+            # Agents may already report the map's common name for every mission.
+            # Distinguish variants based on the real mission ID, not on a guessed
+            # map title; keep explicitly distinct Agent-provided names intact.
+            if content_counts.get(content_id,0)>1 and mission_id:
+                variant=mission_id.split(".",1)[0].replace("_"," ").replace("-"," ").strip()
+                if variant and variant.casefold() not in display.casefold():display=f"{display} — {variant.title()}"
+            if not current or current==mission_id or current.casefold()==base_name.casefold() or not base_name:
+                item["name"]=display
         enriched.append(item)
     result["missions"]=enriched
     current_id=str(result.get("current") or "").strip()
