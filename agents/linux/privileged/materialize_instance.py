@@ -1178,11 +1178,15 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
     except KeyError as exc:
         raise RuntimeError("Agent control group is unavailable") from exc
 
+    # DayZ must never grant the generic recursive policy to an alternative
+    # files_root such as .dsm, even if a malformed request supplies one.
+    if str(spec.get("game_id") or "").lower() == "dayz" and files_root != state_root:
+        raise RuntimeError("DayZ customer files root must match instance state root")
+
     # DayZ deliberately exposes the private instance root as a *virtual*
     # customer files root. Do not recursively chmod that physical root: doing
     # so reopens .dsm, lets group members rename .dsm, and undoes 0710.
-    if (str(spec.get("game_id") or "").lower() == "dayz"
-            and files_root == state_root):
+    if str(spec.get("game_id") or "").lower() == "dayz":
         from dayz_customer_files_policy import (
             DAYZ_CUSTOMER_FILE_DIRS, DAYZ_MANAGED_CONTENT_DIRS,
         )
