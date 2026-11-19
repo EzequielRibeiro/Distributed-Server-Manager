@@ -46,6 +46,15 @@ class CustomerAgentPrivacyContractTest(unittest.TestCase):
             DSM_ROOT=ROOT,
             DATABASE_FILE=ROOT / "data" / "unused-test.db",
             dashboard_repository=lambda _path: repository,
+            # The product-aware DayZ catalog requires the same contract
+            # resolver contract used by the installed dashboard. Never
+            # bypass product validation by omitting it from the fixture.
+            customer_contract_for_runtime=lambda user, game, runtime_id, contract_id, **kwargs: (
+                {"id": "contract-1"}
+                if (user.get("scope_id") == "cli000001" and game == "dayz"
+                    and runtime_id == "dayz.stable" and contract_id == "contract-1")
+                else {}
+            ),
             resolve_instance_placement=lambda _user, _payload, _repository: {
                 "agent_id": "agent-private-123",
                 "node_id": "node-private-456",

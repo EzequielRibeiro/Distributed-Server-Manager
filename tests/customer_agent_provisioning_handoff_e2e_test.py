@@ -164,6 +164,7 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
         backend = self.backend
         db_path = self.db_path
         controller_id = self.controller_id
+        customer_id = self.customer_id
 
         class Legacy:
             DSM_ROOT = ROOT
@@ -191,6 +192,22 @@ class CustomerAgentProvisioningHandoffE2E(unittest.TestCase):
                     preferred_region_id=region_id,
                     requirements=requirements,
                 )
+
+            @staticmethod
+            def customer_contract_for_runtime(user, game, runtime_id, contract_id, **_kwargs):
+                if (not user or int(user.get("scope_id") or 0) != customer_id
+                        or game != "dayz" or runtime_id != "dayz.stable"
+                        or str(contract_id) != "contract-customer-handoff"):
+                    raise PermissionError("contract is not available for this customer")
+                with backend.connect() as connection:
+                    linked = connection.execute(
+                        "SELECT id FROM service_contracts "
+                        "WHERE id=? AND customer_id=? AND game_id='dayz' AND status='active'",
+                        ("contract-customer-handoff", customer_id)
+                    ).fetchone()
+                if linked is None:
+                    raise PermissionError("customer contract is not active")
+                return {"id": linked["id"]}
 
             @staticmethod
             def audit(*_args, **_kwargs):
