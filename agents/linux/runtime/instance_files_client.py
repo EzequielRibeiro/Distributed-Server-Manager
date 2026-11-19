@@ -389,8 +389,9 @@ def _extract(root: Path, archive_value: Any, target_value: Any, policy: dict[str
 def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
     instance_id = str(command.get("instance_id") or ""); record = _owned(config, instance_id); root = _files_root(record); policy = dict(_policy(command))
     state_raw = str(record.get("instance_state_root") or "")
-    if (str(record.get("game_id") or "").lower() == "dayz"
-            and state_raw and Path(state_raw).resolve(strict=False) == root):
+    if str(record.get("game_id") or "").lower() == "dayz":
+        if not state_raw or Path(state_raw).resolve(strict=False) != root:
+            raise PermissionError("DayZ customer files root differs from private instance state")
         # Only the trusted Agent record enables the root-level restriction.
         policy["_restricted_dayz_root"] = True
     action = str(command.get("action") or "").strip().lower(); path = command.get("path"); target = command.get("target_path"); payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
