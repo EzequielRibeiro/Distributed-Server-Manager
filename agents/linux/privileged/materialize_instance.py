@@ -597,29 +597,51 @@ def _prepare_dayz_content_directories(
     runtime_account: pwd.struct_passwd,
     agent_account: pwd.struct_passwd, agent_group: grp.struct_group,
 ) -> None:
-    """Provision and repair only DayZ's Agent-managed content entry points.
+    """Provision Agent-owned DayZ content entry points without following symlinks.
 
-    The Agent downloads and stages Workshop items, while the runtime may only
-    read them. Never recursively chown customer files or widen private roots.
+    Only the exact content and workshop directory entries are repaired; managed
+    payloads, private control state, and other instances remain untouched.
     """
     if str(spec.get("game_id") or "").strip().lower() != "dayz":
         return
-    for path in (state_root / "content", state_root / "content" / "workshop"):
-        if path.is_symlink():
-            raise RuntimeError(f"DayZ managed content directory cannot be a symlink: {path}")
-        if path.exists():
-            if not path.is_dir():
-                raise RuntimeError(f"DayZ managed content path is not a directory: {path}")
-            metadata = path.stat()
-            if metadata.st_uid not in {runtime_account.pw_uid, agent_account.pw_uid}:
-                raise RuntimeError(f"DayZ managed content directory has a foreign owner: {path}")
-            if metadata.st_gid not in {runtime_account.pw_gid, agent_group.gr_gid}:
-                raise RuntimeError(f"DayZ managed content directory has a foreign group: {path}")
-        else:
-            path.mkdir(mode=0o750)
-        os.chown(path, agent_account.pw_uid, agent_group.gr_gid)
-        os.chmod(path, 0o750)
 
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+
+    def ensure_child(parent_fd: int, child: str, name: Path) -> int:
+        if name.is_symlink():
+            raise RuntimeError(f"DayZ managed content directory cannot be a symlink: {name}")
+        try:
+            os.mkdir(child, mode=0o750, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        try:
+            fd = os.open(child, flags, dir_fd=parent_fd)
+        except OSError as exc:
+            raise RuntimeError(f"DayZ managed content is not a safe directory: {name}") from exc
+        try:
+            metadata = os.fstat(fd)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeError(f"DayZ managed content path is not a directory: {name}")
+            if metadata.st_uid not in {runtime_account.pw_uid, agent_account.pw_uid}:
+                raise RuntimeError(f"DayZ managed content directory has a foreign owner: {name}")
+            if metadata.st_gid not in {runtime_account.pw_gid, agent_group.gr_gid}:
+                raise RuntimeError(f"DayZ managed content directory has a foreign group: {name}")
+            os.fchown(fd, agent_account.pw_uid, agent_group.gr_gid)
+            os.fchmod(fd, 0o750)
+            return fd
+        except Exception:
+            os.close(fd)
+            raise
+
+    with os.fdopen(os.open(state_root, flags), "rb") as root_handle:
+        root_fd = root_handle.fileno()
+        content = state_root / "content"
+        content_fd = ensure_child(root_fd, "content", content)
+        try:
+            workshop_fd = ensure_child(content_fd, "workshop", content / "workshop")
+            os.close(workshop_fd)
+        finally:
+            os.close(content_fd)
 
 def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, storage_root: Path) -> None:
     raw_root = spec.get("instance_state_root")
