@@ -100,6 +100,7 @@ def test_materializer_repairs_root_without_reopening_control_or_managed_content(
 def test_virtual_root_lists_only_explicit_directories_and_blocks_private_paths(tmp_path):
     root, control, secret, config, settings, workshop, package, battleye, unknown = _fixture(tmp_path)
     record = {**_spec(root), "agent_id": "agent-test"}
+    root.chmod(0o710)  # Group may traverse, but cannot list the physical root.
     with mock.patch.object(instance_files_client, "_owned", return_value=record):
         listing = instance_files_client.execute(
             {"agent_id": "agent-test"},
@@ -116,6 +117,18 @@ def test_virtual_root_lists_only_explicit_directories_and_blocks_private_paths(t
             {"instance_id": root.name, "action": "list", "path": "config"},
         )
         assert [item["name"] for item in child_list["entries"]] == ["serverDZ.cfg"]
+        original = instance_files_client.execute(
+            {"agent_id": "agent-test"},
+            {"instance_id": root.name, "action": "read_text", "path": "config/serverDZ.cfg"},
+        )
+        assert original["content"] == "hostname=DayZ;"
+        saved = instance_files_client.execute(
+            {"agent_id": "agent-test"},
+            {"instance_id": root.name, "action": "write_text", "path": "config/serverDZ.cfg",
+             "payload": {"content": "hostname=Approved;"}},
+        )
+        assert saved["saved"] is True
+        assert settings.read_text(encoding="utf-8") == "hostname=Approved;"
 
         for action, path in (
             ("list", ".dsm"),
