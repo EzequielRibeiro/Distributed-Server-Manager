@@ -2,7 +2,30 @@
   "schema_version": 1,
   "kind": "GameWorkspacePolicy",
   "game": "dayz",
-  "products": {},
+  "products": {
+    "standard": {
+      "label": "DayZ Padrão",
+      "entitlements": {
+        "mods": false,
+        "plugins": false,
+        "workshop": false,
+        "external_upload": true,
+        "custom_runtime": false
+      },
+      "allowed_runtimes": ["dayz.stable"]
+    },
+    "modified": {
+      "label": "DayZ com Mods e Workshop",
+      "entitlements": {
+        "mods": true,
+        "plugins": false,
+        "workshop": true,
+        "external_upload": true,
+        "custom_runtime": false
+      },
+      "allowed_runtimes": ["dayz.stable"]
+    }
+  },
   "runtimes": {
     "dayz.stable": {
       "label": "DayZ Stable",
