@@ -80,6 +80,14 @@ class CustomerWorkspaceV2Test(unittest.TestCase):
   context={"game_id":"minecraft","runtime_id":"minecraft.java.neoforge","contract_metadata":{"product_variant":"modified"}}
   _,policy=service._contract_policy(context,{"mods_allowed":False})
   self.assertFalse(policy.mods_allowed);self.assertFalse(policy.modpacks_allowed);self.assertFalse(policy.datapacks_allowed)
+ def test_dayz_legacy_standard_contract_still_has_native_mods_and_workshop(self):
+  service=CustomerInstanceWorkspaceService.__new__(CustomerInstanceWorkspaceService);service.root=ROOT
+  context={"game_id":"dayz","runtime_id":"dayz.stable","contract_metadata":{"product_variant":"standard","entitlements":{"mods":False,"workshop":False,"plugins":False}}}
+  _,policy=service._contract_policy(context,{"mods_allowed":False,"workshop_allowed":False,"plugins_allowed":False})
+  self.assertTrue(policy.mods_allowed)
+  self.assertTrue(policy.workshop_allowed)
+  self.assertFalse(policy.plugins_allowed)
+  self.assertFalse(policy.custom_runtime_allowed)
  def test_baseline_has_workspace_distributed_queues(self):
   for backend in ("sqlite","postgresql","mysql","mariadb"):
    sql=load_schema_baseline(backend).sql
