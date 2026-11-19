@@ -95,3 +95,24 @@ def test_nonexistent_root_is_not_created(tmp_path):
 def test_invalid_instance_id_fails_closed(tmp_path):
     with pytest.raises(MaterializerError, match="invalid instance id"):
         _reconcile(tmp_path, {"instance_id": "../escape", "user": "root"}, apply=True)
+
+
+def test_authorized_agent_group_is_used_without_assuming_agent_user_exists(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from materializers import instance_state_access as access
+
+    parent, root, _, spec = _fixture(tmp_path)
+    monkeypatch.setattr(access.grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=root.stat().st_gid))
+    assert access.reconcile_instance_root_traversal(spec, _parent=parent, apply=True) == "repaired"
+    assert stat.S_IMODE(root.stat().st_mode) == 0o710
+
+
+def test_default_group_mismatch_fails_closed(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from materializers import instance_state_access as access
+
+    parent, root, _, spec = _fixture(tmp_path)
+    monkeypatch.setattr(access.grp, "getgrnam", lambda name: SimpleNamespace(gr_gid=root.stat().st_gid + 100))
+    with pytest.raises(MaterializerError, match="not accessible to Agent"):
+        access.reconcile_instance_root_traversal(spec, _parent=parent, apply=True)
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
