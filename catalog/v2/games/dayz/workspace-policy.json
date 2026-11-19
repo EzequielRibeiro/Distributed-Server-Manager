@@ -4,11 +4,11 @@
   "game": "dayz",
   "products": {
     "standard": {
-      "label": "DayZ Padrão",
+      "label": "DayZ Padrão (Mods e Workshop incluídos)",
       "entitlements": {
-        "mods": false,
+        "mods": true,
         "plugins": false,
-        "workshop": false,
+        "workshop": true,
         "external_upload": true,
         "custom_runtime": false
       },

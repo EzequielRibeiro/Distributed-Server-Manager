@@ -20,6 +20,8 @@ async function loadProducts(){
   try{
     const data=await app.request(`/api/catalog/workspace-products?game=${encodeURIComponent(game)}`);
     products=Array.isArray(data.products)?data.products:[];defaultProduct=String(data.default_product_id||"");
+    // DayZ has one native content feature set; legacy variants are not offered as upgrades.
+    if(game==="dayz"){field.hidden=true;select.disabled=true;select.append(option("standard","DayZ (Mods e Workshop incluídos)"));return;}
     if(!products.length){field.hidden=true;select.disabled=true;select.append(option("","Produto padrão do jogo"));return;}
     select.append(...products.map(product=>option(product.id,product.label||product.id)));
     select.value=defaultProduct||products[0].id;select.disabled=false;field.hidden=false;

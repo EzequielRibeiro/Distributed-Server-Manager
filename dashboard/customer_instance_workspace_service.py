@@ -116,10 +116,20 @@ class CustomerInstanceWorkspaceService:
    except Exception:agent_health="unknown"
   return project_runtime_state(record=context,runtime_health=observation,agent_health=agent_health,fallback_state=context.get("status") or "unknown",fallback_health="unknown")
  def _contract_policy(self,context,policy):
-  metadata=context.get("contract_metadata") or {};runtime_id=str(context.get("runtime_id") or "");capabilities=runtime_workspace_capabilities(self.root,str(context.get("game_id") or ""),runtime_id) if runtime_id else {};entitlements=contract_entitlements(metadata)
+  game_id=str(context.get("game_id") or "").strip().lower();runtime_id=str(context.get("runtime_id") or "").strip().lower()
+  metadata=context.get("contract_metadata") or {};capabilities=runtime_workspace_capabilities(self.root,game_id,runtime_id) if runtime_id else {};entitlements=contract_entitlements(metadata)
+  # DayZ's native mod/Workshop access is a game feature, not a paid product tier.
+  # Historical standard contracts and their persisted instance policy contain
+  # false values written by the former product gate; do not treat those legacy
+  # snapshots as an ongoing restriction on DayZ stable. Runtime capability and
+  # user permissions are still independently enforced for every operation.
+  dayz_native_content=game_id=="dayz" and runtime_id=="dayz.stable"
+  if dayz_native_content:
+   entitlements["mods"]=True;entitlements["workshop"]=True
   for key,column in (("mods","mods_allowed"),("plugins","plugins_allowed"),("workshop","workshop_allowed"),("external_upload","external_upload_allowed"),("custom_runtime","custom_runtime_allowed")):
+   if dayz_native_content and key in {"mods","workshop"}:continue
    if column in policy:entitlements[key]=bool(entitlements.get(key)) and bool(policy.get(column))
-  if "mods_allowed" in policy and not bool(policy.get("mods_allowed")):
+  if "mods_allowed" in policy and not bool(policy.get("mods_allowed")) and not dayz_native_content:
    entitlements["modpacks"]=False;entitlements["datapacks"]=False
   return capabilities,effective_content_policy(entitlements,capabilities)
  def _resolved_resource_policy(self,context,policy):
