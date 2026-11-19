@@ -63,7 +63,7 @@ class CustomerAssetsAdminTest(unittest.TestCase):
             user=user or self.admin, backend=self.backend, root=ROOT,
         )
 
-    def attach(self):
+    def attach(self, game_id="minecraft"):
         with self.backend.transaction() as conn:
             conn.execute(
                 "INSERT INTO nodes(id,name,role,status) VALUES (?,?,?,?)",
@@ -77,7 +77,7 @@ class CustomerAssetsAdminTest(unittest.TestCase):
             conn.execute(
                 "INSERT INTO instances(id,node_id,game_id,name,status,controller_id,agent_id,customer_id) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                ("instance-for-contract", "node-for-asset-edit", "minecraft",
+                ("instance-for-contract", "node-for-asset-edit", game_id,
                  "Before name", "offline", self.controller_id,
                  "agent-for-asset-edit", self.customer_id),
             )
@@ -121,6 +121,88 @@ class CustomerAssetsAdminTest(unittest.TestCase):
             revisions = conn.execute("SELECT reason,entitlements_json FROM service_contract_revisions WHERE contract_id=? ORDER BY revision_number", (self.contract_id,)).fetchall()
         self.assertEqual([row["reason"] for row in revisions], ["baseline", "product_upgrade"])
         self.assertTrue(self.act("edit_contract", {"product_variant": "modified"})["idempotent"])
+
+    def test_dayz_linked_contract_enables_workshop_without_changing_low_profile(self):
+        from instance_workspace_repository import InstanceWorkspaceRepository
+        from runtime_workspace_catalog import (
+            contract_entitlements, runtime_allowed_by_contract, runtime_workspace_capabilities,
+        )
+        from instance_workspace_policy import effective_content_policy
+
+        status, contract = dispatch_customer_admin_post(
+            CUSTOMER_ADMIN_CONTRACT,
+            {"customer_code": self.code, "game_id": "dayz",
+             "resource_profile_id": "low", "product_variant": "standard", "instance_limit": 1},
+            user={"username": "operator", "role": "operator"}, backend=self.backend,
+        )
+        self.assertEqual(status, 201)
+        self.contract_id = contract["id"]
+        self.attach(game_id="dayz")
+        repo = InstanceWorkspaceRepository(self.backend)
+        prior = repo.workspace_policy("instance-for-contract")
+        repo.save_workspace_policy("instance-for-contract", prior)
+        before = self.manager.detail(self.code)["instances"][-1]
+        context = repo.instance_context("instance-for-contract")
+        self.assertFalse(effective_content_policy(
+            contract_entitlements(context["contract_metadata"]),
+            runtime_workspace_capabilities(ROOT, "dayz", "dayz.stable"),
+        ).mods_allowed)
+        self.assertTrue(runtime_allowed_by_contract(
+            ROOT, "dayz", "dayz.stable", context["contract_metadata"]
+        ), "Standard DayZ must retain vanilla runtime access")
+
+        with self.backend.connect() as conn:
+            before_policy = dict(conn.execute(
+                "SELECT * FROM instance_workspace_policy WHERE instance_id=?",
+                ("instance-for-contract",)
+            ).fetchone())
+        upgraded = self.act("edit_contract", {"product_variant": "modified"})
+        self.assertEqual(upgraded["instances_updated"], 1)
+        self.assertFalse(upgraded["idempotent"])
+        context = repo.instance_context("instance-for-contract")
+        effective = effective_content_policy(
+            contract_entitlements(context["contract_metadata"]),
+            runtime_workspace_capabilities(ROOT, "dayz", "dayz.stable"),
+        )
+        self.assertTrue(effective.mods_allowed)
+        self.assertTrue(effective.workshop_allowed)
+        policy = repo.workspace_policy("instance-for-contract")
+        self.assertTrue(policy["mods_allowed"])
+        self.assertTrue(policy["workshop_allowed"])
+        self.assertFalse(policy["plugins_allowed"])
+        self.assertEqual(policy["resource_profile_id"], "low")
+        with self.backend.connect() as conn:
+            after_policy = dict(conn.execute(
+                "SELECT * FROM instance_workspace_policy WHERE instance_id=?",
+                ("instance-for-contract",)
+            ).fetchone())
+            queued = conn.execute("SELECT COUNT(*) AS n FROM instance_resource_commands").fetchone()["n"]
+        for field in ("cpu_limit_cores", "memory_limit_bytes", "storage_limit_bytes",
+                      "player_limit", "resource_profile_id", "startup_json"):
+            self.assertEqual(after_policy[field], before_policy[field], field)
+        self.assertEqual(queued, 0)
+        after = next(i for i in self.manager.detail(self.code)["instances"]
+                     if i["id"] == "instance-for-contract")
+        for field in ("id", "game_id", "agent_id", "contract_id", "status", "runtime_id"):
+            self.assertEqual(after[field], before[field])
+        self.assertTrue(self.act("edit_contract", {"product_variant": "modified"})["idempotent"])
+
+    def test_dayz_upgrade_rejects_unauthorized_and_mixed_mutations(self):
+        status, contract = dispatch_customer_admin_post(
+            CUSTOMER_ADMIN_CONTRACT,
+            {"customer_code": self.code, "game_id": "dayz", "product_variant": "standard"},
+            user={"username": "operator", "role": "operator"}, backend=self.backend,
+        )
+        self.assertEqual(status, 201)
+        self.contract_id = contract["id"]
+        self.attach(game_id="dayz")
+        with self.assertRaises(PermissionError):
+            self.act("edit_contract", {"product_variant": "modified"},
+                     user={"username": "edit.customer", "role": "customer"})
+        with self.assertRaisesRegex(ValueError, "isoladamente"):
+            self.act("edit_contract", {"product_variant": "modified", "instance_limit": 3})
+        self.assertEqual(self.act("edit_contract", {"product_variant": "modified"},
+                                  user=self.controller)["product_variant"], "modified")
 
     def test_linked_contract_still_guards_capacity_lifecycle_and_mixed_upgrade(self):
         self.attach()
@@ -180,6 +262,9 @@ class CustomerAssetsVisualContractsTest(unittest.TestCase):
         controller_html = (ROOT / "dashboard/web/controller-instance.html").read_text()
         controller_js = (ROOT / "dashboard/web/controller-instance-core.js").read_text()
         self.assertIn('actionButton("Editar",()=>editContract(item))', script)
+        self.assertIn('actionButton("Habilitar Mods e Workshop",()=>upgradeDayzContentContract(item))', script)
+        self.assertIn('changes:{product_variant:"modified"}', script)
+        self.assertIn('if(!confirm(message))return;', script)
         self.assertIn('actionButton("Editar",()=>editInstance(item))', script)
         self.assertIn('id="provision-builder"', controller_html)
         self.assertIn('classList.toggle("building",building)', controller_js)
