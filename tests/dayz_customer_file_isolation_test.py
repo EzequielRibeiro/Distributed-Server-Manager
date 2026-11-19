@@ -178,7 +178,7 @@ def test_alternate_customer_files_root_cannot_target_private_control(tmp_path):
     spec = {**_spec(root), "files_root": str(control)}
     account = pwd.getpwuid(os.geteuid())
     group = SimpleNamespace(gr_gid=os.getegid())
-    with mock.patch.object(materialize_instance, "_validate_runtime_user", return_value=account), \\
+    with mock.patch.object(materialize_instance, "_validate_runtime_user", return_value=account), \
          mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
         with pytest.raises(RuntimeError, match="must match instance state root"):
             materialize_instance._grant_customer_files_access(spec)
