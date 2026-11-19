@@ -79,6 +79,17 @@ class CustomerContractProductAdminTest(unittest.TestCase):
         self.assertEqual(stored["product_variant"], "standard")
         self.assertEqual(stored["content_mode"], "standard")
 
+    def test_dayz_contract_includes_mods_and_workshop_on_standard_product(self):
+        status, contract = self._create_contract(game_id="dayz")
+        self.assertEqual(status, 201)
+        self.assertEqual(contract["product_variant"], "standard")
+        self.assertTrue(contract["entitlements"]["mods"])
+        self.assertTrue(contract["entitlements"]["workshop"])
+        self.assertFalse(contract["entitlements"]["plugins"])
+        stored = self.management.detail(self.customer["customer_code"])["contracts"][0]
+        self.assertTrue(stored["entitlements"]["mods"])
+        self.assertTrue(stored["entitlements"]["workshop"])
+
     def test_minecraft_modified_product_persists_entitlements(self):
         status, contract = self._create_contract(product_variant="modified")
         self.assertEqual(status, 201)
