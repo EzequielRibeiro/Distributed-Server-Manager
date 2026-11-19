@@ -79,9 +79,9 @@ def test_instance_gets_isolated_writable_home_visible_through_passwd_path():
 def test_agent_traversal_mode_applies_to_managed_instance_roots_across_engines():
     for game_id in ("dayz", "minecraft", "palworld"):
         unit = render_unit(_spec(game_id=game_id))
-        assert "StateDirectoryMode=0710\\n".replace("\\\\n", "\\n") in unit
-        assert "StateDirectoryMode=0750\\n".replace("\\\\n", "\\n") not in unit
-        assert "StateDirectoryMode=0770\\n".replace("\\\\n", "\\n") not in unit
+        assert "StateDirectoryMode=0710\n" in unit
+        assert "StateDirectoryMode=0750\n" not in unit
+        assert "StateDirectoryMode=0770\n" not in unit
 
 
 def test_custom_instance_state_root_does_not_request_systemd_state_mode_change():
