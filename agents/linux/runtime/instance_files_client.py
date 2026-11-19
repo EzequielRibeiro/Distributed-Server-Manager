@@ -124,6 +124,8 @@ def _guard_path_policy(relative: Path, policy: dict[str, Any], *, mutation: bool
                 raise PermissionError("physical instance root is not customer writable")
         elif relative.parts[0] not in DAYZ_CUSTOMER_FILE_DIRS:
             raise PermissionError("path is outside customer-visible DayZ directories")
+        if mutation and len(relative.parts) == 1:
+            raise PermissionError("customer root entries cannot be renamed or removed")
         if mutation and relative.parts and relative.parts[0] in DAYZ_MANAGED_CONTENT_DIRS:
             raise PermissionError("managed content must be changed through Content workspace")
     protected = _parts_set(file_policy.get("protected_paths")) | {".dsm", "runtime"}
