@@ -171,3 +171,25 @@ def test_foreign_owner_rejected_for_customer_writable_tree(tmp_path):
         with pytest.raises(RuntimeError, match="identity mismatch"):
             materialize_instance._grant_customer_files_access(_spec(root))
     assert mode(root) == 0o770
+
+
+def test_alternate_customer_files_root_cannot_target_private_control(tmp_path):
+    root, control, secret, *rest = _fixture(tmp_path)
+    spec = {**_spec(root), "files_root": str(control)}
+    account = pwd.getpwuid(os.geteuid())
+    group = SimpleNamespace(gr_gid=os.getegid())
+    with mock.patch.object(materialize_instance, "_validate_runtime_user", return_value=account), \\
+         mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
+        with pytest.raises(RuntimeError, match="must match instance state root"):
+            materialize_instance._grant_customer_files_access(spec)
+    assert mode(root) == 0o770
+    assert mode(control) == 0o700
+    assert mode(secret) == 0o600
+
+    record = {**spec, "agent_id": "agent-test"}
+    with mock.patch.object(instance_files_client, "_owned", return_value=record):
+        with pytest.raises(PermissionError, match="differs from private instance state"):
+            instance_files_client.execute(
+                {"agent_id": "agent-test"},
+                {"instance_id": root.name, "action": "list", "path": "."},
+            )
