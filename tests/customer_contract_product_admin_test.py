@@ -86,9 +86,14 @@ class CustomerContractProductAdminTest(unittest.TestCase):
         self.assertTrue(contract["entitlements"]["mods"])
         self.assertTrue(contract["entitlements"]["workshop"])
         self.assertFalse(contract["entitlements"]["plugins"])
-        stored = self.management.detail(self.customer["customer_code"])["contracts"][0]
-        self.assertTrue(stored["entitlements"]["mods"])
-        self.assertTrue(stored["entitlements"]["workshop"])
+        import json
+        with self.backend.connect() as connection:
+            row = connection.execute(
+                "SELECT metadata_json FROM service_contracts WHERE id=?", (contract["id"],)
+            ).fetchone()
+        stored_entitlements = json.loads(row["metadata_json"])["entitlements"]
+        self.assertTrue(stored_entitlements["mods"])
+        self.assertTrue(stored_entitlements["workshop"])
 
     def test_minecraft_modified_product_persists_entitlements(self):
         status, contract = self._create_contract(product_variant="modified")
