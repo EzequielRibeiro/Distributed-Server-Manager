@@ -7,6 +7,7 @@ from typing import Any,Callable
 from adapters.systemd import unit_for_instance
 from runtime_secret_store import RuntimeSecretError,credential_path
 from .base import InstanceRuntimeMaterializer,MaterializerError
+from .instance_state_access import reconcile_instance_root_traversal
 Runner=Callable[[list[str],int],tuple[int,str,str]];_GENERATED_BY="capivara-instance-runtime-v1";_RUNTIME_ACCOUNT_HOME="/var/lib/capivara-agent/runtime-home"
 def _default_runner(command,timeout):
  try:cp=subprocess.run(command,capture_output=True,text=True,check=False,timeout=timeout)
@@ -309,9 +310,16 @@ class SystemdMaterializer(InstanceRuntimeMaterializer):
   path=unit_path_for_spec(spec);before=self.inspect(spec)
   if before["exists"] and not before["owned"]:raise MaterializerError(f"refusing to replace non-Capivara unit: {path.name}")
   content=render_unit(spec)
-  if before["matches"]:return {"action":"materialize","changed":False,"idempotent":True,"state":before}
+  # Fail closed on unexpected identity/group before replacing an owned unit.
+  reconcile_instance_root_traversal(spec)
+  if before["matches"]:
+   reconcile_instance_root_traversal(spec,apply=True)
+   return {"action":"materialize","changed":False,"idempotent":True,"state":before}
   path.parent.mkdir(parents=True,exist_ok=True);temp=path.with_name(f".{path.name}.{os.getpid()}.tmp")
-  try:temp.write_text(content,encoding="utf-8");os.chmod(temp,0o644);os.replace(temp,path);self._reload()
+  try:
+   temp.write_text(content,encoding="utf-8");os.chmod(temp,0o644);os.replace(temp,path);self._reload()
+   # Existing roots can be corrected without stopping an already-running game.
+   reconcile_instance_root_traversal(spec,apply=True)
   except Exception:
    try:temp.unlink()
    except FileNotFoundError:pass
