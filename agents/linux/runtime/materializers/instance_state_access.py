@@ -26,7 +26,7 @@ def reconcile_instance_root_traversal(
     specs or remote commands. The default target is always the DSM-managed root.
     """
     instance_id = str(spec.get("instance_id") or "")
-    if not instance_id or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in instance_id):
+    if not instance_id or instance_id in (".", "..") or len(instance_id) > 191 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in instance_id):
         raise MaterializerError("invalid instance id for state access reconciliation")
     expected_path = str(_ROOT / instance_id)
     if str(spec.get("instance_state_root") or expected_path) != expected_path:
