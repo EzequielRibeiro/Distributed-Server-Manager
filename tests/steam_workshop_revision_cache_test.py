@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import errno
+import os
 import sys
 import tempfile
 import threading
@@ -22,12 +24,71 @@ for path in (
         sys.path.insert(0, str(path))
 
 import content_provider_steam_workshop as workshop_provider
+import content_client
 import content_cache_inventory
 import customer_content_workspace as workspace_module
 from content_repository import ContentRepository
 
 
 class SteamWorkshopRevisionCacheTest(unittest.TestCase):
+    def test_workshop_same_device_hardlinks_without_copying(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, payload = root / "cache", root / "stage"
+            source.mkdir()
+            payload.mkdir()
+            (source / "mod.pbo").write_bytes(b"cached")
+            content_client._materialize_workshop_tree(source, payload)
+            self.assertEqual((payload / "mod.pbo").read_bytes(), b"cached")
+            self.assertEqual((source / "mod.pbo").stat().st_ino,
+                             (payload / "mod.pbo").stat().st_ino)
+
+    def test_workshop_exdev_falls_back_to_disk_guarded_copy(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, payload = root / "cache", root / "stage"
+            source.mkdir()
+            payload.mkdir()
+            (source / "mod.pbo").write_bytes(b"cached")
+            with patch.object(content_client.os, "link",
+                              side_effect=OSError(errno.EXDEV, "Invalid cross-device link")), \
+                 patch.object(content_client.shutil, "disk_usage",
+                              return_value=SimpleNamespace(free=3 * 1024**3)):
+                content_client._materialize_workshop_tree(source, payload)
+            self.assertEqual((payload / "mod.pbo").read_bytes(), b"cached")
+            self.assertNotEqual((source / "mod.pbo").stat().st_ino,
+                                (payload / "mod.pbo").stat().st_ino)
+
+    def test_workshop_exdev_refuses_copy_when_space_is_low(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, payload = root / "cache", root / "stage"
+            source.mkdir()
+            payload.mkdir()
+            (source / "mod.pbo").write_bytes(b"cached")
+            with patch.object(content_client.os, "link",
+                              side_effect=OSError(errno.EXDEV, "Invalid cross-device link")), \
+                 patch.object(content_client.shutil, "disk_usage",
+                              return_value=SimpleNamespace(free=1024)):
+                with self.assertRaisesRegex(ValueError, "Espaço insuficiente"):
+                    content_client._materialize_workshop_tree(source, payload)
+            self.assertEqual(list(payload.iterdir()), [])
+            self.assertEqual((source / "mod.pbo").read_bytes(), b"cached")
+
+    def test_workshop_hardlink_non_exdev_failure_remains_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source, payload = root / "cache", root / "stage"
+            source.mkdir()
+            payload.mkdir()
+            (source / "mod.pbo").write_bytes(b"cached")
+            with patch.object(content_client.os, "link",
+                              side_effect=OSError(errno.EPERM, "Operation not permitted")):
+                with self.assertRaisesRegex(ValueError, "Cannot materialize"):
+                    content_client._materialize_workshop_tree(source, payload)
+            self.assertEqual(list(payload.iterdir()), [])
+            self.assertEqual((source / "mod.pbo").read_bytes(), b"cached")
+
     def _write_manifest(self, source: Path, app_id: str, item_id: str, revision: str) -> Path:
         manifest = source.parent.parent.parent / f"appworkshop_{app_id}.acf"
         manifest.parent.mkdir(parents=True, exist_ok=True)
