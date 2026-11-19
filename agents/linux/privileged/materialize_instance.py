@@ -1166,7 +1166,10 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
     files_root_raw = str(spec.get("files_root") or "").strip()
     if not files_root_raw:
         return
-    state_root = Path(str(spec["instance_state_root"])).resolve()
+    state_raw = Path(str(spec["instance_state_root"]))
+    if state_raw.is_symlink():
+        raise RuntimeError("instance state root cannot be a symlink")
+    state_root = state_raw.resolve()
     files_root = _within(state_root, files_root_raw, "customer files root")
     if not files_root.is_dir() or files_root.is_symlink():
         return
@@ -1174,6 +1177,52 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
         agent_group = grp.getgrnam(_AGENT_GROUP)
     except KeyError as exc:
         raise RuntimeError("Agent control group is unavailable") from exc
+
+    # DayZ deliberately exposes the private instance root as a *virtual*
+    # customer files root. Do not recursively chmod that physical root: doing
+    # so reopens .dsm, lets group members rename .dsm, and undoes 0710.
+    if (str(spec.get("game_id") or "").lower() == "dayz"
+            and files_root == state_root):
+        from dayz_customer_files_policy import (
+            DAYZ_CUSTOMER_FILE_DIRS, DAYZ_MANAGED_CONTENT_DIRS,
+        )
+        runtime_user = _validate_runtime_user(
+            str(spec.get("user") or _DEFAULT_RUNTIME_USER)
+        )
+        root_metadata = state_root.stat()
+        if (root_metadata.st_uid != runtime_user.pw_uid
+                or root_metadata.st_gid != agent_group.gr_gid):
+            raise RuntimeError("DayZ customer files root identity mismatch")
+        os.chmod(state_root, 0o710)
+        for dirname in DAYZ_CUSTOMER_FILE_DIRS:
+            child = state_root / dirname
+            if child.is_symlink():
+                raise RuntimeError("DayZ customer files entry cannot be a symlink")
+            if not child.exists():
+                continue
+            if not child.is_dir():
+                raise RuntimeError("DayZ customer files entry must be a directory")
+            if dirname in DAYZ_MANAGED_CONTENT_DIRS:
+                # Keep ownership/modes established by the UCP materializer.
+                continue
+            for current in [child, *child.rglob("*")]:
+                if current.is_symlink():
+                    raise RuntimeError("DayZ customer files tree contains a symlink")
+                metadata = current.stat()
+                if metadata.st_uid != runtime_user.pw_uid:
+                    raise RuntimeError("DayZ customer files entry owner mismatch")
+                if metadata.st_gid != agent_group.gr_gid:
+                    os.chown(current, -1, agent_group.gr_gid)
+                if current.is_dir():
+                    desired_mode = 0o770
+                elif current.is_file():
+                    desired_mode = 0o770 if metadata.st_mode & 0o111 else 0o660
+                else:
+                    raise RuntimeError("unsupported DayZ customer files entry type")
+                if (metadata.st_mode & 0o7777) != desired_mode:
+                    os.chmod(current, desired_mode)
+        return
+
     for current in [files_root, *files_root.rglob("*")]:
         if current.is_symlink():
             raise RuntimeError(f"customer files tree contains a symlink: {current}")
@@ -1188,7 +1237,6 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
             continue
         if (metadata.st_mode & 0o7777) != desired_mode:
             os.chmod(current, desired_mode)
-
 
 def _write_dayz_battleye_runtime(path: Path, record: dict[str, Any], owner) -> None:
     """Atomic owner-preserving private state write, without touching game data."""
