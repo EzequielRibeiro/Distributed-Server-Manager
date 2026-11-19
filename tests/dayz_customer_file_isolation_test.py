@@ -123,6 +123,8 @@ def test_virtual_root_lists_only_explicit_directories_and_blocks_private_paths(t
             ("read_text", "battleye/rcon_password.txt"),
             ("list", "unknown-private"),
             ("write_text", "new.txt"),
+            ("delete", "config"),
+            ("rename", "profiles"),
             ("delete", "content/workshop/cf.pbo"),
         ):
             with pytest.raises(PermissionError):
