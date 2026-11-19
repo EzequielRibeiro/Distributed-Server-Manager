@@ -49,7 +49,6 @@ class DayZCommunityVariantLabelsTest(unittest.TestCase):
     def test_namalsk_variants_named_even_when_agent_supplies_same_display_name(self):
         raw = {"current": "regular.namalsk", "current_name": "Namalsk",
                "missions": [
-                   self.mission("regular.namalsk", active=True) if False else
                    {**self.mission("regular.namalsk"), "active": True},
                    self.mission("hardcore.namalsk"),
                ]}
