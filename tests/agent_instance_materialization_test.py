@@ -379,6 +379,87 @@ class B8RuntimeMaterializationTest(unittest.TestCase):
             self.assertEqual((target / "server.jar").read_bytes(), b"provider-v2")
             self.assertEqual((target / "world" / "level.dat").read_bytes(), b"customer-world")
 
+    def test_dayz_content_defaults_and_legacy_repair_preserve_private_files(self):
+        storage_root = self.root / "dayz-pool"
+        instance_root = storage_root / "dayz-test"
+        spec = {
+            "instance_id": "dayz-test", "game_id": "dayz",
+            "instance_state_root": str(instance_root),
+            "working_directory": str(self.work),
+            "seed_files": [], "seed_directories": [],
+            "bind_paths": [], "writable_directories": [],
+        }
+        runtime_account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        agent_account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        agent_group = type("Group", (), {"gr_gid": os.getgid()})()
+        with mock.patch.object(materialize_instance.os, "chown") as chown, \
+             mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=agent_account), \
+             mock.patch.object(materialize_instance.grp, "getgrnam", return_value=agent_group):
+            materialize_instance._prepare_private_state(spec, runtime_account, storage_root)
+            content = instance_root / "content"
+            workshop = content / "workshop"
+            self.assertEqual(stat.S_IMODE(instance_root.stat().st_mode), 0o710)
+            self.assertEqual(stat.S_IMODE(content.stat().st_mode), 0o750)
+            self.assertEqual(stat.S_IMODE(workshop.stat().st_mode), 0o750)
+            chown.assert_any_call(content, agent_account.pw_uid, agent_group.gr_gid)
+            chown.assert_any_call(workshop, agent_account.pw_uid, agent_group.gr_gid)
+            private = instance_root / ".dsm"
+            self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+            sentinel = workshop / "preserve-legacy.pbo"
+            sentinel.write_bytes(b"preserve")
+            content.chmod(0o700)
+            workshop.chmod(0o700)
+            materialize_instance._prepare_private_state(spec, runtime_account, storage_root)
+            self.assertEqual(sentinel.read_bytes(), b"preserve")
+            self.assertEqual(stat.S_IMODE(content.stat().st_mode), 0o750)
+            self.assertEqual(stat.S_IMODE(workshop.stat().st_mode), 0o750)
+            self.assertEqual(stat.S_IMODE(private.stat().st_mode), 0o700)
+
+    def test_dayz_content_rejects_symlink_without_touching_external_target(self):
+        storage_root = self.root / "dayz-pool"
+        instance_root = storage_root / "dayz-link"
+        instance_root.mkdir(parents=True)
+        external = self.root / "outside"
+        external.mkdir()
+        outside_file = external / "unchanged.txt"
+        outside_file.write_text("protected")
+        (instance_root / "content").symlink_to(external, target_is_directory=True)
+        spec = {
+            "instance_id": "dayz-link", "game_id": "dayz",
+            "instance_state_root": str(instance_root),
+            "working_directory": str(self.work),
+            "seed_files": [], "seed_directories": [],
+            "bind_paths": [], "writable_directories": [],
+        }
+        account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        group = type("Group", (), {"gr_gid": os.getgid()})()
+        with mock.patch.object(materialize_instance.os, "chown"), \
+             mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=account), \
+             mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
+            with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+                materialize_instance._prepare_private_state(spec, account, storage_root)
+        self.assertEqual(outside_file.read_text(), "protected")
+        self.assertEqual(stat.S_IMODE(external.stat().st_mode), 0o755)
+
+    def test_non_dayz_does_not_create_managed_content_directories(self):
+        storage_root = self.root / "generic-pool"
+        instance_root = storage_root / "generic-test"
+        spec = {
+            "instance_id": "generic-test", "game_id": "minecraft",
+            "instance_state_root": str(instance_root),
+            "working_directory": str(self.work),
+            "seed_files": [], "seed_directories": [],
+            "bind_paths": [], "writable_directories": [],
+        }
+        account = type("Account", (), {"pw_uid": os.getuid(), "pw_gid": os.getgid()})()
+        group = type("Group", (), {"gr_gid": os.getgid()})()
+        with mock.patch.object(materialize_instance.os, "chown"), \
+             mock.patch.object(materialize_instance.pwd, "getpwnam", return_value=account), \
+             mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
+            materialize_instance._prepare_private_state(spec, account, storage_root)
+        self.assertFalse((instance_root / "content").exists())
+        self.assertEqual(stat.S_IMODE(instance_root.stat().st_mode), 0o710)
+
     def test_agent_control_state_is_private_but_traversable_from_instance_root(self):
         storage_root = self.root / "instances-control"
         instance_root = storage_root / "instance-control"
