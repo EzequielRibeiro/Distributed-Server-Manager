@@ -855,10 +855,17 @@ def _ensure_dayz_runtime_root_acl(spec: dict[str, Any]) -> bool:
     if len(relative.parts) != 1 or not resolved.is_dir():
         raise RuntimeError("DayZ managed installation is not an expected game-data root")
 
-    agent = pwd.getpwnam("capivara-agent")
+    # The standalone Agent runs SteamCMD as capivara-agent, while the trusted
+    # Hybrid materializer unit sets CAPIVARA_AGENT_RESULT_USER to the DSM
+    # service account (e.g. capivara). Verify the actual SteamCMD identity
+    # instead of rejecting valid Hybrid-owned game-data.
+    agent_name = str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent").strip()
+    agent = pwd.getpwnam(agent_name)
     group = grp.getgrnam(_AGENT_GROUP)
     metadata = resolved.stat()
-    if metadata.st_uid != agent.pw_uid or metadata.st_gid != group.gr_gid:
+    # The Agent's primary group and the dedicated runtime-sharing group are
+    # both legitimate; other groups are still rejected.
+    if metadata.st_uid != agent.pw_uid or metadata.st_gid not in {agent.pw_gid, group.gr_gid}:
         raise RuntimeError("DayZ game-data root is not owned by the SteamCMD Agent")
     _validate_runtime_user(user)
     try:

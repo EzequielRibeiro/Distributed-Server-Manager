@@ -34,7 +34,7 @@ def setup(tmp_path):
 
 
 def _identity_patches(module, working):
-    owner = types.SimpleNamespace(pw_uid=working.stat().st_uid)
+    owner = types.SimpleNamespace(pw_uid=working.stat().st_uid, pw_gid=working.stat().st_gid)
     group = types.SimpleNamespace(gr_gid=working.stat().st_gid)
     return (
         mock.patch.object(module.pwd, "getpwnam", return_value=owner),
@@ -92,6 +92,47 @@ def test_untrusted_ownership_rejected(setup):
          mock.patch.object(module.subprocess, "run") as run:
         with pytest.raises(RuntimeError, match="not owned"):
             module._ensure_dayz_runtime_root_acl({"game_id": "dayz", "working_directory": str(working)})
+        run.assert_not_called()
+
+
+
+
+def test_hybrid_uses_trusted_steamcmd_result_user_without_chown(setup):
+    module, working = setup
+    st = working.stat()
+    agent = types.SimpleNamespace(pw_name="capivara", pw_uid=st.st_uid, pw_gid=st.st_gid)
+    # In Hybrid deployments the DSM user has its own primary group; the
+    # capivara-agent group is used for runtime sharing, not SteamCMD ownership.
+    other_group = types.SimpleNamespace(gr_gid=st.st_gid + 1)
+    with mock.patch.dict(os.environ, {"CAPIVARA_AGENT_RESULT_USER": "capivara"}), \
+         mock.patch.object(module.pwd, "getpwnam", return_value=agent) as lookup, \
+         mock.patch.object(module.grp, "getgrnam", return_value=other_group), \
+         mock.patch.object(module, "_validate_runtime_user", return_value=agent), \
+         mock.patch.object(module.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stderr="")) as run, \
+         mock.patch.object(module.os, "chown") as chown:
+        assert module._ensure_dayz_runtime_root_acl({
+            "game_id": "dayz", "user": "capivara-instance",
+            "working_directory": str(working),
+        })
+    lookup.assert_called_with("capivara")
+    run.assert_called_once()
+    chown.assert_not_called()
+
+
+def test_hybrid_rejects_foreign_group_even_when_owner_matches(setup):
+    module, working = setup
+    st = working.stat()
+    agent = types.SimpleNamespace(pw_name="capivara", pw_uid=st.st_uid, pw_gid=st.st_gid + 1)
+    other_group = types.SimpleNamespace(gr_gid=st.st_gid + 2)
+    with mock.patch.dict(os.environ, {"CAPIVARA_AGENT_RESULT_USER": "capivara"}), \
+         mock.patch.object(module.pwd, "getpwnam", return_value=agent), \
+         mock.patch.object(module.grp, "getgrnam", return_value=other_group), \
+         mock.patch.object(module.subprocess, "run") as run:
+        with pytest.raises(RuntimeError, match="not owned"):
+            module._ensure_dayz_runtime_root_acl({
+                "game_id": "dayz", "user": "capivara-instance",
+                "working_directory": str(working),
+            })
         run.assert_not_called()
 
 
