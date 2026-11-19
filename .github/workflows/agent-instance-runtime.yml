@@ -89,6 +89,13 @@ jobs:
       - name: Install test runner
         run: python3 -m pip install --disable-pip-version-check pytest
 
+      - name: Verify Agent instance-root permissions in isolated fixtures
+        run: |
+          python3 -m pytest \
+            tests/agent_instance_state_access_test.py \
+            tests/agent_systemd_materializer_regression_test.py \
+            -q
+
       - name: Run managed firewall lifecycle tests
         run: |
           python3 -m pytest             tests/linux_privileged_firewall_bridge_test.py             tests/linux_firewall_removal_lifecycle_test.py             tests/linux_managed_firewall_test.py             tests/hybrid_managed_firewall_substrate_test.py             tests/linux_updater_managed_firewall_state_test.py             tests/managed_firewall_port_uniqueness_test.py             -q
