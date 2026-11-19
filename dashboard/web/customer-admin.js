@@ -51,7 +51,7 @@ async function editContract(item){
       if(profiles&&!profiles.value&&item.resource_profile_id)profiles.value=item.resource_profile_id;
       const workspace=await app.request("/api/catalog/workspace-products?game="+encodeURIComponent(item.game_id));
       const choices=workspace.products||[];
-      if(choices.length)products=field(view.body,"Produto / distribuições permitidas","",item.product_variant||workspace.default_product_id||"",choices.map(x=>[x.id,x.label||x.id]));
+      if(choices.length&&item.game_id!=="dayz")products=field(view.body,"Produto / distribuições permitidas","",item.product_variant||workspace.default_product_id||"",choices.map(x=>[x.id,x.label||x.id]));
     }catch(error){view.notice.textContent="Não foi possível carregar todos os perfis/produtos: "+error.message;}
   }else{
     const hint=document.createElement("p");hint.textContent="Perfil e produto precisam de migração para contratos com instâncias vinculadas. Esta edição não interrompe servidores.";view.body.append(hint);
@@ -71,25 +71,6 @@ async function editContract(item){
       view.dialog.close();await load();app.setNotice("detail-error","Contrato atualizado.","success");
     }catch(error){view.notice.textContent=error.message;}finally{view.save.disabled=false;}
   });
-}
-async function upgradeDayzContentContract(item){
-  if(item.game_id!=="dayz"||String(item.product_variant||"standard").toLowerCase()!=="standard"||item.status!=="active")return;
-  try{
-    const workspace=await app.request("/api/catalog/workspace-products?game=dayz");
-    const product=(workspace.products||[]).find(value=>value.id==="modified");
-    if(!product)throw new Error("Produto DayZ com Mods e Workshop indisponível no catálogo.");
-    const count=Number(item.instances_used||0);
-    const message="Autorizar Mods e Steam Workshop no contrato DayZ "+item.id+"? "+
-      "A alteração abrange "+count+" instância(s) vinculada(s), é auditada e "+
-      "não modifica CPU, RAM, armazenamento, mundo ou Agent. "+
-      "Confirme as condições comerciais deste produto antes de prosseguir.";
-    if(!confirm(message))return;
-    await app.request("/api/admin/customer/assets",{method:"POST",body:JSON.stringify({
-      action:"edit_contract",customer_code:customerCode,id:item.id,changes:{product_variant:"modified"}
-    })});
-    await load();
-    app.setNotice("detail-error","Produto DayZ com Mods e Workshop autorizado para o contrato.","success");
-  }catch(error){app.setNotice("detail-error",error.message,"error");}
 }
 async function deleteEmptyContract(item){
   if(Number(item.instances_used||0)>0)return;
@@ -127,9 +108,6 @@ function renderContracts(items){
     if(canEditAssets){
       const actions=document.createElement("div");actions.className="customer-asset-actions";
       actions.append(actionButton("Editar",()=>editContract(item)));
-      if(item.game_id==="dayz"&&item.status==="active"&&String(item.product_variant||"standard").toLowerCase()==="standard"){
-        actions.append(actionButton("Habilitar Mods e Workshop",()=>upgradeDayzContentContract(item)));
-      }
       if(Number(item.instances_used||0)===0)actions.append(actionButton("Remover",()=>deleteEmptyContract(item),"danger"));
       card.append(actions);
     }
