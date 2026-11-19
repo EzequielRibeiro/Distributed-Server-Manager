@@ -80,6 +80,11 @@ def discover_missions(record):
         if source_path.is_dir():
             names.add(name);locations.setdefault(name,set()).add("content")
     if current:names.add(current)
+    variant_counts={}
+    for mission_id in names:
+        metadata=community_metadata.get(mission_id) or {}
+        cid=metadata.get("content_id") or ""
+        if cid:variant_counts[cid]=variant_counts.get(cid,0)+1
     result=[]
     for name in sorted(names,key=lambda x:(_OFFICIAL.get(x,x).lower(),x.lower())):
         where=locations.get(name,set());official=name in _OFFICIAL
@@ -91,6 +96,10 @@ def discover_missions(record):
         community_item=community_metadata.get(name) or {}
         content_id=community_item.get("content_id") or ""
         display_name=community_item.get("name") or _LEGACY_COMMUNITY_NAMES.get(content_id) or name
+        if not official and content_id and variant_counts.get(content_id,0)>1:
+            variant=name.split(".",1)[0].replace("_"," ").replace("-"," ").strip()
+            if variant and variant.casefold() not in display_name.casefold():
+                display_name=f"{display_name} — {variant.title()}"
         item={
             "id":name,"name":_OFFICIAL.get(name,display_name),"official":official,"community":not official,
             "current":active,"active":active,"installed":installed,"available":available,
