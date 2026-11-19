@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import pwd
+import grp
 import stat
 from pathlib import Path
 
@@ -17,7 +18,7 @@ _OPEN_DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 
 def reconcile_instance_root_traversal(
     spec: dict, *, apply: bool = False,
-    _parent: Path = _ROOT, _agent_user: str = "capivara-agent",
+    _parent: Path = _ROOT, _agent_user: str | None = None,
 ) -> str:
     """Audit or grant group traversal only when identities and paths are verified.
 
@@ -46,10 +47,15 @@ def reconcile_instance_root_traversal(
         current = os.fstat(root_fd)
         try:
             service_user = pwd.getpwnam(str(spec["user"]))
-            agent_user = pwd.getpwnam(_agent_user)
-            agent_groups = set(os.getgrouplist(_agent_user, agent_user.pw_gid))
+            if _agent_user is None:
+                # The Agent is a user on external nodes, but may be a
+                # supplementary-group member on hybrid nodes.
+                agent_groups = {grp.getgrnam("capivara-agent").gr_gid}
+            else:
+                agent_user = pwd.getpwnam(_agent_user)
+                agent_groups = set(os.getgrouplist(_agent_user, agent_user.pw_gid))
         except (KeyError, OSError, ValueError) as exc:
-            raise MaterializerError("unknown service or Agent identity for instance state") from exc
+            raise MaterializerError("unknown service owner or authorized Agent group") from exc
         if current.st_uid != service_user.pw_uid:
             raise MaterializerError("instance root owner differs from service user")
         if current.st_gid not in agent_groups:
