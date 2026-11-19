@@ -143,7 +143,7 @@ class CustomerAssetsAdminTest(unittest.TestCase):
         repo.save_workspace_policy("instance-for-contract", prior)
         before = self.manager.detail(self.code)["instances"][-1]
         context = repo.instance_context("instance-for-contract")
-        self.assertFalse(effective_content_policy(
+        self.assertTrue(effective_content_policy(
             contract_entitlements(context["contract_metadata"]),
             runtime_workspace_capabilities(ROOT, "dayz", "dayz.stable"),
         ).mods_allowed)
@@ -262,9 +262,8 @@ class CustomerAssetsVisualContractsTest(unittest.TestCase):
         controller_html = (ROOT / "dashboard/web/controller-instance.html").read_text()
         controller_js = (ROOT / "dashboard/web/controller-instance-core.js").read_text()
         self.assertIn('actionButton("Editar",()=>editContract(item))', script)
-        self.assertIn('actionButton("Habilitar Mods e Workshop",()=>upgradeDayzContentContract(item))', script)
-        self.assertIn('changes:{product_variant:"modified"}', script)
-        self.assertIn('if(!confirm(message))return;', script)
+        self.assertNotIn('Habilitar Mods e Workshop', script)
+        self.assertNotIn('upgradeDayzContentContract', script)
         self.assertIn('actionButton("Editar",()=>editInstance(item))', script)
         self.assertIn('id="provision-builder"', controller_html)
         self.assertIn('classList.toggle("building",building)', controller_js)
