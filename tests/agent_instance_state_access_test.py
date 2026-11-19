@@ -92,9 +92,10 @@ def test_nonexistent_root_is_not_created(tmp_path):
     assert not (parent / INSTANCE_ID).exists()
 
 
-def test_invalid_instance_id_fails_closed(tmp_path):
+@pytest.mark.parametrize("instance_id", ["../escape", ".", "..", "", "x" * 192])
+def test_invalid_instance_id_fails_closed(tmp_path, instance_id):
     with pytest.raises(MaterializerError, match="invalid instance id"):
-        _reconcile(tmp_path, {"instance_id": "../escape", "user": "root"}, apply=True)
+        _reconcile(tmp_path, {"instance_id": instance_id, "user": "root"}, apply=True)
 
 
 def test_authorized_agent_group_is_used_without_assuming_agent_user_exists(tmp_path, monkeypatch):
