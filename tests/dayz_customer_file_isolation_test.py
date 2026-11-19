@@ -124,7 +124,7 @@ def test_virtual_root_lists_only_explicit_directories_and_blocks_private_paths(t
             ("list", "unknown-private"),
             ("write_text", "new.txt"),
             ("delete", "config"),
-            ("rename", "profiles"),
+            ("rename", "config"),
             ("delete", "content/workshop/cf.pbo"),
         ):
             with pytest.raises(PermissionError):
