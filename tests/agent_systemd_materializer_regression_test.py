@@ -62,7 +62,7 @@ def test_instance_gets_isolated_writable_home_visible_through_passwd_path():
     unit = render_unit(_spec())
 
     assert "StateDirectory=capivara-instances/aurora-dayz-002\n" in unit
-    assert "StateDirectoryMode=0700\n" in unit
+    assert "StateDirectoryMode=0710\n" in unit
     assert (
         "BindPaths=/var/lib/capivara-instances/aurora-dayz-002:"
         "/var/lib/capivara-agent/runtime-home\n"
@@ -74,6 +74,20 @@ def test_instance_gets_isolated_writable_home_visible_through_passwd_path():
     assert 'Environment="XDG_CACHE_HOME=/var/lib/capivara-agent/runtime-home/.cache"' in unit
     assert 'Environment="XDG_CONFIG_HOME=/var/lib/capivara-agent/runtime-home/.config"' in unit
     assert "/nonexistent" not in unit
+
+
+def test_agent_traversal_mode_applies_to_managed_instance_roots_across_engines():
+    for game_id in ("dayz", "minecraft", "palworld"):
+        unit = render_unit(_spec(game_id=game_id))
+        assert "StateDirectoryMode=0710\\n".replace("\\\\n", "\\n") in unit
+        assert "StateDirectoryMode=0750\\n".replace("\\\\n", "\\n") not in unit
+        assert "StateDirectoryMode=0770\\n".replace("\\\\n", "\\n") not in unit
+
+
+def test_custom_instance_state_root_does_not_request_systemd_state_mode_change():
+    unit = render_unit(_spec(instance_state_root="/srv/capivara-private/instance"))
+    assert "StateDirectory=" not in unit
+    assert "StateDirectoryMode=" not in unit
 
 
 def test_instance_can_bind_private_persistence_over_shared_game_data_mountpoint():
