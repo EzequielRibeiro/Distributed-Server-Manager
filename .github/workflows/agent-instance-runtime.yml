@@ -23,6 +23,9 @@ on:
       - 'dashboard/server_part17.py'
       - 'bin/cap'
       - 'release/build_agent_package.sh'
+      - 'tests/agent_instance_state_access_test.py'
+      - 'tests/agent_instance_state_systemd_e2e.sh'
+      - 'tests/agent_systemd_materializer_regression_test.py'
       - 'tests/agent_instance_runtime_test.py'
       - 'tests/agent_instance_materialization_test.py'
       - 'tests/agent_game_runtime_profiles_test.py'
@@ -95,6 +98,9 @@ jobs:
             tests/agent_instance_state_access_test.py \
             tests/agent_systemd_materializer_regression_test.py \
             -q
+
+      - name: Exercise systemd instance-root repair on disposable CI service
+        run: sudo --preserve-env=GITHUB_WORKSPACE bash tests/agent_instance_state_systemd_e2e.sh
 
       - name: Run managed firewall lifecycle tests
         run: |
