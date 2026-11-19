@@ -99,7 +99,7 @@ class HybridCustomerWorkspaceParityTest(unittest.TestCase):
         source = (DASHBOARD / "web" / "customer-instance-v2.js").read_text(
             encoding="utf-8"
         )
-        self.assertIn('async function control(action){if(!can(`instance.${action}`))return;', source)
+        self.assertIn('async function control(action){if(!can(`instance.${action}`))throw new Error(', source)
         self.assertNotIn('&&action!=="restart"', source)
 
 
