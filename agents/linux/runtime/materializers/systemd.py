@@ -157,7 +157,8 @@ def render_unit(spec, *, pinned_supervisor_preview=None):
   argv=["/usr/bin/python3",str(supervisor),"--socket",console_socket,"--",*argv]
  lines=["[Unit]",f"Description=Capivara instance {instance_id}","After=network-online.target","Wants=network-online.target",f"X-Capivara-GeneratedBy={_GENERATED_BY}",f"X-Capivara-Instance={instance_id}",f"X-Capivara-Agent={agent_id}",f"X-Capivara-Runtime={runtime_id}","","[Service]","Type=simple",f"User={spec['user']}","IPAccounting=yes"]
  if bool(spec.get("private_shared_memory")):lines.append("TemporaryFileSystem=/dev/shm:rw,nosuid,nodev,mode=1777")
- if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0700"])
+ # The Agent needs group traversal for managed content; do not grant listing or writing.
+ if private_state_path==default_state_path:lines.extend([f"StateDirectory={state_directory}","StateDirectoryMode=0710"])
  lines.append(f"BindPaths={_bind_path(private_state_path,_RUNTIME_ACCOUNT_HOME)}")
  runtime_directory=spec.get("runtime_directory")
  if runtime_directory:lines.extend([f"RuntimeDirectory={runtime_directory}","RuntimeDirectoryMode=0700"])
