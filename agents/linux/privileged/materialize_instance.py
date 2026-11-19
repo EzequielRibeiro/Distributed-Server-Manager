@@ -592,6 +592,35 @@ def _seed_directory(source: Path, target: Path, account: pwd.struct_passwd, *, o
         raise
 
 
+def _prepare_dayz_content_directories(
+    spec: dict[str, Any], state_root: Path,
+    runtime_account: pwd.struct_passwd,
+    agent_account: pwd.struct_passwd, agent_group: grp.struct_group,
+) -> None:
+    """Provision and repair only DayZ's Agent-managed content entry points.
+
+    The Agent downloads and stages Workshop items, while the runtime may only
+    read them. Never recursively chown customer files or widen private roots.
+    """
+    if str(spec.get("game_id") or "").strip().lower() != "dayz":
+        return
+    for path in (state_root / "content", state_root / "content" / "workshop"):
+        if path.is_symlink():
+            raise RuntimeError(f"DayZ managed content directory cannot be a symlink: {path}")
+        if path.exists():
+            if not path.is_dir():
+                raise RuntimeError(f"DayZ managed content path is not a directory: {path}")
+            metadata = path.stat()
+            if metadata.st_uid not in {runtime_account.pw_uid, agent_account.pw_uid}:
+                raise RuntimeError(f"DayZ managed content directory has a foreign owner: {path}")
+            if metadata.st_gid not in {runtime_account.pw_gid, agent_group.gr_gid}:
+                raise RuntimeError(f"DayZ managed content directory has a foreign group: {path}")
+        else:
+            path.mkdir(mode=0o750)
+        os.chown(path, agent_account.pw_uid, agent_group.gr_gid)
+        os.chmod(path, 0o750)
+
+
 def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, storage_root: Path) -> None:
     raw_root = spec.get("instance_state_root")
     if not raw_root:
@@ -624,6 +653,8 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
     for current in [control_root, *control_root.rglob("*")]:
         os.chown(current, agent_account.pw_uid, agent_group.gr_gid)
         os.chmod(current, 0o700 if current.is_dir() else 0o600)
+
+    _prepare_dayz_content_directories(spec, state_root, account, agent_account, agent_group)
 
     working_root = Path(str(spec["working_directory"])).resolve()
     for item in spec.get("writable_directories", []):
