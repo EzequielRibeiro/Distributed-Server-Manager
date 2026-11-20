@@ -409,5 +409,19 @@ class BackupClientInstanceRootTest(unittest.TestCase):
             run.assert_not_called()
 
 
+    def test_custom_pool_preserves_unprivileged_backup_behavior(self):
+        import os
+        command = self.command()
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
+             patch.dict(os.environ, {
+                 "CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE":
+                     "capivara-agent-backup-create@{command_id}.service"
+             }), patch.object(backup_client, "_create_via_privileged_helper") as privileged:
+            reports = backup_client.apply_backup_commands(self.config, [command])
+        self.assertEqual(reports[0]["status"], "completed", reports)
+        self.assertTrue(Path(reports[0]["artifact_path"]).is_file())
+        privileged.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
