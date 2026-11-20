@@ -40,7 +40,9 @@ def _ensure_state_directory(path: Path) -> None:
     try:
         metadata = STATE_DIR.stat()
         os.chown(path, metadata.st_uid, metadata.st_gid)
-        os.chmod(path, 0o700)
+        # The runtime user needs traverse-only access through the Agent root
+        # to the shared game-data directory. Private children remain 0700.
+        os.chmod(path, 0o710 if path == STATE_DIR else 0o700)
     except OSError:
         pass
 
