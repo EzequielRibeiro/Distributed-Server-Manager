@@ -120,6 +120,7 @@ jobs:
           python3 -m unittest tests/customer_backup_physical_inventory_test.py
           python3 -m unittest tests/backup_archive_guards_test.py
           node --check dashboard/web/customer-instance-v2.js
+          node --check dashboard/web/customer-backup-transfer.js
 
       - name: Run managed firewall lifecycle tests
         run: |
