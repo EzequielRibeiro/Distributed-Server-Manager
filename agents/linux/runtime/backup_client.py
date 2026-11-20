@@ -811,17 +811,36 @@ def apply_backup_commands(
     return reports
 
 
+# Keep the reporting window bounded without starving older result receipts.
+# The Agent process lives across heartbeats, so subsequent polls advance the window.
+_BACKUP_STATE_CURSOR = 0
+
+
 def backup_state():
-    output = []
+    global _BACKUP_STATE_CURSOR
+
     paths = sorted(RESULT_ROOT.glob("*.json")) if RESULT_ROOT.exists() else []
-    for path in paths:
+    if not paths:
+        _BACKUP_STATE_CURSOR = 0
+        return []
+
+    # Controller accepts at most 500 reports per call. Paginate over *all*
+    # receipts rather than returning the same lexicographically last 500,
+    # which can permanently hide completed/failed commands after a backlog.
+    start = _BACKUP_STATE_CURSOR % len(paths)
+    count = min(500, len(paths))
+    selected = [paths[(start + index) % len(paths)] for index in range(count)]
+    _BACKUP_STATE_CURSOR = (start + count) % len(paths)
+
+    output = []
+    for path in selected:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, ValueError, UnicodeError):
             continue
         if isinstance(value, dict):
             output.append(value)
-    return output[-500:]
+    return output
 
 
 __all__ = ["apply_backup_commands", "backup_state"]
