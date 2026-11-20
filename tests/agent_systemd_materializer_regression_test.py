@@ -154,10 +154,10 @@ def test_non_minecraft_runtime_does_not_use_console_supervisor():
 def test_dayz_shutdown_grace_period_is_specific_to_dayz():
     for game_id in ("dayz", "dayz.stable"):
         unit = render_unit(_spec(game_id=game_id))
-        assert "TimeoutStopSec=300\\n" in unit
+        assert "TimeoutStopSec=300\n" in unit
 
     for game_id in ("minecraft", "palworld"):
-        assert "TimeoutStopSec=60\\n" in render_unit(_spec(game_id=game_id))
+        assert "TimeoutStopSec=60\n" in render_unit(_spec(game_id=game_id))
 
 
 def test_dayz_agent_waits_longer_than_systemd_before_judging_stop(monkeypatch):
