@@ -135,7 +135,13 @@ def _manifest(record, backup_id):
 def _create_archive(root, paths, destination, compression, manifest):
     mode = "w:gz" if compression == "gzip" else "w"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(destination, mode, dereference=False) as archive:
+    # O_EXCL + O_NOFOLLOW prevents an untrusted backup-directory symlink
+    # from redirecting a privileged creator to an arbitrary file.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    fd = os.open(destination, flags, 0o600)
+    with os.fdopen(fd, "wb") as output, tarfile.open(
+        fileobj=output, mode=mode, dereference=False
+    ) as archive:
         encoded = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()
         info = tarfile.TarInfo(MANIFEST_NAME)
         info.size = len(encoded)
@@ -511,6 +517,76 @@ def _restore_direct(config, command):
     }
 
 
+def _create_via_privileged_helper(config, command, unit_template):
+    """Read protected instance data only through the validated systemd helper."""
+    def token(value):
+        raw = str(value or "").strip()
+        allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        if not raw or len(raw) > 191 or any(ch not in allowed for ch in raw):
+            raise ValueError("invalid privileged backup identifier")
+        return raw
+
+    command_id = token(command.get("command_id"))
+    instance_id = token(command.get("instance_id"))
+    agent_id = token(config.get("agent_id"))
+    _owned(config, instance_id)  # Agent identity and canonical root check.
+    policy = command.get("policy")
+    if not isinstance(policy, dict):
+        raise ValueError("privileged backup creation requires a policy")
+    if str(policy.get("consistency") or "live") != "live":
+        raise ValueError("privileged live backup create requires live consistency")
+
+    request_dir = STATE_ROOT / "privileged-backup-create"
+    request_dir.mkdir(parents=True, exist_ok=True)
+    (STATE_ROOT / "backup-create-locks").mkdir(parents=True, exist_ok=True)
+    request_path = request_dir / f"{command_id}.request.json"
+    result_path = request_dir / f"{command_id}.result.json"
+    if request_path.is_symlink() or result_path.is_symlink():
+        raise PermissionError("unsafe privileged backup request boundary")
+    result_path.unlink(missing_ok=True)
+    _write(request_path, {
+        "schema_version": 1,
+        "kind": "CapivaraPrivilegedBackupCreateRequest",
+        "command_id": command_id,
+        "action": "create",
+        "instance_id": instance_id,
+        "agent_id": agent_id,
+        "policy": policy,
+    })
+
+    try:
+        unit = unit_template.format(command_id=command_id, instance_id=instance_id)
+    except (ValueError, KeyError) as exc:
+        raise RuntimeError("invalid privileged backup create unit template") from exc
+    if unit != f"capivara-agent-backup-create@{command_id}.service":
+        raise PermissionError("unapproved privileged backup create unit")
+
+    completed = subprocess.run(
+        ["systemctl", "start", unit, "--no-pager"],
+        capture_output=True, text=True, check=False, timeout=3600,
+    )
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        if completed.returncode != 0:
+            raise RuntimeError((completed.stderr or completed.stdout
+                                or "privileged backup create failed")[:2000]) from exc
+        raise RuntimeError("privileged backup create returned no valid result") from exc
+    if completed.returncode != 0 or result.get("status") != "completed":
+        raise RuntimeError(str(result.get("error") or completed.stderr
+                               or "privileged backup create failed")[:2000])
+    for name, expected in (
+        ("command_id", command_id), ("instance_id", instance_id),
+        ("agent_id", agent_id), ("action", "create"),
+    ):
+        if str(result.get(name) or "") != expected:
+            raise RuntimeError(f"privileged backup create {name} mismatch")
+    operation = result.get("operation")
+    if not isinstance(operation, dict) or not operation.get("artifact_path") or not operation.get("sha256"):
+        raise RuntimeError("privileged backup create returned invalid operation")
+    return operation
+
+
 def _restore_via_privileged_helper(config, command, unit_template):
     command_id = _safe(command.get("command_id"))
     instance_id = _safe(command.get("instance_id"))
@@ -681,7 +757,9 @@ def apply_backup_commands(
         try:
             action = str(command.get("action") or "create")
             if action == "create":
-                detail = _create(config, command)
+                unit_template = str(os.environ.get("CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE") or "").strip()
+                detail = (_create_via_privileged_helper(config, command, unit_template)
+                          if unit_template else _create(config, command))
             elif action == "restore":
                 detail = _restore(config, command)
             elif action == "delete":
