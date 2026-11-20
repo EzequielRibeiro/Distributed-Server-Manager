@@ -285,6 +285,18 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             "agent/privileged/console_journal_reader.py",
         ),
         (
+            package_root / "agent/privileged/prepare_customer_files.py",
+            INSTALL_ROOT / "privileged/prepare_customer_files.py",
+            0o755,
+            "agent/privileged/prepare_customer_files.py",
+        ),
+        (
+            package_root / "agent/privileged/restore_instance_backup.py",
+            INSTALL_ROOT / "privileged/restore_instance_backup.py",
+            0o755,
+            "agent/privileged/restore_instance_backup.py",
+        ),
+        (
             package_root / "agent/policy/49-capivara-agent-instance-units.rules",
             POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules",
             0o644,
@@ -325,6 +337,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             SYSTEMD_DIR / "capivara-agent-firewall@.service",
             0o644,
             "services/capivara-agent-firewall@.service",
+        ),
+        (
+            package_root / "services/capivara-agent-backup-restore@.service",
+            SYSTEMD_DIR / "capivara-agent-backup-restore@.service",
+            0o644,
+            "services/capivara-agent-backup-restore@.service",
         ),
         (
             package_root / "services/capivara-agent-runtime-identity.service",
