@@ -48,6 +48,14 @@ fi
 install -d -o root -g root -m 0755 "$INSTALL_ROOT"
 cp -a "$GITHUB_WORKSPACE/agents/linux/runtime" "$INSTALL_ROOT/runtime"
 cp -a "$GITHUB_WORKSPACE/agents/linux/privileged" "$INSTALL_ROOT/privileged"
+cp -a "$GITHUB_WORKSPACE/agents/common" "$INSTALL_ROOT/common"
+# Copy the same canonical Core modules into runtime as the official Agent
+# package builder. Isolated helpers must be tested against the installed layout.
+for name in content_bundle minecraft_serverpack_physical_manifest \
+            minecraft_staged_migration_safety minecraft_serverpack_migration_feature \
+            minecraft_serverpack_pending_commit; do
+  install -m 0644 "$GITHUB_WORKSPACE/core/$name.py" "$INSTALL_ROOT/runtime/$name.py"
+done
 install -d -o "$OWNER" -g "$GROUP" -m 0710 "$INSTANCE"
 install -d -o "$OWNER" -g "$GROUP" -m 0700 "$INSTANCE/config"
 printf 'hostname = "Disposable private DayZ test";\n' > "$INSTANCE/config/serverDZ.cfg"
