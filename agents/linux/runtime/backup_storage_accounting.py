@@ -22,7 +22,8 @@ def _folder(root: Path) -> None:
         raise OSError("backup directory unavailable or unsafe")
 
 
-def _physical_files(root: Path, *, missing_ok: bool = False):
+def _physical_files(root: Path, *, missing_ok: bool = False,
+                    allow_shared_hardlinks: bool = False):
     if not root.exists():
         if missing_ok and not root.is_symlink():
             return
@@ -45,10 +46,14 @@ def _physical_files(root: Path, *, missing_ok: bool = False):
                     if count > MAX_FILES:
                         raise OSError("storage inventory exceeds safe file limit")
                     identity = (info.st_dev, info.st_ino)
-                    if info.st_nlink > 1:
-                        # The same inode can be linked from another instance.
-                        # Never silently charge it twice or treat it as free.
+                    if info.st_nlink > 1 and not allow_shared_hardlinks:
+                        # Backup archives must not be shared with other storage
+                        # roots; their ownership and retention remain exclusive.
                         raise OSError("shared hardlinked storage cannot be attributed safely")
+                    # Instance-private content may hardlink a shared read-only
+                    # Workshop cache. Charge the *full* file size to this
+                    # instance, even if the inode is also used elsewhere.
+                    # Deduplicate only within the inventory we are walking.
                     if identity not in seen:
                         seen.add(identity)
                         yield Path(entry.path), info
@@ -121,7 +126,8 @@ def quota_snapshot(record: dict[str, Any], backup_root: Path, *,
     if not isinstance(instance_raw, str) or not instance_raw.startswith("/"):
         raise OSError("instance private state root unavailable")
     state_root = Path(instance_raw)
-    instance_used = sum(info.st_size for _, info in _physical_files(state_root))
+    instance_used = sum(info.st_size for _, info in _physical_files(
+        state_root, allow_shared_hardlinks=True))
     # If the backup directory is already part of the counted instance tree,
     # avoid adding the same bytes twice.
     backup_path = Path(backup_root) / iid
@@ -152,7 +158,7 @@ def source_size(paths: list[Path], source_root: Path) -> int:
         if item.is_file():
             files = [(item, item.stat())]
         else:
-            files = _physical_files(item)
+            files = _physical_files(item, allow_shared_hardlinks=True)
         for _, info in files:
             identity = (info.st_dev, info.st_ino)
             if identity in seen:

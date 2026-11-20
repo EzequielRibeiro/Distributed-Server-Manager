@@ -106,6 +106,9 @@ jobs:
       - name: Validate DayZ private root and virtual customer files
         run: python3 -m pytest tests/dayz_customer_file_isolation_test.py -q
 
+      - name: Validate conservative shared Workshop backup accounting
+        run: python3 -m unittest tests/backup_storage_accounting_1066_test.py
+
       - name: Run managed firewall lifecycle tests
         run: |
           python3 -m pytest             tests/linux_privileged_firewall_bridge_test.py             tests/linux_firewall_removal_lifecycle_test.py             tests/linux_managed_firewall_test.py             tests/hybrid_managed_firewall_substrate_test.py             tests/linux_updater_managed_firewall_state_test.py             tests/managed_firewall_port_uniqueness_test.py             -q
