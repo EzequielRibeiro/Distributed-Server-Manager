@@ -119,6 +119,8 @@ jobs:
           python3 -m unittest tests/backup_schedule_retry_guard_test.py
           python3 -m unittest tests/backup_client_instance_root_test.py
           python3 -m py_compile agents/linux/privileged/create_instance_backup.py agents/linux/privileged/restore_instance_backup.py agents/linux/runtime/backup_client.py database/backup_repository.py
+      - name: Exercise protected backup creation and isolated restore with real systemd
+        run: sudo --preserve-env=GITHUB_WORKSPACE bash tests/backup_privileged_create_systemd_e2e.sh
       - name: Validate physical backup inventory and customer deletion
         run: |
           python3 -m unittest tests/backup_storage_accounting_1066_test.py
