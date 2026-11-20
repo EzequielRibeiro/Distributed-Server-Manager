@@ -320,7 +320,89 @@ serverFields.append(cfProject,cfFile,build,serverNote);
 uploadType.onchange=updateServerpackFields;file.onchange=updateServerpackFields;url.oninput=updateServerpackFields;
 form.append(id,uploadType,file,button,url,urlButton);const outcome=document.createElement("div");outcome.id="content-upload-outcome";outcome.hidden=true;outcome.setAttribute("role","status");outcome.setAttribute("aria-live","polite");uploadCard.append(title,form,serverFields,progressWrap,outcome);updateServerpackFields();box.append(uploadCard);renderContentUploadOutcome();reconcileInterruptedContentUpload().catch(console.warn);if(contentUploadActive)setManagedUploadUi(true,0,"Upload em andamento…")}const installedCard=document.createElement("article"),installedTitle=document.createElement("h2"),installed=document.createElement("div");installedCard.className="card";installedTitle.textContent="Conteúdo gerenciado";installed.id="content-installed";installed.className="content-installed";installedCard.append(installedTitle,installed);box.append(installedCard);renderInstalledContent();syncContentInstallLock()}
 function fillTimeSelects(hourId,minuteId,value="04:00"){const hour=$(hourId),minute=$(minuteId),parts=String(value||"04:00").split(":");if(!hour.options.length)for(let i=0;i<24;i++)hour.append(new Option(String(i).padStart(2,"0"),String(i).padStart(2,"0")));if(!minute.options.length)for(let i=0;i<60;i++)minute.append(new Option(String(i).padStart(2,"0"),String(i).padStart(2,"0")));hour.value=parts[0]||"04";minute.value=parts[1]||"00"}function selectedTime(hourId,minuteId){return `${$(hourId).value}:${$(minuteId).value}`}
-async function loadBackups(){if(!can("backup.read"))return;const [jobs,policy]=await Promise.all([request(`${api}/backups?instance_id=${encodeURIComponent(iid)}`),request(`${api}/backup-policy?instance_id=${encodeURIComponent(iid)}`)]);fillTimeSelects("backup-hour","backup-minute",policy.schedule_time||"04:00");$("backup-zone").value=policy.schedule_timezone||"UTC";$("backup-enabled").checked=policy.enabled!==false;$("backup-save").disabled=!can("backup.create");$("backup-create").disabled=!can("backup.create");const list=$("backup-list");list.replaceChildren();const completed=(jobs.jobs||[]).filter(x=>x.action==="create"&&x.status==="completed"&&x.backup_id);if(!completed.length){list.textContent="Nenhum backup concluído registrado.";return}const title=document.createElement("p");title.className="muted";title.textContent="Referência operacional e histórico preservado. O registro de SHA não substitui a verificação física do arquivo.";list.append(title);completed.forEach(job=>{const d=document.createElement("div");d.className="row";const meta=document.createElement("span");const state={operational_reference:"Referência operacional (não verificada fisicamente)",historical_record:"Histórico preservado (não verificado fisicamente)",incomplete_record:"Histórico com registro incompleto",ambiguous_record:"Histórico com registros duplicados"}[job.history_role]||"Histórico (estado não confirmado)";meta.textContent=`${state} · ${job.backup_id||"backup"} · ${fmtBytes(job.size_bytes)}`;const actions=document.createElement("span");if(can("backup.restore")){const b=document.createElement("button");b.className="btn";b.textContent="Restaurar";b.onclick=()=>backupAction("restore",job.backup_id);actions.append(b)}if(can("backup.delete")){const b=document.createElement("button");b.className="btn danger";b.textContent="Excluir manualmente";b.onclick=()=>backupAction("delete",job.backup_id);actions.append(b)}d.append(meta,actions);list.append(d)})}
+async function loadBackups(){
+ if(!can("backup.read"))return;
+ const [response,policy]=await Promise.all([
+  request(`${api}/backups?instance_id=${encodeURIComponent(iid)}`),
+  request(`${api}/backup-policy?instance_id=${encodeURIComponent(iid)}`)
+ ]);
+ fillTimeSelects("backup-hour","backup-minute",policy.schedule_time||"04:00");
+ $("backup-zone").value=policy.schedule_timezone||"UTC";
+ $("backup-enabled").checked=policy.enabled!==false;
+ $("backup-save").disabled=!can("backup.create");
+ $("backup-create").disabled=!can("backup.create");
+ const list=$("backup-list");list.replaceChildren();
+ const jobs=response.jobs||[];
+ const physical=response.physical_catalog||{};
+ const catalogReady=physical.status==="ok"&&Array.isArray(physical.files);
+ const checked=Date.parse(physical.checked_at||"");
+ const fresh=catalogReady&&Number.isFinite(checked)&&Math.abs(Date.now()-checked)<5*60*1000;
+ const busy=jobs.some(x=>["pending","running"].includes(x.status)&&["create","restore","delete"].includes(x.action));
+ const note=document.createElement("p");note.className="muted";
+ note.textContent=catalogReady
+  ?`Arquivos físicos: ${physical.total_files??physical.files.length} · ${fmtBytes(physical.total_bytes)}. Integridade não verificada nesta listagem.`
+  :"Inventário físico indisponível no Agent. Os registros abaixo não comprovam que o arquivo ainda existe.";
+ list.append(note);
+ if(catalogReady){
+  if(!fresh){
+   const stale=document.createElement("p");stale.className="muted";
+   stale.textContent="Inventário desatualizado: a exclusão só será habilitada após novo heartbeat do Agent.";
+   list.append(stale);
+  }
+  if(physical.truncated){
+   const partial=document.createElement("p");partial.className="muted";
+   partial.textContent="Exibindo apenas os primeiros arquivos; o inventário físico é maior que o limite de listagem.";
+   list.append(partial);
+  }
+  const completed=jobs.filter(x=>x.action==="create"&&x.status==="completed"&&x.backup_id);
+  const byId=new Map(completed.map(x=>[String(x.backup_id),x]));
+  const seen=new Set();
+  for(const file of physical.files){
+   const item=document.createElement("div");item.className="row";
+   const meta=document.createElement("span");
+   const id=String(file.backup_id||"");
+   const job=byId.get(id);
+   const state=job?.history_role==="operational_reference"
+    ?"Referência operacional registrada; integridade física não verificada"
+    :job?"Histórico registrado; integridade física não verificada"
+    :"Arquivo físico sem operação de criação registrada";
+   meta.textContent=`${state} · ${file.filename} · ${fmtBytes(file.size_bytes)}`;
+   item.append(meta);
+   const actions=document.createElement("span");
+   const supported=file.kind==="archive_unverified"&&id&&id.length<=191;
+   if(supported&&can("backup.delete")){
+    const b=document.createElement("button");b.className="btn danger";
+    b.textContent="Excluir manualmente";b.disabled=!fresh||busy||seen.has(id);
+    b.onclick=()=>{
+     if(!confirm(`Excluir DEFINITIVAMENTE o arquivo ${file.filename} (${fmtBytes(file.size_bytes)})? Esta listagem NÃO confirma se o backup é restaurável. Não há exclusão automática nem garantia de recuperação após a remoção.`))return;
+     backupAction("delete",id).catch(error=>toast(`Falha ao excluir: ${error.message}`));
+    };
+    actions.append(b);
+   }
+   if(id)seen.add(id);
+   item.append(actions);list.append(item);
+  }
+  // Keep recorded jobs that the Agent no longer sees, but never claim that
+  // their physical archive exists or offer restore/delete based on DB alone.
+  for(const job of completed){
+   if(seen.has(String(job.backup_id)))continue;
+   const d=document.createElement("div");d.className="row";
+   const meta=document.createElement("span");meta.className="muted";
+   meta.textContent=`Registro histórico sem arquivo físico confirmado · ${job.backup_id}`;
+   d.append(meta);list.append(d);
+  }
+  if(!physical.files.length)list.append(document.createTextNode("Nenhum arquivo físico localizado pelo Agent."));
+  return;
+ }
+ const completed=jobs.filter(x=>x.action==="create"&&x.status==="completed"&&x.backup_id);
+ if(!completed.length){list.append(document.createTextNode("Nenhum backup concluído registrado."));return}
+ for(const job of completed){
+  const d=document.createElement("div");d.className="row";
+  const meta=document.createElement("span");meta.className="muted";
+  meta.textContent=`Registro sem verificação física · ${job.backup_id} · ${fmtBytes(job.size_bytes)}`;
+  d.append(meta);list.append(d);
+ }
+}
 async function backupAction(action,backup_id=null){await request(`${api}/backups`,{method:"POST",body:JSON.stringify({instance_id:iid,action,backup_id})});toast(`Backup: ${action} solicitado.`);setTimeout(loadBackups,1000)}async function saveBackupPolicy(){await request(`${api}/backup-policy`,{method:"PATCH",body:JSON.stringify({instance_id:iid,enabled:$("backup-enabled").checked,schedule_time:selectedTime("backup-hour","backup-minute"),schedule_timezone:$("backup-zone").value})});toast("Agenda de backup atualizada.")}
 const permissionLabels={"instance.view":"Visualizar servidor","instance.start":"Start","instance.stop":"Stop","instance.restart":"Restart","instance.delete":"Excluir servidor","instance.update":"Atualizar servidor","console.read":"Visualizar console","console.execute":"Enviar comandos no console","files.read":"Visualizar arquivos","files.download":"Download de arquivos","files.upload":"Enviar/criar arquivos","files.edit":"Editar arquivos","files.delete":"Excluir arquivos","files.move":"Mover/renomear arquivos","files.extract":"Descompactar arquivos","backup.read":"Visualizar backups","backup.create":"Criar backup","backup.download":"Baixar backup","backup.restore":"Restaurar backup","backup.delete":"Excluir backup","startup.read":"Visualizar inicialização","startup.write":"Alterar inicialização","settings.read":"Visualizar configuração","settings.write":"Alterar configuração","content.read":"Visualizar conteúdo","content.install":"Instalar mods/plugins","content.remove":"Remover mods/plugins","team.read":"Visualizar equipe","team.manage":"Administrar equipe","contract.read":"Visualizar plano","contract.upgrade":"Solicitar upgrade"};
 function permissionForm(container,grants={}){container.replaceChildren();Object.keys(permissionLabels).forEach(p=>{const l=document.createElement("label"),c=document.createElement("input");c.type="checkbox";c.dataset.permission=p;c.checked=!!grants[p];l.append(c,document.createTextNode(permissionLabels[p]));container.append(l)})}
