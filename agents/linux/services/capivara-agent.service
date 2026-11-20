@@ -11,6 +11,7 @@ Group=capivara-agent
 Environment=HOME=/var/lib/capivara-agent
 Environment=CAPIVARA_STEAM_HOME=/var/lib/capivara-agent
 Environment=CAPIVARA_BACKUP_RESTORE_UNIT_TEMPLATE=capivara-agent-backup-restore@{command_id}.service
+Environment=CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE=capivara-agent-backup-create@{command_id}.service
 ExecStart=/usr/bin/python3 /opt/capivara-agent/runtime/agent.py
 Restart=always
 RestartSec=10
