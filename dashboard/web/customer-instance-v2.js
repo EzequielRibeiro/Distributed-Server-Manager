@@ -337,7 +337,7 @@ async function loadBackups(){
  const catalogReady=physical.status==="ok"&&Array.isArray(physical.files);
  const checked=Date.parse(physical.checked_at||"");
  const fresh=catalogReady&&Number.isFinite(checked)&&Math.abs(Date.now()-checked)<5*60*1000;
- const busy=jobs.some(x=>["pending","running"].includes(x.status)&&["create","restore","delete"].includes(x.action));
+ const busy=jobs.some(x=>x.status==="running"&&["create","restore","delete"].includes(x.action));
  const note=document.createElement("p");note.className="muted";
  note.textContent=catalogReady
   ?`Arquivos físicos: ${physical.total_files??physical.files.length} · ${fmtBytes(physical.total_bytes)}. Integridade não verificada nesta listagem.`
@@ -370,6 +370,15 @@ async function loadBackups(){
    item.append(meta);
    const actions=document.createElement("span");
    const supported=file.kind==="archive_unverified"&&id&&id.length<=191;
+   if(supported&&can("backup.restore")){
+    const b=document.createElement("button");b.className="btn";
+    b.textContent="Restaurar";b.disabled=!fresh||busy||seen.has(id);
+    b.onclick=()=>{
+     if(!confirm(`Restaurar ${file.filename}? O Agent validará a integridade e compatibilidade antes de modificar o servidor. A operação pode parar o jogo.`))return;
+     backupAction("restore",id).catch(error=>toast(`Falha ao restaurar: ${error.message}`));
+    };
+    actions.append(b);
+   }
    if(supported&&can("backup.delete")){
     const b=document.createElement("button");b.className="btn danger";
     b.textContent="Excluir manualmente";b.disabled=!fresh||busy||seen.has(id);
@@ -400,7 +409,21 @@ async function loadBackups(){
   const d=document.createElement("div");d.className="row";
   const meta=document.createElement("span");meta.className="muted";
   meta.textContent=`Registro sem verificação física · ${job.backup_id} · ${fmtBytes(job.size_bytes)}`;
-  d.append(meta);list.append(d);
+  const actions=document.createElement("span");
+  if(can("backup.restore")){
+   const b=document.createElement("button");b.className="btn";b.textContent="Restaurar";
+   b.onclick=()=>backupAction("restore",job.backup_id).catch(error=>toast(error.message));
+   actions.append(b);
+  }
+  if(can("backup.delete")){
+   const b=document.createElement("button");b.className="btn danger";b.textContent="Excluir manualmente";
+   b.onclick=()=>{
+    if(!confirm(`Excluir definitivamente o backup ${job.backup_id}? Não existe verificação física atual.`))return;
+    backupAction("delete",job.backup_id).catch(error=>toast(error.message));
+   };
+   actions.append(b);
+  }
+  d.append(meta,actions);list.append(d);
  }
 }
 async function backupAction(action,backup_id=null){await request(`${api}/backups`,{method:"POST",body:JSON.stringify({instance_id:iid,action,backup_id})});toast(`Backup: ${action} solicitado.`);setTimeout(loadBackups,1000)}async function saveBackupPolicy(){await request(`${api}/backup-policy`,{method:"PATCH",body:JSON.stringify({instance_id:iid,enabled:$("backup-enabled").checked,schedule_time:selectedTime("backup-hour","backup-minute"),schedule_timezone:$("backup-zone").value})});toast("Agenda de backup atualizada.")}
