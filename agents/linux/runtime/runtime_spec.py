@@ -98,6 +98,13 @@ def validate_runtime_spec(spec:dict[str,Any],*,expected_agent_id:str|None=None)-
  stop_signal=str(result.get("stop_signal") or "SIGTERM").strip().upper()
  if stop_signal not in VALID_STOP_SIGNALS:raise RuntimeSpecError("invalid stop_signal")
  result["stop_signal"]=stop_signal
+ if result.get("stop_timeout_seconds") is not None:
+  raw_timeout=result["stop_timeout_seconds"]
+  if isinstance(raw_timeout,bool):raise RuntimeSpecError("invalid stop_timeout_seconds")
+  try:stop_timeout=int(raw_timeout)
+  except (ValueError,TypeError,OverflowError) as exc:raise RuntimeSpecError("invalid stop_timeout_seconds") from exc
+  if not 30<=stop_timeout<=600:raise RuntimeSpecError("invalid stop_timeout_seconds")
+  result["stop_timeout_seconds"]=stop_timeout
  for key in ("instance_state_root","configuration_root","config_path","files_root"):
   if result.get(key) is not None:result[key]=_absolute(result[key],key)
  if result.get("files_root") is None:
