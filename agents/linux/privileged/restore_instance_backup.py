@@ -59,7 +59,8 @@ def _write_result(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
-def _validate_external_target(config: dict[str, Any], instance_id: str) -> None:
+def _validate_external_target(config: dict[str, Any], instance_id: str, *,
+                              _approved_parent: Path = Path("/var/lib/capivara-instances")) -> None:
     """External root helper may mutate only the default DSM instance boundary.
 
     This is intentionally narrower than the unprivileged Agent's configurable
@@ -67,7 +68,7 @@ def _validate_external_target(config: dict[str, Any], instance_id: str) -> None:
     restore target outside /var/lib/capivara-instances/<validated instance_id>.
     Custom storage pools need an independently provisioned privileged boundary.
     """
-    expected_parent = Path("/var/lib/capivara-instances")
+    expected_parent = _approved_parent
     expected = expected_parent / instance_id
     record, root = backup_client._owned(config, instance_id)
     if (
@@ -75,6 +76,8 @@ def _validate_external_target(config: dict[str, Any], instance_id: str) -> None:
         or str(record.get("instance_state_root") or "") != str(expected)
         or str(record.get("files_root") or "") != str(expected)
         or expected_parent.is_symlink()
+        or not expected_parent.is_dir()
+        or (expected_parent.stat().st_mode & 0o022) != 0
         or expected.is_symlink()
         or not expected.is_dir()
     ):
