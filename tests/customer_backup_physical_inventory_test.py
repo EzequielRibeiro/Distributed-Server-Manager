@@ -22,6 +22,7 @@ class CustomerBackupPhysicalInventoryTest(unittest.TestCase):
         self.service.require = Mock(return_value={"agent_id": "agent-1"})
         self.service.backups = Mock()
         self.service.backups.request.return_value = {"command_id": "delete-1"}
+        self.service.backups.list_effective_jobs.return_value = []
         self.sample = {
             "instance_id": "cli-000001-dayz-002",
             "backup_physical_catalog": {
