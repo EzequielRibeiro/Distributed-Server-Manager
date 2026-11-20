@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Root-owned helper for atomic restore of a Hybrid instance backup."""
+"""Root-owned helper for atomic restore of a Hybrid or external Agent backup."""
 
 from __future__ import annotations
 
@@ -59,6 +59,28 @@ def _write_result(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temp, path)
 
 
+def _validate_external_target(config: dict[str, Any], instance_id: str) -> None:
+    """External root helper may mutate only the default DSM instance boundary.
+
+    This is intentionally narrower than the unprivileged Agent's configurable
+    paths: the Agent-controlled instance record must never select a privileged
+    restore target outside /var/lib/capivara-instances/<validated instance_id>.
+    Custom storage pools need an independently provisioned privileged boundary.
+    """
+    expected_parent = Path("/var/lib/capivara-instances")
+    expected = expected_parent / instance_id
+    record, root = backup_client._owned(config, instance_id)
+    if (
+        root != expected
+        or str(record.get("instance_state_root") or "") != str(expected)
+        or str(record.get("files_root") or "") != str(expected)
+        or expected_parent.is_symlink()
+        or expected.is_symlink()
+        or not expected.is_dir()
+    ):
+        raise PermissionError("privileged restore target is outside the approved instance storage root")
+
+
 def run(command_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged backup restore helper must run as root")
@@ -93,6 +115,10 @@ def run(command_id: str) -> dict[str, Any]:
     instance_id = _token(request.get("instance_id"), "instance_id")
     backup_id = _token(request.get("backup_id"), "backup_id")
 
+    is_hybrid = os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid"
+    if not is_hybrid:
+        _validate_external_target(config, instance_id)
+
     operation = backup_client._restore_direct(
         config,
         {
@@ -106,11 +132,12 @@ def run(command_id: str) -> dict[str, Any]:
     # The atomic staging directory is created by root. Reapply the existing
     # customer-files boundary before reporting success so the unprivileged
     # Hybrid worker and the capivara-instance runtime retain their group access.
-    files_access = prepare_customer_files.run(instance_id)
-    operation = {
-        **operation,
-        "files_access": files_access,
-    }
+    if is_hybrid:
+        # Hybrid keeps its separate customer-files subtree contract.
+        files_access = prepare_customer_files.run(instance_id)
+        operation = {**operation, "files_access": files_access}
+    # External Agents retain the original root owner/group/mode; do not
+    # recursively grant the Agent write access to managed Workshop content.
 
     result = {
         "status": "completed",
