@@ -203,8 +203,18 @@ class SystemdAdapter(InstanceRuntimeAdapter):
                 return {"action": action, "changed": True, "idempotent": True, "state": normalized}
             return {"action": action, "changed": False, "idempotent": True, "state": before}
         unit = str(before["unit"])
+        # Allow runtime profiles to declare a longer graceful-stop deadline.
+        # Keep the command alive long enough to inspect systemd's result,
+        # rather than interpreting a client timeout as a successful save.
+        grace = instance.get("stop_timeout_seconds")
+        try:
+            stop_grace = int(grace) if grace is not None else 0
+        except (TypeError, ValueError) as exc:
+            raise AdapterError("invalid instance stop timeout") from exc
+        if stop_grace and not 30 <= stop_grace <= 600:
+            raise AdapterError("invalid instance stop timeout")
         command_timeout = (
-            self.stop_command_timeout
+            max(self.stop_command_timeout, stop_grace + 30)
             if action in {"stop", "restart"}
             else self.timeout
         )
