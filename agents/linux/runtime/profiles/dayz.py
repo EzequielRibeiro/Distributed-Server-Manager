@@ -205,6 +205,7 @@ class DayZRuntimeProfile(GameRuntimeProfile):
             "profile_version": self.profile_version,
             "success_exit_statuses": [255],
             "stop_signal": "SIGINT",
+            "stop_timeout_seconds": 300,
             "private_shared_memory": True,
             "inaccessible_content_paths": hidden_content,
             "ports": {
