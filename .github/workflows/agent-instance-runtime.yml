@@ -300,7 +300,7 @@ jobs:
               files = tar.getmembers()
               assert len([x for x in files if x.isfile()]) == manifest['file_count']
               for member in files:
-                  assert member.name.startswith(name + '/')
+                  assert member.name == name or member.name.startswith(name + '/'), member.name
                   assert '..' not in Path(member.name).parts
                   assert not member.issym() and not member.islnk()
               def member_bytes(path):
