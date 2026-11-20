@@ -44,20 +44,24 @@ def _token(value: Any, label: str, max_length: int = 191) -> str:
 def _write_result(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temp.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    os.chmod(temp, 0o600)
+    # Result directories belong to the Agent; the root helper must never
+    # follow a pre-planted symlink while writing a privileged result.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(temp, flags, 0o600)
     try:
-        account = pwd.getpwnam(
-            os.environ.get("CAPIVARA_AGENT_RESULT_USER", "capivara-agent")
-        )
-        os.chown(temp, account.pw_uid, account.pw_gid)
-    except (KeyError, OSError):
-        pass
-    os.replace(temp, path)
-
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            try:
+                account = pwd.getpwnam(
+                    os.environ.get("CAPIVARA_AGENT_RESULT_USER", "capivara-agent")
+                )
+                os.fchown(out.fileno(), account.pw_uid, account.pw_gid)
+            except (KeyError, OSError):
+                pass
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
 
 def _validate_external_target(config: dict[str, Any], instance_id: str, *,
                               _approved_parent: Path = Path("/var/lib/capivara-instances")) -> None:
