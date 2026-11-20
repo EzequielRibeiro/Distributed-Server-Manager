@@ -29,7 +29,7 @@ polkit.addRule(function(action, subject) {
 
     // Only the validated command-id instance is allowed to start the
     // root-owned restore helper; stop/restart/other units stay denied.
-    if (/^capivara-agent-backup-restore@[A-Za-z0-9._-]{1,191}\\.service$/.test(unit) && verb === "start") {
+    if (/^capivara-agent-backup-restore@[A-Za-z0-9._-]{1,191}\.service$/.test(unit) && verb === "start") {
         return polkit.Result.YES;
     }
 
