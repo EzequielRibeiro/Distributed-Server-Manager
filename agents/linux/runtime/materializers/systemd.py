@@ -73,6 +73,12 @@ def _stop_signal(spec):
  signal=str(spec.get("stop_signal") or "SIGTERM").strip().upper()
  if signal not in {"SIGTERM","SIGINT"}:raise MaterializerError("unsupported systemd stop signal")
  return signal
+
+def _stop_timeout(spec):
+ try: seconds=int(spec.get("stop_timeout_seconds") or 60)
+ except (ValueError,TypeError) as exc:raise MaterializerError("invalid systemd stop timeout") from exc
+ if not 30<=seconds<=600:raise MaterializerError("invalid systemd stop timeout")
+ return seconds
 def _preview_readable_by_service_user(path, user):
  """Check POSIX owner/group/mode for every ancestor and the pinned file.
 
@@ -190,7 +196,7 @@ def render_unit(spec, *, pinned_supervisor_preview=None):
  lines.extend(_credential_lines(spec));lines.append("LimitCORE=0");lines.extend(_resource_lines(spec))
  for item in spec.get("pre_start",[]):
   pre_argv=[str(item["executable"]),*[str(x) for x in item.get("arguments",[])]];lines.append("ExecStartPre="+" ".join(_quote(x) for x in pre_argv))
- lines.append("ExecStart="+" ".join(_quote(x) for x in argv));lines.extend(_success_exit_status_lines(spec));lines.extend(["Restart=no",f"KillSignal={_stop_signal(spec)}",f"TimeoutStopSec={300 if str(spec.get('game_id') or '').strip().lower() in {'dayz', 'dayz.stable'} else 60}"])
+ lines.append("ExecStart="+" ".join(_quote(x) for x in argv));lines.extend(_success_exit_status_lines(spec));lines.extend(["Restart=no",f"KillSignal={_stop_signal(spec)}",f"TimeoutStopSec={_stop_timeout(spec)}"])
  for key,value in sorted(dict(spec.get("environment",{})).items()):lines.append(f"Environment={_quote(f'{key}={value}')}")
  lines.extend(["","[Install]","WantedBy=multi-user.target",""]);return "\n".join(lines)
 def _owned_content(content,spec):
