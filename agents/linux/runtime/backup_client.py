@@ -541,6 +541,10 @@ def _create_via_privileged_helper(config, command, unit_template):
     request_dir = STATE_ROOT / "privileged-backup-create"
     request_dir.mkdir(parents=True, exist_ok=True)
     (STATE_ROOT / "backup-create-locks").mkdir(parents=True, exist_ok=True)
+    instance_dir = BACKUP_ROOT / instance_id
+    instance_dir.mkdir(parents=True, exist_ok=True)
+    if request_dir.is_symlink() or instance_dir.is_symlink():
+        raise PermissionError("unsafe privileged backup create directory")
     request_path = request_dir / f"{command_id}.request.json"
     result_path = request_dir / f"{command_id}.result.json"
     if request_path.is_symlink() or result_path.is_symlink():
