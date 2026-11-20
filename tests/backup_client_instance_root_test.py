@@ -348,5 +348,66 @@ class BackupClientInstanceRootTest(unittest.TestCase):
         )
 
 
+    def test_archive_destination_symlink_cannot_be_overwritten(self):
+        outside = self.root / "outside.txt"
+        outside.write_text("untouched", encoding="utf-8")
+        link = self.root / "backup.tar.gz"
+        link.symlink_to(outside)
+        with self.assertRaises((FileExistsError, OSError)):
+            backup_client._create_archive(
+                self.private, [self.private], link, "gzip",
+                {"kind": "CapivaraInstanceBackup"},
+            )
+        self.assertEqual(outside.read_text(encoding="utf-8"), "untouched")
+
+    def test_privileged_create_dispatch_checks_result_identity(self):
+        import json
+        command = self.command()
+        command["command_id"] = "backup-command-safe"
+        template = "capivara-agent-backup-create@{command_id}.service"
+
+        def fake_systemctl(args, **kwargs):
+            self.assertEqual(
+                args, ["systemctl", "start",
+                       "capivara-agent-backup-create@backup-command-safe.service",
+                       "--no-pager"],
+            )
+            request = backup_client.STATE_ROOT / "privileged-backup-create" / (
+                command["command_id"] + ".request.json"
+            )
+            payload = json.loads(request.read_text())
+            self.assertEqual(payload["instance_id"], "instance-safe")
+            self.assertEqual(payload["action"], "create")
+            result = request.with_name(command["command_id"] + ".result.json")
+            result.write_text(json.dumps({
+                "status": "completed", "action": "create",
+                "command_id": command["command_id"],
+                "instance_id": "instance-safe", "agent_id": "agent-safe",
+                "operation": {
+                    "backup_id": "new-backup",
+                    "artifact_path": str(self.root / "backups" / "new.tar.gz"),
+                    "sha256": "abc",
+                },
+            }))
+            return types.SimpleNamespace(returncode=0, stderr="", stdout="")
+
+        with patch.object(backup_client, "get_instance", return_value=self.record), \\
+             patch.object(backup_client.subprocess, "run", side_effect=fake_systemctl):
+            result = backup_client._create_via_privileged_helper(
+                self.config, command, template,
+            )
+        self.assertEqual(result["backup_id"], "new-backup")
+        self.assertTrue((self.root / "backups" / "instance-safe").is_dir())
+
+    def test_privileged_create_rejects_arbitrary_systemd_unit(self):
+        with patch.object(backup_client, "get_instance", return_value=self.record), \\
+             patch.object(backup_client.subprocess, "run") as run:
+            with self.assertRaisesRegex(PermissionError, "unapproved"):
+                backup_client._create_via_privileged_helper(
+                    self.config, self.command(), "other-root@{command_id}.service",
+                )
+            run.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
