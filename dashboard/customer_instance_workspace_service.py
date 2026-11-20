@@ -327,6 +327,38 @@ class CustomerInstanceWorkspaceService:
  def backup_policy(self,user,instance_id):self.require(user,instance_id,"backup.read");return self.repo.backup_policy(instance_id)
  def save_backup_policy(self,user,instance_id,body):self.require(user,instance_id,"backup.create");return self.repo.save_backup_policy(instance_id,enabled=bool(body.get("enabled",True)),schedule_time=body.get("schedule_time") or "04:00",schedule_timezone=body.get("schedule_timezone") or "UTC",healthy_only=True)
  def backup_jobs(self,user,instance_id):self.require(user,instance_id,"backup.read");self.backups.initialize();return annotate_backup_jobs(self.backups.list_effective_jobs(instance_id=instance_id,limit=100))
+ def backup_catalog(self,user,instance_id):
+  """Per-instance physical inventory from the authenticated owning Agent.
+
+  Inventory is observational; an archive may be invalid or unrestorable.
+  It is not a successful create job, nor an automatic deletion permission.
+  """
+  context=self.require(user,instance_id,"backup.read")
+  agent_id=str(context.get("agent_id") or "")
+  metadata=self._location(agent_id).get("agent_metadata") or {}
+  if not isinstance(metadata,dict):metadata={}
+  samples=metadata.get("instance_telemetry") or []
+  sample=next((item for item in reversed(samples) if isinstance(item,dict)
+               and str(item.get("instance_id") or "")==str(instance_id)),{})
+  inventory=sample.get("backup_physical_catalog") if isinstance(sample,dict) else None
+  if not isinstance(inventory,dict) or inventory.get("status")!="ok" or str(inventory.get("instance_id") or "")!=str(instance_id):
+   return {"status":"unavailable","files":[],"total_files":None,"total_bytes":None}
+  files=[]
+  for row in (inventory.get("files") or [])[:1024]:
+   if not isinstance(row,dict):continue
+   bid=row.get("backup_id");filename=row.get("filename")
+   if not isinstance(filename,str) or len(filename)>255:continue
+   if bid is not None and (not isinstance(bid,str) or len(bid)>191):continue
+   size=row.get("size_bytes")
+   if type(size) is not int or size<0:continue
+   files.append({"filename":filename,"backup_id":bid,"size_bytes":size,
+                 "kind":"archive_unverified" if row.get("kind")=="archive_unverified" and bid else "other_file",
+                 "modified_at":row.get("modified_at"),"physical_verification":"not_checked"})
+  return {"status":"ok","instance_id":instance_id,"files":files,
+          "total_files":inventory.get("total_files"),
+          "total_bytes":inventory.get("total_bytes"),
+          "checked_at":inventory.get("checked_at"),
+          "truncated":bool(inventory.get("truncated"))}
  def request_backup(self,user,instance_id,action,backup_id=None):
   action=str(action or "").lower();required={"create":"backup.create","restore":"backup.restore","delete":"backup.delete"}.get(action)
   if required is None:raise ValueError("invalid backup action")
