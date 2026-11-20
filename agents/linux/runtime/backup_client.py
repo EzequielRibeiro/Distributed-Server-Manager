@@ -354,7 +354,10 @@ def _create_unlocked(config, command):
 
 
 def _artifact(instance_id, backup_id):
-    instance_dir = (BACKUP_ROOT / _safe(instance_id)).resolve()
+    directory = BACKUP_ROOT / _safe(instance_id)
+    if BACKUP_ROOT.is_symlink() or directory.is_symlink():
+        raise OSError("unsafe backup storage boundary")
+    instance_dir = directory.resolve()
     instance_dir.relative_to(BACKUP_ROOT)
     # Do not treat an untrusted backup ID as a glob pattern. Imported backups
     # are also eligible for an explicitly authorized customer delete.
