@@ -356,12 +356,21 @@ def _create_unlocked(config, command):
 def _artifact(instance_id, backup_id):
     instance_dir = (BACKUP_ROOT / _safe(instance_id)).resolve()
     instance_dir.relative_to(BACKUP_ROOT)
-    matches = list(instance_dir.glob(f"{_safe(backup_id)}.tar*"))
+    # Do not treat an untrusted backup ID as a glob pattern. Imported backups
+    # are also eligible for an explicitly authorized customer delete.
+    token = _safe(backup_id)
+    matches = [path for suffix in (".tar.gz", ".tar", ".tgz")
+               if (path := instance_dir / (token + suffix)).exists()
+               or path.is_symlink()]
     if not matches:
         raise FileNotFoundError("backup artifact not found")
     if len(matches) > 1:
         raise RuntimeError("multiple backup artifacts found")
-    return matches[0]
+    artifact = matches[0]
+    info = artifact.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise OSError("unsafe backup artifact")
+    return artifact
 
 
 def _validate_manifest(record, manifest):
