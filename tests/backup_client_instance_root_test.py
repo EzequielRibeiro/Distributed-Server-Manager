@@ -391,7 +391,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
             }))
             return types.SimpleNamespace(returncode=0, stderr="", stdout="")
 
-        with patch.object(backup_client, "get_instance", return_value=self.record), \\
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
              patch.object(backup_client.subprocess, "run", side_effect=fake_systemctl):
             result = backup_client._create_via_privileged_helper(
                 self.config, command, template,
@@ -400,7 +400,7 @@ class BackupClientInstanceRootTest(unittest.TestCase):
         self.assertTrue((self.root / "backups" / "instance-safe").is_dir())
 
     def test_privileged_create_rejects_arbitrary_systemd_unit(self):
-        with patch.object(backup_client, "get_instance", return_value=self.record), \\
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
              patch.object(backup_client.subprocess, "run") as run:
             with self.assertRaisesRegex(PermissionError, "unapproved"):
                 backup_client._create_via_privileged_helper(
