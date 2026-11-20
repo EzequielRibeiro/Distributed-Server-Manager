@@ -764,8 +764,20 @@ def apply_backup_commands(
             action = str(command.get("action") or "create")
             if action == "create":
                 unit_template = str(os.environ.get("CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE") or "").strip()
+                if unit_template:
+                    record, selected_root = _owned(config, command["instance_id"])
+                    canonical_root = Path("/var/lib/capivara-instances") / _safe(command["instance_id"])
+                    protected_external = (
+                        os.environ.get("CAPIVARA_AGENT_MODE") != "hybrid"
+                        and selected_root == canonical_root
+                        and str(record.get("files_root") or "") == str(canonical_root)
+                        and str(record.get("instance_state_root") or "") == str(canonical_root)
+                        and str((command.get("policy") or {}).get("consistency") or "live") == "live"
+                    )
+                else:
+                    protected_external = False
                 detail = (_create_via_privileged_helper(config, command, unit_template)
-                          if unit_template else _create(config, command))
+                          if protected_external else _create(config, command))
             elif action == "restore":
                 detail = _restore(config, command)
             elif action == "delete":
