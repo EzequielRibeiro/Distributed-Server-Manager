@@ -11,6 +11,7 @@ OWNER="capivara-instance"
 INSTANCE_ID="dsm-ci-backup-1102"
 INSTANCE="/var/lib/capivara-instances/$INSTANCE_ID"
 STATE="/var/lib/capivara-agent-ci-backup-1102"
+INSTALL_ROOT="/opt/capivara-agent-ci-backup-1102"
 UNIT="/run/systemd/system/capivara-agent-backup-create@.service"
 GAME_UNIT="/run/systemd/system/capivara-instance-$INSTANCE_ID.service"
 POLICY="/etc/polkit-1/rules.d/49-capivara-agent-instance-units.rules"
@@ -20,7 +21,7 @@ for user in "$AGENT" "$OWNER"; do
   ! getent passwd "$user" >/dev/null || { echo "Existing identity: $user"; exit 1; }
 done
 ! getent group "$GROUP" >/dev/null || { echo "Existing group"; exit 1; }
-for entry in "$INSTANCE" "$STATE" "$UNIT" "$GAME_UNIT" "$POLICY"; do
+for entry in "$INSTANCE" "$STATE" "$INSTALL_ROOT" "$UNIT" "$GAME_UNIT" "$POLICY"; do
   [[ ! -e "$entry" && ! -L "$entry" ]] || { echo "Existing path: $entry"; exit 1; }
 done
 cleanup() {
@@ -31,6 +32,7 @@ cleanup() {
   systemctl reset-failed "$(basename "$GAME_UNIT")" >/dev/null 2>&1 || true
   [[ "$INSTANCE" == "/var/lib/capivara-instances/dsm-ci-backup-1102" ]] && rm -rf -- "$INSTANCE"
   [[ "$STATE" == "/var/lib/capivara-agent-ci-backup-1102" ]] && rm -rf -- "$STATE"
+  [[ "$INSTALL_ROOT" == "/opt/capivara-agent-ci-backup-1102" ]] && rm -rf -- "$INSTALL_ROOT"
   userdel "$OWNER" >/dev/null 2>&1 || true
   userdel "$AGENT" >/dev/null 2>&1 || true
   groupdel "$GROUP" >/dev/null 2>&1 || true
@@ -43,6 +45,9 @@ useradd --system --no-create-home --gid "$GROUP" "$OWNER"
 if [[ ! -d /var/lib/capivara-instances ]]; then
   install -d -o root -g root -m 0711 /var/lib/capivara-instances
 fi
+install -d -o root -g root -m 0755 "$INSTALL_ROOT"
+cp -a "$GITHUB_WORKSPACE/agents/linux/runtime" "$INSTALL_ROOT/runtime"
+cp -a "$GITHUB_WORKSPACE/agents/linux/privileged" "$INSTALL_ROOT/privileged"
 install -d -o "$OWNER" -g "$GROUP" -m 0710 "$INSTANCE"
 install -d -o "$OWNER" -g "$GROUP" -m 0700 "$INSTANCE/config"
 printf 'hostname = "Disposable private DayZ test";\n' > "$INSTANCE/config/serverDZ.cfg"
@@ -71,7 +76,7 @@ chmod 0600 "$STATE/agent.json" "$STATE/instances/$INSTANCE_ID.json"
 # Exercise PR production template and policy, with only the CI code and state
 # paths substituted.  Protected instance tree remains read-only to the unit.
 sed \
-  -e "s|/opt/capivara-agent|$GITHUB_WORKSPACE/agents/linux|g" \
+  -e "s|/opt/capivara-agent|$INSTALL_ROOT|g" \
   -e "s|/var/lib/capivara-agent|$STATE|g" \
   -e "s|/etc/capivara-agent/agent.json|$STATE/agent.json|g" \
   "$GITHUB_WORKSPACE/agents/linux/services/capivara-agent-backup-create@.service" > "$UNIT"
@@ -104,7 +109,7 @@ fi
 # then verifies the archive and reads a restored copy in a temp directory.
 runuser -u "$AGENT" -- env \
   CAPIVARA_AGENT_STATE_DIR="$STATE" \
-  PYTHONPATH="$GITHUB_WORKSPACE/agents/linux/runtime" \
+  PYTHONPATH="$INSTALL_ROOT/runtime" \
   CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE='capivara-agent-backup-create@{command_id}.service' \
   python3 - <<'PY'
 import hashlib
