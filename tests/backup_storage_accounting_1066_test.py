@@ -12,7 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
 import backup_client
-from backup_storage_accounting import backup_inventory, quota_snapshot, source_size
+from backup_storage_accounting import backup_inventory, quota_snapshot, source_size, physical_backup_catalog
 
 
 def create_tar(path: Path, *, payload: bool) -> None:
@@ -157,6 +157,46 @@ class BackupStorageAccounting1066(unittest.TestCase):
             self.assertEqual(archive.extractfile(files[0]).read(), payload)
         self.assertEqual(cache.read_bytes(), payload)
         self.assertEqual(private_mod.read_bytes(), payload)
+
+    def test_physical_archive_catalog_lists_imported_and_unindexed_files(self):
+        folder = self.archive_root / "instance-one"
+        folder.mkdir()
+        one = folder / "import-001.tar.gz"
+        two = folder / "historical-002.tgz"
+        other = folder / "transfer.partial"
+        one.write_bytes(b"x" * 150)
+        two.write_bytes(b"y" * 200)
+        other.write_bytes(b"z" * 50)
+        result = physical_backup_catalog(self.archive_root, "instance-one")
+        self.assertEqual(result["total_files"], 3)
+        self.assertEqual(result["total_bytes"], 400)
+        self.assertFalse(result["truncated"])
+        ids = {x["backup_id"]: x for x in result["files"] if x["backup_id"]}
+        self.assertEqual(set(ids), {"import-001", "historical-002"})
+        self.assertTrue(all(x["kind"] == "archive_unverified" for x in ids.values()))
+        self.assertFalse(any("path" in item for item in result["files"]))
+        self.assertEqual(next(x for x in result["files"] if x["filename"]=="transfer.partial")["kind"], "other_file")
+
+        smaller = physical_backup_catalog(self.archive_root, "instance-one", limit=2)
+        self.assertTrue(smaller["truncated"])
+        self.assertEqual(len(smaller["files"]), 2)
+        self.assertEqual(smaller["total_bytes"], 400)
+        self.assertEqual(len(list(folder.iterdir())), 3)
+
+    def test_physical_catalog_does_not_follow_symlinks_or_hardlinks(self):
+        folder = self.archive_root / "instance-one"
+        folder.mkdir()
+        target = self.root / "another-client.tar.gz"
+        target.write_bytes(b"outside")
+        shortcut = folder / "trick.tar.gz"
+        shortcut.symlink_to(target)
+        with self.assertRaisesRegex(OSError, "unsafe"):
+            physical_backup_catalog(self.archive_root, "instance-one")
+        shortcut.unlink()
+        linked = folder / "linked.tar.gz"
+        linked.hardlink_to(target)
+        with self.assertRaisesRegex(OSError, "unsafe"):
+            physical_backup_catalog(self.archive_root, "instance-one")
 
     def test_full_quota_blocks_without_touching_history_or_game(self):
         previous = self.archive_root / "instance-one" / "history.tar.gz"
