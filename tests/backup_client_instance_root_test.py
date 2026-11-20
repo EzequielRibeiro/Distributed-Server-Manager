@@ -423,5 +423,60 @@ class BackupClientInstanceRootTest(unittest.TestCase):
         privileged.assert_not_called()
 
 
+    def test_backup_state_rotates_across_large_result_history(self):
+        """Every local receipt reaches the Controller across repeated polls."""
+        import json
+
+        result_root = backup_client.RESULT_ROOT
+        result_root.mkdir(parents=True, exist_ok=True)
+        expected = set()
+
+        for index in range(1205):
+            command_id = f"receipt-{index:04d}"
+            expected.add(command_id)
+            (result_root / f"{command_id}.json").write_text(
+                json.dumps({
+                    "command_id": command_id,
+                    "instance_id": "instance-safe",
+                    "action": "create",
+                    "status": "failed",
+                }),
+                encoding="utf-8",
+            )
+
+        # A malformed receipt must not block any other pending report.
+        (result_root / "receipt-corrupt.json").write_text(
+            "{not-json", encoding="utf-8"
+        )
+
+        previous_cursor = backup_client._BACKUP_STATE_CURSOR
+        try:
+            backup_client._BACKUP_STATE_CURSOR = 0
+            reported = set()
+            for _ in range(3):
+                page = backup_client.backup_state()
+                ids = [item["command_id"] for item in page]
+                self.assertLessEqual(len(page), 500)
+                self.assertEqual(len(ids), len(set(ids)))
+                reported.update(ids)
+
+            self.assertEqual(reported, expected)
+
+            # Dynamic arrivals also become visible, not just the initial set.
+            new_id = "receipt-new"
+            (result_root / f"{new_id}.json").write_text(
+                json.dumps({"command_id": new_id, "status": "completed"}),
+                encoding="utf-8",
+            )
+            later = {
+                item["command_id"]
+                for _ in range(3)
+                for item in backup_client.backup_state()
+            }
+            self.assertIn(new_id, later)
+        finally:
+            backup_client._BACKUP_STATE_CURSOR = previous_cursor
+
+
 if __name__ == "__main__":
     unittest.main()
