@@ -40,3 +40,31 @@ def test_linux_updater_packages_firewall_helper_and_unit():
         '49-capivara-agent-instance-units.rules"'
         in updater
     )
+
+
+def test_updater_result_keeps_agent_root_traversable_but_private_children_closed(tmp_path):
+    """Result reporting must not undo runtime identity's traverse-only ACL."""
+    import importlib.util
+    import stat
+    from unittest.mock import patch
+
+    spec = importlib.util.spec_from_file_location(
+        "capivara_updater_mode_test",
+        ROOT / "agents" / "linux" / "updater" / "updater.py",
+    )
+    assert spec and spec.loader
+    updater = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(updater)
+
+    agent_root = tmp_path / "capivara-agent"
+    agent_root.mkdir(mode=0o700)
+    updater.STATE_DIR = agent_root
+    updater.RESULT_PATH = agent_root / "update-result.json"
+    updater.HISTORY_DIR = agent_root / "update-history"
+
+    with patch.object(updater.os, "chown"):
+        updater._write_result("applied", installed_version="test")
+
+    assert stat.S_IMODE(agent_root.stat().st_mode) == 0o710
+    assert stat.S_IMODE(updater.HISTORY_DIR.stat().st_mode) == 0o700
+    assert stat.S_IMODE(updater.RESULT_PATH.stat().st_mode) == 0o600
