@@ -362,7 +362,30 @@ class CustomerInstanceWorkspaceService:
  def request_backup(self,user,instance_id,action,backup_id=None):
   action=str(action or "").lower();required={"create":"backup.create","restore":"backup.restore","delete":"backup.delete"}.get(action)
   if required is None:raise ValueError("invalid backup action")
-  self.require(user,instance_id,required);self.backups.initialize();return self.backups.request(instance_id,action=action,backup_id=backup_id,reason="customer",requested_by=str(user.get("username") or "customer"))
+  self.require(user,instance_id,required);self.backups.initialize()
+  if action=="delete":
+   target=str(backup_id or "").strip()
+   if not target:raise ValueError("backup ID required for customer deletion")
+   catalog=self.backup_catalog(user,instance_id)
+   if catalog.get("status")=="ok":
+    # A customer may remove a physical historical/imported archive, but
+    # cannot submit a guessed filename or a non-TAR result/partial file.
+    matches=[item for item in catalog.get("files",[])
+             if item.get("backup_id")==target and item.get("kind")=="archive_unverified"]
+    if len(matches)!=1:raise ValueError("backup file is not uniquely present in physical inventory")
+    from datetime import datetime,timezone
+    checked=str(catalog.get("checked_at") or "").replace("Z","+00:00")
+    try:age=abs((datetime.now(timezone.utc)-datetime.fromisoformat(checked)).total_seconds())
+    except (ValueError,TypeError):age=float("inf")
+    if age>300:raise ValueError("backup inventory is stale: refresh Agent before deleting")
+   else:
+    # Compatibility with legacy Agents: preserve deletion of records that
+    # the Controller has actually acknowledged, never accept guessed IDs.
+    jobs=self.backups.list_effective_jobs(instance_id=instance_id,limit=500)
+    if not any(job.get("action")=="create" and job.get("status")=="completed"
+               and str(job.get("backup_id"))==target for job in jobs):
+     raise ValueError("physical backup inventory is unavailable")
+  return self.backups.request(instance_id,action=action,backup_id=backup_id,reason="customer",requested_by=str(user.get("username") or "customer"))
  def upgrade_options(self,user,instance_id):
   context=self.require(user,instance_id,"contract.read");current=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));catalog=catalog_resource_profiles(self.root,str(context.get("game_id") or ""));current_id=current.get("resource_profile_id");profiles=[]
   for item in catalog.get("profiles") or []:
