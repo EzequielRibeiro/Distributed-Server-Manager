@@ -7,7 +7,16 @@ fail(){ printf 'Agent package build failed: %s\n' "$*" >&2; exit 1; }
 for command_name in git tar gzip sha256sum python3; do command -v "${command_name}" >/dev/null 2>&1 || fail "required command not found: ${command_name}"; done
 git -C "${ROOT}" rev-parse --verify "${REF}^{commit}" >/dev/null 2>&1 || fail "invalid Git ref: ${REF}"
 COMMIT=$(git -C "${ROOT}" rev-parse "${REF}^{commit}")
-VERSION=$(git -C "${ROOT}" show "${REF}:version" | tr -d '\r\n')
+SOURCE_VERSION=$(git -C "${ROOT}" show "${REF}:version" | tr -d '\r\n')
+VERSION="${SOURCE_VERSION}"
+# Preview-only packages must not change the project release version or
+# readiness metadata. An explicit double opt-in prevents accidental publishing
+# with a preview stamp in unattended release workflows.
+if [[ -n "${CAPIVARA_AGENT_PACKAGE_PREVIEW_VERSION:-}" ]]; then
+  [[ "${CAPIVARA_AGENT_PREVIEW_BUILD:-}" == "1" ]] || fail "preview version requires CAPIVARA_AGENT_PREVIEW_BUILD=1"
+  VERSION="${CAPIVARA_AGENT_PACKAGE_PREVIEW_VERSION}"
+  [[ "${VERSION}" == "${SOURCE_VERSION%%-*}-"* && "${VERSION}" != "${SOURCE_VERSION}" ]] || fail "preview version must be a distinct prerelease of ${SOURCE_VERSION%%-*}"
+fi
 [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || fail "invalid SemVer: ${VERSION}"
 SOURCE_DATE_EPOCH=$(git -C "${ROOT}" show -s --format=%ct "${COMMIT}")
 CHANNEL=stable; [[ "${VERSION}" == *-* ]] && CHANNEL=beta
