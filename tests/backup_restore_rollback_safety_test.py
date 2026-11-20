@@ -46,6 +46,26 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             self.assertEqual(sentinel.read_text(), "keep")
             self.assertTrue(root.exists())
 
+    def test_staging_permission_denied_keeps_game_running(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "instance"
+            root.mkdir()
+            (root / "world.dat").write_text("original")
+            archive = Path(temp) / "backup.tar"
+            self._valid_archive(archive)
+            with (
+                patch.object(backup_client, "_owned", return_value=({}, root)),
+                patch.object(backup_client, "_artifact", return_value=archive),
+                patch.object(backup_client, "status", return_value={"observed_state": "running"}),
+                patch.object(backup_client.tempfile, "mkdtemp",
+                             side_effect=PermissionError("adjacent parent inaccessible")),
+                patch.object(backup_client, "lifecycle") as lifecycle,
+            ):
+                with self.assertRaisesRegex(PermissionError, "parent inaccessible"):
+                    backup_client._restore_direct({}, {"instance_id": "test", "backup_id": "test"})
+                lifecycle.assert_not_called()
+            self.assertEqual((root / "world.dat").read_text(), "original")
+
     def test_partial_swap_restores_original_if_activation_fails(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "instance"
@@ -128,6 +148,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             for call in chown.call_args_list:
                 self.assertEqual(call.args[1:], (expected.st_uid, expected.st_gid))
             self.assertEqual(world.read_text(), "unchanged")
+            self.assertEqual(stage.stat().st_mode & 0o7777, original.stat().st_mode & 0o7777)
 
     def test_unprivileged_staging_does_not_attempt_chown(self):
         with tempfile.TemporaryDirectory() as temp:
