@@ -116,6 +116,81 @@ def backup_inventory(backup_root: Path, instance_id: str, *, classify: bool = Tr
     }
 
 
+
+def physical_backup_catalog(backup_root: Path, instance_id: str,
+                            *, limit: int = 1024) -> dict[str, Any]:
+    """Read-only, bounded, *unverified* archive listing for customer inventory.
+
+    The client sees only names and sizes, never host paths. A file being
+    present does not prove it is a valid or restorable backup. Enumeration
+    rejects unsafe paths; deletion is a separate authorized operation.
+    """
+    from datetime import datetime, timezone
+
+    if not instance_id or len(instance_id) > 191 or any(
+        ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        for ch in instance_id
+    ) or instance_id in {".", ".."}:
+        raise ValueError("invalid instance ID for physical backup catalog")
+    if not 1 <= limit <= 2048:
+        raise ValueError("physical backup catalog limit out of range")
+    base = Path(backup_root)
+    if base.is_symlink() or not base.is_dir():
+        raise OSError("backup storage root unavailable or unsafe")
+    directory = base / instance_id
+    if directory.is_symlink():
+        raise OSError("backup instance directory is a symlink")
+    if not directory.exists():
+        return {
+            "status": "ok", "instance_id": instance_id, "files": [],
+            "total_files": 0, "total_bytes": 0, "truncated": False,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+    _folder(directory)
+    items = []
+    total = 0
+    count = 0
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            info = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise OSError("unsafe physical backup inventory entry")
+            count += 1
+            if count > MAX_FILES:
+                raise OSError("physical backup inventory exceeds safe limit")
+            total += info.st_size
+            # .tar, .tgz, and .tar.gz are supported by _artifact() and delete.
+            filename = entry.name
+            suffix = next((ext for ext in (".tar.gz", ".tgz", ".tar")
+                           if filename.endswith(ext)), "")
+            backup_id = filename[:-len(suffix)] if suffix else None
+            if not backup_id or any(
+                ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                for ch in backup_id
+            ) or len(backup_id) > 191 or backup_id in {".", ".."}:
+                backup_id = None
+            items.append({
+                "filename": filename,
+                "backup_id": backup_id,
+                "size_bytes": info.st_size,
+                "modified_at": datetime.fromtimestamp(
+                    info.st_mtime, timezone.utc
+                ).isoformat(),
+                "kind": "archive_unverified" if backup_id else "other_file",
+                "physical_verification": "not_checked",
+            })
+    items.sort(key=lambda item: item["modified_at"], reverse=True)
+    return {
+        "status": "ok",
+        "instance_id": instance_id,
+        "files": items[:limit],
+        "total_files": count,
+        "total_bytes": total,
+        "truncated": count > limit,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def quota_snapshot(record: dict[str, Any], backup_root: Path, *,
                    classify: bool = False) -> dict[str, Any]:
     """Snapshot private instance bytes + physical archives with overlap handled."""

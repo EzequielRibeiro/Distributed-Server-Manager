@@ -31,7 +31,7 @@ _COMMON = next((
 if str(_COMMON) not in sys.path:
     sys.path.insert(0, str(_COMMON))
 from minecraft_java_status import query_reserved_java_game_port
-from backup_storage_accounting import backup_inventory
+from backup_storage_accounting import backup_inventory, physical_backup_catalog
 
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
@@ -533,11 +533,13 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         manifest_only_count = None
         invalid_count = None
         inventory_status = "unknown"
+        physical_catalog = {"status": "unavailable", "files": []}
         try:
             backup_base = Path(os.environ.get(
                 "CAPIVARA_BACKUP_ROOT", str(STATE_DIR / "backups")
             ))
             inventory = backup_inventory(backup_base, instance_id)
+            physical_catalog = physical_backup_catalog(backup_base, instance_id)
             backup_usage = inventory["bytes"]
             backup_count = inventory["file_count"]
             manifest_only_count = inventory["manifest_only_count"]
@@ -562,6 +564,7 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
             "backup_manifest_only_count": manifest_only_count,
             "backup_invalid_count": invalid_count,
             "backup_inventory_status": inventory_status,
+            "backup_physical_catalog": physical_catalog,
             "storage_pool_id": str(record.get("storage_pool_id") or "") or None,
             "cpu_percent": cpu,
             "memory_bytes": memory,
