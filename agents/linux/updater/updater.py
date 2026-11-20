@@ -297,6 +297,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             "agent/privileged/restore_instance_backup.py",
         ),
         (
+            package_root / "agent/privileged/create_instance_backup.py",
+            INSTALL_ROOT / "privileged/create_instance_backup.py",
+            0o755,
+            "agent/privileged/create_instance_backup.py",
+        ),
+        (
             package_root / "agent/policy/49-capivara-agent-instance-units.rules",
             POLKIT_RULES_DIR / "49-capivara-agent-instance-units.rules",
             0o644,
@@ -343,6 +349,12 @@ def _mapping(package_root: Path) -> list[tuple[Path, Path, int, str]]:
             SYSTEMD_DIR / "capivara-agent-backup-restore@.service",
             0o644,
             "services/capivara-agent-backup-restore@.service",
+        ),
+        (
+            package_root / "services/capivara-agent-backup-create@.service",
+            SYSTEMD_DIR / "capivara-agent-backup-create@.service",
+            0o644,
+            "services/capivara-agent-backup-create@.service",
         ),
         (
             package_root / "services/capivara-agent-runtime-identity.service",
