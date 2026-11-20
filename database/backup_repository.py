@@ -285,9 +285,18 @@ class BackupRepository:
         scheduled=local.replace(hour=hour,minute=minute,second=0,microsecond=0)
         if local<scheduled:return False
         for job in jobs:
-            if job.get("action")!="create" or job.get("status")!="completed":continue
-            completed=_datetime(job.get("completed_at"))
-            if completed and completed.astimezone(zone).date()==local.date():return False
+            if job.get("action") != "create":
+                continue
+            # One scheduled attempt per local day, even if it fails.  A
+            # permission error must never become a 30-second retry storm.
+            if job.get("reason") == "schedule":
+                attempted = _datetime(job.get("created_at"))
+                if attempted and attempted.astimezone(zone).date() == local.date():
+                    return False
+            if job.get("status") == "completed":
+                completed = _datetime(job.get("completed_at"))
+                if completed and completed.astimezone(zone).date() == local.date():
+                    return False
         return True
 
     def _ensure_workspace_policies(self, agent_id):
@@ -419,6 +428,10 @@ class BackupRepository:
             else:
                 last=max((_epoch(job.get("completed_at")) for job in jobs if job.get("action")=="create" and job.get("status")=="completed"),default=0)
                 if last and now_value-last<int(policy["interval_seconds"]):continue
+                # Legacy interval policies also need a cooldown on failures:
+                # a scheduler failure is not permission to retry indefinitely.
+                attempted=max((_epoch(job.get("created_at")) for job in jobs if job.get("action")=="create" and job.get("reason")=="schedule"),default=0)
+                if attempted and now_value-attempted < max(21600,int(policy["interval_seconds"])):continue
             created.append(self.request(policy["instance_id"],action="create",reason="schedule",requested_by="scheduler"))
         return created
 
