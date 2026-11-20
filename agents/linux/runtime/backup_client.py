@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -392,6 +393,9 @@ def _preserve_restored_owner(stage: Path, original: Path) -> None:
         elif not current.is_file():
             raise RuntimeError(f"unsupported restore staging entry: {current}")
         os.chown(current, owner.st_uid, owner.st_gid)
+    # tarfile may reset the staging root's mode from the archive. Preserve
+    # the actual live instance root permissions (not a broad default).
+    os.chmod(stage, stat.S_IMODE(owner.st_mode))
 
 
 def _restore_direct(config, command):
@@ -425,9 +429,8 @@ def _restore_direct(config, command):
         ):
             raise ValueError("unsupported backup manifest")
         _validate_manifest(record, manifest)
-    if was_running:
-        lifecycle(config, instance_id, "stop")
-
+    # Fail before stopping the game if the Agent cannot create the
+    # adjacent atomic-swap staging area.
     stage = Path(
         tempfile.mkdtemp(
             prefix=f".{root.name}.restore-",
@@ -437,6 +440,8 @@ def _restore_direct(config, command):
     moved_original = False
 
     try:
+        if was_running:
+            lifecycle(config, instance_id, "stop")
         manifest = _safe_extract(artifact, stage)
         _validate_manifest(record, manifest)
         manifest_path = stage / MANIFEST_NAME
