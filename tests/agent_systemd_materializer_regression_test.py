@@ -151,19 +151,17 @@ def test_non_minecraft_runtime_does_not_use_console_supervisor():
     assert "capivara-instance-console-" not in unit
 
 
-def test_dayz_shutdown_grace_period_is_specific_to_dayz():
-    for game_id in ("dayz", "dayz.stable"):
-        unit = render_unit(_spec(game_id=game_id))
-        assert "TimeoutStopSec=300\n" in unit
-
-    for game_id in ("minecraft", "palworld"):
-        assert "TimeoutStopSec=60\n" in render_unit(_spec(game_id=game_id))
+def test_profile_specified_shutdown_grace_period_is_bounded():
+    assert "TimeoutStopSec=300\n" in render_unit(_spec(stop_timeout_seconds=300))
+    assert "TimeoutStopSec=60\n" in render_unit(_spec())
+    with pytest.raises(MaterializerError, match="invalid systemd stop timeout"):
+        render_unit(_spec(stop_timeout_seconds=601))
 
 
-def test_dayz_agent_waits_longer_than_systemd_before_judging_stop(monkeypatch):
+def test_agent_waits_beyond_profiled_shutdown_deadline(monkeypatch):
     from adapters.systemd import SystemdAdapter
 
-    for game_id, expected_timeout in (("dayz", 330), ("dayz.stable", 330), ("minecraft", 75)):
+    for grace, expected_timeout in ((300, 330), (None, 75)):
         seen = []
         adapter = SystemdAdapter(runner=lambda argv, timeout: (seen.append(timeout), (0, "", ""))[1])
         states = iter((
@@ -171,6 +169,9 @@ def test_dayz_agent_waits_longer_than_systemd_before_judging_stop(monkeypatch):
             {"available": True, "running": False, "unit": "capivara-instance-aurora-dayz-002.service", "active_state": "inactive", "result": "success"},
         ))
         monkeypatch.setattr(adapter, "_show", lambda _instance: next(states))
-        result = adapter.stop({"game_id": game_id, "instance_id": "aurora-dayz-002"})
+        record = {"instance_id": "aurora-dayz-002"}
+        if grace is not None:
+            record["stop_timeout_seconds"] = grace
+        result = adapter.stop(record)
         assert result["state"]["running"] is False
         assert seen == [expected_timeout]
