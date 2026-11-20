@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -29,6 +31,8 @@ UNINSTALL_STATE_DIR = STATE_DIR / "uninstall"
 UNINSTALL_PATH_UNIT = "capivara-agent-uninstall.path"
 CONSOLE_READER_UNIT = "capivara-agent-console-reader.service"
 REPOSITORY = os.environ.get("CAPIVARA_AGENT_GITHUB_REPOSITORY", "EzequielRibeiro/Distributed-Server-Manager")
+# Fixed root-owned staging boundary; remote commands cannot supply arbitrary paths.
+MANUAL_PACKAGE_DIR = Path("/var/cache/capivara-agent/manual")
 
 
 def _utc_now() -> str:
@@ -167,6 +171,47 @@ def _download(url: str, path: Path) -> None:
         shutil.copyfileobj(response, output)
 
 
+def _stage_local_manual_package(
+    version: str, archive: Path, checksum: Path, manifest: Path,
+) -> None:
+    """Copy root-owned, operator-staged preview assets into the sandbox.
+
+    The Agent may request a version but never an arbitrary source path.
+    Parent and staging directories are owned by the updater effective UID,
+    and the staging directory is private (0700).
+    """
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+", version):
+        raise RuntimeError("local/manual requires a prerelease version")
+
+    root = MANUAL_PACKAGE_DIR
+    owner = os.geteuid()
+    for directory in (root.parent, root):
+        metadata = directory.lstat()
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != owner
+            or (metadata.st_mode & 0o022)
+        ):
+            raise PermissionError("unsafe local/manual package staging directory")
+    if stat.S_IMODE(root.stat().st_mode) != 0o700:
+        raise PermissionError("local/manual staging directory must be 0700")
+
+    for destination in (archive, checksum, manifest):
+        source = root / destination.name
+        fd = os.open(source, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as source_stream:
+            metadata = os.fstat(source_stream.fileno())
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+                or metadata.st_uid != owner
+                or (stat.S_IMODE(metadata.st_mode) & 0o077)
+            ):
+                raise PermissionError("unsafe local/manual package artifact")
+            with destination.open("xb") as output:
+                shutil.copyfileobj(source_stream, output)
+
+
 def _safe_extract(package: tarfile.TarFile, destination: Path) -> None:
     members = []
     for member in package.getmembers():
@@ -194,7 +239,7 @@ def _verify_manifest(manifest: dict[str, Any], version: str, channel: str) -> No
         raise RuntimeError("invalid Linux Agent manifest")
     if str(manifest.get("version")) != version:
         raise RuntimeError("package version mismatch")
-    expected = "beta" if channel == "beta" else "stable"
+    expected = "beta" if channel in {"beta", "local/manual"} else "stable"
     if str(manifest.get("channel") or "").lower() != expected:
         raise RuntimeError("package channel mismatch")
 
@@ -646,8 +691,11 @@ def apply_request() -> int:
         raise RuntimeError("desired_version is required")
     if channel not in {"stable", "beta", "local/manual"}:
         raise RuntimeError("unsupported update channel")
-    if channel == "local/manual":
-        raise RuntimeError("local/manual updates require administrator supplied package")
+    if channel == "local/manual" and not re.fullmatch(
+        r"[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z.-]+",
+        version.removeprefix("v"),
+    ):
+        raise RuntimeError("local/manual requires a prerelease version")
 
     identity = _load_persistent_identity()
     persistent_config_snapshot = _snapshot_persistent_config()
@@ -664,9 +712,12 @@ def apply_request() -> int:
         archive = work / archive_name
         checksum = work / f"{archive_name}.sha256"
         external_path = work / manifest_name
-        _download(f"{base}/{archive_name}", archive)
-        _download(f"{base}/{archive_name}.sha256", checksum)
-        _download(f"{base}/{manifest_name}", external_path)
+        if channel == "local/manual":
+            _stage_local_manual_package(plain, archive, checksum, external_path)
+        else:
+            _download(f"{base}/{archive_name}", archive)
+            _download(f"{base}/{archive_name}.sha256", checksum)
+            _download(f"{base}/{manifest_name}", external_path)
         if (
             checksum.read_text().split()[0].strip().lower()
             != hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -746,7 +797,9 @@ def apply_request() -> int:
         channel=channel,
         rollout_id=request.get("rollout_id"),
         batch_number=request.get("batch_number"),
-        source=f"github-release:{REPOSITORY}@{tag}",
+        source=(f"local-manual:{manifest.get('git_commit')}"
+                if channel == "local/manual"
+                else f"github-release:{REPOSITORY}@{tag}"),
     )
     return 0
 
