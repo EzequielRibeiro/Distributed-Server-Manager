@@ -34,7 +34,7 @@ polkit.addRule(function(action, subject) {
     }
 
     // Backup creation is limited to a fixed, root-owned, validated helper.
-    if (/^capivara-agent-backup-create@[A-Za-z0-9._-]{1,191}\\.service$/.test(unit) && verb === "start") {
+    if (/^capivara-agent-backup-create@[A-Za-z0-9._-]{1,191}\.service$/.test(unit) && verb === "start") {
         return polkit.Result.YES;
     }
 
