@@ -82,6 +82,19 @@ class CustomerBackupPhysicalInventoryTest(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.service.backup_catalog(self.user, self.iid)
 
+    def test_transfer_script_does_not_destroy_physical_backup_inventory(self):
+        transfer = (ROOT / "dashboard/web/customer-backup-transfer.js").read_text()
+        page = (ROOT / "dashboard/web/customer-instance.html").read_text()
+        main = (ROOT / "dashboard/web/customer-instance-v2.js").read_text()
+        self.assertIn('getElementById("backup-transfer-history")', transfer)
+        self.assertNotIn('getElementById("backup-list")', transfer)
+        self.assertIn('id="backup-transfer-history"', transfer)
+        self.assertIn('id="backup-list"', page)
+        self.assertIn('/customer-instance-v2.js?v=35', page)
+        self.assertIn('/customer-backup-transfer.js?v=2', page)
+        self.assertIn("Pelo menos", main)
+        self.assertIn("Uso mínimo comprovado pelos backups", main)
+
     def test_customer_ui_has_explicit_confirmation_and_legacy_fallback(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text()
         self.assertIn("physical_catalog", source)
