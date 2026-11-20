@@ -251,10 +251,12 @@ def _create(config, command):
     _selected(root, dict(command.get("policy") or {}))
     locks = STATE_ROOT / "backup-create-locks"
     locks.mkdir(parents=True, exist_ok=True)
+    if locks.is_symlink():
+        raise OSError("backup creation lock directory is unsafe")
     lock_path = locks / f"{instance_id}.lock"
-    if lock_path.is_symlink():
-        raise OSError("backup creation lock is unsafe")
-    with lock_path.open("a+b") as lock:
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(lock_path, flags, 0o600)
+    with os.fdopen(fd, "a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
             return _create_unlocked(config, command)
