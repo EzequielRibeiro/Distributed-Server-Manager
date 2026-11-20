@@ -185,7 +185,7 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
         self.assertIn("User=root", unit)
         self.assertIn("ProtectSystem=strict", unit)
         self.assertIn("ReadWritePaths=/var/lib/capivara-agent /var/lib/capivara-instances", unit)
-        self.assertNotIn("ReadWritePaths=/", unit)
+        self.assertNotIn("/", next(line for line in unit.splitlines() if line.startswith("ReadWritePaths=")).split("=", 1)[1].split())
         self.assertIn("CAPIVARA_BACKUP_RESTORE_UNIT_TEMPLATE=capivara-agent-backup-restore@", agent)
 
     def test_external_helper_never_recursively_relaxes_file_permissions(self):
