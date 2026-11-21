@@ -164,6 +164,78 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertEqual((fixture/"installed/data/database.txt").read_text(),"db durable")
                 self._assert_unchanged(originals)
 
+    def test_auth_agent_main_rehearsal_and_two_systemd_pids_stay_consistent(self):
+        """One isolated #928 cross-contract proof; never authorizes production.
+
+        Exercise actual Linux Agent heartbeat over credentialed HTTP before
+        and after a Controller dispatcher restart, the real update.sh main()
+        disposable no-drain entry (success and failed apply/rollback), and
+        two independent real systemd processes. The main() fixture uses a
+        synthetic game inventory: this is NOT a full daemon/update E2E.
+        """
+        from update_game_uptime_agent_runtime_restart_test import (
+            LinuxAgentProcessHeartbeatTests,
+        )
+        from update_game_uptime_main_path_test import MainPathRehearsalTest
+
+        originals = [self._start("contract-minecraft"),
+                     self._start("contract-dayz")]
+        agent = LinuxAgentProcessHeartbeatTests(
+            "test_real_agent_process_reconnects_to_restarted_controller")
+        agent.setUp()
+        self.addCleanup(agent.doCleanups)
+
+        def heartbeat():
+            result = agent.invoke()
+            self.assertEqual(result.returncode, 0, result.stderr[-1400:])
+            payload = json.loads(result.stdout.strip().splitlines()[-1])
+            self.assertTrue(payload["wire_compatible"])
+            self.assertFalse(payload["live_no_drain_authorized"])
+            self.assertEqual(payload["health_status"], "online")
+            self.assertEqual(payload["agent_id"], agent.controller.agent_id)
+            return payload
+
+        first = heartbeat()
+        self._assert_unchanged(originals)
+        for mode, target_version, journal_status in (
+            ("no_drain_success", "2.0.999-fixture", "verified"),
+            ("no_drain_fail_after_apply", "2.0.998-fixture", "rolled_back"),
+        ):
+            with self.subTest(mode=mode):
+                main = MainPathRehearsalTest(
+                    "test_disposable_no_drain_actual_main_success_preserves_data_and_never_drains")
+                main.setUp()
+                self.addCleanup(main.doCleanups)
+                main.prepare_no_drain_fixture()
+                result = main_rehearsal(main.root, mode)
+                self.assertEqual(
+                    result.returncode, 0 if mode == "no_drain_success" else 2,
+                    result.stdout[-1200:] + result.stderr[-1200:])
+                self.assertEqual(
+                    (main.installed / "version").read_text().strip(),
+                    target_version)
+                self.assertEqual(main.world.read_bytes(), b"saved-world-private-test")
+                self.assertEqual(main.upload.read_bytes(),
+                                 b"in-flight-upload-private-test")
+                self.assertFalse((main.root / "steps").exists(),
+                                 "real game/Controller stop hooks must not run")
+                receipt = json.loads((
+                    main.root / "dsm928-composite-journal/game-uptime-transaction.json"
+                ).read_text())
+                self.assertEqual(receipt["status"], journal_status)
+                self.assertTrue(receipt["strict_inventory"])
+                self.assertEqual(len(receipt["original_units"]), 2)
+                self.assertFalse(receipt["live_no_drain_authorized"])
+                self._assert_unchanged(originals)
+
+                # The Controller dispatcher is recreated against the same
+                # durable disposable SQLite database; the Agent reconnects
+                # using its actual HTTP client and existing credential.
+                agent.controller._restart_controller_dispatcher()
+                resumed = heartbeat()
+                self.assertEqual(resumed["agent_id"], first["agent_id"])
+                self._assert_unchanged(originals)
+
     def test_two_real_systemd_processes_survive_actual_updater_file_functions(self):
         """Run actual update.sh backup/staging/apply/rollback on fake /tmp install."""
         originals = [self._start("real-alpha"), self._start("real-beta")]
