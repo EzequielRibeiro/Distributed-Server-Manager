@@ -18,9 +18,7 @@ import sys
 import tempfile
 import unittest
 
-from update_game_uptime_sqlite_http_integration_test import (
-    ActualDispatcherSqliteHttpTests,
-)
+import update_game_uptime_sqlite_http_integration_test as sqlite_http_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -126,7 +124,7 @@ print(json.dumps({
 
 class LinuxAgentProcessHeartbeatTests(unittest.TestCase):
     def setUp(self):
-        self.controller = ActualDispatcherSqliteHttpTests(
+        self.controller = sqlite_http_fixture.ActualDispatcherSqliteHttpTests(
             "test_credentialed_sqlite_controller_survives_restart_and_new_nonce")
         self.addCleanup(self.controller.doCleanups)
         self.controller.setUp()
