@@ -188,6 +188,7 @@ def execute_with_compatibility_gate(
     apply_unit: Callable[[], None],
     rollback_unit: Callable[[], None],
     verify: Callable[[], None],
+    list_active_units: Callable[[], list[str]] | None = None,
 ) -> dict:
     """Conservatively connect diagnostic compatibility to disposable execution.
 
@@ -195,6 +196,9 @@ def execute_with_compatibility_gate(
     production evidence. Even a passing assessment is NEVER release approval.
     """
     root = _root(workspace, units)
+    if not callable(list_active_units):
+        raise CompositeSafetyError(
+            "complete active game inventory callback required for gated transaction")
     compatibility_loader = SourceFileLoader(
         "dsm928_composite_compatibility",
         str(Path(__file__).with_name("game-uptime-compatibility.py")),
@@ -219,11 +223,34 @@ def execute_with_compatibility_gate(
             "disposable compatibility gate blocked: "
             + ", ".join(assessment.get("blockers") or ["invalid_diagnostic"])
         )
+    # Protocol matching alone never authorizes a no-drain rehearsal: classify
+    # the *complete* release inventory and refuse any systemd, DB, Agent,
+    # unknown, mode, or newly introduced control-plane executable change.
+    impact_loader = SourceFileLoader(
+        "dsm928_composite_release_impact",
+        str(Path(__file__).with_name("game-uptime-plan.py")),
+    )
+    impact_spec = importlib.util.spec_from_loader(
+        impact_loader.name, impact_loader,
+    )
+    impact_plan = importlib.util.module_from_spec(impact_spec)
+    impact_loader.exec_module(impact_plan)
+    try:
+        impact = impact_plan.analyze(root / "installed", root / "new-payload")
+    except (OSError, ValueError) as exc:
+        raise CompositeSafetyError("disposable release impact unclassifiable") from exc
+    if (impact.get("live_no_drain_authorized") is not False
+            or impact.get("control_plane_candidate_for_disposable_review") is not True
+            or impact.get("change_tier") not in (
+                "restart_free", "control_plane_restart_candidate")):
+        raise CompositeSafetyError(
+            "disposable release tier blocked: " + str(impact.get("change_tier", "unknown")))
     result = execute(
         root, units, inspect=inspect,
         prepare_files=prepare_files, apply_files=apply_files,
         rollback_files=rollback_files, apply_unit=apply_unit,
         rollback_unit=rollback_unit, verify=verify,
+        list_active_units=list_active_units,
     )
     # A synthetic successful contract match is only permission to run a
     # disposable rehearsal. It MUST NOT be promoted to production approval.
@@ -231,6 +258,8 @@ def execute_with_compatibility_gate(
         **result,
         "compatibility_source": "synthetic_disposable_fixture",
         "controller_agent_contract_compatible": True,
+        "reviewed_disposable_release_tier": impact["change_tier"],
+        "full_inventory_attested": True,
         "live_no_drain_authorized": False,
     }
 
