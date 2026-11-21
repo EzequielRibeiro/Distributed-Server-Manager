@@ -27,6 +27,9 @@ from server_settings_runtime import materialize_server_settings
 from server_settings_surface import materialize_dynamic_values
 from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
+from game_uptime_privileged_admission import (
+    require_privileged_mutation_admission, privileged_mutation_blocked,
+)
 from storage_pools import resolve_storage_pool
 
 COMMON_DIR = INSTALL_ROOT / "common"
@@ -1478,6 +1481,7 @@ def _apply_dayz_battleye_private(spec: dict[str, Any], config: dict[str, Any], m
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged materializer helper must run as root")
+    require_privileged_mutation_admission()
     instance_id = _token(instance_id)
     request_path = REQUEST_ROOT / f"{instance_id}.request.json"
     result_path = REQUEST_ROOT / f"{instance_id}.result.json"
@@ -1602,7 +1606,10 @@ def main() -> int:
         try:
             request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
             request = json.loads(request_path.read_text(encoding="utf-8"))
-            if str(request.get("action") or "").strip().lower() == "apply":
+            # Do not run the legacy ACL repair while a maintenance hold
+            # blocks the original privileged operation.
+            if (str(request.get("action") or "").strip().lower() == "apply"
+                    and not privileged_mutation_blocked()):
                 config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
                 local_agent_id = str(config.get("agent_id") or "").strip()
                 spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)

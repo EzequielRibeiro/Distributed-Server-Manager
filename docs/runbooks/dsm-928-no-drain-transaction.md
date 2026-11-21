@@ -1308,3 +1308,34 @@ que instâncias Controller em hosts diferentes receberam o mesmo hold.
 Sem proteção distribuída/ACK autenticado e coordinator journal/lease
 operacional, #928 permanece aberta, `update.sh --no-drain` exit 2,
 `live_no_drain_authorized=false` e release não autorizado.
+
+
+## Etapa 2 — admissão dos dois auxiliares privilegiados do Agent (21/11/2026)
+
+O materializador root `agents/linux/privileged/materialize_instance.py` e o
+executor de comandos nativos `agents/linux/privileged/native_command.py`
+agora chamam `require_privileged_mutation_admission()` **imediatamente
+após a verificação de root e antes de ler um pedido**, consultar arquivos
+de jogo, despachar comando, aplicar ou remover runtime. O leitor compartilhado
+`game_uptime_maintenance_hold.observe()` só admite a execução se retornar
+exatamente `{"active": false}`. Hold ativo/inválido, journal persistente
+pendente ou erro de leitura recusam a operação, sem criar ou remover marcador.
+
+No fluxo de erro legado do materializador, a concessão de leitura do cliente
+para `apply` também é omitida se o hold estiver ativo, mantendo apenas o
+resultado `status=failed` necessário ao diagnóstico. Ausência comprovada
+de hold mantém a rotina anterior. O código não altera serviços systemd,
+permissões em produção, world saves nem comandos de jogos.
+
+**Única prova agrupada**: carrega os dois helpers reais em Python isolado,
+impede qualquer acesso ao request usando mock, testa hold/journal/erro,
+evidência ausente, comportamento sem hold e ausência de ACL de recuperação
+quando o materializador é recusado. Não duplica ensaios PID/rollback.
+
+**Limite decisivo:** é apenas uma barreira de *novas admissões* nos dois
+entrypoints root, sem lock estável de processo em voo e sem coordenação de
+outros helpers, jobs/threads já iniciados ou Agents externos. Uma operação
+admitida antes de surgir o hold pode continuar. Não considerar quiescência
+ou autorização de atualização sem drenagem; #928 OPEN,
+`live_no_drain_authorized=false`, `update.sh --no-drain` exit 2,
+release #1096 Draft.

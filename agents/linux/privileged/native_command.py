@@ -32,6 +32,7 @@ for value in (
         )
 
 import instance_runtime
+from game_uptime_privileged_admission import require_privileged_mutation_admission
 from minecraft_rcon_secret import (
     MinecraftRconSecretError,
     read_password,
@@ -306,6 +307,8 @@ def run(
             "privileged native command helper "
             "must run as root"
         )
+
+    require_privileged_mutation_admission()
 
     command_id = _token(
         command_id,
