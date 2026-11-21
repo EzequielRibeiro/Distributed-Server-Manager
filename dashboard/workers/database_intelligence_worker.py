@@ -65,7 +65,7 @@ def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
             time.sleep(1)
             continue
         try:
-            with tracked_operation("database_intelligence_worker", root=ROOT) as admitted:
+            with tracked_operation("database_intelligence_worker", root=root) as admitted:
                 if admitted:
                             try:
                                 result = repo.capture_snapshot()
