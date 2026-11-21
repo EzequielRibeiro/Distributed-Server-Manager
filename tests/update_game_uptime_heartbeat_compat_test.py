@@ -134,6 +134,108 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
         self.assertEqual(data["no_drain_compatibility_offer"]["status"], "blocked")
         self.assertEqual(data["no_drain_compatibility_offer"]["agent_id"], "trusted-agent")
 
+    def test_phase2_authenticated_remote_fence_receipt_never_acks_quiescence(self):
+        """One grouped end-to-end contract: auth, lease, nonce, negative proof."""
+        import time
+        agent_evidence = _load(
+            "dsm928_agent_fence_evidence",
+            ROOT / "agents/linux/runtime/game_uptime_agent_fence_evidence.py",
+        )
+        controller_evidence = _load(
+            "dsm928_controller_fence_evidence",
+            ROOT / "dashboard/game_uptime_remote_fence_evidence.py",
+        )
+        now = int(time.time())
+        local_hold = {
+            "active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": "a" * 32,
+            "issued_at": now - 10, "expires_at": now + 80,
+        }
+        with patch.object(agent_evidence, "observe", return_value=local_hold):
+            probe = agent_evidence.build_fence_evidence("trusted-agent", now=now)
+        self.assertEqual(probe["transaction_id"], "a" * 32)
+        self.assertFalse(probe["agent_workers_fenced"])
+        self.assertFalse(probe["external_jobs_verified"])
+        self.assertFalse(probe["live_no_drain_authorized"])
+        with patch.object(controller_evidence, "observe",
+                          return_value=local_hold), patch(
+                          "agent_remote_http.receipt_for_authenticated_agent",
+                          side_effect=controller_evidence.receipt_for_authenticated_agent):
+            status, payload = self.post({
+                "agent_id": "trusted-agent",
+                "no_drain_fence_evidence": probe,
+            })
+            self.assertEqual(status, 200)
+            receipt = payload["no_drain_fence_receipt"]
+            self.assertEqual(receipt["status"],
+                             "authenticated_evidence_received_unfenced")
+            self.assertEqual(receipt["agent_id"], "trusted-agent")
+            self.assertEqual(receipt["transaction_id"], "a" * 32)
+            verified = agent_evidence.verify_fence_receipt(
+                probe, receipt, now=now)
+            self.assertTrue(verified["wire_receipt_verified"])
+            self.assertFalse(verified["remote_agent_quiescence_acked"])
+            self.assertFalse(verified["live_no_drain_authorized"])
+
+            # A copied receipt cannot satisfy another nonce/transaction.
+            with patch.object(agent_evidence, "observe",
+                              return_value=local_hold):
+                fresh = agent_evidence.build_fence_evidence(
+                    "trusted-agent", now=now)
+            self.assertNotEqual(fresh["request_id"], probe["request_id"])
+            self.assertFalse(agent_evidence.verify_fence_receipt(
+                fresh, receipt, now=now)["wire_receipt_verified"])
+            self.assertFalse(agent_evidence.verify_fence_receipt(
+                probe, receipt, now=now + 31)["wire_receipt_verified"])
+
+            spoof = dict(probe, agent_id="other-agent")
+            status, mismatched = self.post({
+                "no_drain_fence_evidence": spoof,
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                mismatched["no_drain_fence_receipt"]["status"], "blocked")
+            self.assertEqual(
+                mismatched["no_drain_fence_receipt"]["agent_id"],
+                "trusted-agent",
+            )
+            other_tx = dict(probe, transaction_id="b" * 32)
+            status, mismatched = self.post({
+                "no_drain_fence_evidence": other_tx,
+            })
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                mismatched["no_drain_fence_receipt"]["status"], "blocked")
+            self.assertFalse(agent_evidence.verify_fence_receipt(
+                other_tx, receipt, now=now)["wire_receipt_verified"])
+
+            with patch.object(controller_evidence, "observe",
+                              return_value={"active": False, "reason": "hold_absent"}):
+                status, missing_hold = self.post({
+                    "no_drain_fence_evidence": probe,
+                })
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    missing_hold["no_drain_fence_receipt"]["status"], "blocked")
+        expired = dict(probe, observed_at=now - 40)
+        self.assertEqual(controller_evidence.receipt_for_authenticated_agent(
+            expired, authenticated_agent_id="trusted-agent", now=now
+        )["status"], "blocked")
+        with patch.object(agent_evidence, "observe",
+                          return_value={"active": False, "reason": "hold_absent"}):
+            self.assertIsNone(agent_evidence.build_fence_evidence(
+                "trusted-agent", now=now))
+
+        with patch.object(controller_evidence, "observe",
+                          return_value=local_hold):
+            from agent_pairing_repository import AgentCredentialInvalid
+            self.auth.return_value.authenticate.side_effect = AgentCredentialInvalid("bad")
+            status, rejected = self.post({
+                "no_drain_fence_evidence": probe,
+            })
+            self.assertEqual(status, 401)
+            self.assertNotIn("no_drain_fence_receipt", rejected)
+
     def test_absent_probe_preserves_old_heartbeat(self):
         status, data = self.post({"agent_id": "trusted-agent"})
         self.assertEqual(status, 200)
