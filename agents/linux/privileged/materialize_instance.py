@@ -1345,7 +1345,10 @@ def _prepare_dayz_customer_read_access(spec: dict[str, Any], config: dict[str, A
         for component in relative.parts:
             # dir_fd + O_NOFOLLOW prevents the game user from swapping a
             # validated mission directory for a symlink before fchmod/fchown.
-            child_fd = os.open(component, flags, dir_fd=fds[-1])
+            try:
+                child_fd = os.open(component, flags, dir_fd=fds[-1])
+            except OSError as exc:
+                raise PermissionError("DayZ customer directory is inaccessible or unsafe") from exc
             fds.append(child_fd)
             metadata = os.fstat(child_fd)
             if (not stat.S_ISDIR(metadata.st_mode)
