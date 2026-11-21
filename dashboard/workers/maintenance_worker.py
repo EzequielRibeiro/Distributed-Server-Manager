@@ -15,6 +15,12 @@ from maintenance_game_update_coordinator import MaintenanceGameUpdateCoordinator
 from maintenance_platform import due_warning_offsets,maintenance_event,render_warning,update_maintenance_event
 from maintenance_repository import MaintenanceRepository
 from runtime_backend import backend_from_environment
+# Resolve the sibling helper from this installed script, not the caller's
+# current working directory (runpy/remote launchers may omit this directory).
+_WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKERS_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKERS_MODULE_DIR)
+from maintenance_hold_gate import maintenance_paused
 from runtime_workspace_catalog import runtime_workspace_capabilities
 INTERVAL_SECONDS=max(1,min(int(os.environ.get('DSM_MAINTENANCE_WORKER_SECONDS','5')),60))
 NATIVE_SHUTDOWN_TIMEOUT_SECONDS=max(30,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TIMEOUT_SECONDS','180')),900))
@@ -510,8 +516,13 @@ class MaintenanceWorker:
   return result
 
 def run_forever(interval:int=INTERVAL_SECONDS)->None:
+ while maintenance_paused():
+  time.sleep(1)
  backend=backend_from_environment(_database_environment(ROOT));worker=MaintenanceWorker(backend)
  while True:
+  if maintenance_paused():
+   time.sleep(1)
+   continue
   try:
    result=worker.tick()
    if result['active'] or result['failed']:print(f"maintenance worker active={result['active']} planned={result['planned']} warnings={result['warnings']} saves={result['saves']} stops={result['stops']} game={result['game_activated']}/{result['game_committed']} content={result['content_dispatched']}/{result['content_aligned']} starts={result['starts']} completed={result['completed']} skipped={result['skipped']} failed={result['failed']}",flush=True)

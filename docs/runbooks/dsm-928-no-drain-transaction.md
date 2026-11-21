@@ -752,3 +752,46 @@ a segurança necessária. O `update.sh --no-drain` segue read-only/exit 2,
 coordenar uma barreira com confirmação autenticada de todos os Agents e
 Workers mutadores, dono transacional durável/rollback e remocao verificável
 do hold; só então ligar o caminho de aplicação da atualização sem drenagem.
+
+## Cobertura de todos os nove Workers do supervisor — fase de implementação (21/11/2026)
+
+O `dashboard/workers/worker.sh` inicia nove processos. Agora **todos os nove
+verificam o mesmo hold local protegido** antes de iniciar trabalho novo:
+
+- `scheduler_worker.sh`: consulta o leitor Python somente leitura antes de
+  gravar o estado; leitor ausente/inseguro bloqueia o tick.
+- `automation_worker.py`, `content_update_worker.py`,
+  `maintenance_worker.py`, `observability_retention_worker.py`,
+  `content_upload_retention_worker.py`,
+  `database_intelligence_worker.py`: consultam `maintenance_paused()`
+  antes de inicializar repositórios e a cada passagem de seus loops.
+- `hybrid_customer_workspace_worker.py`: mesma verificação do loop e
+  proteção antecipada de `workspace_cycle()`, inclusive modo `once`.
+- `hybrid_agent_worker.py`: já consultava o hold antes da reconciliação e
+  antes de abrir banco, conforme etapa anterior.
+
+A função compartilhada `maintenance_hold_gate.py` **reutiliza o mesmo leitor
+de `agents/linux/runtime/game_uptime_maintenance_hold.py`**: nenhum segundo
+formato, arquivo, flag de ambiente ou novo mecanismo de autorização.
+O leitor também tem um **modo de processo somente leitura** para o
+`scheduler_worker.sh`: exit 0 sem hold, exit 2 quando presente/inseguro.
+Um único teste de regressão agrupado confere o contrato dos oito
+entrypoints e a barreira antes do workspace.
+
+**Risco restante:**
+- A checagem ocorre **entre ciclos**, não interrompe uma chamada mutadora
+  já iniciada. Um loop que está executando um update, expiração de arquivos
+  ou shutdown pode continuar apesar de o hold ter surgido; não existe ACK
+  de quiescência, contador de operações ativas nem um fencing transacional.
+- O Controller HTTP, os Agents remotos, streaming/threads, unidades de
+  materialização e executores privilegiados **não estão abrangidos**
+  pelo hold local. O supervisor continua reiniciando filhos conforme
+  política de produção; o bloqueio é feito em cada filho, não via SIGSTOP.
+- Não há coordenador que crie/remova este arquivo com journal durável.
+  Não criar manualmente o marcador em hosts com clientes ativos.
+
+**Regra de saída:** somente quando um proprietário transacional obtiver
+ACK autenticado de todos os mutadores, verificar fim de operações em voo,
+preservar PIDs, executar update/rollback e provar recuperação integral, a
+opção pública poderá ser considerada. Até então `--no-drain`
+permanece read-only/exit 2 e `live_no_drain_authorized=false`.

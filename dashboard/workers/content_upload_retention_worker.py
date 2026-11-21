@@ -22,6 +22,12 @@ for location in (ROOT, ROOT / "database", ROOT / "dashboard" / "workers"):
 from artifact_transfer_repository import ArtifactTransferRepository
 from hybrid_agent_worker import _database_environment
 from runtime_backend import backend_from_environment
+# Resolve the sibling helper from this installed script, not the caller's
+# current working directory (runpy/remote launchers may omit this directory).
+_WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKERS_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKERS_MODULE_DIR)
+from maintenance_hold_gate import maintenance_paused
 
 INTERVAL_SECONDS = max(60, min(int(os.environ.get("DSM_UPLOAD_WATCHDOG_SECONDS", "300")), 3600))
 STAGING_MINUTES = max(30, min(int(os.environ.get("DSM_UPLOAD_STAGING_TIMEOUT_MINUTES", "60")), 1440))
@@ -137,10 +143,15 @@ def sweep(repo: ArtifactTransferRepository, *, now: datetime | None = None, limi
 
 
 def run_forever():
+    while maintenance_paused():
+        time.sleep(1)
     backend = backend_from_environment(_database_environment(ROOT))
     repo = ArtifactTransferRepository(backend, ROOT)
     repo.initialize()
     while True:
+        if maintenance_paused():
+            time.sleep(1)
+            continue
         try:
             report = sweep(repo)
             if report["marked_failed"] or report["files_removed"]:

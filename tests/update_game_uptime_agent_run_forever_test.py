@@ -27,6 +27,74 @@ class StopFixture(Exception):
 
 
 class AgentRunForeverLoopTests(unittest.TestCase):
+    def test_each_worker_loop_checks_maintenance_hold_before_mutation(self):
+        """One grouped regression guard for existing Worker loop entrypoints.
+
+        This tests guard placement, not a drained/acknowledged in-flight task
+        or actual runtime safety across a multi-host release.
+        """
+        import ast
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+
+        workers = ROOT / "dashboard" / "workers"
+        spec = spec_from_loader(
+            "dsm928_maintenance_hold_gate",
+            SourceFileLoader("dsm928_maintenance_hold_gate",
+                             str(workers / "maintenance_hold_gate.py")),
+        )
+        gate = module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        with patch.object(gate, "observe", return_value={"active": True}):
+            self.assertTrue(gate.maintenance_paused())
+        with patch.object(gate, "observe", return_value={"active": False}):
+            self.assertFalse(gate.maintenance_paused())
+
+        names = (
+            "automation_worker.py",
+            "content_update_worker.py",
+            "maintenance_worker.py",
+            "observability_retention_worker.py",
+            "content_upload_retention_worker.py",
+            "database_intelligence_worker.py",
+            "hybrid_customer_workspace_worker.py",
+        )
+        def is_guard(value):
+            return (isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name)
+                    and value.func.id == "maintenance_paused")
+
+        for filename in names:
+            with self.subTest(worker=filename):
+                source = (workers / filename).read_text(encoding="utf-8")
+                tree = ast.parse(source)
+                loop = next(
+                    node for node in tree.body if isinstance(node, ast.FunctionDef)
+                    and node.name == "run_forever"
+                )
+                first = loop.body[0]
+                self.assertIsInstance(first, ast.While)
+                self.assertTrue(is_guard(first.test))
+                perpetual = next(
+                    node for node in loop.body if isinstance(node, ast.While)
+                    and isinstance(node.test, ast.Constant)
+                    and node.test.value is True
+                )
+                self.assertIsInstance(perpetual.body[0], ast.If)
+                self.assertTrue(is_guard(perpetual.body[0].test))
+                self.assertIn("from maintenance_hold_gate import maintenance_paused",
+                              source)
+        script = (workers / "scheduler_worker.sh").read_text(encoding="utf-8")
+        self.assertIn('python3 -B "${HOLD_READER}"', script)
+        self.assertIn("scheduler_update || true", script)
+        workspace = ast.parse((workers / "hybrid_customer_workspace_worker.py")
+                              .read_text(encoding="utf-8"))
+        cycle = next(node for node in workspace.body
+                     if isinstance(node, ast.FunctionDef)
+                     and node.name == "workspace_cycle")
+        self.assertIsInstance(cycle.body[0], ast.If)
+        self.assertTrue(is_guard(cycle.body[0].test))
+
     def test_root_owned_maintenance_hold_fail_closed_and_no_agent_startup(self):
         with tempfile.TemporaryDirectory(prefix="dsm928-protected-hold-") as temp:
             folder = Path(temp) / "protected"

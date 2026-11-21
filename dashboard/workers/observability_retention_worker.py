@@ -17,6 +17,12 @@ for path in (ROOT, ROOT / "database"):
 from observability_repository import ObservabilityRepository
 from artifact_transfer_repository import ArtifactTransferRepository
 from runtime_backend import backend_from_environment
+# Resolve the sibling helper from this installed script, not the caller's
+# current working directory (runpy/remote launchers may omit this directory).
+_WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKERS_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKERS_MODULE_DIR)
+from maintenance_hold_gate import maintenance_paused
 
 INTERVAL_SECONDS = max(60, min(int(os.environ.get("DSM_OBSERVABILITY_RETENTION_WORKER_SECONDS", "300")), 3600))
 RETENTION_DAYS = max(1, min(int(os.environ.get("DSM_OBSERVABILITY_RETENTION_DAYS", "7")), 365))
@@ -87,11 +93,16 @@ class ObservabilityRetentionWorker:
 
 
 def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
+    while maintenance_paused():
+        time.sleep(1)
     backend = backend_from_environment(_database_environment(root))
     worker = ObservabilityRetentionWorker(backend)
     artifact_transfers = ArtifactTransferRepository(backend, root)
     artifact_transfers.initialize()
     while True:
+        if maintenance_paused():
+            time.sleep(1)
+            continue
         try:
             report = worker.tick()
             if report["deleted"] or report["pending"]:

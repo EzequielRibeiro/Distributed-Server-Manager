@@ -16,6 +16,12 @@ for path in (ROOT, ROOT / "database"):
 
 from database_intelligence_repository import DatabaseIntelligenceRepository
 from runtime_backend import backend_from_environment
+# Resolve the sibling helper from this installed script, not the caller's
+# current working directory (runpy/remote launchers may omit this directory).
+_WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKERS_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKERS_MODULE_DIR)
+from maintenance_hold_gate import maintenance_paused
 
 INTERVAL_SECONDS = max(300, min(int(os.environ.get("DSM_DATABASE_INTELLIGENCE_SNAPSHOT_SECONDS", "3600")), 86400))
 _ALLOWED_DB_KEYS = {
@@ -49,10 +55,15 @@ def _database_environment(root: Path = ROOT, environment: dict[str, str] | None 
 
 
 def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
+    while maintenance_paused():
+        time.sleep(1)
     backend = backend_from_environment(_database_environment(root))
     repo = DatabaseIntelligenceRepository(backend)
     repo.initialize()
     while True:
+        if maintenance_paused():
+            time.sleep(1)
+            continue
         try:
             result = repo.capture_snapshot()
             print(
