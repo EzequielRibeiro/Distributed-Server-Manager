@@ -13,6 +13,7 @@ from automation_engine import AutomationEngine
 from automation_execution_repository import AutomationExecutionRepository
 from automation_repository import AutomationRepository
 from runtime_backend import backend_from_environment
+from maintenance_hold_gate import maintenance_paused
 
 _ALLOWED_DB_KEYS={
  "DSM_DATABASE_DRIVER","DSM_DATABASE","DSM_DATABASE_HOST","DSM_DATABASE_PORT",
@@ -113,8 +114,13 @@ class AutomationWorker:
   return count
  def tick(self):return {"events":self.process_events(),"metrics":self.process_metrics(),"schedules":self.process_schedules()}
 def run_forever(interval=5):
+ while maintenance_paused():
+  time.sleep(1)
  backend=backend_from_environment(_database_environment(ROOT));worker=AutomationWorker(backend)
  while True:
+  if maintenance_paused():
+   time.sleep(1)
+   continue
   try:worker.tick()
   except Exception as exc:print(f"automation worker failed: {exc}",file=sys.stderr,flush=True)
   time.sleep(max(1,int(interval)))
