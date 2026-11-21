@@ -35,6 +35,7 @@ from agent_pairing_repository import AgentPairingRepository
 from agent_remote_http import (dispatch_heartbeat, dispatch_fence_observation,
                                dispatch_enroll, dispatch_uninstall_result)
 from game_uptime_agent_wire import build_probe, verify_offer
+from game_uptime_controller_http_inflight import observe_controller_agent_inflight
 
 
 class ActualDispatcherSqliteHttpTests(unittest.TestCase):
@@ -456,6 +457,133 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             code, resumed = self._request(self._payload())
             self.assertEqual(code, 200, resumed)
             self.assertEqual(resumed["health_status"], "online")
+
+
+    def test_three_controller_agent_mutations_are_counted_until_all_exit(self):
+        """Grouped concurrency and exception proof; never an update ACK.
+
+        Count one real invocation of each dispatcher while its maintenance
+        guard is still executing. Count must remain nonzero while in-flight,
+        and must return to zero on every exit.
+        """
+        from unittest.mock import patch
+
+        gate_barrier = threading.Barrier(4)
+        release = threading.Event()
+        completed = []
+        errors = []
+        denied = (423, {
+            "status": "blocked",
+            "reason": "controller_maintenance_hold_active",
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        })
+
+        def suspended_guard():
+            gate_barrier.wait(timeout=12)
+            if not release.wait(timeout=12):
+                raise AssertionError("inflight test release was not signalled")
+            return denied
+
+        calls = (
+            lambda: dispatch_enroll({"pairing_token": "not-used"}, backend=self.backend),
+            lambda: dispatch_heartbeat(self._payload(), headers={}, backend=self.backend),
+            lambda: dispatch_uninstall_result(
+                {"status": "completed"}, headers={}, backend=self.backend),
+        )
+
+        def run(call):
+            try:
+                completed.append(call())
+            except BaseException as exc:
+                errors.append(exc)
+
+        before = observe_controller_agent_inflight()
+        self.assertEqual(before["inflight_total"], 0)
+        threads = [threading.Thread(target=run, args=(call,), daemon=True)
+                   for call in calls]
+        try:
+            with patch("agent_remote_http._mutating_agent_api_hold_response",
+                       side_effect=suspended_guard):
+                for thread in threads:
+                    thread.start()
+                gate_barrier.wait(timeout=12)
+                while_running = observe_controller_agent_inflight()
+                self.assertEqual(while_running["inflight_total"], 3)
+                self.assertEqual(while_running["inflight"], {
+                    "enroll": 1, "heartbeat": 1, "uninstall_result": 1,
+                })
+                self.assertFalse(while_running["controller_http_acked"])
+                self.assertFalse(while_running["live_no_drain_authorized"])
+                self.assertEqual(while_running["scope"],
+                                 "three_agent_http_dispatchers_in_this_pid_only")
+        finally:
+            release.set()
+            for thread in threads:
+                thread.join(timeout=12)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(completed, [denied] * 3)
+        after = observe_controller_agent_inflight()
+        self.assertEqual(after["inflight_total"], 0)
+        self.assertEqual(after["generation"], before["generation"] + 6)
+        self.assertFalse(after["controller_http_acked"])
+        self.assertFalse(after["remote_agents_acked"])
+        self.assertFalse(after["external_jobs_acked"])
+        self.assertFalse(after["live_no_drain_authorized"])
+
+        # An already-admitted mutation remains counted *after* its hold
+        # check has passed. A new request may be rejected while the older
+        # request is still inside the business operation.
+        admitted = threading.Event()
+        proceed = threading.Event()
+        completed.clear()
+        errors.clear()
+
+        def suspended_enrollment(*_args, **_kwargs):
+            admitted.set()
+            if not proceed.wait(timeout=12):
+                raise AssertionError("enrollment test release was not signalled")
+            raise ValueError("synthetic rejected enrollment")
+
+        def enrollment_call():
+            return dispatch_enroll({"pairing_token": "test"}, backend=self.backend)
+
+        worker = threading.Thread(target=run, args=(enrollment_call,), daemon=True)
+        try:
+            with patch("agent_remote_http._mutating_agent_api_hold_response",
+                       return_value=None), \
+                 patch("agent_remote_http.enroll_remote_agent",
+                       side_effect=suspended_enrollment):
+                worker.start()
+                self.assertTrue(admitted.wait(timeout=12))
+                active = observe_controller_agent_inflight()
+                self.assertEqual(active["inflight_total"], 1)
+                self.assertEqual(active["inflight"]["enroll"], 1)
+                with patch("agent_remote_http._mutating_agent_api_hold_response",
+                           return_value=denied):
+                    self.assertEqual(
+                        dispatch_heartbeat(self._payload(), headers={},
+                                           backend=self.backend),
+                        denied)
+                self.assertEqual(
+                    observe_controller_agent_inflight()["inflight_total"], 1)
+        finally:
+            proceed.set()
+            worker.join(timeout=12)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0][0], 409)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
+
+        with patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=RuntimeError("synthetic read error")):
+            with self.assertRaises(RuntimeError):
+                dispatch_heartbeat(self._payload(), headers={}, backend=self.backend)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
 
 
 if __name__ == "__main__":
