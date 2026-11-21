@@ -270,6 +270,9 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
     staging = keyring.with_name(f".{keyring.name}.{os.getpid()}.tmp")
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(mode=0o755)
+    # The helper may run with a restrictive umask. Public verification keys
+    # must be readable by a different runtime account through BindPaths.
+    os.chmod(staging, 0o755)
     try:
         written: list[str] = []
         for item in combined.values():
@@ -283,7 +286,7 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
             if _is_link(keyring) or not keyring.is_dir():
                 raise DayZContentActivationError("existing DayZ keyring is unsafe")
             existing = {path.name: path for path in keyring.iterdir()}
-            if any(_is_link(path) or not path.is_file() for path in existing.values()):
+            if any(_is_link(path) or not path.is_file() or path.stat().st_nlink != 1 for path in existing.values()):
                 raise DayZContentActivationError("existing DayZ keyring contains unsafe entries")
             # The directory is a live systemd BindPaths source. Replacing its
             # inode strands running instances on a stale/deleted mount, often
@@ -293,12 +296,18 @@ def materialize_dayz_keyring(spec: dict[str, Any]) -> list[str]:
                 target = existing.get(name)
                 if target is None or _sha256(target) != digest:
                     os.replace(staging / name, keyring / name)
+                # Correct legacy 0600 modes even when hashes already match.
+                # Otherwise DayZ cannot validate clients' signed PBOs.
+                os.chmod(keyring / name, 0o644)
             for name, target in existing.items():
                 if name not in wanted:
                     target.unlink()
             shutil.rmtree(staging)
         else:
             os.replace(staging, keyring)
+        # Preserve the live bind-mounted directory inode, but make it
+        # traversable for the game's separate runtime user.
+        os.chmod(keyring, 0o755)
         return written
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
