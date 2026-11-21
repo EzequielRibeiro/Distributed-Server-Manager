@@ -95,6 +95,37 @@ class AgentRunForeverLoopTests(unittest.TestCase):
         self.assertIsInstance(cycle.body[0], ast.If)
         self.assertTrue(is_guard(cycle.body[0].test))
 
+    def test_maintenance_worker_inflight_lock_is_observable_without_authorization(self):
+        """The real flock spans the entire operation; a stale file is not ACK."""
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+
+        filename = ROOT / "dashboard" / "workers" / "maintenance_hold_gate.py"
+        spec = spec_from_loader("dsm928_inflight_lock", SourceFileLoader(
+            "dsm928_inflight_lock", str(filename)))
+        gate = module_from_spec(spec)
+        spec.loader.exec_module(gate)
+        with tempfile.TemporaryDirectory(prefix="dsm928-inflight-") as temp:
+            root = Path(temp)
+            first = gate.inspect_operation("maintenance_worker", root=root)
+            self.assertEqual(first["status"], "unverified")
+            self.assertFalse(first["live_no_drain_authorized"])
+            with patch.object(gate, "maintenance_paused", return_value=False):
+                with gate.tracked_operation("maintenance_worker", root=root) as admitted:
+                    self.assertTrue(admitted)
+                    during = gate.inspect_operation("maintenance_worker", root=root)
+                    self.assertEqual(during["status"], "operation_in_flight")
+                    self.assertFalse(during["live_no_drain_authorized"])
+            after = gate.inspect_operation("maintenance_worker", root=root)
+            self.assertEqual(after["status"], "lock_free_process_identity_unverified")
+            self.assertFalse(after["live_no_drain_authorized"])
+            with patch.object(gate, "maintenance_paused", return_value=True):
+                with gate.tracked_operation("maintenance_worker", root=root) as admitted:
+                    self.assertFalse(admitted)
+            with self.assertRaises(ValueError):
+                with gate.tracked_operation("../untrusted", root=root):
+                    pass
+
     def test_root_owned_maintenance_hold_fail_closed_and_no_agent_startup(self):
         with tempfile.TemporaryDirectory(prefix="dsm928-protected-hold-") as temp:
             folder = Path(temp) / "protected"
