@@ -1302,6 +1302,72 @@ def _grant_customer_files_access(spec: dict[str, Any]) -> None:
         if (metadata.st_mode & 0o7777) != desired_mode:
             os.chmod(current, desired_mode)
 
+def _prepare_dayz_customer_read_access(spec: dict[str, Any], config: dict[str, Any], relative_path: str) -> dict[str, Any]:
+    """Grant Agent read/traverse only to a requested customer-visible DayZ directory.
+
+    The game can create mission subdirectories with 0700 after the last
+    materialization. Never open the private root or recursively chmod game
+    data; repair only the requested ancestor chain, without changing owners.
+    """
+    from dayz_customer_files_policy import DAYZ_CUSTOMER_FILE_DIRS, DAYZ_MANAGED_CONTENT_DIRS
+
+    if str(spec.get("game_id") or "").lower() != "dayz":
+        raise PermissionError("DayZ customer read access requires a DayZ instance")
+    root_raw = Path(str(spec.get("instance_state_root") or ""))
+    files_raw = Path(str(spec.get("files_root") or ""))
+    if (not root_raw.is_absolute() or root_raw.is_symlink()
+            or not files_raw.is_absolute() or files_raw.is_symlink()
+            or files_raw != root_raw):
+        raise PermissionError("DayZ customer root is not the declared private instance root")
+    expected = (_instance_storage_root(config, spec.get("storage_pool_id")) / spec["instance_id"]).resolve()
+    if root_raw.resolve() != expected:
+        raise PermissionError("DayZ customer root differs from storage pool policy")
+    relative = Path(str(relative_path or "").replace("\\", "/"))
+    if (relative.is_absolute() or not relative.parts or ".." in relative.parts
+            or relative.parts[0] not in DAYZ_CUSTOMER_FILE_DIRS
+            or relative.parts[0] in DAYZ_MANAGED_CONTENT_DIRS):
+        raise PermissionError("requested directory is outside DayZ customer read policy")
+    agent_group = grp.getgrnam(_AGENT_GROUP)
+    runtime_account = _validate_runtime_user(str(spec.get("user") or _DEFAULT_RUNTIME_USER))
+    agent_account = pwd.getpwnam(
+        str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent")
+    )
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fds: list[int] = []
+    changed = 0
+    try:
+        root_fd = os.open(root_raw, flags)
+        fds.append(root_fd)
+        root_stat = os.fstat(root_fd)
+        if (not stat.S_ISDIR(root_stat.st_mode) or root_stat.st_uid != runtime_account.pw_uid
+                or root_stat.st_gid != agent_group.gr_gid):
+            raise PermissionError("DayZ private instance root identity mismatch")
+        for component in relative.parts:
+            # dir_fd + O_NOFOLLOW prevents the game user from swapping a
+            # validated mission directory for a symlink before fchmod/fchown.
+            try:
+                child_fd = os.open(component, flags, dir_fd=fds[-1])
+            except OSError as exc:
+                raise PermissionError("DayZ customer directory is inaccessible or unsafe") from exc
+            fds.append(child_fd)
+            metadata = os.fstat(child_fd)
+            if (not stat.S_ISDIR(metadata.st_mode)
+                    or metadata.st_uid not in {runtime_account.pw_uid, agent_account.pw_uid}
+                    or metadata.st_gid not in {runtime_account.pw_gid, agent_account.pw_gid, agent_group.gr_gid}):
+                raise PermissionError("DayZ customer directory owner or type mismatch")
+            if metadata.st_gid != agent_group.gr_gid:
+                os.fchown(child_fd, -1, agent_group.gr_gid)
+                changed += 1
+            desired_mode = stat.S_IMODE(metadata.st_mode) | 0o050
+            if stat.S_IMODE(metadata.st_mode) != desired_mode:
+                os.fchmod(child_fd, desired_mode)
+                changed += 1
+    finally:
+        for fd in reversed(fds):
+            os.close(fd)
+    return {"action": "prepare-dayz-customer-read-access", "changed": bool(changed), "updated": changed}
+
+
 def _write_dayz_battleye_runtime(path: Path, record: dict[str, Any], owner) -> None:
     """Atomic owner-preserving private state write, without touching game data."""
     temp=path.with_name(f".{path.name}.{os.getpid()}.bepath.tmp")
@@ -1461,6 +1527,8 @@ def run(instance_id: str) -> dict[str, Any]:
         ).lower().startswith("minecraft.java."):
             content_files = _sync_private_minecraft_content(spec, config)
         operation = materializer.apply(spec)
+    elif action == "prepare-dayz-customer-read-access":
+        operation = _prepare_dayz_customer_read_access(spec, config, str(request.get("relative_path") or ""))
     elif action == "apply-dayz-battleye":
         operation = _apply_dayz_battleye_private(spec, config, materializer)
     elif action == "repair-dayz-dlc-ownership":

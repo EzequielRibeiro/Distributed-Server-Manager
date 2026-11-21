@@ -95,8 +95,13 @@ def _resolve(root: Path, value: Any, *, missing: bool = False) -> Path:
             raise ValueError("symbolic links are not allowed")
     candidate = (root / relative).resolve(strict=False)
     candidate.relative_to(root)
-    if not missing and not candidate.exists():
-        raise FileNotFoundError(relative.as_posix())
+    if not missing:
+        # pathlib.exists() may turn EACCES into False (Python-version
+        # dependent), obscuring a reparable permission denial as ENOENT.
+        try:
+            candidate.stat()
+        except FileNotFoundError:
+            raise FileNotFoundError(relative.as_posix()) from None
     return candidate
 
 
@@ -403,7 +408,21 @@ def execute(config: dict[str, Any], command: dict[str, Any]) -> dict[str, Any]:
         if isinstance(supplied.get("fields"),dict) and supplied.get("fields"):surface_spec["catalog_server_settings"]=supplied
         elif not isinstance(declaration.get("fields"),dict) or not declaration.get("fields"):surface_spec["catalog_server_settings"]=supplied
         return observed_surface(surface_spec)
-    if action == "list": return _list(root, path, policy)
+    if action == "list":
+        try:
+            return _list(root, path, policy)
+        except PermissionError:
+            if not policy.get("_restricted_dayz_root"):
+                raise
+            relative = _relative(path)
+            # Denied/disallowed paths must never trigger a privileged repair.
+            _guard_path_policy(relative, policy)
+            if not relative.parts or relative.parts[0] in DAYZ_MANAGED_CONTENT_DIRS:
+                raise
+            from privileged_materialization import prepare_dayz_customer_read_access
+            prepare_dayz_customer_read_access(config, record, relative.as_posix())
+            # Exactly one retry. Never mask a persistent denial or run a loop.
+            return _list(root, path, policy)
     if action == "usage": return {"usage_bytes": _usage(root, policy), "limit_bytes": _quota(policy)}
     if action == "read_text": return _read_text(root, path, policy)
     if action == "write_text": return _write_text(root, path, payload, policy)
