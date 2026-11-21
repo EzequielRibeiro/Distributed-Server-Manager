@@ -992,3 +992,51 @@ barreira de tarefas delegadas/Controller HTTP e ACK autenticado de
 cada Agent remoto com geração de lease, fencing de threads/executores
 privilegiados e checagem de versões compatíveis. Só após isso iniciar
 a Etapa 3 de `update.sh` efetivamente transacional.
+
+## Etapa 2 — recibo autenticado de evidência remota, sem ACK (21/11/2026)
+
+O contrato **opt-in diagnóstico** dsm928-fence-evidence-readonly-v1
+foi implementado no heartbeat Controller/Agent existente, respeitando
+a autenticação já estabelecida por AgentPairingRepository:
+
+- Somente com DSM928_REMOTE_FENCE_DIAGNOSTIC=1 e um marcador root-owned
+  **válido e não expirado**, o Agent pode construir a mensagem
+  CapivaraNoDrainFenceEvidence. Inclui agent_id, nonce aleatório de 128
+  bits por mensagem, transaction_id, issued_at, expires_at, observed_at,
+  schema/contrato exatos e todas as flags de quiescência negativas
+  (agent_workers_fenced=false, external_jobs_verified=false,
+  live_no_drain_authorized=false). O campo é opcional; Controllers
+  antigos podem ignorá-lo sem quebrar o heartbeat.
+- **Depois** de autenticar as credenciais, o Controller compara o ID da
+  mensagem com o Agent autenticado, valida nonce, versão, emissão,
+  expiração, TTL máximo de 900 s e observação com desvio até 30 s. Exige
+  também seu **próprio marcador root-owned** com a mesma transação,
+  emissão e expiração. Em sucesso retorna apenas
+  status=authenticated_evidence_received_unfenced e
+  remote_agent_quiescence_acked=false. Evidências inválidas são bloqueadas.
+- O Agent só reconhece recibos vinculados ao nonce da solicitação atual,
+  identidade do Agent, transação, geração, expiração, contrato exato e
+  flags negativas. Uma resposta antiga, substituída ou tentando
+  autorizar jogos/updater é rejeitada. wire_receipt_verified **não é ACK
+  de quiescência**.
+
+**Limitação operacional crucial:** quando o hold root-owned está ativo,
+Agent.run_forever() suspende o heartbeat normal para impedir reconciliação
+e despacho de comandos. Esta PR preserva essa guarda: o novo contrato
+constitui um **ensaio autenticado de transporte/correlação**, ainda
+**não um handshake operacional durante manutenção**. Nunca chamar
+o heartbeat mutador para contornar a proteção. O próximo incremento
+deve prover um canal dedicado estritamente somente leitura capaz de
+responder durante o hold sem chamar record_agent_heartbeat() nem
+enviar comandos.
+
+Não existe journal durável de nonce: um pacote autenticado inteiro ainda
+poderia ser repetido dentro da janela temporal. A checagem do nonce
+impede aplicar um recibo de uma solicitação a **outra**, mas não demonstra
+unicidade global. Antes de qualquer ACK positivo, são indispensáveis
+lease/geração sob coordenador autenticado, replay cache persistente,
+inventário de **todos** os Agents e conclusão real das threads, jobs
+externos e executores privilegiados.
+
+**Garantia atual:** #928 OPEN; update.sh --no-drain read-only/exit 2,
+live_no_drain_authorized=false. Nenhum host ou jogo foi alterado.
