@@ -21,7 +21,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 
 INTERVAL_SECONDS = max(300, min(int(os.environ.get("DSM_DATABASE_INTELLIGENCE_SNAPSHOT_SECONDS", "3600")), 86400))
 _ALLOWED_DB_KEYS = {
@@ -65,14 +65,19 @@ def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
             time.sleep(1)
             continue
         try:
-            result = repo.capture_snapshot()
-            print(
-                f"database intelligence snapshot day={result['snapshot_day']} "
-                f"rows={result['rows']} size={result['database_size_bytes']}",
-                flush=True,
-            )
-        except Exception as exc:
-            print(f"database intelligence snapshot failed: {exc}", file=sys.stderr, flush=True)
+            with tracked_operation("database_intelligence_worker", root=ROOT) as admitted:
+                if admitted:
+                            try:
+                                result = repo.capture_snapshot()
+                                print(
+                                    f"database intelligence snapshot day={result['snapshot_day']} "
+                                    f"rows={result['rows']} size={result['database_size_bytes']}",
+                                    flush=True,
+                                )
+                            except Exception as exc:
+                                print(f"database intelligence snapshot failed: {exc}", file=sys.stderr, flush=True)
+        except (OSError, RuntimeError) as exc:
+            print(f"in-flight Worker gate failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(max(300, int(interval)))
 
 
