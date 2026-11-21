@@ -23,28 +23,108 @@ on:
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'
   workflow_dispatch:
 
+
 jobs:
   readonly-preflight:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          # PR diff is required for fail-closed test-tier selection.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Unit tests for fail-closed impact and per-unit snapshots
-        run: python3 -m unittest discover -s tests -p 'update_game_uptime_*test.py' -v
-      - name: Ensure updater preflight still requires game drain
+      - name: Run full suite for runtime changes; focused suite for tests/docs only
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" || -z "${BASE_SHA:-}" ]]; then
+            scope=full
+          else
+            git diff --name-only "$BASE_SHA" HEAD > /tmp/dsm928-changed
+            # Any unknown path, deletion, rename, or broken diff expands to
+            # the FULL gate; no runtime modification can escape coverage.
+            if [[ ! -s /tmp/dsm928-changed ]] ||
+               git diff --name-status "$BASE_SHA" HEAD | grep -Eq '^(D|R|C)[0-9]*[[:space:]]' ||
+               grep -Evq '^(tests/update_game_uptime_[^/]*_test\.py|docs/runbooks/dsm-928-no-drain-transaction\.md)$' /tmp/dsm928-changed; then
+              scope=full
+            else
+              scope=focused
+            fi
+          fi
+          echo "DSM #928 readonly scope=$scope"
+          if [[ "$scope" == full ]]; then
+            python3 -m unittest discover -s tests -p 'update_game_uptime_*test.py' -v
+          else
+            # One run per unique module: core fail-closed guarantees PLUS
+            # every changed test file. Never silently discard new tests.
+            printf '%s\n' \
+              tests/update_game_uptime_discovery_test.py \
+              tests/update_game_uptime_guard_test.py \
+              tests/update_game_uptime_no_drain_flag_test.py \
+              tests/update_game_uptime_compatibility_test.py \
+              tests/update_game_uptime_preflight_test.py \
+              tests/update_game_uptime_transaction_test.py > /tmp/dsm928-selected
+            grep -E '^tests/update_game_uptime_[^/]*_test\.py$' /tmp/dsm928-changed >> /tmp/dsm928-selected || true
+            sort -u /tmp/dsm928-selected -o /tmp/dsm928-selected
+            while IFS= read -r file; do
+              test -f "$file"
+              python3 -m unittest discover -s tests -p "$(basename "$file")" -v
+            done < /tmp/dsm928-selected
+          fi
+      - name: Fail closed unless preflight still requires safe drain
         run: bash tests/update_preflight_test.sh
 
   disposable-systemd-rehearsal:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Refuse live DSM and run 2 transient units in disposable runner
+      - name: Run selected disposable systemd proof, never on installed DSM
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
+          set -euo pipefail
           test -d /run/systemd/system
           test ! -e /opt/dsm/runtime/hybrid-instance-storage
-          sudo env CAPIVARA_DSM928_SYSTEMD_E2E=1 python3 -m unittest discover -s tests -p 'update_game_uptime_systemd_e2e_test.py' -v
+          if [[ "$GITHUB_EVENT_NAME" != "pull_request" || -z "${BASE_SHA:-}" ]]; then
+            scope=full
+          else
+            git diff --name-only "$BASE_SHA" HEAD > /tmp/dsm928-changed
+            if [[ ! -s /tmp/dsm928-changed ]] ||
+               git diff --name-status "$BASE_SHA" HEAD | grep -Eq '^(D|R|C)[0-9]*[[:space:]]' ||
+               grep -Evq '^(tests/update_game_uptime_[^/]*_test\.py|docs/runbooks/dsm-928-no-drain-transaction\.md)$' /tmp/dsm928-changed ||
+               grep -Eq '^tests/update_game_uptime_(systemd_e2e|main_path|real_update_functions|agent_runtime_restart|sqlite_http_integration|isolated_compose|evidence_rehearsal|transaction)_test\.py$' /tmp/dsm928-changed; then
+              scope=full
+            elif grep -Eq '^tests/update_game_uptime_[^/]*_test\.py$' /tmp/dsm928-changed; then
+              scope=smoke
+            else
+              scope=docs
+            fi
+          fi
+          echo "DSM #928 systemd scope=$scope"
+          case "$scope" in
+            full)
+              sudo env CAPIVARA_DSM928_SYSTEMD_E2E=1 python3 -m unittest discover -s tests -p 'update_game_uptime_systemd_e2e_test.py' -v
+              ;;
+            smoke)
+              # Only the decisive PID/rollback and Worker recovery probes.
+              # The complete set still runs on main and for relevant changes.
+              sudo env CAPIVARA_DSM928_SYSTEMD_E2E=1 PYTHONPATH="$GITHUB_WORKSPACE/tests" \
+                python3 -m unittest -v \
+                  update_game_uptime_systemd_e2e_test.DisposableSystemdHostSafetyTests.test_refuses_active_game_service \
+                  update_game_uptime_systemd_e2e_test.DisposableSystemdNoDrainTest.test_two_systemd_processes_survive_actual_updater_main_and_failure_rollback \
+                  update_game_uptime_systemd_e2e_test.DisposableSystemdNoDrainTest.test_real_worker_supervisor_group_restarts_without_draining_game_units
+              ;;
+            docs)
+              echo "Documentation-only PR: no systemd service execution needed"
+              ;;
+          esac
