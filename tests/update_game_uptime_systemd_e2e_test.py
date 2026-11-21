@@ -356,7 +356,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             # no host discovery or mutation (the existing fixture forbids it).
             agent_fixture.controller.url = (
                 f"http://127.0.0.1:{port}/api/agent/heartbeat")
-            result = agent_fixture.invoke(invalid_secret=rejected)
+            # Keep this phase telemetry-only: new Controller enrollment can
+            # return an operational Doctor command, which must never be
+            # executed by an isolated update acceptance test.
+            result = agent_fixture.invoke(invalid_secret=rejected, read_only=True)
             if rejected:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Controller rejected request (401)",
