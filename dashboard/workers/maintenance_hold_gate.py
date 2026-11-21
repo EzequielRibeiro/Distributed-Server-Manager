@@ -36,7 +36,10 @@ _KNOWN_WORKERS = frozenset({
     "hybrid_agent_worker",
     "hybrid_customer_workspace_worker",
 })
-_LOCK_DIR = "dsm928-worker-operations"
+# Root-owned parent and root-owned directory are outside /opt/dsm and
+# survive replacement of the application tree. Lock files are pre-provisioned
+# by a privileged systemd ExecStartPre; workers never create or unlink them.
+LOCK_DIRECTORY = Path("/run/capivara-dsm/worker-operations")
 
 
 def maintenance_paused() -> bool:
@@ -44,38 +47,50 @@ def maintenance_paused() -> bool:
     return observe()["active"]
 
 
-def _directory(root: Path, *, create: bool) -> Path:
-    base = Path(root) / "dashboard" / "state"
-    if (Path(root).is_symlink() or (Path(root) / "dashboard").is_symlink()
-            or base.is_symlink()):
-        raise RuntimeError("unsafe worker state parent")
-    if create:
-        base.mkdir(parents=True, exist_ok=True)
-    folder = base / _LOCK_DIR
-    if create:
-        folder.mkdir(mode=0o700, exist_ok=True)
+def _directory(root: Path, *, create: bool,
+               lock_dir: Path | None = None) -> Path:
+    """Validate fixed, installer-provisioned lock storage without creating it.
+
+    `root` and `create` are retained for existing callers only. The lock
+    directory must NOT follow the DSM install root; a custom lock_dir is
+    reserved for isolated tests and never supplied by runtime entrypoints.
+    """
+    del root, create
+    folder = LOCK_DIRECTORY if lock_dir is None else Path(lock_dir)
+    trusted_uid = 0 if lock_dir is None else os.geteuid()
+    if lock_dir is None:
+        run = Path("/run").lstat()
+        if (not stat.S_ISDIR(run.st_mode) or run.st_uid != 0
+                or run.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+            raise RuntimeError("untrusted /run parent")
+    parent = folder.parent.lstat()
     info = folder.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
-            or info.st_mode & (stat.S_IRWXG | stat.S_IRWXO)):
-        raise RuntimeError("worker operation lock directory is not private")
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != trusted_uid
+            or parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or not stat.S_ISDIR(info.st_mode) or info.st_uid != trusted_uid
+            or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+        raise RuntimeError("untrusted persistent Worker lock directory")
     return folder
 
 
 def _open_lock(folder: Path, worker: str, *, create: bool) -> int:
     if worker not in _KNOWN_WORKERS:
         raise ValueError("unrecognized worker identity")
-    flags = os.O_RDWR if create else os.O_RDONLY
-    flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-    if create:
-        flags |= os.O_CREAT
-    fd = os.open(folder / (worker + ".lock"), flags, 0o600)
-    info = os.fstat(fd)
-    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
-            or info.st_nlink != 1 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+    # Existing root-provisioned inode ONLY; never O_CREAT/O_TRUNC/O_EXCL.
+    # Root-owned parent blocks Worker users from unlinking/replacing it.
+    del create
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    fd = os.open(folder / (worker + ".lock"), flags)
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600):
+            raise RuntimeError("untrusted Worker lock inode")
+    except BaseException:
         os.close(fd)
-        raise RuntimeError("untrusted worker operation lock")
+        raise
     return fd
-
 
 @contextmanager
 def tracked_operation(worker: str, *, root: Path) -> Iterator[bool]:
