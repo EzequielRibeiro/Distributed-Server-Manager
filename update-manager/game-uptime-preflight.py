@@ -61,6 +61,77 @@ def _pinned_minecraft_evidence(units, *, versions_dir, expected_sha256, inspect)
             "blockers": blockers}
 
 
+
+def _handoff_witness(inventory, *, list_units=None, inspect=None):
+    """Re-read the *complete* active set and each PID/unit hash before a handoff.
+
+    This is a read-only two-point race guard, not a process lock or a grant to
+    update. Continuous uptime still requires a transaction and post-rollback
+    verification. Never persist ExecStart, EnvironmentFiles or secrets here.
+    """
+    result = {"kind": "CapivaraNoDrainHandoffWitness", "schema_version": 1,
+              "mode": "read_only", "verified_for_disposable_rehearsal": False,
+              "live_no_drain_authorized": False, "blockers": []}
+    blockers = result["blockers"]
+    if inventory.get("inventory_error"):
+        blockers.append("initial_game_inventory_failed")
+        return result
+    original = inventory.get("units")
+    if not isinstance(original, list):
+        blockers.append("initial_game_inventory_invalid")
+        return result
+    known = {}
+    for item in original:
+        if not isinstance(item, dict):
+            blockers.append("initial_game_record_invalid")
+            continue
+        name = item.get("unit")
+        if not isinstance(name, str) or not reporter.guard.UNIT.fullmatch(name) or name in known:
+            blockers.append("initial_game_unit_set_invalid")
+            continue
+        if item.get("identity_verified") is not True:
+            blockers.append("initial_game_identity_unverified")
+        for key in ("main_pid", "start_stamp"):
+            value = item.get(key)
+            if type(value) is not int or value <= (1 if key == "main_pid" else 0):
+                blockers.append("initial_game_identity_incomplete")
+        digest = item.get("unit_config_sha256")
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+                char not in "0123456789abcdef" for char in digest):
+            blockers.append("initial_game_unit_witness_missing")
+        known[name] = item
+    if blockers:
+        result["blockers"] = sorted(set(blockers))
+        return result
+    try:
+        # Re-list, not only re-inspect known PIDs. A newly started game must
+        # block the handoff as surely as a removed or replaced game.
+        current = (list_units or reporter._list_units)()
+        if (not isinstance(current, list)
+                or any(not isinstance(name, str)
+                       or not reporter.guard.UNIT.fullmatch(name) for name in current)
+                or len(current) != len(set(current))
+                or sorted(current) != sorted(known)):
+            blockers.append("active_game_unit_set_changed")
+        else:
+            observer = inspect or reporter.guard.inspect
+            for name in sorted(current):
+                now = observer(name)
+                initial = known[name]
+                if (not isinstance(now, dict) or
+                        now.get("main_pid") != initial["main_pid"] or
+                        now.get("start_stamp") != initial["start_stamp"] or
+                        now.get("unit_config_sha256") != initial["unit_config_sha256"]):
+                    blockers.append("active_game_pid_or_unit_witness_changed")
+    except Exception:
+        # A failed systemd read is a blocker, never permission to continue.
+        blockers.append("second_game_inventory_or_identity_read_failed")
+    result["blockers"] = sorted(set(blockers))
+    result["verified_for_disposable_rehearsal"] = not blockers
+    result["active_units_witnessed"] = len(known)
+    return result
+
+
 def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
               controller_contract=None, agent_contract=None, supervisor_pinned=False,
               supervisor_versions_dir=None, supervisor_expected_sha256=None,
@@ -78,6 +149,11 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
         state["release_impact"] = impact
         operational_coverage = coverage.assess(expected_active_units, units)
         state["operational_coverage"] = operational_coverage
+        # Both inventory and process witnesses must still agree when entering
+        # a future transaction. A single initial sample is insufficient.
+        witness = _handoff_witness(units, list_units=list_units, inspect=inspect)
+        state["handoff_witness"] = witness
+        state["no_drain_handoff_witness_verified"] = witness["verified_for_disposable_rehearsal"]
         state["no_drain_operational_coverage_verified"] = (
             operational_coverage["verified_for_disposable_rehearsal"]
         )
@@ -99,6 +175,12 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
         state["supervisor_pin_evidence"] = pin
         state["compatibility_gate"] = gate
         state["no_drain_compatibility_verified"] = gate["compatible_for_further_rehearsal"]
+        state["no_drain_disposable_rehearsal_candidate"] = bool(
+            not impact["requires_game_drain"]
+            and operational_coverage["verified_for_disposable_rehearsal"]
+            and witness["verified_for_disposable_rehearsal"]
+            and gate["compatible_for_further_rehearsal"]
+        )
         if units.get("inventory_error"):
             state.update(classification="blocked", requires_game_drain=True,
                          reason="Cannot establish complete game service inventory: " +

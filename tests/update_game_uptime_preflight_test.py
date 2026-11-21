@@ -196,5 +196,73 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(confirmed["live_no_drain_authorized"])
         self.assertTrue(confirmed["current_updater_drains_active_games"])
 
+
+    def test_full_systemd_pid_and_unit_digest_witness_passes_two_points(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        digest = "a" * 64
+        calls = []
+        def inspect(unit):
+            calls.append(unit)
+            return {"main_pid": 1234 if "dayz" in unit else 5678,
+                    "start_stamp": 222 if "dayz" in unit else 333,
+                    "unit_config_sha256": digest}
+        result = module.preflight(
+            self.installed, self.target,
+            list_units=lambda: self.units, inspect=inspect,
+            expected_active_units=self.units)
+        self.assertTrue(result["handoff_witness"]["verified_for_disposable_rehearsal"])
+        self.assertEqual(result["handoff_witness"]["active_units_witnessed"], 2)
+        self.assertEqual(len(calls), 4, "inspect once during inventory and again at handoff")
+        self.assertFalse(result["no_drain_disposable_rehearsal_candidate"],
+                         "missing authenticated contracts and supervisor evidence")
+        self.assertFalse(result["live_no_drain_authorized"])
+
+    def test_pid_change_at_handoff_blocks_even_when_initial_sample_verified(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        calls = {}
+        def inspect(unit):
+            calls[unit] = calls.get(unit, 0) + 1
+            return {"main_pid": (99999 if calls[unit] > 1 and "dayz" in unit
+                                 else 12345),
+                    "start_stamp": 444,
+                    "unit_config_sha256": "b" * 64}
+        result = module.preflight(
+            self.installed, self.target,
+            list_units=lambda: self.units, inspect=inspect,
+            expected_active_units=self.units)
+        self.assertFalse(result["no_drain_handoff_witness_verified"])
+        self.assertIn("active_game_pid_or_unit_witness_changed",
+                      result["handoff_witness"]["blockers"])
+        self.assertFalse(result["no_drain_disposable_rehearsal_candidate"])
+        self.assertFalse(result["live_no_drain_authorized"])
+
+    def test_new_game_started_between_inventory_and_handoff_blocks(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        calls = [0]
+        def list_units():
+            calls[0] += 1
+            return self.units if calls[0] == 1 else self.units + [
+                "capivara-instance-dayz-999.service"]
+        result = module.preflight(
+            self.installed, self.target, list_units=list_units,
+            inspect=lambda unit: {"main_pid": 12345, "start_stamp": 555,
+                                  "unit_config_sha256": "c" * 64},
+            expected_active_units=self.units)
+        self.assertFalse(result["no_drain_handoff_witness_verified"])
+        self.assertIn("active_game_unit_set_changed", result["handoff_witness"]["blockers"])
+        self.assertFalse(result["live_no_drain_authorized"])
+
+    def test_missing_full_unit_digest_cannot_qualify_as_pid_witness(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        result = module.preflight(
+            self.installed, self.target,
+            list_units=lambda: self.units,
+            inspect=lambda unit: {"main_pid": 12345, "start_stamp": 555},
+            expected_active_units=self.units)
+        self.assertFalse(result["no_drain_handoff_witness_verified"])
+        self.assertIn("initial_game_unit_witness_missing",
+                      result["handoff_witness"]["blockers"])
+
+
 if __name__ == "__main__":
     unittest.main()
