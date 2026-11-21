@@ -27,17 +27,31 @@ class HoldPreparationBlocked(RuntimeError):
     """Operator recovery is required; never retry by deleting evidence."""
 
 
-def _trusted_directory(path: Path, uid: int) -> None:
-    """Refuse writable, symlinked or foreign storage, including its parent."""
+def _trusted_directory(path: Path, uid: int, *,
+                       runtime_readable: bool = False) -> None:
+    """Refuse writable, symlinked or foreign storage, including its parent.
+
+    An Agent/Worker may use a distinct UID and GID. The *ephemeral hold*
+    directory and its ancestors must therefore be traversable by others;
+    this never applies to the private persistent journal directory.
+    """
     for candidate in (path.parent, path):
         info = candidate.lstat()
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid
-                or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+                or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or (runtime_readable and not info.st_mode & stat.S_IXOTH)):
             raise HoldPreparationBlocked("untrusted_maintenance_storage")
 
 
-def _write_once(path: Path, payload: dict[str, object], uid: int) -> None:
-    """Exclusive create + fsync; a partial file is retained as fail-closed."""
+def _write_once(path: Path, payload: dict[str, object], uid: int,
+                *, mode: int = 0o600) -> None:
+    """Exclusive create + fsync; partial evidence remains fail-closed.
+
+    The journal must stay 0600. Only the non-secret ephemeral hold uses 0644:
+    unprivileged Agents/Workers must read it but can never write it.
+    """
+    if mode not in (0o600, 0o644):
+        raise HoldPreparationBlocked("invalid_evidence_mode")
     flags = (os.O_WRONLY | os.O_CREAT | os.O_EXCL
              | getattr(os, "O_NOFOLLOW", 0)
              | getattr(os, "O_CLOEXEC", 0))
@@ -56,6 +70,8 @@ def _write_once(path: Path, payload: dict[str, object], uid: int) -> None:
         if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
                 or stat.S_IMODE(info.st_mode) != 0o600
                 or info.st_nlink != 1):
+            # Creation always starts private; widen only after content is
+            # written so no unprivileged reader observes partial JSON.
             raise HoldPreparationBlocked("untrusted_created_evidence")
         remaining = memoryview(data)
         while remaining:
@@ -63,6 +79,8 @@ def _write_once(path: Path, payload: dict[str, object], uid: int) -> None:
             if sent <= 0:
                 raise OSError("short journal write")
             remaining = remaining[sent:]
+        if mode != 0o600:
+            os.fchmod(fd, mode)
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -105,7 +123,7 @@ def prepare_root_only(
     # directories, replace files, follow links, unlink or overwrite evidence.
     try:
         _trusted_directory(journal_path.parent, trusted_uid)
-        _trusted_directory(hold_path.parent, trusted_uid)
+        _trusted_directory(hold_path.parent, trusted_uid, runtime_readable=True)
     except OSError as exc:
         raise HoldPreparationBlocked("evidence_directory_unavailable") from exc
 
@@ -128,7 +146,7 @@ def prepare_root_only(
     }
     try:
         _write_once(journal_path, pending, trusted_uid)
-        _write_once(hold_path, marker, trusted_uid)
+        _write_once(hold_path, marker, trusted_uid, mode=0o644)
     except OSError as exc:
         raise HoldPreparationBlocked("evidence_write_failed_manual_recovery") from exc
     return {
