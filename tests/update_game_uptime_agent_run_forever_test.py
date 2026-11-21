@@ -85,7 +85,7 @@ class AgentRunForeverLoopTests(unittest.TestCase):
                 self.assertIn("from maintenance_hold_gate import maintenance_paused",
                               source)
         script = (workers / "scheduler_worker.sh").read_text(encoding="utf-8")
-        self.assertIn('python3 -B "${HOLD_READER}"', script)
+        self.assertIn('python3 -B "${HOLD_GATE}" --scheduler-tick', script)
         self.assertIn("scheduler_update || true", script)
         workspace = ast.parse((workers / "hybrid_customer_workspace_worker.py")
                               .read_text(encoding="utf-8"))
