@@ -9,6 +9,7 @@ fail-closed journal and verifies PID/start identity around both operations.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -68,13 +69,63 @@ def _snapshot(name: str, inspect: Callable[[str], Mapping]) -> dict:
         raise TransactionSafetyError(f"cannot prove disposable unit identity: {name}") from exc
 
 
-def _checkpoint(path: Path, status: str, originals: list[dict], detail: str = "") -> None:
+
+def _active_set(units: list[str], list_units: Callable[[], list[str]]) -> None:
+    """Verify ALL active disposable game units, not merely the known PIDs."""
+    try:
+        observed = list_units()
+    except Exception as exc:
+        raise TransactionSafetyError("complete game inventory unreadable") from exc
+    if (not isinstance(observed, list)
+            or any(not isinstance(x, str) or not _UNIT.fullmatch(x) for x in observed)
+            or len(observed) != len(set(observed))
+            or sorted(observed) != sorted(units)):
+        raise TransactionSafetyError("complete active game unit set changed")
+
+
+def attest_handoff(units: list[str], *, inspect: Callable[[str], Mapping],
+                   list_units: Callable[[], list[str]]) -> dict:
+    """Produce a read-only double-sampled witness for a disposable transaction."""
+    if (not isinstance(units, list) or not units
+            or any(not isinstance(x, str) or not _UNIT.fullmatch(x) for x in units)
+            or len(units) != len(set(units))):
+        raise TransactionSafetyError("only disposable E2E game units are allowed")
+    _active_set(units, list_units)
+    original = [_snapshot(x, inspect) for x in sorted(units)]
+    if any("unit_config_sha256" not in x for x in original):
+        raise TransactionSafetyError("full systemd unit digest is required")
+    _active_set(units, list_units)
+    if [_snapshot(x, inspect) for x in sorted(units)] != original:
+        raise TransactionSafetyError("game identity changed during handoff")
+    return {"kind": "DSM928DisposableInventoryHandoff",
+            "scope": "disposable_only_not_production",
+            "live_no_drain_authorized": False, "original_units": original}
+
+
+def _check_handoff(expected: list[dict], handoff: Mapping) -> None:
+    if (not isinstance(handoff, Mapping)
+            or handoff.get("kind") != "DSM928DisposableInventoryHandoff"
+            or handoff.get("scope") != "disposable_only_not_production"
+            or handoff.get("live_no_drain_authorized") is not False
+            or handoff.get("original_units") != expected
+            or any("unit_config_sha256" not in x for x in expected)):
+        raise TransactionSafetyError("preflight handoff no longer matches game processes")
+
+
+def _digest(original: list[dict]) -> str:
+    return hashlib.sha256(json.dumps(original, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+def _checkpoint(path: Path, status: str, originals: list[dict], detail: str = "",
+                strict_inventory: bool = False) -> None:
     report = {
         "kind": "DSM928DisposableUptimeTransaction",
         "scope": "disposable_only_not_production",
         "status": status,
         "live_no_drain_authorized": False,
         "original_units": originals,
+        "original_units_sha256": _digest(originals),
+        "strict_inventory": strict_inventory,
         "detail": detail[:300],
     }
     tmp = path.with_name("." + path.name + ".part")
@@ -108,6 +159,8 @@ def execute(
     inspect: Callable[[str], Mapping],
     apply: Callable[[], None],
     rollback: Callable[[], None],
+    handoff: Mapping | None = None,
+    list_units: Callable[[], list[str]] | None = None,
 ) -> dict:
     """Run one isolated transaction. Fail closed after any interrupted run.
 
@@ -120,30 +173,62 @@ def execute(
             or any(not isinstance(unit, str) or not _UNIT.fullmatch(unit) for unit in units)
             or len(units) != len(set(units))):
         raise TransactionSafetyError("only named disposable E2E systemd units are allowed")
+    if (handoff is None) != (list_units is None):
+        raise TransactionSafetyError("handoff and complete inventory callback must be paired")
+    strict = handoff is not None
     path = root / "game-uptime-transaction.json"
     if path.exists() or path.is_symlink():
         raise TransactionSafetyError("existing transaction evidence requires manual review")
-    before = [_snapshot(unit, inspect) for unit in sorted(units)]
-    _checkpoint(path, "prepared", before)
+    if strict:
+        _active_set(units, list_units)
+    before = [_snapshot(x, inspect) for x in sorted(units)]
+    if strict:
+        _check_handoff(before, handoff)
+        _active_set(units, list_units)
+    _checkpoint(path, "prepared", before, strict_inventory=strict)
+    if strict:
+        try:
+            _active_set(units, list_units)
+            if [_snapshot(x, inspect) for x in sorted(units)] != before:
+                raise TransactionSafetyError("process identity changed before apply")
+        except TransactionSafetyError as exc:
+            _checkpoint(path, "manual_recovery_required", before, str(exc),
+                        strict_inventory=True)
+            raise TransactionSafetyError("game handoff changed before apply; manual review required") from exc
     try:
         apply()
-        _checkpoint(path, "applied", before)
-        after = [_snapshot(row["unit"], inspect) for row in before]
+        _checkpoint(path, "applied", before, strict_inventory=strict)
+        if strict:
+            _active_set(units, list_units)
+        after = [_snapshot(x["unit"], inspect) for x in before]
         if after != before:
             raise TransactionSafetyError("process or unit configuration changed during apply")
-        _checkpoint(path, "verified", before)
+        _checkpoint(path, "verified", before, strict_inventory=strict)
         return {"status": "verified", "live_no_drain_authorized": False, "units": after}
     except Exception as exc:
+        # Unknown/missing active units after apply must not cause a blind rollback.
+        if strict:
+            try:
+                _active_set(units, list_units)
+            except TransactionSafetyError as inventory_exc:
+                _checkpoint(path, "manual_recovery_required", before,
+                            str(inventory_exc), strict_inventory=True)
+                raise TransactionSafetyError(
+                    "game inventory changed after apply; manual recovery required") from exc
         try:
             rollback()
-            after_rollback = [_snapshot(row["unit"], inspect) for row in before]
+            if strict:
+                _active_set(units, list_units)
+            after_rollback = [_snapshot(x["unit"], inspect) for x in before]
             if after_rollback != before:
                 raise TransactionSafetyError("process or unit configuration changed during rollback")
-            _checkpoint(path, "rolled_back", before, str(exc))
+            _checkpoint(path, "rolled_back", before, str(exc), strict_inventory=strict)
         except Exception as rollback_exc:
-            _checkpoint(path, "manual_recovery_required", before, str(rollback_exc))
+            _checkpoint(path, "manual_recovery_required", before, str(rollback_exc),
+                        strict_inventory=strict)
             raise TransactionSafetyError("rollback failed; manual recovery required") from rollback_exc
         raise TransactionSafetyError("transaction rejected and rollback completed") from exc
+
 
 def recover_interrupted(
     workspace: Path,
@@ -152,6 +237,7 @@ def recover_interrupted(
     inspect: Callable[[str], Mapping],
     rollback: Callable[[], None],
     operator_reviewed: bool = False,
+    list_units: Callable[[], list[str]] | None = None,
 ) -> dict:
     """Explicit, disposable-only rollback of one interrupted transaction.
 
@@ -188,25 +274,40 @@ def recover_interrupted(
             or not isinstance(report.get("original_units"), list)):
         raise TransactionSafetyError("journal does not prove recoverable interruption")
     recorded = report["original_units"]
-    if len(recorded) != len(units) or any(
-            not isinstance(item, dict)
-            for item in recorded):
+    if len(recorded) != len(units) or any(not isinstance(x, dict) for x in recorded):
         raise TransactionSafetyError("journal inventory mismatch")
-    # The journal must match the *same* processes by unit, PID and start stamp.
-    # Never invoke rollback if an observed unit was replaced while we were down.
-    actual = [_snapshot(name, inspect) for name in sorted(units)]
-    if recorded != actual:
-        raise TransactionSafetyError("process identity changed or unit configuration changed; manual recovery required")
-    _checkpoint(path, "recovery_started", actual,
-                "explicit disposable-only recovery")
     try:
+        matches_digest = report.get("original_units_sha256") == _digest(recorded)
+    except (ValueError, TypeError):
+        matches_digest = False
+    if not matches_digest:
+        raise TransactionSafetyError("durable process witness digest mismatch")
+    strict = report.get("strict_inventory") is True
+    if strict != (list_units is not None):
+        raise TransactionSafetyError("durable inventory witness callback missing or unexpected")
+    if strict:
+        _active_set(units, list_units)
+    actual = [_snapshot(x, inspect) for x in sorted(units)]
+    if recorded != actual:
+        raise TransactionSafetyError(
+            "process identity changed or unit configuration changed; manual recovery required")
+    if strict:
+        _active_set(units, list_units)
+    _checkpoint(path, "recovery_started", actual,
+                "explicit disposable-only recovery", strict_inventory=strict)
+    try:
+        if strict:
+            _active_set(units, list_units)
         rollback()
+        if strict:
+            _active_set(units, list_units)
         after = [_snapshot(name, inspect) for name in sorted(units)]
         if after != actual:
             raise TransactionSafetyError("process or unit configuration changed during recovery rollback")
-        _checkpoint(path, "recovered_rollback", actual)
+        _checkpoint(path, "recovered_rollback", actual, strict_inventory=strict)
         return {"status": "recovered_rollback",
                 "live_no_drain_authorized": False, "units": after}
     except Exception as exc:
-        _checkpoint(path, "manual_recovery_required", actual, str(exc))
+        _checkpoint(path, "manual_recovery_required", actual, str(exc),
+                    strict_inventory=strict)
         raise TransactionSafetyError("recovery rollback failed; manual review required") from exc

@@ -345,5 +345,65 @@ module.execute(root, sorted(snapshots), inspect=lambda name: snapshots[name],
 
 
 
+    def test_strict_full_set_witness_is_durable_and_no_live_authorization(self):
+        for record in self.snapshots.values():
+            record["unit_config_sha256"] = "e" * 64
+        names = lambda: list(self.snapshots)
+        handoff = tx.attest_handoff(self.units, inspect=self.inspect, list_units=names)
+        result = self.run_tx(handoff=handoff, list_units=names)
+        self.assertEqual(result["status"], "verified")
+        self.assertTrue(self.journal()["strict_inventory"])
+        self.assertTrue(self.journal()["original_units_sha256"])
+        self.assertEqual(self.journal()["original_units"], handoff["original_units"])
+        self.assertFalse(result["live_no_drain_authorized"])
+
+    def test_added_unit_after_attestation_blocks_before_mutation(self):
+        for record in self.snapshots.values():
+            record["unit_config_sha256"] = "a" * 64
+        handoff = tx.attest_handoff(self.units, inspect=self.inspect,
+                                    list_units=lambda: list(self.snapshots))
+        self.snapshots["dsm928-e2e-surprise.service"] = {
+            "unit": "dsm928-e2e-surprise.service", "pid": 9010,
+            "started": 100, "state": "active", "unit_config_sha256": "a" * 64}
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "set changed"):
+            self.run_tx(handoff=handoff, list_units=lambda: list(self.snapshots))
+        self.assertEqual(self.apply_count, 0)
+        self.assertFalse((self.root / "game-uptime-transaction.json").exists())
+
+    def test_new_active_unit_during_apply_does_not_trigger_blind_rollback(self):
+        for record in self.snapshots.values():
+            record["unit_config_sha256"] = "a" * 64
+        names = lambda: list(self.snapshots)
+        handoff = tx.attest_handoff(self.units, inspect=self.inspect, list_units=names)
+        def start_extra():
+            self.apply()
+            self.snapshots["dsm928-e2e-surprise.service"] = {
+                "unit": "dsm928-e2e-surprise.service", "pid": 9010,
+                "started": 100, "state": "active", "unit_config_sha256": "a" * 64}
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "manual recovery required"):
+            self.run_tx(handoff=handoff, list_units=names, apply=start_extra)
+        self.assertEqual(self.apply_count, 1)
+        self.assertEqual(self.undo_count, 0)
+        self.assertEqual(self.journal()["status"], "manual_recovery_required")
+
+    def test_strict_interrupted_rollback_refuses_missing_inventory(self):
+        for record in self.snapshots.values():
+            record["unit_config_sha256"] = "f" * 64
+        names = lambda: list(self.snapshots)
+        handoff = tx.attest_handoff(self.units, inspect=self.inspect, list_units=names)
+        with self.assertRaises(SystemExit):
+            self.run_tx(handoff=handoff, list_units=names,
+                        apply=lambda: (_ for _ in ()).throw(SystemExit(88)))
+        with self.assertRaisesRegex(tx.TransactionSafetyError, "callback missing"):
+            tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                   rollback=self.rollback, operator_reviewed=True)
+        self.assertEqual(self.undo_count, 0)
+        result = tx.recover_interrupted(self.root, self.units, inspect=self.inspect,
+                                        rollback=self.rollback, operator_reviewed=True,
+                                        list_units=names)
+        self.assertEqual(result["status"], "recovered_rollback")
+        self.assertFalse(result["live_no_drain_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()

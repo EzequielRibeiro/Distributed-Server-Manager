@@ -264,5 +264,21 @@ class UpdatePreflightTest(unittest.TestCase):
                       result["handoff_witness"]["blockers"])
 
 
+    def test_handoff_exposes_only_normalized_process_witnesses(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        result = module.preflight(
+            self.installed, self.target,
+            list_units=lambda: self.units,
+            inspect=lambda unit: {"main_pid": 111 if "dayz" in unit else 222,
+                                  "start_stamp": 888, "unit_config_sha256": "a" * 64},
+            expected_active_units=self.units)
+        witness = result["handoff_witness"]
+        self.assertTrue(witness["verified_for_disposable_rehearsal"])
+        self.assertEqual(len(witness["original_units"]), 2)
+        self.assertEqual(set(witness["original_units"][0]), {
+            "unit", "pid", "started", "state", "unit_config_sha256"})
+        self.assertFalse(result["live_no_drain_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()
