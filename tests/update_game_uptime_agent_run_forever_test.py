@@ -86,14 +86,20 @@ class AgentRunForeverLoopTests(unittest.TestCase):
                               source)
         script = (workers / "scheduler_worker.sh").read_text(encoding="utf-8")
         self.assertIn('python3 -B "${HOLD_GATE}" --scheduler-tick', script)
-        self.assertIn("scheduler_update || true", script)
+        self.assertIn("scheduler_update", script)
+        self.assertIn('if [[ "${1:-}" == "--once" ]]', script)
         workspace = ast.parse((workers / "hybrid_customer_workspace_worker.py")
                               .read_text(encoding="utf-8"))
         cycle = next(node for node in workspace.body
                      if isinstance(node, ast.FunctionDef)
                      and node.name == "workspace_cycle")
-        self.assertIsInstance(cycle.body[0], ast.If)
-        self.assertTrue(is_guard(cycle.body[0].test))
+        self.assertIsInstance(cycle.body[0], ast.With)
+        self.assertIn("tracked_operation", ast.unparse(cycle.body[0].items[0].context_expr))
+        guarded_cycle = next(node for node in workspace.body
+                             if isinstance(node, ast.FunctionDef)
+                             and node.name == "_workspace_cycle")
+        self.assertIsInstance(guarded_cycle.body[0], ast.If)
+        self.assertTrue(is_guard(guarded_cycle.body[0].test))
 
     def test_all_nine_worker_inflight_locks_are_observable_without_authorization(self):
         """One grouped contract: busy evidence for all nine, never live ACK."""
