@@ -12,6 +12,7 @@ from content_update_dispatch_repository import ContentUpdateDispatchRepository
 from content_update_validation import verify_content_update_revision
 from customer_content_workspace import CustomerContentWorkspaceService
 from runtime_backend import backend_from_environment
+from maintenance_hold_gate import maintenance_paused
 
 INTERVAL_SECONDS=max(10,int(os.environ.get('DSM_CONTENT_UPDATE_WORKER_SECONDS','30')))
 DETECTION_INTERVAL_SECONDS=max(60,min(int(os.environ.get('DSM_CONTENT_UPDATE_DETECT_SECONDS','900')),86400))
@@ -57,8 +58,13 @@ class ContentUpdateWorker:
 
 
 def run_forever(root:Path=ROOT,interval:int=INTERVAL_SECONDS)->None:
+ while maintenance_paused():
+  time.sleep(1)
  backend=backend_from_environment(_database_environment(root));worker=ContentUpdateWorker(backend,root)
  while True:
+  if maintenance_paused():
+   time.sleep(1)
+   continue
   try:
    report=worker.tick();detection=report.get('detection') or {}
    if report['due'] or report['failed'] or detection.get('checked'):print(f"content update worker detected={detection.get('checked',0)} available={detection.get('available',0)} due={report['due']} claimed={report['claimed']} updated={report['updated']} failed={report['failed']} instances={len(report['instances'])}",flush=True)
