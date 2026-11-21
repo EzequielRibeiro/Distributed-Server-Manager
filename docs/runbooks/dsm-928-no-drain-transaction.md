@@ -1203,3 +1203,40 @@ reconciliação e ACK operacional autenticado de **cada Agent remoto**. Lock
 local livre ou exclusivo dos três handlers **jamais** prova quiescência
 distribuída. Issue #928 segue OPEN; `update.sh --no-drain` segue
 somente diagnóstico/exit 2, e release continua bloqueado.
+
+
+## Etapa 2 — Console Push sob a mesma barreira de Agent HTTP (21/11/2026)
+
+`dashboard/agent_console_push.py` agora aplica o mesmo
+`shared_controller_agent_http_lock()` opt-in introduzido na PR #1134 durante
+**toda** a requisição HTTP chunked de Console Push
+(`/api/agent/console/stream`). O stream é de longa duração; portanto, se uma
+sessão já está aberta, o futuro coordenador **não** consegue tomar
+`LOCK_EX|LOCK_NB` até ela encerrar. Com lock exclusivo em posse do
+coordenador, uma nova conexão é recusada com **HTTP 423 antes da
+autenticação** ou de qualquer atualização do buffer em memória. Sem
+`DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1`, a aquisição do inode continua
+desativada por padrão.
+
+A verificação read-only de hold root-owned é aplicada **mesmo sem opt-in**,
+antes da autenticação, e novamente **após ler cada chunk e antes de aceitar
+keepalive, tocar a presença ou ingerir eventos**. Assim, uma conexão já
+aberta que receba um novo frame durante a manutenção deixa de publicar
+console lines: devolve HTTP 423. Se a evidência for inválida, expirou,
+não for legível ou houver journal pendente, falha fechado sem limpar ou
+substituir os dados. O loop existente mantém o timeout de socket de 15s;
+nenhuma thread nova, restart, comando de game ou integração com o updater.
+
+O teste agrupado na suíte `update_game_uptime_sqlite_http_integration_test`
+verifica (i) hold bloqueando antes de autenticação, (ii) lock EX rejeitando
+uma conexão nova, (iii) um stream já admitido segurando SH enquanto o
+coordenador tenta EX, (iv) stop de ingestão após o primeiro chunk quando
+um hold aparece antes do segundo. Os testes anteriores de cursor, chunk
+NDJSON e propriedade da instância continuam no seu módulo legado.
+
+**Limites:** a barreira é opcional e não cobre ainda outras APIs HTTP,
+clientes administrativos, todos os subprocessos/threads/jobs nem Agents
+remotos. As linhas já aceitas antes do hold são preservadas; a conexão
+pode continuar viva até o próximo chunk/timeout, mantendo SH nesse
+intervalo. Nenhuma evidência nesse fluxo é ACK positivo ou autorização de
+`update.sh --no-drain`. #928 segue aberta / Etapa 2 parcial.
