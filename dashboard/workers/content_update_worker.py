@@ -12,6 +12,11 @@ from content_update_dispatch_repository import ContentUpdateDispatchRepository
 from content_update_validation import verify_content_update_revision
 from customer_content_workspace import CustomerContentWorkspaceService
 from runtime_backend import backend_from_environment
+# Resolve the sibling helper from this installed script, not the caller's
+# current working directory (runpy/remote launchers may omit this directory).
+_WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKERS_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKERS_MODULE_DIR)
 from maintenance_hold_gate import maintenance_paused
 
 INTERVAL_SECONDS=max(10,int(os.environ.get('DSM_CONTENT_UPDATE_WORKER_SECONDS','30')))
