@@ -253,17 +253,17 @@ class AgentRunForeverLoopTests(unittest.TestCase):
         def make_stat(pid, ppid, ticks):
             # Linux /proc/PID/stat fields 3=state, 4=PPID, 22=starttime.
             return (f"{pid} (synthetic worker) S {ppid} "
-                    + "0 " * 17 + f"{ticks} 0\\n")
+                    + "0 " * 17 + f"{ticks} 0\n")
 
         def write_proc(proc_root, pid, ppid, ticks, script, program):
             home = proc_root / str(pid)
             home.mkdir(parents=True, exist_ok=True)
             (home / "stat").write_text(make_stat(pid, ppid, ticks))
             (home / "status").write_text(
-                f"Uid:\\t{uid}\\t{uid}\\t{uid}\\t{uid}\\n")
-            (home / "cgroup").write_text("0::" + group + "\\n")
+                f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+            (home / "cgroup").write_text("0::" + group + "\n")
             (home / "cmdline").write_bytes(
-                (program + "\\0" + script + "\\0").encode("utf-8"))
+                (program + "\0" + script + "\0").encode("utf-8"))
 
         with tempfile.TemporaryDirectory(prefix="dsm928-worker-ids-") as tmp:
             proc_root = Path(tmp) / "proc"
@@ -282,7 +282,7 @@ class AgentRunForeverLoopTests(unittest.TestCase):
             proc_task = proc_root / str(main_pid) / "task" / str(main_pid)
             proc_task.mkdir(parents=True)
             (proc_task / "children").write_text(
-                " ".join(str(pid) for pid in children) + "\\n")
+                " ".join(str(pid) for pid in children) + "\n")
 
             snapshot = diag._snapshot(main_pid, proc_root)
             locks = {name: "lock_free_process_identity_unverified"
@@ -320,7 +320,7 @@ class AgentRunForeverLoopTests(unittest.TestCase):
                 return {"worker": name, "status": locks[name],
                         "live_no_drain_authorized": False}
 
-            with patch.object(diag, "_unit_status", return_value=unit), \\
+            with patch.object(diag, "_unit_status", return_value=unit), \
                  patch.object(diag, "inspect_operation",
                               side_effect=lock_info):
                 observed = diag.inspect(proc_root=proc_root)
@@ -328,7 +328,7 @@ class AgentRunForeverLoopTests(unittest.TestCase):
                                  "local_identity_verified_only")
                 self.assertFalse(observed["live_no_drain_authorized"])
                 output = io.StringIO()
-                with patch.object(diag, "inspect", return_value=observed), \\
+                with patch.object(diag, "inspect", return_value=observed), \
                      redirect_stdout(output):
                     self.assertEqual(diag.main(["--inspect"]), 2)
                 self.assertFalse(json.loads(output.getvalue())[
@@ -338,9 +338,9 @@ class AgentRunForeverLoopTests(unittest.TestCase):
             changed = diag._snapshot(main_pid, proc_root)
             changed["children"][0] = {
                 **changed["children"][0], "start_ticks": 99000}
-            with patch.object(diag, "_unit_status", return_value=unit), \\
+            with patch.object(diag, "_unit_status", return_value=unit), \
                  patch.object(diag, "_snapshot",
-                              side_effect=[snapshot, changed]), \\
+                              side_effect=[snapshot, changed]), \
                  patch.object(diag, "inspect_operation",
                               side_effect=lock_info):
                 reused = diag.inspect(proc_root=proc_root)
