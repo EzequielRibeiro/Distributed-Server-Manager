@@ -22,6 +22,7 @@ for directory in (ROOT / "agents/linux/runtime", ROOT / "agents/linux/privileged
 
 import instance_files_client
 import materialize_instance
+import prepare_customer_files
 
 
 def mode(path: Path) -> int:
@@ -193,3 +194,57 @@ def test_alternate_customer_files_root_cannot_target_private_control(tmp_path):
                 {"agent_id": "agent-test"},
                 {"instance_id": root.name, "action": "list", "path": "."},
             )
+
+
+def test_privileged_customer_files_helper_repairs_only_dayz_visible_tree(tmp_path):
+    """Production-facing helper cannot chmod the private DayZ root to 0770."""
+    root, control, secret, config, settings, workshop, package, battleye, unknown = _fixture(tmp_path)
+    missions = root / "mpmissions"
+    hardcore = missions / "hardcore.namalsk"
+    hardcore.mkdir(parents=True)
+    xml = hardcore / "cfgeconomycore.xml"
+    xml.write_text("<root/>", encoding="utf-8")
+    missions.chmod(0o755)
+    hardcore.chmod(0o755)
+    xml.chmod(0o644)
+
+    record = {**_spec(root), "agent_id": "agent-test"}
+    agent_config = tmp_path / "agent.json"
+    agent_config.write_text('{"agent_id": "agent-test"}', encoding="utf-8")
+    account = pwd.getpwuid(os.geteuid())
+    group = SimpleNamespace(gr_gid=os.getegid())
+
+    with mock.patch.object(prepare_customer_files, "CONFIG_PATH", agent_config), \
+         mock.patch.object(prepare_customer_files, "_owned_record", return_value=record), \
+         mock.patch.object(prepare_customer_files.os, "geteuid", return_value=0), \
+         mock.patch.object(materialize_instance, "_validate_runtime_user", return_value=account), \
+         mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
+        result = prepare_customer_files.run(root.name)
+
+    assert result["scope"] == "dayz-customer-visible-only"
+    assert result["root_mode"] == "0710"
+    assert mode(root) == 0o710
+    assert mode(missions) == 0o770
+    assert mode(hardcore) == 0o770
+    assert mode(xml) == 0o660
+    assert mode(control) == 0o700
+    assert mode(secret) == 0o600
+    assert mode(workshop) == 0o750
+    assert mode(package) == 0o640
+    assert mode(battleye) == 0o700
+    assert mode(unknown) == 0o700
+
+
+def test_privileged_customer_files_helper_rejects_dayz_alternate_root(tmp_path):
+    root, control, secret, *_ = _fixture(tmp_path)
+    record = {**_spec(root), "agent_id": "agent-test", "files_root": str(control)}
+    agent_config = tmp_path / "agent.json"
+    agent_config.write_text('{"agent_id": "agent-test"}', encoding="utf-8")
+    with mock.patch.object(prepare_customer_files, "CONFIG_PATH", agent_config), \
+         mock.patch.object(prepare_customer_files, "_owned_record", return_value=record), \
+         mock.patch.object(prepare_customer_files.os, "geteuid", return_value=0):
+        with pytest.raises(RuntimeError, match="must match private state"):
+            prepare_customer_files.run(root.name)
+    assert mode(root) == 0o770
+    assert mode(control) == 0o700
+    assert mode(secret) == 0o600

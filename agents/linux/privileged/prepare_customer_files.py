@@ -48,6 +48,9 @@ def _managed_root(record: dict[str, Any]) -> tuple[Path, Path]:
     files_root = Path(raw_files)
     if not state_root.is_absolute() or not files_root.is_absolute():
         raise RuntimeError("customer files paths must be absolute")
+    # Do not follow a symlink at either declared security boundary.
+    if state_root.is_symlink() or files_root.is_symlink():
+        raise RuntimeError("customer files security boundary cannot be a symlink")
     state_root = state_root.resolve()
     files_root = files_root.resolve()
     try:
@@ -119,7 +122,26 @@ def run(instance_id: str) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise RuntimeError("Agent config must be a JSON object")
     record = _owned_record(config, instance_id)
-    _, files_root = _managed_root(record)
+    state_root, files_root = _managed_root(record)
+    game_id = str(record.get("game_id") or "").lower()
+    if game_id == "dayz":
+        # The DayZ customer files root is virtual. The legacy generic walker
+        # would chmod the physical state root to 0770 and expose .dsm control
+        # state. Reuse the allowlisted, owner-checked materializer policy.
+        if files_root != state_root:
+            raise RuntimeError("DayZ customer files root must match private state")
+        from materialize_instance import _grant_customer_files_access
+        _grant_customer_files_access(record)
+        return {
+            "instance_id": instance_id,
+            "files_root": str(files_root),
+            "group": _AGENT_GROUP,
+            "root_mode": "0710",
+            "directory_mode": "0770",
+            "file_mode": "0660",
+            "scope": "dayz-customer-visible-only",
+        }
+
     executable_paths = _declared_executables(record, files_root)
     try:
         group = grp.getgrnam(_AGENT_GROUP)

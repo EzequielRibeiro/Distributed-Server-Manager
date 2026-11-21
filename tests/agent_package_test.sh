@@ -16,6 +16,32 @@ bash "${BUILDER}" HEAD "${TMP}/one" >/dev/null
 bash "${BUILDER}" HEAD "${TMP}/two" >/dev/null
 VERSION=$(tr -d '\r\n' <"${ROOT}/version"); ARCHIVE="capivara-agent-linux-${VERSION}.tar.gz"
 cmp -s "${TMP}/one/${ARCHIVE}" "${TMP}/two/${ARCHIVE}" || fail "Agent package is not reproducible"
+
+# Build a test version from the SAME tracked source SHA, without changing the
+# authoritative project version or release/readiness-v2.json.
+PREVIEW_VERSION="${VERSION%%-*}-preview.pkgtest.1"
+if CAPIVARA_AGENT_PACKAGE_PREVIEW_VERSION="${PREVIEW_VERSION}" \
+   bash "${BUILDER}" HEAD "${TMP}/rejected" >/dev/null 2>&1; then
+  fail "preview package override accepted without explicit test opt-in"
+fi
+CAPIVARA_AGENT_PREVIEW_BUILD=1 \
+CAPIVARA_AGENT_PACKAGE_PREVIEW_VERSION="${PREVIEW_VERSION}" \
+  bash "${BUILDER}" HEAD "${TMP}/preview" >/dev/null
+PREVIEW_ARCHIVE="capivara-agent-linux-${PREVIEW_VERSION}.tar.gz"
+(cd "${TMP}/preview" && sha256sum -c "${PREVIEW_ARCHIVE}.sha256" >/dev/null)
+python3 - "${TMP}/preview" "${PREVIEW_VERSION}" "${VERSION}" "${ROOT}" <<'PY'
+import json, pathlib, subprocess, sys
+dest, preview_version, source_version, root = sys.argv[1:]
+root = pathlib.Path(root)
+manifest = json.loads((pathlib.Path(dest) / f"capivara-agent-linux-{preview_version}.manifest.json").read_text())
+assert manifest["version"] == preview_version
+assert manifest["channel"] == "beta"
+assert manifest["git_commit"] == subprocess.check_output(
+    ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+).strip()
+assert (root / "version").read_text().strip() == source_version
+assert (root / "release/readiness-v2.json").is_file()
+PY
 (cd "${TMP}/one" && sha256sum -c "${ARCHIVE}.sha256" >/dev/null)
 mkdir "${TMP}/extract"; tar -xzf "${TMP}/one/${ARCHIVE}" -C "${TMP}/extract"; PACKAGE="${TMP}/extract/capivara-agent-linux-${VERSION}"
 for path in agent/runtime/content_bundle.py agent/runtime/minecraft_serverpack_physical_manifest.py agent/runtime/minecraft_staged_migration_safety.py agent/runtime/minecraft_serverpack_migration_feature.py agent/runtime/minecraft_serverpack_pending_commit.py install-agent.sh manifest.json VERSION agent/common/identity.py agent/privileged/materialize_instance.py agent/privileged/reconcile_runtime_identity.py agent/privileged/uninstall_agent.py agent/privileged/console_journal_reader.py agent/policy/49-capivara-agent-instance-units.rules agent/updater/updater.py services/capivara-agent.service services/capivara-agent-console-reader.service services/capivara-agent-update.service services/capivara-agent-update.path services/capivara-agent-materialize@.service services/capivara-agent-runtime-identity.service services/capivara-agent-uninstall.service services/capivara-agent-uninstall.path config/README.md; do [[ -f "${PACKAGE}/${path}" ]] || fail "missing Agent package file: ${path}"; done

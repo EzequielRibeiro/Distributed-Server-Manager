@@ -285,7 +285,10 @@ def runtime_projection_inputs(instance_id: str, spec: dict[str, Any], snapshot: 
     """Recover configured DayZ map dependencies before runtime projection."""
     prepared = dict(spec)
     base = snapshot if isinstance(snapshot, dict) else build_activation_snapshot(instance_id)
-    if str(prepared.get("game_id") or "").strip().lower() != "dayz" or prepared.get("dayz_content_enabled") is not False:
+    # A configured community mission needs its Workshop dependencies in both
+    # disabled (map-only) and enabled (all selected mods) content modes. A
+    # mode toggle must never silently drop the currently running map mods.
+    if str(prepared.get("game_id") or "").strip().lower() != "dayz":
         return prepared, base
     config_path = str(prepared.get("config_path") or "").strip()
     if not config_path:
