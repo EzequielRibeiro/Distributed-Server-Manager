@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The actual Linux Agent imports/configuration/heartbeat/urllib protocol run.
 _CHILD = r'''
 import json
+import os
 from contextlib import ExitStack
 from pathlib import Path
 import sys
@@ -50,6 +51,11 @@ payload = {
     "degraded_after_seconds": 60,
     "offline_after_seconds": 120,
 }
+if os.environ.get("DSM928_READ_ONLY_HEARTBEAT") == "1":
+    # The production Controller may issue onboarding Doctor diagnostics.
+    # This integration fixture reports results only: it must never run
+    # any Controller-driven Doctor/game/update operation on the runner.
+    payload["result_flush"] = True
 if sys.argv[2] == "diagnostic":
     payload["no_drain_compatibility_probe"] = build_probe(agent_id)
 elif sys.argv[2] != "legacy":
@@ -135,7 +141,7 @@ class LinuxAgentProcessHeartbeatTests(unittest.TestCase):
         self.state = self.root / "runtime"
         self.state.mkdir(mode=0o700)
 
-    def invoke(self, mode="diagnostic", *, invalid_secret=False):
+    def invoke(self, mode="diagnostic", *, invalid_secret=False, read_only=False):
         cfg = {
             "controller_url": self.controller.url.rsplit("/api/agent/heartbeat", 1)[0],
             "agent_id": self.controller.agent_id,
@@ -154,6 +160,7 @@ class LinuxAgentProcessHeartbeatTests(unittest.TestCase):
             "CAPIVARA_AGENT_STATE_DIR": str(self.state),
             "CAPIVARA_AGENT_HOST_IDENTITY": str(self.root / "host-identity"),
             "DSM928_COMPAT_DIAGNOSTIC": "1" if mode == "diagnostic" else "0",
+            "DSM928_READ_ONLY_HEARTBEAT": "1" if read_only else "0",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         result = subprocess.run(
