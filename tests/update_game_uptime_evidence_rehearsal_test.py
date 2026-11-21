@@ -125,6 +125,20 @@ class ObservedEvidenceFixtureTests(unittest.TestCase):
                          "2.0.999-fixture")
         self.fixture.updater("rollback")
 
+    def test_authenticated_offer_does_not_replace_complete_game_inventory(self):
+        with self.assertRaisesRegex(observed.EvidenceSafetyError,
+                                    "complete active game inventory"):
+            self.execute(list_active_units=None)
+        self.assert_no_mutation()
+
+    def test_authenticated_offer_does_not_override_agent_runtime_change(self):
+        self.fixture.set_fixture_supervisors(installed="old", candidate="new")
+        with self.assertRaisesRegex(
+                observed._COMPOSE.CompositeSafetyError,
+                "disposable release tier blocked"):
+            self.execute()
+        self.assert_no_mutation()
+
     def test_replayed_heartbeat_offer_blocked_before_any_backup(self):
         another = observed._AGENT.build_probe("fixture-agent")
         with self.assertRaisesRegex(observed.EvidenceSafetyError,
