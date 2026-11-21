@@ -9,12 +9,12 @@ STATE_DIR="${DSM_ROOT}/dashboard/state"
 OUTPUT="${STATE_DIR}/scheduler_state.json"
 
 JOBS_DB="${DSM_ROOT}/scheduler/jobs.db"
-
-mkdir -p "$STATE_DIR"
+HOLD_READER="${DSM_ROOT}/agents/linux/runtime/game_uptime_maintenance_hold.py"
 
 
 scheduler_update()
 {
+    mkdir -p "$STATE_DIR"
 
     local TOTAL=0
     local ENABLED=0
@@ -72,7 +72,11 @@ main()
 {
     while true
     do
-        scheduler_update || true
+        # Missing reader, unreadable/invalid marker or maintenance hold:
+        # do not change scheduler state. This does not attest idle workers.
+        if [[ -f "${HOLD_READER}" ]] && python3 -B "${HOLD_READER}"; then
+            scheduler_update || true
+        fi
         sleep "$DSM_INTERVAL"
     done
 }
