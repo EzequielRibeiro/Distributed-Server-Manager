@@ -36,6 +36,11 @@ from agent_remote_http import (dispatch_heartbeat, dispatch_fence_observation,
                                dispatch_enroll, dispatch_uninstall_result)
 from game_uptime_agent_wire import build_probe, verify_offer
 from game_uptime_controller_http_inflight import observe_controller_agent_inflight
+from game_uptime_controller_agent_http_flock import (
+    shared_controller_agent_http_lock, exclusive_controller_agent_http_lock,
+    ControllerHttpLockUnavailable,
+)
+from prepare_controller_agent_http_lock import provision_controller_agent_http_lock
 
 
 class ActualDispatcherSqliteHttpTests(unittest.TestCase):
@@ -583,6 +588,134 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
                    side_effect=RuntimeError("synthetic read error")):
             with self.assertRaises(RuntimeError):
                 dispatch_heartbeat(self._payload(), headers={}, backend=self.backend)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
+
+
+    def test_controller_http_interprocess_flock_is_real_and_opt_in(self):
+        """Grouped: cross-process exclusion, request lifetime and fail closed.
+
+        Only temporary storage and subprocesses. Does not enable the optional
+        fence in a running Controller or turn a local lock into an ACK.
+        """
+        import os
+        import subprocess
+        from unittest.mock import patch
+        import game_uptime_controller_http_inflight as tracker
+
+        uid, gid = os.geteuid(), os.getegid()
+        folder = Path(self.temp.name) / "controller-http-root"
+        folder.mkdir(mode=0o755)
+        witness = folder / "controller-agent-http.lock"
+        denied = (423, {
+            "status": "blocked",
+            "reason": "controller_maintenance_hold_active",
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        })
+
+        provision_controller_agent_http_lock(uid, gid, path=witness,
+                                              parent_uid=uid)
+        original_inode = witness.stat().st_ino
+        provision_controller_agent_http_lock(uid, gid, path=witness,
+                                              parent_uid=uid)
+        self.assertEqual(witness.stat().st_ino, original_inode)
+        self.assertEqual(witness.stat().st_mode & 0o777, 0o600)
+
+        def shared():
+            return shared_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid, enabled=True)
+
+        def exclusive():
+            return exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid)
+
+        # Another actual Python PID tries to acquire the exclusive witness.
+        code = (
+            "import sys\\n"
+            "from pathlib import Path\\n"
+            "sys.path.insert(0, sys.argv[2])\\n"
+            "from game_uptime_controller_agent_http_flock import "
+            "exclusive_controller_agent_http_lock, ControllerHttpLockUnavailable\\n"
+            "try:\\n"
+            "  with exclusive_controller_agent_http_lock("
+            "lock_path=Path(sys.argv[1]), expected_uid=int(sys.argv[3]), "
+            "expected_gid=int(sys.argv[4]), parent_uid=int(sys.argv[3])) as state:\\n"
+            "    print('ACQUIRED:' + str(state['live_no_drain_authorized']))\\n"
+            "except ControllerHttpLockUnavailable:\\n"
+            "  print('BLOCKED')\\n"
+        )
+
+        def child_probe():
+            run = subprocess.run(
+                [sys.executable, "-c", code, str(witness),
+                 str(ROOT / "dashboard"), str(uid), str(gid)],
+                capture_output=True, text=True, check=True, timeout=12)
+            return run.stdout.strip()
+
+        with shared():
+            self.assertEqual(child_probe(), "BLOCKED")
+        self.assertEqual(child_probe(), "ACQUIRED:False")
+
+        admitted = threading.Event()
+        release = threading.Event()
+        result = []
+        errors = []
+
+        def pending_dispatch():
+            try:
+                result.append(dispatch_heartbeat(
+                    self._payload(), headers={}, backend=self.backend))
+            except BaseException as exc:
+                errors.append(exc)
+
+        def held_admission():
+            admitted.set()
+            if not release.wait(timeout=12):
+                raise AssertionError("synthetic HTTP mutation timeout")
+            return denied
+
+        with patch.object(tracker, "shared_controller_agent_http_lock",
+                          side_effect=shared), \\
+             patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=held_admission):
+            worker = threading.Thread(target=pending_dispatch, daemon=True)
+            try:
+                worker.start()
+                self.assertTrue(admitted.wait(timeout=12))
+                self.assertEqual(
+                    observe_controller_agent_inflight()["inflight_total"], 1)
+                self.assertEqual(child_probe(), "BLOCKED")
+            finally:
+                release.set()
+                worker.join(timeout=12)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(result, [denied])
+            self.assertEqual(child_probe(), "ACQUIRED:False")
+
+        # Exclusive coordinator occupancy prevents new request admission,
+        # even with the original business hold reader mocked as absent.
+        with patch.object(tracker, "shared_controller_agent_http_lock",
+                          side_effect=shared), \\
+             patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=AssertionError("should not reach hold gate")):
+            with exclusive() as evidence:
+                self.assertFalse(evidence["controller_http_acked"])
+                self.assertFalse(evidence["live_no_drain_authorized"])
+                status, response = dispatch_heartbeat(
+                    self._payload(), headers={}, backend=self.backend)
+                self.assertEqual(status, 423, response)
+                self.assertEqual(response["reason"],
+                                 "controller_http_interprocess_fence_unavailable")
+            witness.chmod(0o666)
+            try:
+                status, response = dispatch_heartbeat(
+                    self._payload(), headers={}, backend=self.backend)
+                self.assertEqual(status, 423, response)
+            finally:
+                witness.chmod(0o600)
         self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
 
 
