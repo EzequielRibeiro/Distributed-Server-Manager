@@ -53,7 +53,9 @@ def prepare(uid: int, gid: int, *, directory: Path = LOCK_DIRECTORY,
             fd = os.open(path, os.O_RDONLY | baseflags)
         try:
             if created:
-                os.fchown(fd, uid, gid)
+                fresh = os.fstat(fd)
+                if (fresh.st_uid, fresh.st_gid) != (uid, gid):
+                    os.fchown(fd, uid, gid)
                 os.fchmod(fd, 0o600)
             info = os.fstat(fd)
             if (not stat.S_ISREG(info.st_mode) or info.st_uid != uid
