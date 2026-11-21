@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -134,7 +135,13 @@ def _manifest(record, backup_id):
 def _create_archive(root, paths, destination, compression, manifest):
     mode = "w:gz" if compression == "gzip" else "w"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(destination, mode, dereference=False) as archive:
+    # O_EXCL + O_NOFOLLOW prevents an untrusted backup-directory symlink
+    # from redirecting a privileged creator to an arbitrary file.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW
+    fd = os.open(destination, flags, 0o600)
+    with os.fdopen(fd, "wb") as output, tarfile.open(
+        fileobj=output, mode=mode, dereference=False
+    ) as archive:
         encoded = (json.dumps(manifest, sort_keys=True, indent=2) + "\n").encode()
         info = tarfile.TarInfo(MANIFEST_NAME)
         info.size = len(encoded)
@@ -244,10 +251,12 @@ def _create(config, command):
     _selected(root, dict(command.get("policy") or {}))
     locks = STATE_ROOT / "backup-create-locks"
     locks.mkdir(parents=True, exist_ok=True)
+    if locks.is_symlink():
+        raise OSError("backup creation lock directory is unsafe")
     lock_path = locks / f"{instance_id}.lock"
-    if lock_path.is_symlink():
-        raise OSError("backup creation lock is unsafe")
-    with lock_path.open("a+b") as lock:
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC
+    fd = os.open(lock_path, flags, 0o600)
+    with os.fdopen(fd, "a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         try:
             return _create_unlocked(config, command)
@@ -353,14 +362,26 @@ def _create_unlocked(config, command):
 
 
 def _artifact(instance_id, backup_id):
-    instance_dir = (BACKUP_ROOT / _safe(instance_id)).resolve()
+    directory = BACKUP_ROOT / _safe(instance_id)
+    if BACKUP_ROOT.is_symlink() or directory.is_symlink():
+        raise OSError("unsafe backup storage boundary")
+    instance_dir = directory.resolve()
     instance_dir.relative_to(BACKUP_ROOT)
-    matches = list(instance_dir.glob(f"{_safe(backup_id)}.tar*"))
+    # Do not treat an untrusted backup ID as a glob pattern. Imported backups
+    # are also eligible for an explicitly authorized customer delete.
+    token = _safe(backup_id)
+    matches = [path for suffix in (".tar.gz", ".tar", ".tgz")
+               if (path := instance_dir / (token + suffix)).exists()
+               or path.is_symlink()]
     if not matches:
         raise FileNotFoundError("backup artifact not found")
     if len(matches) > 1:
         raise RuntimeError("multiple backup artifacts found")
-    return matches[0]
+    artifact = matches[0]
+    info = artifact.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise OSError("unsafe backup artifact")
+    return artifact
 
 
 def _validate_manifest(record, manifest):
@@ -392,6 +413,9 @@ def _preserve_restored_owner(stage: Path, original: Path) -> None:
         elif not current.is_file():
             raise RuntimeError(f"unsupported restore staging entry: {current}")
         os.chown(current, owner.st_uid, owner.st_gid)
+    # tarfile may reset the staging root's mode from the archive. Preserve
+    # the actual live instance root permissions (not a broad default).
+    os.chmod(stage, stat.S_IMODE(owner.st_mode))
 
 
 def _restore_direct(config, command):
@@ -425,9 +449,8 @@ def _restore_direct(config, command):
         ):
             raise ValueError("unsupported backup manifest")
         _validate_manifest(record, manifest)
-    if was_running:
-        lifecycle(config, instance_id, "stop")
-
+    # Fail before stopping the game if the Agent cannot create the
+    # adjacent atomic-swap staging area.
     stage = Path(
         tempfile.mkdtemp(
             prefix=f".{root.name}.restore-",
@@ -437,6 +460,8 @@ def _restore_direct(config, command):
     moved_original = False
 
     try:
+        if was_running:
+            lifecycle(config, instance_id, "stop")
         manifest = _safe_extract(artifact, stage)
         _validate_manifest(record, manifest)
         manifest_path = stage / MANIFEST_NAME
@@ -492,6 +517,80 @@ def _restore_direct(config, command):
         "size_bytes": artifact.stat().st_size,
         "sha256": _digest(artifact),
     }
+
+
+def _create_via_privileged_helper(config, command, unit_template):
+    """Read protected instance data only through the validated systemd helper."""
+    def token(value):
+        raw = str(value or "").strip()
+        allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        if not raw or len(raw) > 191 or any(ch not in allowed for ch in raw):
+            raise ValueError("invalid privileged backup identifier")
+        return raw
+
+    command_id = token(command.get("command_id"))
+    instance_id = token(command.get("instance_id"))
+    agent_id = token(config.get("agent_id"))
+    _owned(config, instance_id)  # Agent identity and canonical root check.
+    policy = command.get("policy")
+    if not isinstance(policy, dict):
+        raise ValueError("privileged backup creation requires a policy")
+    if str(policy.get("consistency") or "live") != "live":
+        raise ValueError("privileged live backup create requires live consistency")
+
+    request_dir = STATE_ROOT / "privileged-backup-create"
+    request_dir.mkdir(parents=True, exist_ok=True)
+    (STATE_ROOT / "backup-create-locks").mkdir(parents=True, exist_ok=True)
+    instance_dir = BACKUP_ROOT / instance_id
+    instance_dir.mkdir(parents=True, exist_ok=True)
+    if request_dir.is_symlink() or instance_dir.is_symlink():
+        raise PermissionError("unsafe privileged backup create directory")
+    request_path = request_dir / f"{command_id}.request.json"
+    result_path = request_dir / f"{command_id}.result.json"
+    if request_path.is_symlink() or result_path.is_symlink():
+        raise PermissionError("unsafe privileged backup request boundary")
+    result_path.unlink(missing_ok=True)
+    _write(request_path, {
+        "schema_version": 1,
+        "kind": "CapivaraPrivilegedBackupCreateRequest",
+        "command_id": command_id,
+        "action": "create",
+        "instance_id": instance_id,
+        "agent_id": agent_id,
+        "policy": policy,
+    })
+
+    try:
+        unit = unit_template.format(command_id=command_id, instance_id=instance_id)
+    except (ValueError, KeyError) as exc:
+        raise RuntimeError("invalid privileged backup create unit template") from exc
+    if unit != f"capivara-agent-backup-create@{command_id}.service":
+        raise PermissionError("unapproved privileged backup create unit")
+
+    completed = subprocess.run(
+        ["systemctl", "start", unit, "--no-pager"],
+        capture_output=True, text=True, check=False, timeout=3600,
+    )
+    try:
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        if completed.returncode != 0:
+            raise RuntimeError((completed.stderr or completed.stdout
+                                or "privileged backup create failed")[:2000]) from exc
+        raise RuntimeError("privileged backup create returned no valid result") from exc
+    if completed.returncode != 0 or result.get("status") != "completed":
+        raise RuntimeError(str(result.get("error") or completed.stderr
+                               or "privileged backup create failed")[:2000])
+    for name, expected in (
+        ("command_id", command_id), ("instance_id", instance_id),
+        ("agent_id", agent_id), ("action", "create"),
+    ):
+        if str(result.get(name) or "") != expected:
+            raise RuntimeError(f"privileged backup create {name} mismatch")
+    operation = result.get("operation")
+    if not isinstance(operation, dict) or not operation.get("artifact_path") or not operation.get("sha256"):
+        raise RuntimeError("privileged backup create returned invalid operation")
+    return operation
 
 
 def _restore_via_privileged_helper(config, command, unit_template):
@@ -664,7 +763,21 @@ def apply_backup_commands(
         try:
             action = str(command.get("action") or "create")
             if action == "create":
-                detail = _create(config, command)
+                unit_template = str(os.environ.get("CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE") or "").strip()
+                if unit_template:
+                    record, selected_root = _owned(config, command["instance_id"])
+                    canonical_root = Path("/var/lib/capivara-instances") / _safe(command["instance_id"])
+                    protected_external = (
+                        os.environ.get("CAPIVARA_AGENT_MODE") != "hybrid"
+                        and selected_root == canonical_root
+                        and str(record.get("files_root") or "") == str(canonical_root)
+                        and str(record.get("instance_state_root") or "") == str(canonical_root)
+                        and str((command.get("policy") or {}).get("consistency") or "live") == "live"
+                    )
+                else:
+                    protected_external = False
+                detail = (_create_via_privileged_helper(config, command, unit_template)
+                          if protected_external else _create(config, command))
             elif action == "restore":
                 detail = _restore(config, command)
             elif action == "delete":
@@ -698,17 +811,36 @@ def apply_backup_commands(
     return reports
 
 
+# Keep the reporting window bounded without starving older result receipts.
+# The Agent process lives across heartbeats, so subsequent polls advance the window.
+_BACKUP_STATE_CURSOR = 0
+
+
 def backup_state():
-    output = []
+    global _BACKUP_STATE_CURSOR
+
     paths = sorted(RESULT_ROOT.glob("*.json")) if RESULT_ROOT.exists() else []
-    for path in paths:
+    if not paths:
+        _BACKUP_STATE_CURSOR = 0
+        return []
+
+    # Controller accepts at most 500 reports per call. Paginate over *all*
+    # receipts rather than returning the same lexicographically last 500,
+    # which can permanently hide completed/failed commands after a backlog.
+    start = _BACKUP_STATE_CURSOR % len(paths)
+    count = min(500, len(paths))
+    selected = [paths[(start + index) % len(paths)] for index in range(count)]
+    _BACKUP_STATE_CURSOR = (start + count) % len(paths)
+
+    output = []
+    for path in selected:
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except (OSError, ValueError, UnicodeError):
             continue
         if isinstance(value, dict):
             output.append(value)
-    return output[-500:]
+    return output
 
 
 __all__ = ["apply_backup_commands", "backup_state"]

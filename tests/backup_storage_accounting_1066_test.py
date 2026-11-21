@@ -12,7 +12,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
 import backup_client
-from backup_storage_accounting import backup_inventory, quota_snapshot
+from backup_storage_accounting import backup_inventory, quota_snapshot, source_size, physical_backup_catalog
 
 
 def create_tar(path: Path, *, payload: bool) -> None:
@@ -116,6 +116,87 @@ class BackupStorageAccounting1066(unittest.TestCase):
         (folder / "hardlink.tar.gz").hardlink_to(external)
         with self.assertRaisesRegex(OSError, "hardlinked"):
             backup_inventory(self.archive_root, "instance-one")
+
+    def test_shared_workshop_hardlinks_are_charged_conservatively_and_archived(self):
+        # A Workshop cache file is hardlinked into the instance's private
+        # content tree. The cache outside the private root is not archived.
+        cache = self.root / "shared-workshop" / "mod.cpp"
+        cache.parent.mkdir()
+        payload = b"shared-workshop-fixture"
+        cache.write_bytes(payload)
+        mods = self.private / "content" / "workshop" / "steam-workshop:2289456201"
+        mods.mkdir(parents=True)
+        private_mod = mods / "mod.cpp"
+        private_mod.hardlink_to(cache)
+        self.assertEqual(private_mod.stat().st_nlink, 2)
+
+        expected = len(b"live-world") + len(payload)
+        snapshot = quota_snapshot(self.record, self.archive_root)
+        self.assertEqual(snapshot["instance_used_bytes"], expected)
+        self.assertEqual(source_size([self.private], self.private), expected)
+
+        # Charge the full private file size to a second instance too: neither
+        # owner gets a zero-cost shared inode or another owner's file.
+        other = self.root / "instance-two"
+        other.mkdir()
+        (other / "mod.cpp").hardlink_to(cache)
+        record_two = dict(self.record, instance_id="instance-two",
+                          instance_state_root=str(other), files_root=str(other))
+        self.assertEqual(
+            quota_snapshot(record_two, self.archive_root)["instance_used_bytes"],
+            len(payload),
+        )
+
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            created = backup_client._create(self.config, self.command())
+        with tarfile.open(created["artifact_path"], "r:*") as archive:
+            files = [item for item in archive.getmembers()
+                     if item.name.lstrip("./") == "content/workshop/steam-workshop:2289456201/mod.cpp"]
+            self.assertEqual(len(files), 1)
+            self.assertTrue(files[0].isfile())
+            self.assertEqual(archive.extractfile(files[0]).read(), payload)
+        self.assertEqual(cache.read_bytes(), payload)
+        self.assertEqual(private_mod.read_bytes(), payload)
+
+    def test_physical_archive_catalog_lists_imported_and_unindexed_files(self):
+        folder = self.archive_root / "instance-one"
+        folder.mkdir()
+        one = folder / "import-001.tar.gz"
+        two = folder / "historical-002.tgz"
+        other = folder / "transfer.partial"
+        one.write_bytes(b"x" * 150)
+        two.write_bytes(b"y" * 200)
+        other.write_bytes(b"z" * 50)
+        result = physical_backup_catalog(self.archive_root, "instance-one")
+        self.assertEqual(result["total_files"], 3)
+        self.assertEqual(result["total_bytes"], 400)
+        self.assertFalse(result["truncated"])
+        ids = {x["backup_id"]: x for x in result["files"] if x["backup_id"]}
+        self.assertEqual(set(ids), {"import-001", "historical-002"})
+        self.assertTrue(all(x["kind"] == "archive_unverified" for x in ids.values()))
+        self.assertFalse(any("path" in item for item in result["files"]))
+        self.assertEqual(next(x for x in result["files"] if x["filename"]=="transfer.partial")["kind"], "other_file")
+
+        smaller = physical_backup_catalog(self.archive_root, "instance-one", limit=2)
+        self.assertTrue(smaller["truncated"])
+        self.assertEqual(len(smaller["files"]), 2)
+        self.assertEqual(smaller["total_bytes"], 400)
+        self.assertEqual(len(list(folder.iterdir())), 3)
+
+    def test_physical_catalog_does_not_follow_symlinks_or_hardlinks(self):
+        folder = self.archive_root / "instance-one"
+        folder.mkdir()
+        target = self.root / "another-client.tar.gz"
+        target.write_bytes(b"outside")
+        shortcut = folder / "trick.tar.gz"
+        shortcut.symlink_to(target)
+        with self.assertRaisesRegex(OSError, "unsafe"):
+            physical_backup_catalog(self.archive_root, "instance-one")
+        shortcut.unlink()
+        linked = folder / "linked.tar.gz"
+        linked.hardlink_to(target)
+        with self.assertRaisesRegex(OSError, "unsafe"):
+            physical_backup_catalog(self.archive_root, "instance-one")
 
     def test_full_quota_blocks_without_touching_history_or_game(self):
         previous = self.archive_root / "instance-one" / "history.tar.gz"

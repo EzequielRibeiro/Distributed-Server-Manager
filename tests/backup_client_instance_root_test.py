@@ -348,5 +348,135 @@ class BackupClientInstanceRootTest(unittest.TestCase):
         )
 
 
+    def test_archive_destination_symlink_cannot_be_overwritten(self):
+        outside = self.root / "outside.txt"
+        outside.write_text("untouched", encoding="utf-8")
+        link = self.root / "backup.tar.gz"
+        link.symlink_to(outside)
+        with self.assertRaises((FileExistsError, OSError)):
+            backup_client._create_archive(
+                self.private, [self.private], link, "gzip",
+                {"kind": "CapivaraInstanceBackup"},
+            )
+        self.assertEqual(outside.read_text(encoding="utf-8"), "untouched")
+
+    def test_privileged_create_dispatch_checks_result_identity(self):
+        import json
+        command = self.command()
+        command["command_id"] = "backup-command-safe"
+        template = "capivara-agent-backup-create@{command_id}.service"
+
+        def fake_systemctl(args, **kwargs):
+            self.assertEqual(
+                args, ["systemctl", "start",
+                       "capivara-agent-backup-create@backup-command-safe.service",
+                       "--no-pager"],
+            )
+            request = backup_client.STATE_ROOT / "privileged-backup-create" / (
+                command["command_id"] + ".request.json"
+            )
+            payload = json.loads(request.read_text())
+            self.assertEqual(payload["instance_id"], "instance-safe")
+            self.assertEqual(payload["action"], "create")
+            result = request.with_name(command["command_id"] + ".result.json")
+            result.write_text(json.dumps({
+                "status": "completed", "action": "create",
+                "command_id": command["command_id"],
+                "instance_id": "instance-safe", "agent_id": "agent-safe",
+                "operation": {
+                    "backup_id": "new-backup",
+                    "artifact_path": str(self.root / "backups" / "new.tar.gz"),
+                    "sha256": "abc",
+                },
+            }))
+            return types.SimpleNamespace(returncode=0, stderr="", stdout="")
+
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
+             patch.object(backup_client.subprocess, "run", side_effect=fake_systemctl):
+            result = backup_client._create_via_privileged_helper(
+                self.config, command, template,
+            )
+        self.assertEqual(result["backup_id"], "new-backup")
+        self.assertTrue((self.root / "backups" / "instance-safe").is_dir())
+
+    def test_privileged_create_rejects_arbitrary_systemd_unit(self):
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
+             patch.object(backup_client.subprocess, "run") as run:
+            with self.assertRaisesRegex(PermissionError, "unapproved"):
+                backup_client._create_via_privileged_helper(
+                    self.config, self.command(), "other-root@{command_id}.service",
+                )
+            run.assert_not_called()
+
+
+    def test_custom_pool_preserves_unprivileged_backup_behavior(self):
+        import os
+        command = self.command()
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
+             patch.dict(os.environ, {
+                 "CAPIVARA_BACKUP_CREATE_UNIT_TEMPLATE":
+                     "capivara-agent-backup-create@{command_id}.service"
+             }), patch.object(backup_client, "_create_via_privileged_helper") as privileged:
+            reports = backup_client.apply_backup_commands(self.config, [command])
+        self.assertEqual(reports[0]["status"], "completed", reports)
+        self.assertTrue(Path(reports[0]["artifact_path"]).is_file())
+        privileged.assert_not_called()
+
+
+    def test_backup_state_rotates_across_large_result_history(self):
+        """Every local receipt reaches the Controller across repeated polls."""
+        import json
+
+        result_root = backup_client.RESULT_ROOT
+        result_root.mkdir(parents=True, exist_ok=True)
+        expected = set()
+
+        for index in range(1205):
+            command_id = f"receipt-{index:04d}"
+            expected.add(command_id)
+            (result_root / f"{command_id}.json").write_text(
+                json.dumps({
+                    "command_id": command_id,
+                    "instance_id": "instance-safe",
+                    "action": "create",
+                    "status": "failed",
+                }),
+                encoding="utf-8",
+            )
+
+        # A malformed receipt must not block any other pending report.
+        (result_root / "receipt-corrupt.json").write_text(
+            "{not-json", encoding="utf-8"
+        )
+
+        previous_cursor = backup_client._BACKUP_STATE_CURSOR
+        try:
+            backup_client._BACKUP_STATE_CURSOR = 0
+            reported = set()
+            for _ in range(3):
+                page = backup_client.backup_state()
+                ids = [item["command_id"] for item in page]
+                self.assertLessEqual(len(page), 500)
+                self.assertEqual(len(ids), len(set(ids)))
+                reported.update(ids)
+
+            self.assertEqual(reported, expected)
+
+            # Dynamic arrivals also become visible, not just the initial set.
+            new_id = "receipt-new"
+            (result_root / f"{new_id}.json").write_text(
+                json.dumps({"command_id": new_id, "status": "completed"}),
+                encoding="utf-8",
+            )
+            later = {
+                item["command_id"]
+                for _ in range(3)
+                for item in backup_client.backup_state()
+            }
+            self.assertIn(new_id, later)
+        finally:
+            backup_client._BACKUP_STATE_CURSOR = previous_cursor
+
+
 if __name__ == "__main__":
     unittest.main()

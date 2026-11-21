@@ -1,0 +1,26 @@
+[Unit]
+Description=Capivara Agent constrained backup creation for %i
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=CAPIVARA_AGENT_ROOT=/opt/capivara-agent
+Environment=CAPIVARA_AGENT_STATE_DIR=/var/lib/capivara-agent
+Environment=CAPIVARA_AGENT_CONFIG=/etc/capivara-agent/agent.json
+Environment=CAPIVARA_AGENT_RESULT_USER=capivara-agent
+ExecStart=/usr/bin/python3 /opt/capivara-agent/privileged/create_instance_backup.py %i
+TimeoutStartSec=3550
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/capivara-agent/backups /var/lib/capivara-agent/privileged-backup-create /var/lib/capivara-agent/backup-create-locks
+ReadOnlyPaths=/var/lib/capivara-instances
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true

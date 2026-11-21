@@ -126,6 +126,7 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
                     "geteuid",
                     return_value=0,
                 ),
+                patch.dict(os.environ, {"CAPIVARA_AGENT_MODE": "hybrid"}),
                 patch.object(
                     restore_instance_backup.backup_client,
                     "_restore_direct",
@@ -157,6 +158,65 @@ class HybridPrivilegedBackupRestoreTest(unittest.TestCase):
                 },
             )
             prepare_files.assert_called_once_with("instance-1")
+
+    def test_external_root_scope_and_systemd_contract(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "managed-instances"
+            parent.mkdir(mode=0o700)
+            current = parent / "instance-1"
+            current.mkdir()
+            record = {
+                "instance_id": "instance-1",
+                "instance_state_root": str(current),
+                "files_root": str(current),
+            }
+            with patch.object(restore_instance_backup.backup_client, "_owned",
+                              return_value=(record, current)):
+                restore_instance_backup._validate_external_target(
+                    {}, "instance-1", _approved_parent=parent,
+                )
+                parent.chmod(0o777)
+                with self.assertRaisesRegex(PermissionError, "approved"):
+                    restore_instance_backup._validate_external_target(
+                        {}, "instance-1", _approved_parent=parent,
+                    )
+        unit = (ROOT / "agents/linux/services/capivara-agent-backup-restore@.service").read_text()
+        agent = (ROOT / "agents/linux/services/capivara-agent.service").read_text()
+        self.assertIn("User=root", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("ReadWritePaths=/var/lib/capivara-agent /var/lib/capivara-instances", unit)
+        self.assertNotIn("/", next(line for line in unit.splitlines() if line.startswith("ReadWritePaths=")).split("=", 1)[1].split())
+        self.assertIn("CAPIVARA_BACKUP_RESTORE_UNIT_TEMPLATE=capivara-agent-backup-restore@", agent)
+
+    def test_external_helper_never_recursively_relaxes_file_permissions(self):
+        with tempfile.TemporaryDirectory() as temp:
+            requests = Path(temp) / "requests"
+            requests.mkdir()
+            config_path = Path(temp) / "agent.json"
+            config_path.write_text(json.dumps({"agent_id": "agent-1"}))
+            command_id = "test-restore"
+            (requests / f"{command_id}.request.json").write_text(json.dumps({
+                "kind": "CapivaraPrivilegedBackupRestoreRequest",
+                "command_id": command_id, "action": "restore",
+                "agent_id": "agent-1", "instance_id": "instance-1",
+                "backup_id": "backup-1",
+            }))
+            with (
+                patch.object(restore_instance_backup, "REQUEST_ROOT", requests),
+                patch.object(restore_instance_backup, "CONFIG_PATH", config_path),
+                patch.object(restore_instance_backup.os, "geteuid", return_value=0),
+                patch.dict(os.environ, {"CAPIVARA_AGENT_MODE": "external"}),
+                patch.object(restore_instance_backup, "_validate_external_target") as check,
+                patch.object(restore_instance_backup.backup_client, "_restore_direct",
+                             return_value={"backup_id": "backup-1"}) as restore,
+                patch.object(restore_instance_backup.prepare_customer_files, "run") as chmod_tree,
+                patch.object(restore_instance_backup, "_write_result"),
+            ):
+                result = restore_instance_backup.run(command_id)
+            self.assertEqual(result["status"], "completed")
+            check.assert_called_once_with({"agent_id": "agent-1"}, "instance-1")
+            restore.assert_called_once()
+            chmod_tree.assert_not_called()
 
     def test_installer_preserves_private_storage_boundary(self):
         installer = (

@@ -27,6 +27,8 @@ on:
       - 'tests/agent_instance_state_systemd_e2e.sh'
       - 'tests/agent_systemd_materializer_regression_test.py'
       - 'tests/dayz_customer_file_isolation_test.py'
+      - 'tests/dayz_namalsk_content_projection_test.py'
+      - 'tests/dayz_keyring_mode_reconciliation_test.py'
       - 'tests/agent_instance_runtime_test.py'
       - 'tests/agent_instance_materialization_test.py'
       - 'tests/agent_game_runtime_profiles_test.py'
@@ -104,7 +106,30 @@ jobs:
         run: sudo --preserve-env=GITHUB_WORKSPACE bash tests/agent_instance_state_systemd_e2e.sh
 
       - name: Validate DayZ private root and virtual customer files
-        run: python3 -m pytest tests/dayz_customer_file_isolation_test.py -q
+        run: python3 -m pytest tests/dayz_customer_file_isolation_test.py tests/dayz_namalsk_content_projection_test.py tests/dayz_keyring_mode_reconciliation_test.py -q
+
+      - name: Validate conservative shared Workshop backup accounting
+        run: python3 -m unittest tests/backup_storage_accounting_1066_test.py
+
+      - name: Verify external backup restore permissions and rollback
+        run: |
+          python3 -m unittest tests/hybrid_privileged_backup_restore_test.py
+          python3 -m unittest tests/backup_restore_rollback_safety_test.py
+
+      - name: Verify failed backup retry guard and protected create dispatch
+        run: |
+          python3 -m unittest tests/backup_schedule_retry_guard_test.py
+          python3 -m unittest tests/backup_client_instance_root_test.py
+          python3 -m py_compile agents/linux/privileged/create_instance_backup.py agents/linux/privileged/restore_instance_backup.py agents/linux/runtime/backup_client.py database/backup_repository.py
+      - name: Exercise protected backup creation and isolated restore with real systemd
+        run: sudo --preserve-env=GITHUB_WORKSPACE bash tests/backup_privileged_create_systemd_e2e.sh
+      - name: Validate physical backup inventory and customer deletion
+        run: |
+          python3 -m unittest tests/backup_storage_accounting_1066_test.py
+          python3 -m unittest tests/customer_backup_physical_inventory_test.py
+          python3 -m unittest tests/backup_archive_guards_test.py
+          node --check dashboard/web/customer-instance-v2.js
+          node --check dashboard/web/customer-backup-transfer.js
 
       - name: Run managed firewall lifecycle tests
         run: |
@@ -212,13 +237,13 @@ jobs:
       - name: Validate Agent package
         run: bash tests/agent_package_test.sh
 
-  package_rc6_homologation:
+  package_rc7_homologation:
     name: Build verified rc.6 artifact (no publication or deployment)
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.number == 1096 &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.head_ref == 'homolog/2.0.133-rc.6-dayz-isolation-20261119'
+      github.head_ref == 'homolog/2.0.133-rc.7-dayz-isolation-20261119'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -237,18 +262,18 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
-          test "$(cat version)" = '2.0.133-rc.6'
+          test "$(cat version)" = '2.0.133-rc.7'
           python3 - <<'PY'
           import json
           from pathlib import Path
           r = json.loads(Path('release/readiness-v2.json').read_text(encoding='utf-8'))
-          assert r['release_version'] == '2.0.133-rc.6'
-          assert r['tag_name'] == 'v2.0.133-rc.6'
+          assert r['release_version'] == '2.0.133-rc.7'
+          assert r['tag_name'] == 'v2.0.133-rc.7'
           assert r['status'] == 'homologation-only'
           assert r['publish_release'] is False
           assert r['release_authorized'] is False
-          assert Path('release/RELEASE_TRIGGER').read_text().splitlines()[0] != '2.0.133-rc.6'
-          assert Path('release/RELEASE_NOTES_2.0.133-rc.6.md').is_file()
+          assert Path('release/RELEASE_TRIGGER').read_text().splitlines()[0] != '2.0.133-rc.7'
+          assert Path('release/RELEASE_NOTES_2.0.133-rc.7.md').is_file()
           PY
 
       - name: Run focused DayZ and Agent permission regression
@@ -257,19 +282,22 @@ jobs:
           python3 -m pytest -q \
             tests/dayz_customer_file_isolation_test.py \
             tests/agent_instance_state_access_test.py \
-            tests/agent_systemd_materializer_regression_test.py
+            tests/agent_systemd_materializer_regression_test.py \
+            tests/dayz_management_test.py \
+            tests/dayz_namalsk_content_projection_test.py \
+            tests/dayz_keyring_mode_reconciliation_test.py
 
       - name: Build, inspect and checksum RC package in disposable runner
         env:
           EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          ARTIFACT_DIR="$RUNNER_TEMP/dsm-rc6-artifacts"
+          ARTIFACT_DIR="$RUNNER_TEMP/dsm-rc7-artifacts"
           mkdir -p "$ARTIFACT_DIR"
           bash release/build_release.sh "$EXPECTED_COMMIT" "$ARTIFACT_DIR"
           (
             cd "$ARTIFACT_DIR"
-            sha256sum -c capivara-dsm-2.0.133-rc.6.tar.gz.sha256
+            sha256sum -c capivara-dsm-2.0.133-rc.7.tar.gz.sha256
           )
           python3 - "$ARTIFACT_DIR" "$EXPECTED_COMMIT" <<'PY'
           import hashlib
@@ -281,7 +309,7 @@ jobs:
 
           base = Path(sys.argv[1])
           expected_commit = sys.argv[2]
-          name = 'capivara-dsm-2.0.133-rc.6'
+          name = 'capivara-dsm-2.0.133-rc.7'
           archive = base / (name + '.tar.gz')
           manifest_path = base / (name + '.manifest.json')
           checksum_path = base / (name + '.tar.gz.sha256')
@@ -292,7 +320,7 @@ jobs:
           assert actual_hash == expected_hash
           manifest = json.loads(manifest_path.read_text())
           assert manifest['kind'] == 'CapivaraReleaseManifest'
-          assert manifest['version'] == '2.0.133-rc.6'
+          assert manifest['version'] == '2.0.133-rc.7'
           assert manifest['git_commit'] == expected_commit
           assert manifest['archive'] == archive.name
 
@@ -307,27 +335,31 @@ jobs:
                   file = tar.extractfile(name + '/' + path)
                   assert file is not None, path
                   return file.read()
-              assert member_bytes('version').decode().strip() == '2.0.133-rc.6'
+              assert member_bytes('version').decode().strip() == '2.0.133-rc.7'
               assert json.loads(member_bytes('release-manifest.json')) == manifest
               readiness = json.loads(member_bytes('release/readiness-v2.json'))
               assert readiness['publish_release'] is False
               assert readiness['release_authorized'] is False
-              assert readiness['release_version'] == '2.0.133-rc.6'
+              assert readiness['release_version'] == '2.0.133-rc.7'
               for path in (
                   'agents/linux/runtime/dayz_customer_files_policy.py',
                   'agents/linux/runtime/materializers/instance_state_access.py',
                   'agents/linux/runtime/instance_files_client.py',
                   'agents/linux/privileged/materialize_instance.py',
+                  'agents/common/dayz_management.py',
+                  'agents/linux/runtime/content_activation_dayz.py',
+                  'agents/linux/privileged/create_instance_backup.py',
+                  'tests/dayz_keyring_mode_reconciliation_test.py',
               ):
                   assert member_bytes(path)
-          print('VERIFIED UNRELEASED RC6 SHA256:', actual_hash)
+          print('VERIFIED UNRELEASED RC7 SHA256:', actual_hash)
           print('VERIFIED GIT COMMIT:', expected_commit)
           PY
 
       - name: Upload temporary, unreleaseable RC package for inspection
         uses: actions/upload-artifact@v4
         with:
-          name: dsm-2.0.133-rc.6-unreleased-${{ github.event.pull_request.head.sha }}
-          path: ${{ runner.temp }}/dsm-rc6-artifacts/*
+          name: dsm-2.0.133-rc.7-unreleased-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/dsm-rc7-artifacts/*
           if-no-files-found: error
           retention-days: 7

@@ -7,7 +7,16 @@ fail(){ printf 'Agent package build failed: %s\n' "$*" >&2; exit 1; }
 for command_name in git tar gzip sha256sum python3; do command -v "${command_name}" >/dev/null 2>&1 || fail "required command not found: ${command_name}"; done
 git -C "${ROOT}" rev-parse --verify "${REF}^{commit}" >/dev/null 2>&1 || fail "invalid Git ref: ${REF}"
 COMMIT=$(git -C "${ROOT}" rev-parse "${REF}^{commit}")
-VERSION=$(git -C "${ROOT}" show "${REF}:version" | tr -d '\r\n')
+SOURCE_VERSION=$(git -C "${ROOT}" show "${REF}:version" | tr -d '\r\n')
+VERSION="${SOURCE_VERSION}"
+# Preview-only packages must not change the project release version or
+# readiness metadata. An explicit double opt-in prevents accidental publishing
+# with a preview stamp in unattended release workflows.
+if [[ -n "${CAPIVARA_AGENT_PACKAGE_PREVIEW_VERSION:-}" ]]; then
+  [[ "${CAPIVARA_AGENT_PREVIEW_BUILD:-}" == "1" ]] || fail "preview version requires CAPIVARA_AGENT_PREVIEW_BUILD=1"
+  VERSION="${CAPIVARA_AGENT_PACKAGE_PREVIEW_VERSION}"
+  [[ "${VERSION}" == "${SOURCE_VERSION%%-*}-"* && "${VERSION}" != "${SOURCE_VERSION}" ]] || fail "preview version must be a distinct prerelease of ${SOURCE_VERSION%%-*}"
+fi
 [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || fail "invalid SemVer: ${VERSION}"
 SOURCE_DATE_EPOCH=$(git -C "${ROOT}" show -s --format=%ct "${COMMIT}")
 CHANNEL=stable; [[ "${VERSION}" == *-* ]] && CHANNEL=beta
@@ -74,16 +83,19 @@ copy agents/linux/privileged/reconcile_firewall.py agent/privileged/reconcile_fi
 copy agents/linux/privileged/reconcile_runtime_identity.py agent/privileged/reconcile_runtime_identity.py
 copy agents/linux/privileged/uninstall_agent.py agent/privileged/uninstall_agent.py
 copy agents/linux/privileged/console_journal_reader.py agent/privileged/console_journal_reader.py
+copy agents/linux/privileged/prepare_customer_files.py agent/privileged/prepare_customer_files.py
+copy agents/linux/privileged/restore_instance_backup.py agent/privileged/restore_instance_backup.py
+copy agents/linux/privileged/create_instance_backup.py agent/privileged/create_instance_backup.py
 copy agents/linux/policy/49-capivara-agent-instance-units.rules agent/policy/49-capivara-agent-instance-units.rules
 copy agents/linux/updater/updater.py agent/updater/updater.py
-for file in capivara-agent.service capivara-agent-console-reader.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-firewall@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do copy "agents/linux/services/${file}" "services/${file}"; done
+for file in capivara-agent.service capivara-agent-console-reader.service capivara-agent-update.service capivara-agent-update.path capivara-agent-materialize@.service capivara-agent-firewall@.service capivara-agent-backup-restore@.service capivara-agent-backup-create@.service capivara-agent-runtime-identity.service capivara-agent-uninstall.service capivara-agent-uninstall.path; do copy "agents/linux/services/${file}" "services/${file}"; done
 printf '%s\n' "${VERSION}" >"${PACKAGE_ROOT}/VERSION"
 printf '%s\n' 'Runtime configuration is created during installation. Pairing secrets are never packaged.' >"${PACKAGE_ROOT}/config/README.md"
 chmod 0755 "${PACKAGE_ROOT}/install-agent.sh"
 for executable in agent.py local_cli.py controller_cli.py relink_cli.py cap_dispatch.py game_data_executor.py provisioning_executor.py storage_pool_migration_executor.py; do
   [[ ! -f "${PACKAGE_ROOT}/agent/runtime/${executable}" ]] || chmod 0755 "${PACKAGE_ROOT}/agent/runtime/${executable}"
 done
-chmod 0755 "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_firewall.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/privileged/uninstall_agent.py" "${PACKAGE_ROOT}/agent/privileged/console_journal_reader.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
+chmod 0755 "${PACKAGE_ROOT}/agent/privileged/materialize_instance.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_firewall.py" "${PACKAGE_ROOT}/agent/privileged/reconcile_runtime_identity.py" "${PACKAGE_ROOT}/agent/privileged/uninstall_agent.py" "${PACKAGE_ROOT}/agent/privileged/console_journal_reader.py" "${PACKAGE_ROOT}/agent/privileged/prepare_customer_files.py" "${PACKAGE_ROOT}/agent/privileged/restore_instance_backup.py" "${PACKAGE_ROOT}/agent/privileged/create_instance_backup.py" "${PACKAGE_ROOT}/agent/updater/updater.py"
 find "${PACKAGE_ROOT}/agent" -type f ! -perm -0100 -exec chmod 0644 {} +
 chmod 0644 "${PACKAGE_ROOT}/services/"* "${PACKAGE_ROOT}/VERSION" "${PACKAGE_ROOT}/config/README.md"
 python3 - "${PACKAGE_ROOT}" "${VERSION}" "${COMMIT}" "${CHANNEL}" <<'PY'

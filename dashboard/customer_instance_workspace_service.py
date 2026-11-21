@@ -327,10 +327,65 @@ class CustomerInstanceWorkspaceService:
  def backup_policy(self,user,instance_id):self.require(user,instance_id,"backup.read");return self.repo.backup_policy(instance_id)
  def save_backup_policy(self,user,instance_id,body):self.require(user,instance_id,"backup.create");return self.repo.save_backup_policy(instance_id,enabled=bool(body.get("enabled",True)),schedule_time=body.get("schedule_time") or "04:00",schedule_timezone=body.get("schedule_timezone") or "UTC",healthy_only=True)
  def backup_jobs(self,user,instance_id):self.require(user,instance_id,"backup.read");self.backups.initialize();return annotate_backup_jobs(self.backups.list_effective_jobs(instance_id=instance_id,limit=100))
+ def backup_catalog(self,user,instance_id):
+  """Per-instance physical inventory from the authenticated owning Agent.
+
+  Inventory is observational; an archive may be invalid or unrestorable.
+  It is not a successful create job, nor an automatic deletion permission.
+  """
+  context=self.require(user,instance_id,"backup.read")
+  agent_id=str(context.get("agent_id") or "")
+  metadata=self._location(agent_id).get("agent_metadata") or {}
+  if not isinstance(metadata,dict):metadata={}
+  samples=metadata.get("instance_telemetry") or []
+  sample=next((item for item in reversed(samples) if isinstance(item,dict)
+               and str(item.get("instance_id") or "")==str(instance_id)),{})
+  inventory=sample.get("backup_physical_catalog") if isinstance(sample,dict) else None
+  if not isinstance(inventory,dict) or inventory.get("status")!="ok" or str(inventory.get("instance_id") or "")!=str(instance_id):
+   return {"status":"unavailable","files":[],"total_files":None,"total_bytes":None}
+  files=[]
+  for row in (inventory.get("files") or [])[:1024]:
+   if not isinstance(row,dict):continue
+   bid=row.get("backup_id");filename=row.get("filename")
+   if not isinstance(filename,str) or len(filename)>255:continue
+   if bid is not None and (not isinstance(bid,str) or len(bid)>191):continue
+   size=row.get("size_bytes")
+   if type(size) is not int or size<0:continue
+   files.append({"filename":filename,"backup_id":bid,"size_bytes":size,
+                 "kind":"archive_unverified" if row.get("kind")=="archive_unverified" and bid else "other_file",
+                 "modified_at":row.get("modified_at"),"physical_verification":"not_checked"})
+  return {"status":"ok","instance_id":instance_id,"files":files,
+          "total_files":inventory.get("total_files"),
+          "total_bytes":inventory.get("total_bytes"),
+          "checked_at":inventory.get("checked_at"),
+          "truncated":bool(inventory.get("truncated"))}
  def request_backup(self,user,instance_id,action,backup_id=None):
   action=str(action or "").lower();required={"create":"backup.create","restore":"backup.restore","delete":"backup.delete"}.get(action)
   if required is None:raise ValueError("invalid backup action")
-  self.require(user,instance_id,required);self.backups.initialize();return self.backups.request(instance_id,action=action,backup_id=backup_id,reason="customer",requested_by=str(user.get("username") or "customer"))
+  self.require(user,instance_id,required);self.backups.initialize()
+  if action=="delete":
+   target=str(backup_id or "").strip()
+   if not target:raise ValueError("backup ID required for customer deletion")
+   catalog=self.backup_catalog(user,instance_id)
+   if catalog.get("status")=="ok":
+    # A customer may remove a physical historical/imported archive, but
+    # cannot submit a guessed filename or a non-TAR result/partial file.
+    matches=[item for item in catalog.get("files",[])
+             if item.get("backup_id")==target and item.get("kind")=="archive_unverified"]
+    if len(matches)!=1:raise ValueError("backup file is not uniquely present in physical inventory")
+    from datetime import datetime,timezone
+    checked=str(catalog.get("checked_at") or "").replace("Z","+00:00")
+    try:age=abs((datetime.now(timezone.utc)-datetime.fromisoformat(checked)).total_seconds())
+    except (ValueError,TypeError):age=float("inf")
+    if age>300:raise ValueError("backup inventory is stale: refresh Agent before deleting")
+   else:
+    # Compatibility with legacy Agents: preserve deletion of records that
+    # the Controller has actually acknowledged, never accept guessed IDs.
+    jobs=self.backups.list_effective_jobs(instance_id=instance_id,limit=500)
+    if not any(job.get("action")=="create" and job.get("status")=="completed"
+               and str(job.get("backup_id"))==target for job in jobs):
+     raise ValueError("physical backup inventory is unavailable")
+  return self.backups.request(instance_id,action=action,backup_id=backup_id,reason="customer",requested_by=str(user.get("username") or "customer"))
  def upgrade_options(self,user,instance_id):
   context=self.require(user,instance_id,"contract.read");current=self._resolved_resource_policy(context,self.repo.workspace_policy(instance_id));catalog=catalog_resource_profiles(self.root,str(context.get("game_id") or ""));current_id=current.get("resource_profile_id");profiles=[]
   for item in catalog.get("profiles") or []:

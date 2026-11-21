@@ -78,6 +78,26 @@ class DayZManagementTest(unittest.TestCase):
   self.assertTrue((private/"init.c").is_file());self.assertTrue((private/"db"/"types.xml").is_file())
   self.assertEqual(current_mission(changed),"regular.namalsk")
   self.assertFalse(any(str(item.get("source") or "").startswith(str(self.state/"content")) for item in changed.get("seed_directories") or []))
+ def test_community_map_variants_are_labeled_and_stay_available_without_activation(self):
+  root=self.state/"content"/"maps"/"namalsk"/"Mission Files"
+  raw=[]
+  for mission_id in ("regular.namalsk","hardcore.namalsk"):
+   source=root/mission_id
+   source.mkdir(parents=True)
+   raw.append({"id":mission_id,"source":str(source),"content_id":"dayz-map:namalsk","name":"Namalsk"})
+  record={**self.record,"content_dayz_community_missions":raw}
+  view=discover_missions(record)
+  by_id={item["id"]:item for item in view["missions"]}
+  self.assertEqual(by_id["regular.namalsk"]["name"],"Namalsk — Regular")
+  self.assertEqual(by_id["hardcore.namalsk"]["name"],"Namalsk — Hardcore")
+  for mission_id in ("regular.namalsk","hardcore.namalsk"):
+   self.assertTrue(by_id[mission_id]["available"])
+   self.assertFalse(by_id[mission_id]["installed"])
+   self.assertTrue(by_id[mission_id]["can_activate"])
+  self.assertEqual(current_mission(record),"dayzOffline.chernarusplus")
+  self.assertFalse((self.state/"mpmissions"/"regular.namalsk").exists())
+  self.assertFalse((self.state/"mpmissions"/"hardcore.namalsk").exists())
+
  def test_mod_preflight_ignores_map_assignments(self):
   snapshot={"entries":[
    {"content_id":"map","game_id":"dayz","content_type":"map","managed_path":"/unused","dependencies":["missing-map-dependency"]},

@@ -416,7 +416,8 @@ def install_customer_instance_workspace(legacy, authenticate):
             elif path == PREFIX + "/backup-policy":
                 data = api.backup_policy(user, instance_id)
             elif path == PREFIX + "/backups":
-                data = {"jobs": api.backup_jobs(user, instance_id)}
+                data = {"jobs": api.backup_jobs(user, instance_id),
+                        "physical_catalog": api.backup_catalog(user, instance_id)}
             elif path == PREFIX + "/upgrade-options":
                 data = api.upgrade_options(user, instance_id)
             elif path == PREFIX + "/runtime-options":

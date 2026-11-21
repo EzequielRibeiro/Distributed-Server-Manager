@@ -22,7 +22,8 @@ def _folder(root: Path) -> None:
         raise OSError("backup directory unavailable or unsafe")
 
 
-def _physical_files(root: Path, *, missing_ok: bool = False):
+def _physical_files(root: Path, *, missing_ok: bool = False,
+                    allow_shared_hardlinks: bool = False):
     if not root.exists():
         if missing_ok and not root.is_symlink():
             return
@@ -45,10 +46,14 @@ def _physical_files(root: Path, *, missing_ok: bool = False):
                     if count > MAX_FILES:
                         raise OSError("storage inventory exceeds safe file limit")
                     identity = (info.st_dev, info.st_ino)
-                    if info.st_nlink > 1:
-                        # The same inode can be linked from another instance.
-                        # Never silently charge it twice or treat it as free.
+                    if info.st_nlink > 1 and not allow_shared_hardlinks:
+                        # Backup archives must not be shared with other storage
+                        # roots; their ownership and retention remain exclusive.
                         raise OSError("shared hardlinked storage cannot be attributed safely")
+                    # Instance-private content may hardlink a shared read-only
+                    # Workshop cache. Charge the *full* file size to this
+                    # instance, even if the inode is also used elsewhere.
+                    # Deduplicate only within the inventory we are walking.
                     if identity not in seen:
                         seen.add(identity)
                         yield Path(entry.path), info
@@ -111,6 +116,81 @@ def backup_inventory(backup_root: Path, instance_id: str, *, classify: bool = Tr
     }
 
 
+
+def physical_backup_catalog(backup_root: Path, instance_id: str,
+                            *, limit: int = 1024) -> dict[str, Any]:
+    """Read-only, bounded, *unverified* archive listing for customer inventory.
+
+    The client sees only names and sizes, never host paths. A file being
+    present does not prove it is a valid or restorable backup. Enumeration
+    rejects unsafe paths; deletion is a separate authorized operation.
+    """
+    from datetime import datetime, timezone
+
+    if not instance_id or len(instance_id) > 191 or any(
+        ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+        for ch in instance_id
+    ) or instance_id in {".", ".."}:
+        raise ValueError("invalid instance ID for physical backup catalog")
+    if not 1 <= limit <= 2048:
+        raise ValueError("physical backup catalog limit out of range")
+    base = Path(backup_root)
+    if base.is_symlink() or not base.is_dir():
+        raise OSError("backup storage root unavailable or unsafe")
+    directory = base / instance_id
+    if directory.is_symlink():
+        raise OSError("backup instance directory is a symlink")
+    if not directory.exists():
+        return {
+            "status": "ok", "instance_id": instance_id, "files": [],
+            "total_files": 0, "total_bytes": 0, "truncated": False,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+    _folder(directory)
+    items = []
+    total = 0
+    count = 0
+    with os.scandir(directory) as entries:
+        for entry in entries:
+            info = entry.stat(follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise OSError("unsafe physical backup inventory entry")
+            count += 1
+            if count > MAX_FILES:
+                raise OSError("physical backup inventory exceeds safe limit")
+            total += info.st_size
+            # .tar, .tgz, and .tar.gz are supported by _artifact() and delete.
+            filename = entry.name
+            suffix = next((ext for ext in (".tar.gz", ".tgz", ".tar")
+                           if filename.endswith(ext)), "")
+            backup_id = filename[:-len(suffix)] if suffix else None
+            if not backup_id or any(
+                ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-"
+                for ch in backup_id
+            ) or len(backup_id) > 191 or backup_id in {".", ".."}:
+                backup_id = None
+            items.append({
+                "filename": filename,
+                "backup_id": backup_id,
+                "size_bytes": info.st_size,
+                "modified_at": datetime.fromtimestamp(
+                    info.st_mtime, timezone.utc
+                ).isoformat(),
+                "kind": "archive_unverified" if backup_id else "other_file",
+                "physical_verification": "not_checked",
+            })
+    items.sort(key=lambda item: item["modified_at"], reverse=True)
+    return {
+        "status": "ok",
+        "instance_id": instance_id,
+        "files": items[:limit],
+        "total_files": count,
+        "total_bytes": total,
+        "truncated": count > limit,
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def quota_snapshot(record: dict[str, Any], backup_root: Path, *,
                    classify: bool = False) -> dict[str, Any]:
     """Snapshot private instance bytes + physical archives with overlap handled."""
@@ -121,7 +201,8 @@ def quota_snapshot(record: dict[str, Any], backup_root: Path, *,
     if not isinstance(instance_raw, str) or not instance_raw.startswith("/"):
         raise OSError("instance private state root unavailable")
     state_root = Path(instance_raw)
-    instance_used = sum(info.st_size for _, info in _physical_files(state_root))
+    instance_used = sum(info.st_size for _, info in _physical_files(
+        state_root, allow_shared_hardlinks=True))
     # If the backup directory is already part of the counted instance tree,
     # avoid adding the same bytes twice.
     backup_path = Path(backup_root) / iid
@@ -152,7 +233,7 @@ def source_size(paths: list[Path], source_root: Path) -> int:
         if item.is_file():
             files = [(item, item.stat())]
         else:
-            files = _physical_files(item)
+            files = _physical_files(item, allow_shared_hardlinks=True)
         for _, info in files:
             identity = (info.st_dev, info.st_ino)
             if identity in seen:
