@@ -32,8 +32,15 @@ from backend_factory import create_backend
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
 from agent_pairing_repository import AgentPairingRepository
-from agent_remote_http import dispatch_heartbeat, dispatch_fence_observation
+from agent_remote_http import (dispatch_heartbeat, dispatch_fence_observation,
+                               dispatch_enroll, dispatch_uninstall_result)
 from game_uptime_agent_wire import build_probe, verify_offer
+from game_uptime_controller_http_inflight import observe_controller_agent_inflight
+from game_uptime_controller_agent_http_flock import (
+    shared_controller_agent_http_lock, exclusive_controller_agent_http_lock,
+    ControllerHttpLockUnavailable,
+)
+from prepare_controller_agent_http_lock import provision_controller_agent_http_lock
 
 
 class ActualDispatcherSqliteHttpTests(unittest.TestCase):
@@ -383,6 +390,579 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(before_used, after_used)
         self.assertEqual(after_count, 1)
+
+
+    def test_controller_hold_blocks_agent_mutation_entries_without_database_writes(self):
+        """One grouped #928 regression: real HTTP/SQLite plus other dispatchers.
+
+        A held Controller must never admit a *new* heartbeat, enrollment or
+        uninstall result, but the normal heartbeat stays compatible after the
+        hold is absent. This does not prove in-flight work is drained.
+        """
+        from unittest.mock import patch
+
+        code, initial = self._request(self._payload())
+        self.assertEqual(code, 200, initial)
+        with sqlite3.connect(self.db_path) as db:
+            before = db.execute(
+                "SELECT last_used_at FROM agent_credentials WHERE id=?",
+                (self.identity.credential_id,),
+            ).fetchone()
+            inventory = db.execute(
+                "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                (self.agent_id,),
+            ).fetchone()
+
+        denied_cases = [
+            {"active": True, "reason": "root_owned_maintenance_hold"},
+            {"active": True, "reason": "hold_expired_requires_operator"},
+            {"active": True, "reason": "pending_journal_requires_operator_recovery"},
+        ]
+        for observed in denied_cases:
+            with self.subTest(observed=observed), \
+                 patch("agent_remote_http.observe_no_drain_hold",
+                       return_value=observed), \
+                 patch("agent_remote_http.enroll_remote_agent",
+                       side_effect=AssertionError("enroll called while held")), \
+                 patch("agent_remote_http.AgentPairingRepository",
+                       side_effect=AssertionError("credential write while held")):
+                code, response = self._request(self._payload())
+                self.assertEqual(code, 423, response)
+                self.assertEqual(response["reason"],
+                                 "controller_maintenance_hold_active")
+                self.assertFalse(response["remote_agent_quiescence_acked"])
+                self.assertFalse(response["live_no_drain_authorized"])
+                for name, (status, body) in (
+                    ("enroll", dispatch_enroll({"pairing_token": "test"},
+                                               backend=self.backend)),
+                    ("uninstall", dispatch_uninstall_result(
+                        {"status": "completed"}, headers={}, backend=self.backend)),
+                ):
+                    with self.subTest(endpoint=name):
+                        self.assertEqual(status, 423, body)
+                        self.assertFalse(body["live_no_drain_authorized"])
+
+        with patch("agent_remote_http.observe_no_drain_hold",
+                   side_effect=OSError("unreadable hold")):
+            code, response = self._request(self._payload())
+            self.assertEqual(code, 423, response)
+
+        with sqlite3.connect(self.db_path) as db:
+            self.assertEqual(before, db.execute(
+                "SELECT last_used_at FROM agent_credentials WHERE id=?",
+                (self.identity.credential_id,),
+            ).fetchone())
+            self.assertEqual(inventory, db.execute(
+                "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                (self.agent_id,),
+            ).fetchone())
+
+        with patch("agent_remote_http.observe_no_drain_hold",
+                   return_value={"active": False, "reason": "hold_absent"}):
+            code, resumed = self._request(self._payload())
+            self.assertEqual(code, 200, resumed)
+            self.assertEqual(resumed["health_status"], "online")
+
+
+    def test_three_controller_agent_mutations_are_counted_until_all_exit(self):
+        """Grouped concurrency and exception proof; never an update ACK.
+
+        Count one real invocation of each dispatcher while its maintenance
+        guard is still executing. Count must remain nonzero while in-flight,
+        and must return to zero on every exit.
+        """
+        from unittest.mock import patch
+
+        gate_barrier = threading.Barrier(4)
+        release = threading.Event()
+        completed = []
+        errors = []
+        denied = (423, {
+            "status": "blocked",
+            "reason": "controller_maintenance_hold_active",
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        })
+
+        def suspended_guard():
+            gate_barrier.wait(timeout=12)
+            if not release.wait(timeout=12):
+                raise AssertionError("inflight test release was not signalled")
+            return denied
+
+        calls = (
+            lambda: dispatch_enroll({"pairing_token": "not-used"}, backend=self.backend),
+            lambda: dispatch_heartbeat(self._payload(), headers={}, backend=self.backend),
+            lambda: dispatch_uninstall_result(
+                {"status": "completed"}, headers={}, backend=self.backend),
+        )
+
+        def run(call):
+            try:
+                completed.append(call())
+            except BaseException as exc:
+                errors.append(exc)
+
+        before = observe_controller_agent_inflight()
+        self.assertEqual(before["inflight_total"], 0)
+        threads = [threading.Thread(target=run, args=(call,), daemon=True)
+                   for call in calls]
+        try:
+            with patch("agent_remote_http._mutating_agent_api_hold_response",
+                       side_effect=suspended_guard):
+                for thread in threads:
+                    thread.start()
+                gate_barrier.wait(timeout=12)
+                while_running = observe_controller_agent_inflight()
+                self.assertEqual(while_running["inflight_total"], 3)
+                self.assertEqual(while_running["inflight"], {
+                    "enroll": 1, "heartbeat": 1, "uninstall_result": 1,
+                })
+                self.assertFalse(while_running["controller_http_acked"])
+                self.assertFalse(while_running["live_no_drain_authorized"])
+                self.assertEqual(while_running["scope"],
+                                 "three_agent_http_dispatchers_in_this_pid_only")
+        finally:
+            release.set()
+            for thread in threads:
+                thread.join(timeout=12)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(completed, [denied] * 3)
+        after = observe_controller_agent_inflight()
+        self.assertEqual(after["inflight_total"], 0)
+        self.assertEqual(after["generation"], before["generation"] + 6)
+        self.assertFalse(after["controller_http_acked"])
+        self.assertFalse(after["remote_agents_acked"])
+        self.assertFalse(after["external_jobs_acked"])
+        self.assertFalse(after["live_no_drain_authorized"])
+
+        # An already-admitted mutation remains counted *after* its hold
+        # check has passed. A new request may be rejected while the older
+        # request is still inside the business operation.
+        admitted = threading.Event()
+        proceed = threading.Event()
+        completed.clear()
+        errors.clear()
+
+        def suspended_enrollment(*_args, **_kwargs):
+            admitted.set()
+            if not proceed.wait(timeout=12):
+                raise AssertionError("enrollment test release was not signalled")
+            raise ValueError("synthetic rejected enrollment")
+
+        def enrollment_call():
+            return dispatch_enroll({"pairing_token": "test"}, backend=self.backend)
+
+        worker = threading.Thread(target=run, args=(enrollment_call,), daemon=True)
+        try:
+            with patch("agent_remote_http._mutating_agent_api_hold_response",
+                       return_value=None), \
+                 patch("agent_remote_http.enroll_remote_agent",
+                       side_effect=suspended_enrollment):
+                worker.start()
+                self.assertTrue(admitted.wait(timeout=12))
+                active = observe_controller_agent_inflight()
+                self.assertEqual(active["inflight_total"], 1)
+                self.assertEqual(active["inflight"]["enroll"], 1)
+                with patch("agent_remote_http._mutating_agent_api_hold_response",
+                           return_value=denied):
+                    self.assertEqual(
+                        dispatch_heartbeat(self._payload(), headers={},
+                                           backend=self.backend),
+                        denied)
+                self.assertEqual(
+                    observe_controller_agent_inflight()["inflight_total"], 1)
+        finally:
+            proceed.set()
+            worker.join(timeout=12)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(len(completed), 1)
+        self.assertEqual(completed[0][0], 409)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
+
+        with patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=RuntimeError("synthetic read error")):
+            with self.assertRaises(RuntimeError):
+                dispatch_heartbeat(self._payload(), headers={}, backend=self.backend)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
+
+
+    def test_controller_http_interprocess_flock_is_real_and_opt_in(self):
+        """Grouped: cross-process exclusion, request lifetime and fail closed.
+
+        Only temporary storage and subprocesses. Does not enable the optional
+        fence in a running Controller or turn a local lock into an ACK.
+        """
+        import os
+        import subprocess
+        from unittest.mock import patch
+        import game_uptime_controller_http_inflight as tracker
+
+        uid, gid = os.geteuid(), os.getegid()
+        folder = Path(self.temp.name) / "controller-http-root"
+        folder.mkdir(mode=0o755)
+        witness = folder / "controller-agent-http.lock"
+        denied = (423, {
+            "status": "blocked",
+            "reason": "controller_maintenance_hold_active",
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        })
+
+        provision_controller_agent_http_lock(uid, gid, path=witness,
+                                              parent_uid=uid)
+        original_inode = witness.stat().st_ino
+        provision_controller_agent_http_lock(uid, gid, path=witness,
+                                              parent_uid=uid)
+        self.assertEqual(witness.stat().st_ino, original_inode)
+        self.assertEqual(witness.stat().st_mode & 0o777, 0o600)
+
+        def shared():
+            return shared_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid, enabled=True)
+
+        def exclusive():
+            return exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid)
+
+        # Another actual Python PID tries to acquire the exclusive witness.
+        code = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, sys.argv[2])\n"
+            "from game_uptime_controller_agent_http_flock import "
+            "exclusive_controller_agent_http_lock, ControllerHttpLockUnavailable\n"
+            "try:\n"
+            "  with exclusive_controller_agent_http_lock("
+            "lock_path=Path(sys.argv[1]), expected_uid=int(sys.argv[3]), "
+            "expected_gid=int(sys.argv[4]), parent_uid=int(sys.argv[3])) as state:\n"
+            "    print('ACQUIRED:' + str(state['live_no_drain_authorized']))\n"
+            "except ControllerHttpLockUnavailable:\n"
+            "  print('BLOCKED')\n"
+        )
+
+        def child_probe():
+            run = subprocess.run(
+                [sys.executable, "-c", code, str(witness),
+                 str(ROOT / "dashboard"), str(uid), str(gid)],
+                capture_output=True, text=True, check=True, timeout=12)
+            return run.stdout.strip()
+
+        with shared():
+            self.assertEqual(child_probe(), "BLOCKED")
+        self.assertEqual(child_probe(), "ACQUIRED:False")
+
+        admitted = threading.Event()
+        release = threading.Event()
+        result = []
+        errors = []
+
+        def pending_dispatch():
+            try:
+                result.append(dispatch_heartbeat(
+                    self._payload(), headers={}, backend=self.backend))
+            except BaseException as exc:
+                errors.append(exc)
+
+        def held_admission():
+            admitted.set()
+            if not release.wait(timeout=12):
+                raise AssertionError("synthetic HTTP mutation timeout")
+            return denied
+
+        with patch.object(tracker, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=held_admission):
+            worker = threading.Thread(target=pending_dispatch, daemon=True)
+            try:
+                worker.start()
+                self.assertTrue(admitted.wait(timeout=12))
+                self.assertEqual(
+                    observe_controller_agent_inflight()["inflight_total"], 1)
+                self.assertEqual(child_probe(), "BLOCKED")
+            finally:
+                release.set()
+                worker.join(timeout=12)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(result, [denied])
+            self.assertEqual(child_probe(), "ACQUIRED:False")
+
+        # Exclusive coordinator occupancy prevents new request admission,
+        # even with the original business hold reader mocked as absent.
+        with patch.object(tracker, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=AssertionError("should not reach hold gate")):
+            with exclusive() as evidence:
+                self.assertFalse(evidence["controller_http_acked"])
+                self.assertFalse(evidence["live_no_drain_authorized"])
+                status, response = dispatch_heartbeat(
+                    self._payload(), headers={}, backend=self.backend)
+                self.assertEqual(status, 423, response)
+                self.assertEqual(response["reason"],
+                                 "controller_http_interprocess_fence_unavailable")
+            witness.chmod(0o666)
+            try:
+                status, response = dispatch_heartbeat(
+                    self._payload(), headers={}, backend=self.backend)
+                self.assertEqual(status, 423, response)
+            finally:
+                witness.chmod(0o600)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
+
+
+    def test_console_push_stream_respects_shared_flock_and_midstream_hold(self):
+        """One grouped #928 proof: entry denial, inflight fence and frame stop.
+
+        Uses the real Console Push server path, real temporary flock inode,
+        and existing temporary SQLite fixture. Does not run a host daemon.
+        """
+        import io
+        import os
+        from unittest.mock import patch
+        import agent_console_push as push
+
+        uid, gid = os.geteuid(), os.getegid()
+        folder = Path(self.temp.name) / "console-stream-fence"
+        folder.mkdir(mode=0o755)
+        witness = folder / "controller-agent-http.lock"
+        provision_controller_agent_http_lock(
+            uid, gid, path=witness, parent_uid=uid)
+
+        def shared():
+            return shared_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid, enabled=True)
+
+        def exclusive():
+            return exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid)
+
+        class FakeConnection:
+            def settimeout(self, _value):
+                pass
+
+        class FakeHandler:
+            def __init__(self):
+                self.rfile = io.BytesIO()
+                self.connection = FakeConnection()
+                self.responses = []
+
+            def send_json(self, status, body):
+                self.responses.append((status, body))
+
+        headers = {
+            "Transfer-Encoding": "chunked",
+            "Content-Type": "application/x-ndjson",
+        }
+
+        # A root-owned hold must reject BEFORE credential lookup, even with
+        # the optional cross-process fence disabled on current Controllers.
+        held = FakeHandler()
+        with patch.object(push, "observe_no_drain_hold",
+                          return_value={"active": True}), \
+             patch.object(push, "_authenticate",
+                          side_effect=AssertionError("unexpected authentication")):
+            push.serve_agent_console_stream(
+                held, headers=headers, backend=self.backend)
+        self.assertEqual(held.responses[-1][0], 423)
+        self.assertFalse(held.responses[-1][1]["live_no_drain_authorized"])
+
+        # Occupied exclusive inode must reject BEFORE authentication.
+        unavailable = FakeHandler()
+        with patch.object(push, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch.object(push, "_authenticate",
+                          side_effect=AssertionError("unexpected authentication")):
+            with exclusive() as evidence:
+                self.assertFalse(evidence["controller_http_acked"])
+                push.serve_agent_console_stream(
+                    unavailable, headers=headers, backend=self.backend)
+        self.assertEqual(unavailable.responses[-1][0], 423)
+        self.assertEqual(
+            unavailable.responses[-1][1]["reason"],
+            "controller_http_interprocess_fence_unavailable")
+
+        # While an already-admitted stream is paused between chunks, its
+        # shared lock must prevent a future exclusive coordinator takeover.
+        first = json.dumps({
+            "kind": "console-batch", "events": [
+                {"instance_id": "console-928", "cursor": "c1", "line": "first"}
+            ],
+        }).encode()
+        second = json.dumps({
+            "kind": "console-batch", "events": [
+                {"instance_id": "console-928", "cursor": "c2", "line": "second"}
+            ],
+        }).encode()
+        ready = threading.Event()
+        release = threading.Event()
+        now_held = {"active": False}
+        count = [0]
+        exceptions = []
+        handler = FakeHandler()
+
+        def chunk_reader(_stream):
+            count[0] += 1
+            if count[0] == 1:
+                return first
+            if count[0] == 2:
+                ready.set()
+                if not release.wait(timeout=12):
+                    raise AssertionError("console stream hold test timed out")
+                now_held["active"] = True
+                return second
+            return b""
+
+        def ingest():
+            try:
+                push.serve_agent_console_stream(
+                    handler, headers=headers, backend=self.backend)
+            except BaseException as exc:
+                exceptions.append(exc)
+
+        with patch.object(push, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch.object(push, "observe_no_drain_hold",
+                          side_effect=lambda: dict(now_held)), \
+             patch.object(push, "_authenticate",
+                          return_value={"agent_id": self.agent_id}), \
+             patch.object(push, "_owned_instances",
+                          return_value={"console-928"}), \
+             patch.object(push, "_read_chunk", side_effect=chunk_reader):
+            thread = threading.Thread(target=ingest, daemon=True)
+            try:
+                thread.start()
+                self.assertTrue(ready.wait(timeout=12))
+                with self.assertRaises(ControllerHttpLockUnavailable):
+                    with exclusive():
+                        self.fail("exclusive fence must reject live stream")
+            finally:
+                release.set()
+                thread.join(timeout=12)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(exceptions, [])
+        self.assertEqual(handler.responses[-1][0], 423)
+        self.assertFalse(handler.responses[-1][1]["live_no_drain_authorized"])
+        snapshot = push.console_push_snapshot("console-928")
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(
+            [line["cursor"] for line in snapshot["lines"]], ["c1"])
+        with exclusive() as evidence:
+            self.assertFalse(evidence["controller_http_acked"])
+        self.assertFalse(now_held["active"] is False)
+
+
+    def test_agent_installation_post_respects_hold_and_interprocess_fence(self):
+        """Single grouped #928 proof: hold, fail-closed, exclusive and inflight."""
+        import os
+        from unittest.mock import patch
+        import agent_installation_http as installation
+
+        uid, gid = os.geteuid(), os.getegid()
+        folder = Path(self.temp.name) / "installation-http-fence"
+        folder.mkdir(mode=0o755)
+        witness = folder / "controller-agent-http.lock"
+        provision_controller_agent_http_lock(
+            uid, gid, path=witness, parent_uid=uid)
+
+        def shared():
+            return shared_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid, enabled=True)
+
+        def exclusive():
+            return exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid)
+
+        install_path = installation.AGENT_INSTALLATIONS_PATH
+        probe_path = installation.AGENT_INSTALLATION_TEST_PATH
+        user, payload = {"role": "admin"}, {"fixture": True}
+
+        def call(path):
+            return installation.dispatch_agent_installation_post(
+                path, payload, user=user, backend=self.backend)
+
+        with patch.object(installation, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch.object(installation, "create_agent_installation_for_user",
+                          return_value={"installation_id": "temporary"}) as create, \
+             patch.object(installation, "test_agent_connection_for_user",
+                          return_value={"reachable": True}) as probe:
+            # Active/malformed/unreadable evidence blocks both routes before
+            # any outgoing SSH test or installer action.
+            for evidence in ({"active": True}, {"active": "unknown"}, None):
+                with patch.object(installation, "observe_no_drain_hold",
+                                  return_value=evidence):
+                    for path in (install_path, probe_path):
+                        code, body = call(path)
+                        self.assertEqual(code, 423, body)
+                        self.assertFalse(body["live_no_drain_authorized"])
+            with patch.object(installation, "observe_no_drain_hold",
+                              side_effect=OSError("cannot read hold")):
+                self.assertEqual(call(install_path)[0], 423)
+            create.assert_not_called()
+            probe.assert_not_called()
+
+            with patch.object(installation, "observe_no_drain_hold",
+                              return_value={"active": False}):
+                # A coordinator holding exclusive prevents new work.
+                with exclusive() as negative_evidence:
+                    self.assertFalse(negative_evidence["controller_http_acked"])
+                    for path in (install_path, probe_path):
+                        code, body = call(path)
+                        self.assertEqual(code, 423, body)
+                        self.assertEqual(
+                            body["reason"],
+                            "controller_http_interprocess_fence_unavailable")
+                create.assert_not_called()
+                probe.assert_not_called()
+
+                # Without maintenance, preserve both existing success paths.
+                self.assertEqual(call(install_path)[0], 201)
+                self.assertEqual(call(probe_path)[0], 200)
+                self.assertEqual(create.call_count, 1)
+                self.assertEqual(probe.call_count, 1)
+
+                # A live installation retains SH until the call has ended.
+                started, release = threading.Event(), threading.Event()
+                results = []
+
+                def in_flight(*_args):
+                    started.set()
+                    if not release.wait(timeout=10):
+                        raise RuntimeError("installation fixture timed out")
+                    return {"installation_id": "temporary"}
+
+                create.side_effect = in_flight
+                thread = threading.Thread(
+                    target=lambda: results.append(call(install_path)),
+                    daemon=True)
+                try:
+                    thread.start()
+                    self.assertTrue(started.wait(timeout=10))
+                    with self.assertRaises(ControllerHttpLockUnavailable):
+                        with exclusive():
+                            self.fail("must not fence in-flight installation")
+                finally:
+                    release.set()
+                    thread.join(timeout=10)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(results[0][0], 201)
+                with exclusive() as negative_evidence:
+                    self.assertFalse(negative_evidence["live_no_drain_authorized"])
+
 
 
 if __name__ == "__main__":

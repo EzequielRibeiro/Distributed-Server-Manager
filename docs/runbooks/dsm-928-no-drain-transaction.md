@@ -1084,3 +1084,190 @@ workers/executores privilegiados remotos, journal ou ACK positivo.
 Receber o recibo NÃO é quiescência. #928 permanece OPEN,
 live_no_drain_authorized=false, update.sh --no-drain continua
 diagnóstico/exit 2, e o release permanece bloqueado.
+
+
+## Etapa 2 — bloqueio dos três despachantes mutadores de Agent no Controller (21/11/2026)
+
+`dashboard/agent_remote_http.py` agora verifica o hold local **antes da primeira
+chamada ao repositório** nos despachantes `dispatch_enroll()`,
+`dispatch_heartbeat()` e `dispatch_uninstall_result()`. Quando
+`game_uptime_maintenance_hold.observe()` indica bloqueio ativo — inclusive
+marcador expirado, inválido ou apenas journal pendente após reboot — ou a
+leitura falha inesperadamente, os três retornam HTTP **423** com
+`controller_maintenance_hold_active`, sem autenticar, registrar heartbeat,
+despachar comandos, registrar instalação ou aceitar resultado de remoção.
+Não inclui token, ID de cliente ou outros segredos na resposta.
+Sem hold, o fluxo existente não muda.
+
+O endpoint separado `POST /api/agent/no-drain/observe` **continua disponível**
+por seu contrato autenticado `SELECT`-only de recibo negativo, sem comando ou
+ACK positivo.
+
+**Comprovação:** teste agrupado já existente em
+`tests/update_game_uptime_sqlite_http_integration_test.py` usa listener HTTP
+local + SQLite descartável para verificar bloqueio no heartbeat real, ausência
+de alteração de `last_used_at` e quantidade de inventário, proibição de
+enrollment/uninstall antes de autenticar e retomada do heartbeat sem hold.
+Inclui evidências de hold válido, expirado, journal pendente e falha de leitura.
+
+**Limite crítico:** a verificação é **admissão de nova requisição** e não
+retém um lock durante toda a chamada. Requisição que entrou antes do marcador
+pode continuar a executar; Console Push, outras rotas HTTP, jobs assíncronos,
+materializers, threads internas e Agents remotos ainda exigem fencing próprio.
+Ela não substitui a posse exclusiva de lease/journal coordenado com ACK
+autenticado de todos os hosts e contagem de operações em voo. **Não é uma
+barreira distribuída concluída.** Permanece `live_no_drain_authorized=false`,
+`update.sh --no-drain` apenas diagnóstico/exit 2, issue #928 aberta e
+release bloqueado. Nenhuma alteração em instalações ou jogos reais.
+
+
+## Etapa 2 — inventário *in-flight* dos três despachantes HTTP do Controller (21/11/2026)
+
+Complemento da barreira de ADMISSÃO introduzida na PR #1132.
+`dashboard/game_uptime_controller_http_inflight.py` instrumenta os três
+despachantes (`enroll`, `heartbeat`, `uninstall_result`) com contagem
+sincronizada por processo. A entrada incrementa a contagem **antes** da
+verificação de hold; a saída decrementa em `finally`, inclusive em erro ou
+HTTP 423. `observe_controller_agent_inflight()` fornece PID, geração
+monotônica e contagens por rota em uma só leitura sincronizada. Não registra
+credenciais/payloads e não altera respostas, gravações ou filas normais.
+
+O teste agrupado na suíte SQLite/HTTP existente simultaneamente mantém
+as três funções em voo, verifica os três contadores, solta as chamadas,
+confirma retorno a zero, incremento de geração, limpeza por exceção e
+flags negativas. A suíte completa `update_game_uptime_*` continua no
+mesmo gate; não há nova rodada de testes redundantes de PID ou rollback.
+
+**Limitação decisiva:** é somente contagem **dentro de um único PID Python**.
+Requisições de processos anteriores/outros, Console Push, endpoints
+administrativos e do cliente, materializadores, subprocessos e tarefas
+externas não são cobertos. A leitura em zero não é posse de lock e pode
+mudar logo após a observação; o contador reinicia junto com o processo.
+Portanto **nenhuma contagem, nem zero, concede ACK de Controller, quiescência
+remota ou autorização `--no-drain`**. A próxima barreira deve usar locks
+interprocessos estáveis provisionados por root, revalidar journal/lease sob
+posse exclusiva e incluir os demais mutadores antes de integrar o updater.
+Issue #928 permanece aberta, `live_no_drain_authorized=false`.
+
+
+## Etapa 2 — fence interprocessos dos três Agent HTTP dispatchers (21/11/2026)
+
+Complemento da #1133, **sem habilitação automática**. O arquivo
+`dashboard/game_uptime_controller_agent_http_flock.py` implementa uma
+barreira **interprocessos** com `flock` em um inode estável:
+`/run/capivara-dsm/controller-agent-http.lock`. O arquivo fica fora de
+`/opt/dsm`, em diretório root-owned, não gravável por usuários não-root.
+Seu inode deve ser **provisionado pelo root** com proprietário usuário/grupo
+de serviço do Dashboard, modo `0600`, conteúdo vazio, um único hardlink e
+`O_NOFOLLOW`; a preparação idempotente rejeita permissões, proprietário,
+symlink ou hardlink existentes inseguros, sem substituir nem reparar
+automaticamente.
+
+`dashboard/prepare_controller_agent_http_lock.py` oferece o preparador
+privilegiado `--user/--group`. **Não está ligado a
+`dsm-dashboard.service`, updater, bootstrap ou Agent:** sua instalação e
+ativação ficam para uma futura homologação operacional isolada. Não executar
+em hosts com jogos ativos nesta etapa.
+
+Quando `DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1` estiver configurado em um
+**Controller descartável com o inode validamente provisionado**, os três
+despachantes `enroll`, `heartbeat`, `uninstall_result` seguram
+`LOCK_SH|LOCK_NB` durante sua execução completa, desde antes da checagem do
+hold root-owned, liberando em `finally` mesmo sob erro. Arquivo
+ausente/alterado/inseguro ou lock exclusivo ocupado gera HTTP `423`
+`controller_http_interprocess_fence_unavailable` sem atingir o código de
+autenticação mutadora. Sem opt-in, o contrato anterior permanece inalterado
+para não introduzir regressão nos Controllers existentes.
+
+Um futuro coordenador privilegiado pode tomar o **mesmo** inode com
+`LOCK_EX|LOCK_NB`, permanecendo exclusivamente dono do lock durante todo
+o bloco de contexto; uma chamada que já detenha lock compartilhado faz a
+tentativa falhar imediatamente, e uma nova chamada opt-in falha com 423
+enquanto o lock exclusivo estiver ocupado. A API de exclusividade fornece
+**somente evidência local negativa** (`controller_http_acked=false`,
+`remote_agents_acked=false`, `external_jobs_acked=false`,
+`live_no_drain_authorized=false`), sem instalar hold, limpar journal
+ou invocar updater. **Não é permissão para update.**
+
+O teste agrupado na suíte HTTP/SQLite já existente exercita provisionamento
+idempotente em diretório temporário, exclusão real entre **dois processos
+Python**, um heartbeat ainda em voo, recusa de nova requisição sob lock
+exclusivo e recusa de inode inseguro. O CI usa o gate completo de #928, sem
+repetir a bateria de PIDs/rollback.
+
+**O que ainda falta na Etapa 2:** habilitação/provisionamento somente após
+verificar que **todos** os processos Controller receberam a instrumentação;
+abranger demais rotas HTTP, Console Push e operações assíncronas, jobs
+externos e materializers; integrar posse de locks com hold/journal durável,
+reconciliação e ACK operacional autenticado de **cada Agent remoto**. Lock
+local livre ou exclusivo dos três handlers **jamais** prova quiescência
+distribuída. Issue #928 segue OPEN; `update.sh --no-drain` segue
+somente diagnóstico/exit 2, e release continua bloqueado.
+
+
+## Etapa 2 — Console Push sob a mesma barreira de Agent HTTP (21/11/2026)
+
+`dashboard/agent_console_push.py` agora aplica o mesmo
+`shared_controller_agent_http_lock()` opt-in introduzido na PR #1134 durante
+**toda** a requisição HTTP chunked de Console Push
+(`/api/agent/console/stream`). O stream é de longa duração; portanto, se uma
+sessão já está aberta, o futuro coordenador **não** consegue tomar
+`LOCK_EX|LOCK_NB` até ela encerrar. Com lock exclusivo em posse do
+coordenador, uma nova conexão é recusada com **HTTP 423 antes da
+autenticação** ou de qualquer atualização do buffer em memória. Sem
+`DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1`, a aquisição do inode continua
+desativada por padrão.
+
+A verificação read-only de hold root-owned é aplicada **mesmo sem opt-in**,
+antes da autenticação, e novamente **após ler cada chunk e antes de aceitar
+keepalive, tocar a presença ou ingerir eventos**. Assim, uma conexão já
+aberta que receba um novo frame durante a manutenção deixa de publicar
+console lines: devolve HTTP 423. Se a evidência for inválida, expirou,
+não for legível ou houver journal pendente, falha fechado sem limpar ou
+substituir os dados. O loop existente mantém o timeout de socket de 15s;
+nenhuma thread nova, restart, comando de game ou integração com o updater.
+
+O teste agrupado na suíte `update_game_uptime_sqlite_http_integration_test`
+verifica (i) hold bloqueando antes de autenticação, (ii) lock EX rejeitando
+uma conexão nova, (iii) um stream já admitido segurando SH enquanto o
+coordenador tenta EX, (iv) stop de ingestão após o primeiro chunk quando
+um hold aparece antes do segundo. Os testes anteriores de cursor, chunk
+NDJSON e propriedade da instância continuam no seu módulo legado.
+
+**Limites:** a barreira é opcional e não cobre ainda outras APIs HTTP,
+clientes administrativos, todos os subprocessos/threads/jobs nem Agents
+remotos. As linhas já aceitas antes do hold são preservadas; a conexão
+pode continuar viva até o próximo chunk/timeout, mantendo SH nesse
+intervalo. Nenhuma evidência nesse fluxo é ACK positivo ou autorização de
+`update.sh --no-drain`. #928 segue aberta / Etapa 2 parcial.
+
+
+## Etapa 2 — admissão de instalação e teste de conexão de Agent (21/11/2026)
+
+Os dois POSTs do Controller `/api/agents/installations` e
+`/api/agents/installations/test-connection` agora obedecem ao mesmo leitor
+`game_uptime_maintenance_hold.observe()` já utilizado no fluxo Agent:
+hold ativo, inválido, ilegível ou journal pendente bloqueia com HTTP 423,
+**antes** de iniciar instalação remota ou prova de conexão. A ausência
+comprovada de hold preserva o comportamento existente.
+
+Quando `DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1` estiver explicitamente
+habilitado em homologação isolada, cada operação mantém o **mesmo**
+`shared_controller_agent_http_lock()` da #1134 durante toda a chamada;
+um `LOCK_EX` concorrente impede nova entrada e uma instalação já em voo
+impede a posse exclusiva até terminar. Nenhum novo lockfile, flag, writer ou
+protocolo foi criado. Falhas de aquisição são fail-closed; retornos continuam
+sempre com `live_no_drain_authorized=false` e ACKs negativos.
+
+A prova agrupada adicionada à suíte SQLite/HTTP #928 cobre ambas as rotas,
+hold ativo/inválido/ilegível, exclusividade, conservação dos caminhos
+originais na ausência de hold e chamada de instalação em voo. Nenhuma
+instalação remota real é iniciada pelo teste (funções de conexão/instalação
+são mocks). O novo módulo é incluído no filtro de CI de runtime.
+
+**Escopo limitado:** isso cobre somente esses dois POSTs; outras rotas
+administrativas, jobs, subprocessos já delegados, Agents remotos e
+instalações iniciadas por outros canais continuam fora da barreira. A flag
+interprocessos permanece **desabilitada por padrão**. Sem prova
+distribuída de quiescência, `update.sh --no-drain` continua exit 2,
+`live_no_drain_authorized=false`, issue #928 aberta e release bloqueado.

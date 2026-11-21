@@ -39,6 +39,8 @@ from minecraft_serverpack_heartbeat_recovery_offer import serverpack_recovery_of
 from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpack_report_delivery
 from game_uptime_heartbeat_compat import assess_authenticated_probe
 from game_uptime_remote_fence_evidence import receipt_for_authenticated_agent
+from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+from game_uptime_controller_http_inflight import track_controller_agent_mutation
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -56,7 +58,33 @@ _LINK_CRITICAL_CODES = {
 }
 
 
+def _mutating_agent_api_hold_response() -> tuple[int, dict[str, Any]] | None:
+    """Block NEW Agent mutations before credential/heartbeat database writes.
+
+    This only protects the three Agent REST dispatcher entrypoints. It cannot
+    prove that in-flight requests, other Controller APIs, or background jobs
+    have become quiescent. No release/update permission is derived from it.
+    """
+    try:
+        held = observe_no_drain_hold()
+        if isinstance(held, dict) and held.get("active") is False:
+            return None
+    except Exception:
+        # Observation unavailable is not a reason to admit a mutation.
+        pass
+    return 423, {
+        "status": "blocked",
+        "reason": "controller_maintenance_hold_active",
+        "remote_agent_quiescence_acked": False,
+        "live_no_drain_authorized": False,
+    }
+
+
+@track_controller_agent_mutation("enroll")
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
+    gate = _mutating_agent_api_hold_response()
+    if gate is not None:
+        return gate
     try:
         result = enroll_remote_agent(backend, payload)
     except (PairingTokenInvalid, PairingTokenExpired, PairingTokenConsumed):
@@ -278,6 +306,7 @@ def _attach_backup_clone_state(result, *, agent_id, backend):
 
 
 
+@track_controller_agent_mutation("uninstall_result")
 def dispatch_uninstall_result(
     payload: dict[str, Any] | None,
     *,
@@ -289,6 +318,9 @@ def dispatch_uninstall_result(
     Permanent Agent credentials remain authoritative for identity. The Agent
     does not choose which Controller-side Agent record receives the result.
     """
+    gate = _mutating_agent_api_hold_response()
+    if gate is not None:
+        return gate
     credential_id = str(
         headers.get("X-Capivara-Agent-Credential", "")
     ).strip()
@@ -428,7 +460,11 @@ def dispatch_fence_observation(
                  "live_no_drain_authorized": False}
 
 
+@track_controller_agent_mutation("heartbeat")
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
+    gate = _mutating_agent_api_hold_response()
+    if gate is not None:
+        return gate
     credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()
     credential_secret = str(headers.get("X-Capivara-Agent-Secret", "")).strip()
     fingerprint = str(headers.get("X-Capivara-Agent-Fingerprint", "")).strip() or None
