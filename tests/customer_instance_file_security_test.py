@@ -59,6 +59,11 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
         self.assertIn('void cachedFileUsage().then(paintUsage)', source)
         self.assertNotIn('await fileCommand("usage", ".")', source)
         self.assertIn('if(["write_text","upload","mkdir","delete","rename","move","extract"].includes(action))invalidateFileUsage()', source)
+        # A completed measurement from before a file mutation cannot replace
+        # the newer sample or keep the older single-flight promise alive.
+        self.assertIn('fileUsageGeneration++;fileUsagePending=null', source)
+        self.assertIn('if(generation!==fileUsageGeneration)return cachedFileUsage()', source)
+        self.assertIn('if(fileUsagePending===pending)fileUsagePending=null', source)
 
     def test_linux_extract_scans_archive_and_expanded_tree_before_materialization(self):
         module = load("linux_instance_files_extract_security", ROOT / "agents/linux/runtime/instance_files_client.py")
