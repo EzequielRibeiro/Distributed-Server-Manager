@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import subprocess
+import json
 import tempfile
 from pathlib import Path
 import unittest
@@ -32,6 +33,82 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.installed = self.root/"installed"
         self.world = self.installed/"runtime/hybrid-instance-storage/minecraft005/world/level.dat"
         self.upload = self.installed/"runtime/artifact-transfers/job-001/upload.part"
+
+    def prepare_no_drain_fixture(self):
+        # Keep the checked-out source's actual backup/apply/rollback file
+        # routines, but ensure every release change is compatible with the
+        # STRICT control-plane-only classifier. Runtime/database state is
+        # identical, whereas the dashboard and version are changed.
+        for tree in (self.root / "installed", self.root / "new-payload"):
+            supervisor = tree / "agents/linux/runtime/console_supervisor.py"
+            supervisor.parent.mkdir(parents=True, exist_ok=True)
+            supervisor.write_text("stable supervisor fixture\\n")
+        target_db = self.root / "new-payload/data/database.txt"
+        target_db.parent.mkdir(parents=True, exist_ok=True)
+        target_db.write_bytes((self.installed / "data/database.txt").read_bytes())
+        (self.installed / "version").write_text("2.0.998-fixture")
+        (self.root / "new-payload/version").write_text("2.0.999-fixture")
+
+    def test_disposable_no_drain_actual_main_success_preserves_data_and_never_drains(self):
+        self.prepare_no_drain_fixture()
+        outcome = main_rehearsal(self.root, "no_drain_success")
+        self.assertEqual(outcome.returncode, 0,
+                         outcome.stderr[-3000:] + outcome.stdout[-1900:])
+        self.assertEqual((self.installed / "version").read_text().strip(), "2.0.999-fixture")
+        receipt = json.loads(
+            (self.root / "dsm928-composite-journal/game-uptime-transaction.json").read_text())
+        self.assertTrue(receipt["strict_inventory"])
+        self.assertEqual(receipt["status"], "verified")
+        self.assertEqual(len(receipt["original_units"]), 2)
+        self.assertFalse(receipt["live_no_drain_authorized"])
+        self.assertIn("DSM928MainDisposableNoDrainRehearsal", outcome.stdout)
+        self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+        self.assertEqual(self.upload.read_bytes(), b"in-flight-upload-private-test")
+        self.assertEqual(len(list((self.root / "backups").glob("*.tar.gz"))), 1)
+        self.assertFalse((self.root / "steps").exists(), "never call stop/start service hooks")
+
+    def test_disposable_no_drain_main_injected_failure_rolls_back_without_draining(self):
+        self.prepare_no_drain_fixture()
+        outcome = main_rehearsal(self.root, "no_drain_fail_after_apply")
+        self.assertEqual(outcome.returncode, 2, outcome.stderr[-2500:])
+        self.assertIn("EXPECTED_DISPOSABLE_ROLLBACK_CONFIRMED", outcome.stdout)
+        self.assertEqual((self.installed / "version").read_text().strip(), "2.0.998-fixture")
+        receipt = json.loads(
+            (self.root / "dsm928-composite-journal/game-uptime-transaction.json").read_text())
+        self.assertEqual(receipt["status"], "rolled_back")
+        self.assertTrue(receipt["strict_inventory"])
+        self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+        self.assertEqual(self.upload.read_bytes(), b"in-flight-upload-private-test")
+        self.assertFalse((self.root / "steps").exists())
+
+    def test_disposable_no_drain_main_rejects_new_game_before_any_backup(self):
+        self.prepare_no_drain_fixture()
+        (self.root / "fixture-add-game-during-handoff").write_text("new game")
+        outcome = main_rehearsal(self.root, "no_drain_drift")
+        self.assertEqual(outcome.returncode, 2, outcome.stdout[-800:] + outcome.stderr[-1300:])
+        self.assertEqual((self.installed / "version").read_text().strip(), "2.0.998-fixture")
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
+        self.assertFalse((self.root / "steps").exists())
+
+    def test_disposable_no_drain_main_rejects_unclassified_schema_change(self):
+        self.prepare_no_drain_fixture()
+        unexpected = self.root / "new-payload/database/migrations/099.sql"
+        unexpected.parent.mkdir(parents=True, exist_ok=True)
+        unexpected.write_text("ALTER TABLE x")
+        outcome = main_rehearsal(self.root, "no_drain_unknown_file")
+        self.assertEqual(outcome.returncode, 2, outcome.stderr[-1300:])
+        self.assertEqual((self.installed / "version").read_text().strip(), "2.0.998-fixture")
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
+
+    def test_disposable_no_drain_main_refuses_without_explicit_fixture_opt_in(self):
+        self.prepare_no_drain_fixture()
+        outcome = main_rehearsal(self.root, "no_drain_no_env")
+        self.assertEqual(outcome.returncode, 2)
+        self.assertEqual((self.installed / "version").read_text().strip(), "2.0.998-fixture")
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
 
     def test_actual_main_path_success_preserves_world_and_checks_guard_order(self):
         outcome = main_rehearsal(self.root)
