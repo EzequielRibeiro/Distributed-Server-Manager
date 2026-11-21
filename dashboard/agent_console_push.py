@@ -18,6 +18,10 @@ from typing import Any
 
 from agent_pairing_repository import AgentCredentialInvalid, AgentPairingRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
+from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+from game_uptime_controller_agent_http_flock import (
+    ControllerHttpLockUnavailable, shared_controller_agent_http_lock,
+)
 
 CONSOLE_PUSH_PATH = "/api/agent/console/stream"
 INSTANCE_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
@@ -267,7 +271,8 @@ def _decode_frame(raw: bytes) -> dict[str, Any]:
         raise ValueError("console stream frame must be an object")
     return value
 
-def serve_agent_console_stream(handler, *, headers, backend) -> None:
+def _serve_agent_console_stream_under_fence(handler, *, headers, backend) -> None:
+    """Process chunked frames while caller owns its optional shared flock."""
     try:
         identity = _authenticate(headers, backend)
     except AgentCredentialInvalid:
@@ -289,6 +294,12 @@ def serve_agent_console_stream(handler, *, headers, backend) -> None:
         while True:
             raw = _read_chunk(handler.rfile)
             if raw is None:
+                return
+            # A long-lived chunked stream may have been admitted BEFORE
+            # maintenance began. Re-check after every read and before any
+            # keepalive touch, ownership query or in-memory event mutation.
+            if _console_maintenance_hold_blocked():
+                _send_console_maintenance_blocked(handler)
                 return
             if raw == b"":
                 break
@@ -328,6 +339,43 @@ def serve_agent_console_stream(handler, *, headers, backend) -> None:
             "rejected": rejected,
         },
     )
+
+def _console_maintenance_hold_blocked() -> bool:
+    """Fail closed on active/expired/invalid hold or unreadable evidence."""
+    try:
+        observed = observe_no_drain_hold()
+        return not (isinstance(observed, dict)
+                    and observed.get("active") is False)
+    except Exception:
+        return True
+
+
+def _send_console_maintenance_blocked(handler, *, fence: bool = False) -> None:
+    handler.send_json(423, {
+        "status": "blocked",
+        "reason": ("controller_http_interprocess_fence_unavailable" if fence
+                   else "controller_maintenance_hold_active"),
+        "remote_agent_quiescence_acked": False,
+        "live_no_drain_authorized": False,
+    })
+
+
+def serve_agent_console_stream(handler, *, headers, backend) -> None:
+    """Fence the whole chunked connection before credential/stream writes.
+
+    Flock remains opt-in, using the SAME inode as the three Agent dispatchers.
+    Local maintenance hold applies regardless of the optional flock flag.
+    This is not distributed quiescence, nor permission for a no-drain update.
+    """
+    try:
+        with shared_controller_agent_http_lock():
+            if _console_maintenance_hold_blocked():
+                _send_console_maintenance_blocked(handler)
+                return
+            _serve_agent_console_stream_under_fence(
+                handler, headers=headers, backend=backend)
+    except ControllerHttpLockUnavailable:
+        _send_console_maintenance_blocked(handler, fence=True)
 
 
 __all__ = [
