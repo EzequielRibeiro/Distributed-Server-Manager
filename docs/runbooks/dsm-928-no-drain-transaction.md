@@ -1084,3 +1084,38 @@ workers/executores privilegiados remotos, journal ou ACK positivo.
 Receber o recibo NÃO é quiescência. #928 permanece OPEN,
 live_no_drain_authorized=false, update.sh --no-drain continua
 diagnóstico/exit 2, e o release permanece bloqueado.
+
+
+## Etapa 2 — bloqueio dos três despachantes mutadores de Agent no Controller (21/11/2026)
+
+`dashboard/agent_remote_http.py` agora verifica o hold local **antes da primeira
+chamada ao repositório** nos despachantes `dispatch_enroll()`,
+`dispatch_heartbeat()` e `dispatch_uninstall_result()`. Quando
+`game_uptime_maintenance_hold.observe()` indica bloqueio ativo — inclusive
+marcador expirado, inválido ou apenas journal pendente após reboot — ou a
+leitura falha inesperadamente, os três retornam HTTP **423** com
+`controller_maintenance_hold_active`, sem autenticar, registrar heartbeat,
+despachar comandos, registrar instalação ou aceitar resultado de remoção.
+Não inclui token, ID de cliente ou outros segredos na resposta.
+Sem hold, o fluxo existente não muda.
+
+O endpoint separado `POST /api/agent/no-drain/observe` **continua disponível**
+por seu contrato autenticado `SELECT`-only de recibo negativo, sem comando ou
+ACK positivo.
+
+**Comprovação:** teste agrupado já existente em
+`tests/update_game_uptime_sqlite_http_integration_test.py` usa listener HTTP
+local + SQLite descartável para verificar bloqueio no heartbeat real, ausência
+de alteração de `last_used_at` e quantidade de inventário, proibição de
+enrollment/uninstall antes de autenticar e retomada do heartbeat sem hold.
+Inclui evidências de hold válido, expirado, journal pendente e falha de leitura.
+
+**Limite crítico:** a verificação é **admissão de nova requisição** e não
+retém um lock durante toda a chamada. Requisição que entrou antes do marcador
+pode continuar a executar; Console Push, outras rotas HTTP, jobs assíncronos,
+materializers, threads internas e Agents remotos ainda exigem fencing próprio.
+Ela não substitui a posse exclusiva de lease/journal coordenado com ACK
+autenticado de todos os hosts e contagem de operações em voo. **Não é uma
+barreira distribuída concluída.** Permanece `live_no_drain_authorized=false`,
+`update.sh --no-drain` apenas diagnóstico/exit 2, issue #928 aberta e
+release bloqueado. Nenhuma alteração em instalações ou jogos reais.
