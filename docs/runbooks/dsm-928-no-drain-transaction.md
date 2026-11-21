@@ -1119,3 +1119,32 @@ autenticado de todos os hosts e contagem de operações em voo. **Não é uma
 barreira distribuída concluída.** Permanece `live_no_drain_authorized=false`,
 `update.sh --no-drain` apenas diagnóstico/exit 2, issue #928 aberta e
 release bloqueado. Nenhuma alteração em instalações ou jogos reais.
+
+
+## Etapa 2 — inventário *in-flight* dos três despachantes HTTP do Controller (21/11/2026)
+
+Complemento da barreira de ADMISSÃO introduzida na PR #1132.
+`dashboard/game_uptime_controller_http_inflight.py` instrumenta os três
+despachantes (`enroll`, `heartbeat`, `uninstall_result`) com contagem
+sincronizada por processo. A entrada incrementa a contagem **antes** da
+verificação de hold; a saída decrementa em `finally`, inclusive em erro ou
+HTTP 423. `observe_controller_agent_inflight()` fornece PID, geração
+monotônica e contagens por rota em uma só leitura sincronizada. Não registra
+credenciais/payloads e não altera respostas, gravações ou filas normais.
+
+O teste agrupado na suíte SQLite/HTTP existente simultaneamente mantém
+as três funções em voo, verifica os três contadores, solta as chamadas,
+confirma retorno a zero, incremento de geração, limpeza por exceção e
+flags negativas. A suíte completa `update_game_uptime_*` continua no
+mesmo gate; não há nova rodada de testes redundantes de PID ou rollback.
+
+**Limitação decisiva:** é somente contagem **dentro de um único PID Python**.
+Requisições de processos anteriores/outros, Console Push, endpoints
+administrativos e do cliente, materializadores, subprocessos e tarefas
+externas não são cobertos. A leitura em zero não é posse de lock e pode
+mudar logo após a observação; o contador reinicia junto com o processo.
+Portanto **nenhuma contagem, nem zero, concede ACK de Controller, quiescência
+remota ou autorização `--no-drain`**. A próxima barreira deve usar locks
+interprocessos estáveis provisionados por root, revalidar journal/lease sob
+posse exclusiva e incluir os demais mutadores antes de integrar o updater.
+Issue #928 permanece aberta, `live_no_drain_authorized=false`.
