@@ -59,6 +59,10 @@ _AGENT_RUNTIME = ROOT / "agents" / "linux" / "runtime"
 if str(_AGENT_RUNTIME) not in sys.path:
     sys.path.append(str(_AGENT_RUNTIME))
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+_WORKER_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKER_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKER_MODULE_DIR)
+from maintenance_hold_gate import tracked_operation
 from universal_event_repository import UniversalEventRepository
 
 INTERVAL_SECONDS = max(10, int(os.environ.get("DSM_HYBRID_HEARTBEAT_SECONDS", "30")))
@@ -931,7 +935,7 @@ def process_hybrid_serverpack_observation_cycle(backend, root: Path, agent_id: s
         return {"status":"unavailable","checked":0,"verified":0}
 
 
-def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+def _heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
         return {"active": False, "reason": "not_hybrid"}
@@ -1067,6 +1071,17 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         response["published_log_lines"] = 0
     response["log_message"] = message
     return response
+
+
+
+def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+    """Keep the lock across the entire Hybrid heartbeat and all child cycles."""
+    with tracked_operation("hybrid_agent_worker", root=root) as admitted:
+        if not admitted:
+            return {"active": True, "maintenance_hold": True,
+                    "reason": "root_owned_maintenance_hold",
+                    "log_message": "hybrid reconciliation held for protected maintenance"}
+        return _heartbeat_cycle(root, backend=backend)
 
 
 def run_forever(root: Path = ROOT) -> None:
