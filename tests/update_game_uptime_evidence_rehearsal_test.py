@@ -8,9 +8,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from update_game_uptime_isolated_compose_test import (
-    IsolatedCompositionTests, UNIT, DAYZ, load,
-)
+import update_game_uptime_isolated_compose_test as isolated_fixture
+from update_game_uptime_isolated_compose_test import UNIT, DAYZ, load
 
 ROOT = Path(__file__).resolve().parents[1]
 observed = load(
@@ -25,7 +24,7 @@ stage = load(
 
 class ObservedEvidenceFixtureTests(unittest.TestCase):
     def setUp(self):
-        self.fixture = IsolatedCompositionTests(methodName="test_success_composes_real_updater_functions_and_fake_reload")
+        self.fixture = isolated_fixture.IsolatedCompositionTests(methodName="test_success_composes_real_updater_functions_and_fake_reload")
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         f = self.fixture
