@@ -935,7 +935,7 @@ def process_hybrid_serverpack_observation_cycle(backend, root: Path, agent_id: s
         return {"status":"unavailable","checked":0,"verified":0}
 
 
-def _heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
         return {"active": False, "reason": "not_hybrid"}
@@ -1074,20 +1074,20 @@ def _heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
 
 
 
-def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
-    """Keep the lock across the entire Hybrid heartbeat and all child cycles."""
+def tracked_heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+    """Protect the daemon/once heartbeat without changing its public function body."""
     with tracked_operation("hybrid_agent_worker", root=root) as admitted:
         if not admitted:
             return {"active": True, "maintenance_hold": True,
                     "reason": "root_owned_maintenance_hold",
                     "log_message": "hybrid reconciliation held for protected maintenance"}
-        return _heartbeat_cycle(root, backend=backend)
+        return heartbeat_cycle(root, backend=backend)
 
 
 def run_forever(root: Path = ROOT) -> None:
     while True:
         try:
-            result = heartbeat_cycle(root)
+            result = tracked_heartbeat_cycle(root)
             if result.get("active"):
                 print(result.get("log_message") or "hybrid heartbeat ok", flush=True)
         except Exception as exc:
@@ -1100,7 +1100,7 @@ def run_forever(root: Path = ROOT) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "once":
-        result = heartbeat_cycle(ROOT)
+        result = tracked_heartbeat_cycle(ROOT)
         print(result)
         return 0
     run_forever(ROOT)
