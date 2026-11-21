@@ -92,6 +92,7 @@ def test_symlink_mission_refused_without_touching_target(tmp_path):
     mission.rmdir()
     outside = tmp_path / "outside"
     outside.mkdir()
+    original_mode = _mode(outside)
     mission.symlink_to(outside, target_is_directory=True)
     owner = pwd.getpwuid(os.geteuid())
     group = SimpleNamespace(gr_gid=os.getegid())
@@ -103,7 +104,7 @@ def test_symlink_mission_refused_without_touching_target(tmp_path):
             materialize_instance._prepare_dayz_customer_read_access(
                 spec, {"agent_id": "agent-vps"}, "mpmissions/hardcore.namalsk"
             )
-    assert _mode(outside) == 0o755
+    assert _mode(outside) == original_mode  # Never modify the symlink target.
 
 
 def test_agent_retries_once_on_denied_mission_listing(tmp_path):
