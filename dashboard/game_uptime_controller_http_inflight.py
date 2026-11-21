@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """DSM #928: process-local accounting for in-flight Controller Agent mutations.
 
-This is deliberately NOT a quiescence ACK, cross-process lock, update gate or
-persistent journal. A zero count only means the three covered dispatchers are
-not currently executing *in this Python process*. A future coordinator must
-fence every process/HTTP route and external job before considering an update.
+This module reports only per-process accounting and optionally holds the
+separate Controller Agent HTTP interprocess lock for each dispatcher invocation.
+A zero count remains local to this PID and never grants a quiescence ACK;
+other HTTP routes, processes and external jobs are not covered.
 """
 from __future__ import annotations
 
@@ -12,6 +12,10 @@ from functools import wraps
 import os
 from threading import Lock
 from typing import Any, Callable
+
+from game_uptime_controller_agent_http_flock import (
+    ControllerHttpLockUnavailable, shared_controller_agent_http_lock,
+)
 
 _OPERATIONS = ("enroll", "heartbeat", "uninstall_result")
 _LOCK = Lock()
@@ -32,7 +36,16 @@ def track_controller_agent_mutation(operation: str) -> Callable:
                 _ACTIVE[operation] += 1
                 _GENERATION += 1
             try:
-                return dispatch(*args, **kwargs)
+                try:
+                    with shared_controller_agent_http_lock():
+                        return dispatch(*args, **kwargs)
+                except ControllerHttpLockUnavailable:
+                    return 423, {
+                        "status": "blocked",
+                        "reason": "controller_http_interprocess_fence_unavailable",
+                        "remote_agent_quiescence_acked": False,
+                        "live_no_drain_authorized": False,
+                    }
             finally:
                 with _LOCK:
                     _ACTIVE[operation] -= 1
