@@ -121,6 +121,16 @@ class PersistentPendingHoldTests(unittest.TestCase):
             self.assertFalse(self.journal.exists())
         finally:
             self.state.chmod(0o755)
+        # The journal folder may remain root-private; the /run marker path
+        # must be traversable by an Agent running under a different UID/GID.
+        self.run.chmod(0o700)
+        try:
+            with self.assertRaises(HoldPreparationBlocked):
+                self.prepare()
+            self.assertFalse(self.journal.exists())
+            self.assertFalse(self.marker.exists())
+        finally:
+            self.run.chmod(0o755)
 
     def test_hold_write_collision_keeps_existing_evidence_and_pending_block(self):
         self.marker.write_text("protected marker")
