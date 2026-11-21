@@ -633,18 +633,18 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
 
         # Another actual Python PID tries to acquire the exclusive witness.
         code = (
-            "import sys\\n"
-            "from pathlib import Path\\n"
-            "sys.path.insert(0, sys.argv[2])\\n"
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, sys.argv[2])\n"
             "from game_uptime_controller_agent_http_flock import "
-            "exclusive_controller_agent_http_lock, ControllerHttpLockUnavailable\\n"
-            "try:\\n"
+            "exclusive_controller_agent_http_lock, ControllerHttpLockUnavailable\n"
+            "try:\n"
             "  with exclusive_controller_agent_http_lock("
             "lock_path=Path(sys.argv[1]), expected_uid=int(sys.argv[3]), "
-            "expected_gid=int(sys.argv[4]), parent_uid=int(sys.argv[3])) as state:\\n"
-            "    print('ACQUIRED:' + str(state['live_no_drain_authorized']))\\n"
-            "except ControllerHttpLockUnavailable:\\n"
-            "  print('BLOCKED')\\n"
+            "expected_gid=int(sys.argv[4]), parent_uid=int(sys.argv[3])) as state:\n"
+            "    print('ACQUIRED:' + str(state['live_no_drain_authorized']))\n"
+            "except ControllerHttpLockUnavailable:\n"
+            "  print('BLOCKED')\n"
         )
 
         def child_probe():
@@ -677,7 +677,7 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             return denied
 
         with patch.object(tracker, "shared_controller_agent_http_lock",
-                          side_effect=shared), \\
+                          side_effect=shared), \
              patch("agent_remote_http._mutating_agent_api_hold_response",
                    side_effect=held_admission):
             worker = threading.Thread(target=pending_dispatch, daemon=True)
@@ -698,7 +698,7 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
         # Exclusive coordinator occupancy prevents new request admission,
         # even with the original business hold reader mocked as absent.
         with patch.object(tracker, "shared_controller_agent_http_lock",
-                          side_effect=shared), \\
+                          side_effect=shared), \
              patch("agent_remote_http._mutating_agent_api_hold_response",
                    side_effect=AssertionError("should not reach hold gate")):
             with exclusive() as evidence:
