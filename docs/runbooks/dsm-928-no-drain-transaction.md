@@ -903,3 +903,40 @@ coordenador nem writer da marca root-owned de manutenção, e o lock livre
 isoladamente continua `live_no_drain_authorized=false`.
 `update.sh --no-drain` permanece diagnóstico, exit 2. Sem deploy
 ou reinício de jogos cliente como parte desta implementação.
+
+## Evidência de identidade local do supervisor e nove Workers (21/11/2026)
+
+O comando de leitura
+`python3 /opt/dsm/dashboard/workers/worker_identity_diagnostic.py --inspect`
+consulta a unidade systemd `dsm-dashboard-worker.service` e os processos
+Linux, sem criar marcador de manutenção, modificar serviços, instalar pacotes
+nem tocar em instâncias. Ele cruza `MainPID`, `ActiveState`, `SubState`,
+`User` e `ControlGroup` com o processo pai em `/proc` e os **nove
+filhos diretos** de `/proc/<MainPID>/task/<MainPID>/children`.
+
+Para cada processo são exigidos PPID, UID efetivo, cgroup, interpretador e
+caminho de script esperados para os nove Workers. São comparados
+`PID + starttime` (ticks imutáveis de inicialização do kernel)
+em **duas leituras** e a identidade da unidade systemd antes/depois.
+Filho faltante, extra ou duplicado, troca de PID, cgroup divergente,
+zumbi, erro de leitura ou troca de starttime => `unverified`.
+Alternância normal de estado S/R não é tratada como reinício.
+
+A saída JSON é puramente diagnóstica:
+`supervisor_verified`, `workers_verified`, `workers` com PID/start_ticks
+e lock_status, `locks_free_candidate`, `errors` e
+**`live_no_drain_authorized=false`**. O comando sempre retorna **exit 2**
+mesmo quando todos os nove filhos são identificados: nenhum script pode
+converter o resultado em permissão por sucesso de exit code. Para observar
+também as travas 0600, execute com o usuário de serviço do Worker, que
+possui os arquivos; root não é aceito como substituto de identidade do
+processo em `maintenance_hold_gate.py`.
+
+**Limites:** a confirmação de identidade local não comprova ausência
+de jobs iniciados por subprocessos, materializadores externos ou
+comandos remotos, nem bloqueia novas tarefas do Controller/Agent.
+Também não estabelece um fence estável entre a leitura e o swap.
+O próximo contrato precisa de **coordenador mantendo locks** e ACK
+autenticado dos Agents/Controller, além do journal de transação/rollback.
+`--no-drain` continua read-only/exit 2 e
+`live_no_drain_authorized=false` até os gates operacionais restantes.

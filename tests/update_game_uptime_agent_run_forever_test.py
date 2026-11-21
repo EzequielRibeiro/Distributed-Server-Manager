@@ -216,6 +216,139 @@ class AgentRunForeverLoopTests(unittest.TestCase):
                     os.geteuid(), os.getegid(),
                     directory=lock_dir, parent_owner=os.geteuid())
 
+    def test_readonly_worker_identity_diagnostic_fails_closed_on_pid_reuse(self):
+        """One grouped Linux /proc + systemd identity regression for #928."""
+        import io
+        import pwd
+        from contextlib import redirect_stdout
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+
+        workers = ROOT / "dashboard/workers"
+        module_path = workers / "worker_identity_diagnostic.py"
+        gate_path = workers / "maintenance_hold_gate.py"
+        gate_spec = spec_from_loader("dsm928_diag_gate",
+                                     SourceFileLoader("dsm928_diag_gate",
+                                                      str(gate_path)))
+        gate = module_from_spec(gate_spec)
+        gate_spec.loader.exec_module(gate)
+        diag_spec = spec_from_loader("dsm928_worker_identity",
+                                     SourceFileLoader("dsm928_worker_identity",
+                                                      str(module_path)))
+        diag = module_from_spec(diag_spec)
+        with patch.dict(sys.modules, {"maintenance_hold_gate": gate}):
+            diag_spec.loader.exec_module(diag)
+
+        uid = os.geteuid()
+        username = pwd.getpwuid(uid).pw_name
+        group = "/system.slice/dsm-dashboard-worker.service"
+        root = Path("/opt/dsm")
+        names = sorted(gate._KNOWN_WORKERS)
+        first_pid = 9100
+        main_pid = 9000
+        unit = {"ActiveState": "active", "SubState": "running",
+                "MainPID": str(main_pid), "User": username,
+                "ControlGroup": group}
+
+        def make_stat(pid, ppid, ticks):
+            # Linux /proc/PID/stat fields 3=state, 4=PPID, 22=starttime.
+            return (f"{pid} (synthetic worker) S {ppid} "
+                    + "0 " * 17 + f"{ticks} 0\n")
+
+        def write_proc(proc_root, pid, ppid, ticks, script, program):
+            home = proc_root / str(pid)
+            home.mkdir(parents=True, exist_ok=True)
+            (home / "stat").write_text(make_stat(pid, ppid, ticks))
+            (home / "status").write_text(
+                f"Uid:\t{uid}\t{uid}\t{uid}\t{uid}\n")
+            (home / "cgroup").write_text("0::" + group + "\n")
+            (home / "cmdline").write_bytes(
+                (program + "\0" + script + "\0").encode("utf-8"))
+
+        with tempfile.TemporaryDirectory(prefix="dsm928-worker-ids-") as tmp:
+            proc_root = Path(tmp) / "proc"
+            parent_script = str(root / "dashboard/workers/worker.sh")
+            write_proc(proc_root, main_pid, 1, 100,
+                       parent_script, "/bin/bash")
+            children = []
+            for index, name in enumerate(names):
+                pid = first_pid + index
+                children.append(pid)
+                script = (name + ".py" if name != "scheduler_worker"
+                          else "scheduler_worker.sh")
+                program = "python3" if name != "scheduler_worker" else "bash"
+                write_proc(proc_root, pid, main_pid, 200 + index,
+                           str(root / "dashboard/workers" / script), program)
+            proc_task = proc_root / str(main_pid) / "task" / str(main_pid)
+            proc_task.mkdir(parents=True)
+            (proc_task / "children").write_text(
+                " ".join(str(pid) for pid in children) + "\n")
+
+            snapshot = diag._snapshot(main_pid, proc_root)
+            locks = {name: "lock_free_process_identity_unverified"
+                     for name in names}
+            good = diag.evaluate(unit, snapshot, locks, expected_uid=uid)
+            self.assertEqual(good["status"], "local_identity_verified_only")
+            self.assertTrue(good["workers_verified"])
+            self.assertTrue(good["locks_free_candidate"])
+            self.assertEqual(len(good["workers"]), 9)
+            self.assertFalse(good["live_no_drain_authorized"])
+
+            busy = dict(locks)
+            busy["maintenance_worker"] = "operation_in_flight"
+            self.assertFalse(
+                diag.evaluate(unit, snapshot, busy, expected_uid=uid)[
+                    "locks_free_candidate"])
+            missing = dict(snapshot)
+            missing["children"] = snapshot["children"][:-1]
+            self.assertFalse(
+                diag.evaluate(unit, missing, locks, expected_uid=uid)[
+                    "workers_verified"])
+            altered = dict(snapshot)
+            altered["children"] = [
+                {**item, "ppid": 1} if item["pid"] == first_pid else item
+                for item in snapshot["children"]
+            ]
+            self.assertFalse(
+                diag.evaluate(unit, altered, locks, expected_uid=uid)[
+                    "workers_verified"])
+            self.assertFalse(
+                diag.evaluate(unit, snapshot, locks, expected_uid=uid,
+                              stable=False)["workers_verified"])
+
+            def lock_info(name, **_kwargs):
+                return {"worker": name, "status": locks[name],
+                        "live_no_drain_authorized": False}
+
+            with patch.object(diag, "_unit_status", return_value=unit), \
+                 patch.object(diag, "inspect_operation",
+                              side_effect=lock_info):
+                observed = diag.inspect(proc_root=proc_root)
+                self.assertEqual(observed["status"],
+                                 "local_identity_verified_only")
+                self.assertFalse(observed["live_no_drain_authorized"])
+                output = io.StringIO()
+                with patch.object(diag, "inspect", return_value=observed), \
+                     redirect_stdout(output):
+                    self.assertEqual(diag.main(["--inspect"]), 2)
+                self.assertFalse(json.loads(output.getvalue())[
+                    "live_no_drain_authorized"])
+
+            # Simulate PID reuse between the two procfs observations.
+            changed = diag._snapshot(main_pid, proc_root)
+            changed["children"][0] = {
+                **changed["children"][0], "start_ticks": 99000}
+            with patch.object(diag, "_unit_status", return_value=unit), \
+                 patch.object(diag, "_snapshot",
+                              side_effect=[snapshot, changed]), \
+                 patch.object(diag, "inspect_operation",
+                              side_effect=lock_info):
+                reused = diag.inspect(proc_root=proc_root)
+                self.assertEqual(reused["status"], "unverified")
+                self.assertIn("identity_changed_during_observation",
+                              reused["errors"])
+                self.assertFalse(reused["live_no_drain_authorized"])
+
     def test_root_owned_maintenance_hold_fail_closed_and_no_agent_startup(self):
         with tempfile.TemporaryDirectory(prefix="dsm928-protected-hold-") as temp:
             folder = Path(temp) / "protected"
