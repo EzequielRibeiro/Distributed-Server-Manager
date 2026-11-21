@@ -95,8 +95,13 @@ def _resolve(root: Path, value: Any, *, missing: bool = False) -> Path:
             raise ValueError("symbolic links are not allowed")
     candidate = (root / relative).resolve(strict=False)
     candidate.relative_to(root)
-    if not missing and not candidate.exists():
-        raise FileNotFoundError(relative.as_posix())
+    if not missing:
+        # pathlib.exists() may turn EACCES into False (Python-version
+        # dependent), obscuring a reparable permission denial as ENOENT.
+        try:
+            candidate.stat()
+        except FileNotFoundError:
+            raise FileNotFoundError(relative.as_posix()) from None
     return candidate
 
 
