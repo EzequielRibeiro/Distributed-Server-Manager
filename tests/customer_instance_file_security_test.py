@@ -67,11 +67,19 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn("usage.usage_bytes??usage.used_bytes", source)
         self.assertIn('filePath==="."?"/":`/${filePath}`', source)
+        # The overview must not report zero when the private root is not
+        # readable but the same authenticated Agent can measure visible files.
+        self.assertIn('knownStorage===null&&can("files.read")', source)
+        self.assertIn('const minimum=visible+(knownBackup??0)', source)
+        self.assertIn('overview!==snapshot', source)
+        self.assertIn('Pelo menos ${fmtBytes(minimum)}', source)
 
     def test_customer_ui_builds_child_directory_path_and_disables_up_at_root(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
         self.assertIn('const target=filePath==="."?name:`${filePath}/${name}`', source)
         self.assertIn('$("file-up").disabled=filePath==="."', source)
+        self.assertIn('if(!await loadFiles())filePath=previous', source)
+        self.assertIn('Não foi possível abrir /', source)
         self.assertNotIn('fileCommand("mkdir",filePath,null,{name})', source)
 
     def test_customer_ui_downloads_files_only_with_permission(self):
