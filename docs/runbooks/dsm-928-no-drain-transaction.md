@@ -940,3 +940,55 @@ O próximo contrato precisa de **coordenador mantendo locks** e ACK
 autenticado dos Agents/Controller, além do journal de transação/rollback.
 `--no-drain` continua read-only/exit 2 e
 `live_no_drain_authorized=false` até os gates operacionais restantes.
+
+## Etapa 2 — barreira exclusiva LOCAL de nove Workers (21/11/2026)
+
+A função `dashboard/workers/local_worker_fence.py:local_worker_fence()`
+implementa a primeira operação de **fencing real**, porém limitada ao
+host Controller e aos nove ciclos mutadores já instrumentados. Ela é uma
+API de contexto, **não** um comando de atualização; não é chamada pelo
+`update.sh` nem por cron/systemd.
+
+O coordenador local:
+1. Exige marcador **root-owned válido e ainda dentro do TTL**, lido pelo
+   leitor existente de `game_uptime_maintenance_hold.py`. O leitor agora
+   também retorna o `transaction_id`, `issued_at` e `expires_at`
+   somente no caso da evidência validada. Ausência, expiração, corrupção,
+   marcador não confiável ou troca de transação impedem o contexto.
+2. Abre os **nove inodes estáveis**, pré-criados no diretório root-owned
+   `/run/capivara-dsm/worker-operations`, em ordem alfabética fixa, e
+   adquire todos com `flock(LOCK_EX|LOCK_NB)` **sem aguardar**. Se qualquer
+   lock estiver ocupado/inseguro ou ausente, libera todos os anteriores
+   imediatamente e falha fechado. Não modifica/limpa os arquivos.
+3. Enquanto mantém os nove locks, relê o marcador e chama o diagnóstico
+   de identidade de processos introduzido na PR #1123. Exige supervisor
+   verificado, nove filhos exatos e identidade estável, e relê novamente
+   o mesmo marcador/ID antes de fornecer a evidência ao chamador.
+4. **Mantém os nove locks durante todo o bloco de contexto** e libera-os
+   ao sair, inclusive por exceção. Um segundo coordenador concorrente é
+   rejeitado. A evidência limita o escopo a
+   `nine_local_worker_cycles_only`, registra os nove locks e o ID da
+   transação, e sempre declara `remote_agents_acked=false`,
+   `external_jobs_acked=false`, `controller_http_acked=false` e
+   `live_no_drain_authorized=false`.
+
+**Importante:** isto não instala/remover o marcador; o writer root-only
+com journal durável ainda está pendente. Não o criar manualmente em
+servidores com clientes ativos. Este guard não impede um comando já
+despachado de continuar em subprocesso, no Agent remoto, em HTTP ou em
+serviços de materialização. O próprio marcador root-owned pode mudar
+após a última leitura; o mecanismo não é autorização para swap e
+**não altera o bloqueio `update.sh --no-drain` (exit 2)**.
+
+O teste agrupado em `update_game_uptime_agent_run_forever_test.py`
+confirma lock real ocupado para os nove Workers, exclusividade de duas
+barreiras, limpeza das travas após falha, ausência de hold, identidade
+inválida, troca de `transaction_id` e operação ainda em voo. Não
+acrescentar novos testes redundantes de PID/rollback já homologados.
+
+**Restante da Etapa 2:** coordenador privilegiado que cria o marcador
+com journal/fsync e preserva o fencing durante crash/recovery,
+barreira de tarefas delegadas/Controller HTTP e ACK autenticado de
+cada Agent remoto com geração de lease, fencing de threads/executores
+privilegiados e checagem de versões compatíveis. Só após isso iniciar
+a Etapa 3 de `update.sh` efetivamente transacional.

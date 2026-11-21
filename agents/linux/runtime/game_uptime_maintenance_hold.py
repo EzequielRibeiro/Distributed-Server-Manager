@@ -89,7 +89,9 @@ def observe(*, path: Path = HOLD_PATH, trusted_uid: int = 0,
         return {"active": True, "reason": "hold_window_invalid"}
     if current >= expires:
         return {"active": True, "reason": "hold_expired_requires_operator"}
-    return {"active": True, "reason": "root_owned_maintenance_hold"}
+    return {"active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": payload["transaction_id"],
+            "issued_at": started, "expires_at": expires}
 
 if __name__ == "__main__":
     # A read-only check used by scheduler_worker.sh. An active, malformed,
