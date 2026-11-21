@@ -202,7 +202,7 @@ def inspect(*, proc_root: Path = Path("/proc"),
             procs = [snap["supervisor"], *snap["children"]]
             return tuple(sorted(
                 (p["pid"], p["ppid"], p["start_ticks"], p["uid"],
-                 p["state"], p["argv"], p["cgroup"]) for p in procs
+                 p["argv"], p["cgroup"]) for p in procs
             ))
         stable = same_unit and identity(one) == identity(two)
         locks = {
