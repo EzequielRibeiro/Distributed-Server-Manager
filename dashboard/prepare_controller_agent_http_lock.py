@@ -55,7 +55,8 @@ def provision_controller_agent_http_lock(
             if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
                     or info.st_size != 0):
                 raise ControllerHttpLockUnavailable("invalid_created_witness")
-            os.fchown(fd, uid, gid)
+            if (info.st_uid, info.st_gid) != (uid, gid):
+                os.fchown(fd, uid, gid)
             os.fchmod(fd, 0o600)
             os.fsync(fd)
     finally:
