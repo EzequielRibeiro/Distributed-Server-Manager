@@ -129,6 +129,13 @@ def _handoff_witness(inventory, *, list_units=None, inspect=None):
     result["blockers"] = sorted(set(blockers))
     result["verified_for_disposable_rehearsal"] = not blockers
     result["active_units_witnessed"] = len(known)
+    if not blockers:
+        result["original_units"] = [
+            {"unit": name, "pid": known[name]["main_pid"],
+             "started": known[name]["start_stamp"], "state": "active",
+             "unit_config_sha256": known[name]["unit_config_sha256"]}
+            for name in sorted(known)
+        ]
     return result
 
 

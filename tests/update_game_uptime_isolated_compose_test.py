@@ -475,5 +475,42 @@ compose.execute(root,[unit,dayz],
 
 
 
+    def test_composed_full_set_handoff_prevents_new_game_before_any_backup(self):
+        for record in self.states.values():
+            record["unit_config_sha256"] = "a" * 64
+        def names():
+            # A new fake unit appears during the second inventory scan.
+            names.calls += 1
+            return list(self.states) if names.calls == 1 else list(self.states) + [
+                "dsm928-e2e-new-game.service"]
+        names.calls = 0
+        with self.assertRaisesRegex(compose._TRANSACTION.TransactionSafetyError,
+                                    "set changed"):
+            compose.execute(self.root, [UNIT, DAYZ], inspect=self.inspect,
+                            prepare_files=lambda: self.fail("unexpected prepare"),
+                            apply_files=lambda: self.fail("unexpected update"),
+                            rollback_files=lambda: None, apply_unit=lambda: None,
+                            rollback_unit=lambda: None, verify=lambda: None,
+                            list_active_units=names)
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+
+    def test_composed_durable_witness_during_fixture_update(self):
+        for record in self.states.values():
+            record["unit_config_sha256"] = "b" * 64
+        result = compose.execute(
+            self.root, [UNIT, DAYZ], inspect=self.inspect,
+            prepare_files=lambda: self.updater("prepare"),
+            apply_files=lambda: self.updater("apply"),
+            rollback_files=lambda: self.updater("rollback"),
+            apply_unit=lambda: None, rollback_unit=lambda: None, verify=self.verify,
+            list_active_units=lambda: list(self.states))
+        self.assertEqual(result["status"], "verified")
+        receipt = json.loads((self.root / "dsm928-composite-journal" /
+                              "game-uptime-transaction.json").read_text())
+        self.assertTrue(receipt["strict_inventory"])
+        self.assertEqual(len(receipt["original_units"]), 2)
+        self.assertFalse(receipt["live_no_drain_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()

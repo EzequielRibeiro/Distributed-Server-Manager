@@ -121,6 +121,7 @@ def execute(
     apply_unit: Callable[[], None],
     rollback_unit: Callable[[], None],
     verify: Callable[[], None],
+    list_active_units: Callable[[], list[str]] | None = None,
 ) -> dict:
     """Apply fixture file functions + systemd swap; compensate in reverse order.
 
@@ -141,6 +142,9 @@ def execute(
     if journal.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise CompositeSafetyError("composite transaction journal must be private")
 
+    # The handoff must be valid before even the disposable file backup starts.
+    handoff = (_TRANSACTION.attest_handoff(units, inspect=inspect,
+                list_units=list_active_units) if list_active_units is not None else None)
     # Backup fixture files before starting the process-preservation transaction.
     # If this fails, there are no changes to compensate.
     prepare_files()
@@ -156,6 +160,7 @@ def execute(
 
     result = _TRANSACTION.execute(
         journal, units, inspect=inspect, apply=apply, rollback=rollback,
+        handoff=handoff, list_units=list_active_units,
     )
     if result["status"] != "verified" or result["live_no_drain_authorized"] is not False:
         raise CompositeSafetyError("unverified disposable composite transaction")
@@ -239,6 +244,7 @@ def recover_interrupted(
     rollback_unit: Callable[[], None],
     verify: Callable[[], None],
     operator_reviewed: bool = False,
+    list_active_units: Callable[[], list[str]] | None = None,
 ) -> dict:
     """Manual-only recovery of *both* components after abrupt interruption.
 
@@ -273,7 +279,7 @@ def recover_interrupted(
 
     result = _TRANSACTION.recover_interrupted(
         journal, units, inspect=inspect, rollback=rollback,
-        operator_reviewed=True,
+        operator_reviewed=True, list_units=list_active_units,
     )
     if result["status"] != "recovered_rollback" or result["live_no_drain_authorized"] is not False:
         raise CompositeSafetyError("unverified disposable composite recovery")
