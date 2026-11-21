@@ -32,7 +32,7 @@ from backend_factory import create_backend
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
 from agent_pairing_repository import AgentPairingRepository
-from agent_remote_http import dispatch_heartbeat
+from agent_remote_http import dispatch_heartbeat, dispatch_fence_observation
 from game_uptime_agent_wire import build_probe, verify_offer
 
 
@@ -229,6 +229,7 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             "CONSOLE_PUSH_PATH": "/api/agent/console/push",
             "ENROLL_PATH": "/api/agent/enroll",
             "HEARTBEAT_PATH": "/api/agent/heartbeat",
+            "NO_DRAIN_OBSERVE_PATH": "/api/agent/no-drain/observe",
             "UNINSTALL_RESULT_PATH": "/api/agent/uninstall/result",
             "_previous_post": lambda handler: handler.send_error(404),
             "legacy": SimpleNamespace(
@@ -237,6 +238,7 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
                     backend=fixture.backend),
             ),
             "dispatch_heartbeat": dispatch_heartbeat,
+            "dispatch_fence_observation": dispatch_fence_observation,
             "dispatch_enroll": lambda *_args, **_kw: self.fail(
                 "unexpected controller enrollment"),
             "dispatch_uninstall_result": lambda *_args, **_kw: self.fail(
