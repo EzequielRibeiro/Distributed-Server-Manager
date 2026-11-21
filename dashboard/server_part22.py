@@ -5,11 +5,14 @@ from __future__ import annotations
 import server_part21 as integration
 from database_intelligence_http import install_database_intelligence_http
 from provider_credentials_http import install_curseforge_provider_http
+from game_uptime_controller_mutation_gate import install_controller_mutation_gate
 
 legacy = integration.legacy
 _controller_authenticate = integration._controller_authenticate
 install_database_intelligence_http(legacy, _controller_authenticate)
 install_curseforge_provider_http(legacy, _controller_authenticate)
+# Install last, after every Controller/Customer HTTP composition wrapper.
+install_controller_mutation_gate(legacy)
 
 
 def run():

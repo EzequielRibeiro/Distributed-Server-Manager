@@ -1271,3 +1271,40 @@ instalações iniciadas por outros canais continuam fora da barreira. A flag
 interprocessos permanece **desabilitada por padrão**. Sem prova
 distribuída de quiescência, `update.sh --no-drain` continua exit 2,
 `live_no_drain_authorized=false`, issue #928 aberta e release bloqueado.
+
+
+## Etapa 2 — barreira final de admissão HTTP do Controller (21/11/2026)
+
+O entrypoint executado pelo systemd, `dashboard/server_part22.py`, instala
+`install_controller_mutation_gate(legacy)` **por último**, depois de todos
+os hooks Controller/Customer. O wrapper cobre todas as rotas atendidas por
+`do_POST`, `do_PUT`, `do_PATCH` e `do_DELETE` existentes no
+`DashboardHandler`, sem adicionar métodos HTTP antes inexistentes.
+
+Cada chamada mutadora consulta o hold root-owned. Hold ativo/inválido/ilegível,
+ou journal pendente com marcador ausente, retorna **HTTP 423** antes de chamar
+o roteador original. Quando o flock de homologação
+`DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1` está explicitamente habilitado,
+a chamada mantém a **mesma** trava compartilhada da #1134 enquanto roda;
+`LOCK_EX` impede novas admissões e falha fechado quando uma requisição
+já está em voo. A flag permanece desligada por padrão. Operações sem hold
+mantêm o comportamento anterior.
+
+A rota única `POST /api/agent/no-drain/observe` é exceção deliberada:
+trata-se do transporte autenticado **somente leitura** das PRs #1126/#1127,
+necessário sob hold e não pode emitir ACK positivo. A exceção é por caminho
+exato (query string ignorada), nunca por prefixo. Rotas GET continuam
+inalteradas e não são prova de imutabilidade universal.
+
+Um único teste agrupado exercita quatro verbos, hold malformado/ilegível,
+HTTP 423, exceção read-only, caminho normal, lock EX em disputa e operação
+em andamento com lock SH real em temporário descartável. Teste verifica
+também a ordem do hook final. Sem games, hosts, SSH, banco ou updater reais.
+
+**Limites restantes:** esta prova não demonstra quiescência de GETs com
+efeitos colaterais, jobs/threads/materializers já delegados, processos que
+não entram pelo handler, nem Agents remotos. O wrapper também não garante
+que instâncias Controller em hosts diferentes receberam o mesmo hold.
+Sem proteção distribuída/ACK autenticado e coordinator journal/lease
+operacional, #928 permanece aberta, `update.sh --no-drain` exit 2,
+`live_no_drain_authorized=false` e release não autorizado.
