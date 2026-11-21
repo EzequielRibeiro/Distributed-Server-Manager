@@ -17,14 +17,41 @@ import stat
 import time
 
 HOLD_PATH = Path("/run/capivara-dsm/no-drain-maintenance.json")
+# Persistent root-only pending sentinel: survives loss of /run across reboot.
+PENDING_PATH = Path("/var/lib/capivara-dsm-928/no-drain-pending.json")
 _KIND = "CapivaraDSMNoDrainMaintenanceHold"
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 _KEYS = frozenset({"kind", "schema_version", "transaction_id",
                    "issued_at", "expires_at"})
 
 
+def _pending_recovery_reason(path: Path, trusted_uid: int) -> str | None:
+    """Existence of a persistent pending inode blocks even after /run loss.
+
+    Never parse, remove or trust the file's contents here; an incomplete
+    write or damaged journal still requires root/operator recovery.
+    """
+    try:
+        parent = path.parent.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "pending_journal_directory_unreadable"
+    if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != trusted_uid
+            or parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+        return "pending_journal_directory_untrusted"
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return "pending_journal_unreadable"
+    return "pending_journal_requires_operator_recovery"
+
+
 def observe(*, path: Path = HOLD_PATH, trusted_uid: int = 0,
-            now: int | None = None) -> dict[str, object]:
+            now: int | None = None,
+            pending_path: Path | None = None) -> dict[str, object]:
     """Return an unforgeable-by-unprivileged-users local hold observation.
 
     An invalid, unreadable, expired or forged marker remains an ACTIVE block
@@ -33,10 +60,22 @@ def observe(*, path: Path = HOLD_PATH, trusted_uid: int = 0,
     configuration; Agent and Worker always use the fixed root-owned path.
     """
     root = Path(path)
+    # Fixture paths retain the old reader contract unless an isolated
+    # pending_path is explicitly provided. Runtime always uses fixed paths.
+    pending = (PENDING_PATH if root == HOLD_PATH and pending_path is None
+               else pending_path)
+
+    def absent(reason: str) -> dict[str, object]:
+        if pending is not None:
+            blocked = _pending_recovery_reason(Path(pending), trusted_uid)
+            if blocked is not None:
+                return {"active": True, "reason": blocked}
+        return {"active": False, "reason": reason}
+
     try:
         parent = root.parent.lstat()
     except FileNotFoundError:
-        return {"active": False, "reason": "hold_directory_absent"}
+        return absent("hold_directory_absent")
     except OSError:
         return {"active": True, "reason": "hold_directory_unreadable"}
     if (not stat.S_ISDIR(parent.st_mode) or parent.st_uid != trusted_uid
@@ -46,7 +85,7 @@ def observe(*, path: Path = HOLD_PATH, trusted_uid: int = 0,
     try:
         before = root.lstat()
     except FileNotFoundError:
-        return {"active": False, "reason": "hold_absent"}
+        return absent("hold_absent")
     except OSError:
         return {"active": True, "reason": "hold_unreadable"}
 
