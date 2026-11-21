@@ -11,9 +11,11 @@ from agent_console_push import CONSOLE_PUSH_PATH, serve_agent_console_stream
 from agent_remote_http import (
     ENROLL_PATH,
     HEARTBEAT_PATH,
+    NO_DRAIN_OBSERVE_PATH,
     UNINSTALL_RESULT_PATH,
     dispatch_enroll,
     dispatch_heartbeat,
+    dispatch_fence_observation,
     dispatch_uninstall_result,
 )
 
@@ -51,6 +53,7 @@ def integrated_post(self):
     if path not in {
         ENROLL_PATH,
         HEARTBEAT_PATH,
+        NO_DRAIN_OBSERVE_PATH,
         UNINSTALL_RESULT_PATH,
     }:
         return _previous_post(self)
@@ -69,6 +72,12 @@ def integrated_post(self):
         )
     elif path == HEARTBEAT_PATH:
         status, body = dispatch_heartbeat(
+            payload,
+            headers=self.headers,
+            backend=backend,
+        )
+    elif path == NO_DRAIN_OBSERVE_PATH:
+        status, body = dispatch_fence_observation(
             payload,
             headers=self.headers,
             backend=backend,
