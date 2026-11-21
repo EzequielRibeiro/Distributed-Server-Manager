@@ -425,6 +425,154 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertFalse((root / "runtime/hybrid-agent-state/agent.json").exists())
         self.assertFalse(Path("/opt/dsm/runtime/hybrid-instance-storage").exists())
 
+    def test_real_worker_supervisor_group_restarts_without_draining_game_units(self):
+        """Exercise unchanged worker.sh, nine harmless children, and real systemd.
+
+        Production worker children are NEVER started. Every child executable
+        is a self-contained sleep fixture inside a private, owner-marked /tmp
+        root. The worker.sh bytes and lifecycle are real; operational worker
+        code, database access and host reconciliation are out of scope.
+        """
+        import signal
+        from update_game_uptime_main_path_test import MainPathRehearsalTest
+
+        originals = [self._start("supervised-game-a"),
+                     self._start("supervised-game-b")]
+        fake_root = self.workspace / "supervisor-only-clone"
+        workers = fake_root / "dashboard" / "workers"
+        workers.mkdir(parents=True, mode=0o700)
+        (fake_root / "logs").mkdir(mode=0o700)
+
+        source = ROOT / "dashboard" / "workers" / "worker.sh"
+        supervisor_script = workers / "worker.sh"
+        supervisor_script.write_bytes(source.read_bytes())
+        supervisor_script.chmod(0o700)
+        self.assertEqual(source.read_bytes(), supervisor_script.read_bytes())
+        expected_workers = (
+            "scheduler_worker.sh",
+            "automation_worker.py",
+            "content_update_worker.py",
+            "maintenance_worker.py",
+            "observability_retention_worker.py",
+            "content_upload_retention_worker.py",
+            "database_intelligence_worker.py",
+            "hybrid_agent_worker.py",
+            "hybrid_customer_workspace_worker.py",
+        )
+        (workers / "scheduler_worker.sh").write_text(
+            "#!/usr/bin/env bash\nexec /usr/bin/sleep 180\n", encoding="utf-8")
+        (workers / "scheduler_worker.sh").chmod(0o700)
+        for name in expected_workers[1:]:
+            stub = workers / name
+            stub.write_text(
+                "import os, time\n"
+                "from pathlib import Path\n"
+                "if Path(__file__).name == 'hybrid_agent_worker.py':\n"
+                "    assert os.environ.get('CAPIVARA_AGENT_MODE') == 'hybrid'\n"
+                "    assert os.environ.get('CAPIVARA_DSM_ROOT') == "
+                + repr(str(fake_root)) + "\n"
+                "    assert os.environ.get('CAPIVARA_STEAM_HOME') == "
+                + repr(str(fake_root)) + "\n"
+                "time.sleep(180)\n", encoding="utf-8")
+
+        unit = f"{self.prefix}-supervisor-clone.service"
+        self._run(
+            "systemd-run", "--unit", unit[:-8], "--collect",
+            "--property=Type=simple", "--property=Restart=on-failure",
+            "--property=RestartSec=1s",
+            "--property=KillMode=control-group",
+            "--property=NoNewPrivileges=yes",
+            "--property=ProtectSystem=strict",
+            f"--property=ReadWritePaths={fake_root}",
+            "--property=IPAddressDeny=any",
+            "--setenv=PYTHONDONTWRITEBYTECODE=1",
+            f"--setenv=DSM_ROOT={fake_root}",
+            "/usr/bin/bash", str(supervisor_script),
+        )
+        self.units.append(unit)
+        log = fake_root / "logs" / "dashboard_worker.log"
+
+        def running_snapshot(exclude_pid=0):
+            for _ in range(100):
+                snap = self._snapshot(unit)
+                if (snap["state"] == "active"
+                    and snap["pid"] > 1
+                    and snap["started"] > 0
+                    and snap["pid"] != exclude_pid):
+                    children_file = (Path("/proc") / str(snap["pid"]) /
+                                     "task" / str(snap["pid"]) / "children")
+                    try:
+                        children = [int(x) for x in
+                                    children_file.read_text().strip().split()]
+                    except OSError:
+                        children = []
+                    if len(children) == len(expected_workers):
+                        return snap, children
+                time.sleep(0.1)
+            self.fail("real worker.sh never supervised all nine disposable children")
+
+        before, children = running_snapshot()
+        self._assert_unchanged(originals)
+        self.assertTrue(log.exists())
+        for name in expected_workers:
+            self.assertIn(f"Iniciando {name}", log.read_text())
+
+        for mode, version, status in (
+            ("no_drain_success", "2.0.999-fixture", "verified"),
+            ("no_drain_fail_after_apply", "2.0.998-fixture", "rolled_back"),
+        ):
+            with self.subTest(mode=mode):
+                fixture = MainPathRehearsalTest(
+                    "test_disposable_no_drain_actual_main_success_preserves_data_and_never_drains")
+                fixture.setUp()
+                self.addCleanup(fixture.doCleanups)
+                fixture.prepare_no_drain_fixture()
+                result = main_rehearsal(fixture.root, mode)
+                self.assertEqual(
+                    result.returncode,
+                    0 if mode == "no_drain_success" else 2,
+                    result.stderr[-900:] + result.stdout[-900:],
+                )
+                self.assertEqual(
+                    (fixture.installed / "version").read_text().strip(), version)
+                receipt = json.loads((
+                    fixture.root /
+                    "dsm928-composite-journal/game-uptime-transaction.json"
+                ).read_text())
+                self.assertEqual(receipt["status"], status)
+                self.assertFalse(receipt["live_no_drain_authorized"])
+                self.assertEqual(fixture.world.read_bytes(),
+                                 b"saved-world-private-test")
+                self.assertEqual(fixture.upload.read_bytes(),
+                                 b"in-flight-upload-private-test")
+                self.assertFalse((fixture.root / "steps").exists())
+                self.assertEqual(self._snapshot(unit), before)
+                self._assert_unchanged(originals)
+
+        # Prove a REAL child of the transient supervisor can trigger the
+        # production shell's wait -n -> exit 1 -> systemd Restart=on-failure.
+        # Never send a signal to a PID without private script and cgroup proof.
+        candidate = None
+        for pid in children:
+            proc = Path("/proc") / str(pid)
+            try:
+                command = (proc / "cmdline").read_bytes()
+                cgroup = (proc / "cgroup").read_text()
+            except OSError:
+                continue
+            if (str(workers / "automation_worker.py").encode() in command
+                and unit in cgroup):
+                candidate = pid
+                break
+        self.assertIsNotNone(candidate, "no verified disposable child to terminate")
+        os.kill(candidate, signal.SIGTERM)
+        after, recreated_children = running_snapshot(exclude_pid=before["pid"])
+        self.assertNotEqual(before["pid"], after["pid"])
+        self.assertEqual(len(recreated_children), len(expected_workers))
+        self.assertIn("Worker filho encerrou inesperadamente", log.read_text())
+        self._assert_unchanged(originals)
+        self.assertFalse((fake_root / "config" / "agent.conf").exists())
+
     def test_two_real_systemd_processes_survive_actual_updater_file_functions(self):
         """Run actual update.sh backup/staging/apply/rollback on fake /tmp install."""
         originals = [self._start("real-alpha"), self._start("real-beta")]
