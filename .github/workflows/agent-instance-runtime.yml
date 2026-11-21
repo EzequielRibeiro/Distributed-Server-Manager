@@ -27,6 +27,7 @@ on:
       - 'tests/agent_instance_state_systemd_e2e.sh'
       - 'tests/agent_systemd_materializer_regression_test.py'
       - 'tests/dayz_customer_file_isolation_test.py'
+      - 'tests/dayz_namalsk_content_projection_test.py'
       - 'tests/agent_instance_runtime_test.py'
       - 'tests/agent_instance_materialization_test.py'
       - 'tests/agent_game_runtime_profiles_test.py'
@@ -104,7 +105,7 @@ jobs:
         run: sudo --preserve-env=GITHUB_WORKSPACE bash tests/agent_instance_state_systemd_e2e.sh
 
       - name: Validate DayZ private root and virtual customer files
-        run: python3 -m pytest tests/dayz_customer_file_isolation_test.py -q
+        run: python3 -m pytest tests/dayz_customer_file_isolation_test.py tests/dayz_namalsk_content_projection_test.py -q
 
       - name: Validate conservative shared Workshop backup accounting
         run: python3 -m unittest tests/backup_storage_accounting_1066_test.py
