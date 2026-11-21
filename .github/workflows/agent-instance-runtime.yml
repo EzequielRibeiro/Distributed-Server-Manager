@@ -238,12 +238,12 @@ jobs:
         run: bash tests/agent_package_test.sh
 
   package_rc7_homologation:
-    name: Build verified rc.6 artifact (no publication or deployment)
+    name: Build verified rc.7 artifact (no publication or deployment)
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.number == 1096 &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.head_ref == 'homolog/2.0.133-rc.7-dayz-isolation-20261119'
+      github.head_ref == 'homolog/2.0.133-rc.6-dayz-isolation-20261119'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
