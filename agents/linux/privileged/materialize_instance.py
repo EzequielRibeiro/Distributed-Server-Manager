@@ -674,9 +674,26 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         _reject_symlinks(control_root, label="Agent control state")
     else:
         control_root.mkdir()
+    # DayZ's public verification keys are bind-mounted into the game process.
+    # Keep their directory owned by the Agent and readable by the runtime:
+    # a generic private-state chmod(0700)/chown(runtime) breaks both signature
+    # verification and the next unprivileged keyring reconciliation.
+    dayz_keyring = (
+        control_root / "dayz-keys"
+        if str(spec.get("game_id") or "").strip().lower() == "dayz"
+        else None
+    )
     for current in [control_root, *control_root.rglob("*")]:
         os.chown(current, agent_account.pw_uid, agent_group.gr_gid)
-        os.chmod(current, 0o700 if current.is_dir() else 0o600)
+        if dayz_keyring is not None and current == dayz_keyring:
+            if not current.is_dir():
+                raise RuntimeError("DayZ keyring must be a directory")
+            os.chmod(current, 0o755)
+        elif (dayz_keyring is not None and current.parent == dayz_keyring
+              and current.is_file() and current.suffix.casefold() == ".bikey"):
+            os.chmod(current, 0o644)
+        else:
+            os.chmod(current, 0o700 if current.is_dir() else 0o600)
 
     _prepare_dayz_content_directories(spec, state_root, account, agent_account, agent_group)
 
@@ -711,8 +728,15 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
         source.mkdir(parents=True, exist_ok=True)
-        os.chown(source, account.pw_uid, account.pw_gid)
-        os.chmod(source, 0o700)
+        if dayz_keyring is not None and source == dayz_keyring:
+            # Do not transfer ownership to the game's user or replace the
+            # directory inode: the Agent updates keys in place while systemd
+            # continues to mount the same directory into the running DayZ.
+            os.chown(source, agent_account.pw_uid, agent_group.gr_gid)
+            os.chmod(source, 0o755)
+        else:
+            os.chown(source, account.pw_uid, account.pw_gid)
+            os.chmod(source, 0o700)
         target.mkdir(parents=True, exist_ok=True)
 
 
@@ -993,6 +1017,41 @@ def _sync_working_file_copies(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return results
 
 
+def _ensure_dayz_addons_case_alias(source: Path) -> bool:
+    """Make a managed Workshop mod's addons visible to case-sensitive DayZ.
+
+    Steam Workshop revisions may ship with Addons/ instead of addons/. Create
+    only a relative alias inside the validated instance-owned mod root; never
+    rename, overwrite or copy PBOs, and fail closed on ambiguous/suspicious
+    existing entries.
+    """
+    lower = source / "addons"
+    if lower.is_symlink():
+        linked = os.readlink(lower)
+        if (Path(linked).name != linked or linked == "addons"
+                or linked.casefold() != "addons"
+                or not (source / linked).is_dir()
+                or (source / linked).is_symlink()):
+            raise RuntimeError("unsafe DayZ addons case alias")
+        return False
+    if lower.exists():
+        if not lower.is_dir():
+            raise RuntimeError("DayZ addons path is not a directory")
+        return False
+    candidates = [
+        child for child in source.iterdir()
+        if child.name.casefold() == "addons" and child.name != "addons"
+    ]
+    if any(child.is_symlink() or not child.is_dir() for child in candidates):
+        raise RuntimeError("unsafe DayZ addons directory")
+    if len(candidates) > 1:
+        raise RuntimeError("ambiguous DayZ addons directory casing")
+    if not candidates:
+        return False
+    lower.symlink_to(candidates[0].name, target_is_directory=True)
+    return True
+
+
 def _sync_dayz_mod_aliases(spec: dict[str, Any]) -> list[dict[str, Any]]:
     aliases = spec.get("content_dayz_mod_aliases") or []
     if not isinstance(aliases, list):
@@ -1025,6 +1084,7 @@ def _sync_dayz_mod_aliases(spec: dict[str, Any]) -> list[dict[str, Any]]:
             raise RuntimeError("DayZ mod alias source escapes instance content") from exc
         if not source.is_dir():
             raise RuntimeError("DayZ mod alias source is unavailable")
+        _ensure_dayz_addons_case_alias(source)
         target = working_root / alias
         if str(item.get("target") or "") != str(target):
             raise RuntimeError("DayZ mod alias target mismatch")
