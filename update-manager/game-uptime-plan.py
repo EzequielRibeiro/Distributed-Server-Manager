@@ -22,6 +22,73 @@ COSMETIC_PREFIX = ("docs/", "release/RELEASE_NOTES_", "dashboard/web/")
 COSMETIC_EXACT = frozenset({"version"})
 
 
+
+# More granular, *advisory* classification for #928. This is deliberately
+# independent of the legacy drain boolean: not even a "restart_free" candidate
+# grants permission for live no-drain updates.
+CHANGE_TIERS = ("no_change", "restart_free", "control_plane_restart_candidate",
+                "instance_maintenance_required", "full_maintenance_required")
+CONTROL_PLANE_PREFIXES = (
+    "dashboard/", "api/", "scheduler/", "notification/", "metrics/", "monitor/",
+)
+CONTROL_PLANE_SUFFIXES = frozenset((
+    ".py", ".js", ".css", ".html", ".htm", ".json", ".svg", ".png", ".ico",
+    ".woff", ".woff2", ".map",
+))
+INSTANCE_PREFIXES = ("agents/", "games/", "catalog/", "player/", "packages/")
+
+
+def _change_tier(name: str, before: dict, after: dict) -> str:
+    old, new = before.get(name), after.get(name)
+    # Any mode change, suspicious file permissions, or removal/addition of
+    # runtime code needs a maintenance window. Documentation-only additions
+    # are fine, but never executable documentation disguised as release notes.
+    if old is not None and new is not None and old[0] != new[0]:
+        return "full_maintenance_required"
+    info = new if new is not None else old
+    if info is None or info[0] & 0o022:
+        return "full_maintenance_required"
+    is_doc = (
+        name == "version" and old is not None and new is not None
+        or name.startswith("docs/") and Path(name).suffix.lower() in (".md", ".txt", ".rst")
+        or name.startswith("release/RELEASE_NOTES_") and name.endswith(".md")
+    )
+    if is_doc and not info[0] & 0o111:
+        return "restart_free"
+    if (old is not None and new is not None
+            and any(name.startswith(prefix) for prefix in CONTROL_PLANE_PREFIXES)
+            and Path(name).suffix.lower() in CONTROL_PLANE_SUFFIXES
+            and not info[0] & 0o111):
+        return "control_plane_restart_candidate"
+    if any(name.startswith(prefix) for prefix in INSTANCE_PREFIXES):
+        return "instance_maintenance_required"
+    return "full_maintenance_required"
+
+
+def _tiers(changed: list[str], before: dict, after: dict) -> dict[str, object]:
+    counts = {tier: 0 for tier in CHANGE_TIERS if tier != "no_change"}
+    examples = {tier: [] for tier in counts}
+    for name in changed:
+        tier = _change_tier(name, before, after)
+        counts[tier] += 1
+        if len(examples[tier]) < 12:
+            examples[tier].append(name)
+    highest = next((tier for tier in reversed(CHANGE_TIERS[1:])
+                    if counts[tier]), "no_change")
+    # These are advisory classes only. Independent process/contract proof,
+    # durable rollback and a separately reviewed live path are still missing.
+    return {
+        "change_tier": highest,
+        "change_tier_counts": counts,
+        "change_tier_examples": examples,
+        "control_plane_candidate_for_disposable_review":
+            bool(changed) and highest in (
+                "restart_free", "control_plane_restart_candidate"),
+        "live_no_drain_authorized": False,
+    }
+
+
+
 def _inventory(root: Path) -> dict[str, tuple[int, str]]:
     if not root.is_dir() or root.is_symlink():
         raise ValueError("unsafe or missing DSM root")
@@ -68,7 +135,9 @@ def analyze(installed: Path, target: Path) -> dict[str, object]:
         if name not in COSMETIC_EXACT
         and not any(name.startswith(prefix) for prefix in COSMETIC_PREFIX)
     ]
+    tiers = _tiers(changed, before, after)
     return {
+        **tiers,
         "kind": "CapivaraDSMGameUptimeImpact",
         "schema_version": 1,
         "mode": "read_only_diagnostic",

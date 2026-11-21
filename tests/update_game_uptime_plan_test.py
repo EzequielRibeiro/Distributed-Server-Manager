@@ -91,5 +91,62 @@ class UptimeImpactTest(unittest.TestCase):
             plan.analyze(self.installed,self.target)
 
 
+
+    def test_control_plane_worker_change_is_only_candidate_for_disposable_review(self):
+        self.put("dashboard/workers/worker.py", "old", "new")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["change_tier"], "control_plane_restart_candidate")
+        self.assertTrue(state["requires_game_drain"], "current updater still drains games")
+        self.assertTrue(state["control_plane_candidate_for_disposable_review"])
+        self.assertFalse(state["live_no_drain_authorized"])
+
+    def test_added_controller_executable_and_mode_change_force_maintenance(self):
+        self.put("dashboard/workers/worker.py", "old", "new")
+        first = plan.analyze(self.installed, self.target)
+        self.assertEqual(first["change_tier"], "control_plane_restart_candidate")
+        (self.target / "dashboard/workers/new.py").write_text("new")
+        second = plan.analyze(self.installed, self.target)
+        self.assertEqual(second["change_tier"], "full_maintenance_required")
+        (self.target / "dashboard/workers/new.py").unlink()
+        (self.target / "dashboard/workers/worker.py").chmod(0o755)
+        third = plan.analyze(self.installed, self.target)
+        self.assertEqual(third["change_tier"], "full_maintenance_required")
+
+    def test_game_adapter_requires_instance_maintenance(self):
+        self.put("agents/linux/runtime/adapters/dayz.py", "old", "new")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["change_tier"], "instance_maintenance_required")
+        self.assertFalse(state["control_plane_candidate_for_disposable_review"])
+
+    def test_database_and_systemd_changes_require_full_maintenance(self):
+        self.put("dashboard/web/status.css", "old", "new")
+        self.put("database/migrations/0023.sql", "old", "new")
+        self.put("systemd/capivara-instance@.service", "old", "new")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["change_tier"], "full_maintenance_required")
+        self.assertFalse(state["control_plane_candidate_for_disposable_review"])
+
+    def test_full_inventory_classification_not_only_truncated_preview(self):
+        for i in range(65):
+            self.put(f"dashboard/web/p{i:03d}.css", "old", "new")
+        self.put("zz-unknown/surprise.py", "old", "new")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["change_tier"], "full_maintenance_required")
+        self.assertEqual(state["change_tier_counts"]["control_plane_restart_candidate"], 65)
+        self.assertEqual(state["change_tier_counts"]["full_maintenance_required"], 1)
+        self.assertFalse(state["control_plane_candidate_for_disposable_review"])
+
+    def test_docs_and_version_only_and_no_change_never_authorize(self):
+        unchanged = plan.analyze(self.installed, self.target)
+        self.assertEqual(unchanged["change_tier"], "no_change")
+        self.assertFalse(unchanged["control_plane_candidate_for_disposable_review"])
+        self.put("docs/howto.md", "old", "new")
+        self.put("version", "2.0.132", "2.0.133")
+        state = plan.analyze(self.installed, self.target)
+        self.assertEqual(state["change_tier"], "restart_free")
+        self.assertTrue(state["control_plane_candidate_for_disposable_review"])
+        self.assertFalse(state["live_no_drain_authorized"])
+
+
 if __name__=="__main__":
     unittest.main()

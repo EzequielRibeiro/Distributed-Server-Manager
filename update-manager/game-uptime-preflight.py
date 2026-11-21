@@ -154,6 +154,8 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
         impact = plan.analyze(installed, target)
         units = reporter.report(list_units=list_units, inspect=inspect)
         state["release_impact"] = impact
+        state["proposed_no_drain_change_tier"] = impact["change_tier"]
+        state["proposed_no_drain_live_authorized"] = False
         operational_coverage = coverage.assess(expected_active_units, units)
         state["operational_coverage"] = operational_coverage
         # Both inventory and process witnesses must still agree when entering
@@ -183,7 +185,7 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
         state["compatibility_gate"] = gate
         state["no_drain_compatibility_verified"] = gate["compatible_for_further_rehearsal"]
         state["no_drain_disposable_rehearsal_candidate"] = bool(
-            not impact["requires_game_drain"]
+            impact["control_plane_candidate_for_disposable_review"]
             and operational_coverage["verified_for_disposable_rehearsal"]
             and witness["verified_for_disposable_rehearsal"]
             and gate["compatible_for_further_rehearsal"]

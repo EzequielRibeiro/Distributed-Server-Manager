@@ -280,5 +280,18 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(result["live_no_drain_authorized"])
 
 
+
+    def test_advisory_change_tier_never_changes_actual_stop_actions(self):
+        self.write("dashboard/workers/worker.py", "old", "new")
+        result = self.result()
+        self.assertEqual(result["proposed_no_drain_change_tier"],
+                         "control_plane_restart_candidate")
+        self.assertFalse(result["proposed_no_drain_live_authorized"])
+        self.assertTrue(result["current_updater_drains_active_games"])
+        self.assertTrue(all(x["action"] == "stop_and_restart"
+                            for x in result["planned_game_actions"]))
+        self.assertFalse(result["no_drain_disposable_rehearsal_candidate"])
+
+
 if __name__ == "__main__":
     unittest.main()
