@@ -109,7 +109,12 @@ def test_virtual_root_lists_only_explicit_directories_and_blocks_private_paths(t
         )
         names = {entry["name"] for entry in listing["entries"]}
         assert names == {"config", "content"}
-        assert listing["usage_bytes"] >= len(settings.read_bytes()) + len(package.read_bytes())
+        assert listing["usage_bytes"] is None  # Listing never scans the tree.
+        usage = instance_files_client.execute(
+            {"agent_id": "agent-test"},
+            {"instance_id": root.name, "action": "usage", "path": "."},
+        )
+        assert usage["usage_bytes"] >= len(settings.read_bytes()) + len(package.read_bytes())
         assert "battleye" not in names
         assert ".dsm" not in names
 
