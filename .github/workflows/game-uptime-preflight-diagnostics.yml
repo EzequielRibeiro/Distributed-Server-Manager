@@ -2,23 +2,51 @@ name: Game Uptime Preflight Diagnostics
 on:
   pull_request:
     paths:
-      - 'update-manager/game-uptime-*.py'
-      - 'update-manager/preflight.sh'
+      # Only the update and uptime-critical runtime paths trigger this workflow.
+      # Runtime changes always select the FULL gate; test/docs-only changes
+      # can still select the focused gate below.
+      - 'update.sh'
+      - 'update-manager/**'
+      - 'dashboard/server.py'
+      - 'dashboard/server_part*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/game_uptime_heartbeat_compat.py'
+      - 'dashboard/workers/worker.sh'
+      - 'dashboard/workers/hybrid_agent_worker.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/game_uptime_agent_wire.py'
+      - 'systemd/dsm-dashboard*.service'
+      - 'systemd/dsm-controller-service-topology.service'
+      - 'systemd/dsm-hybrid-agent-*.service.in'
       - 'docs/runbooks/dsm-928-no-drain-transaction.md'
       - 'tests/update_game_uptime_*test.py'
-      - 'tests/fixtures/update_928_real_functions_rehearsal.sh'
-      - 'tests/fixtures/update_928_main_path_rehearsal.sh'
+      - 'tests/fixtures/update_928_*'
       - 'tests/update_preflight_test.sh'
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'
   push:
     branches: [main]
     paths:
-      - 'update-manager/game-uptime-*.py'
-      - 'update-manager/preflight.sh'
+      # Only the update and uptime-critical runtime paths trigger this workflow.
+      # Runtime changes always select the FULL gate; test/docs-only changes
+      # can still select the focused gate below.
+      - 'update.sh'
+      - 'update-manager/**'
+      - 'dashboard/server.py'
+      - 'dashboard/server_part*.py'
+      - 'dashboard/agent_remote_http.py'
+      - 'dashboard/agent_heartbeat_api.py'
+      - 'dashboard/game_uptime_heartbeat_compat.py'
+      - 'dashboard/workers/worker.sh'
+      - 'dashboard/workers/hybrid_agent_worker.py'
+      - 'agents/linux/runtime/agent.py'
+      - 'agents/linux/runtime/game_uptime_agent_wire.py'
+      - 'systemd/dsm-dashboard*.service'
+      - 'systemd/dsm-controller-service-topology.service'
+      - 'systemd/dsm-hybrid-agent-*.service.in'
       - 'docs/runbooks/dsm-928-no-drain-transaction.md'
       - 'tests/update_game_uptime_*test.py'
-      - 'tests/fixtures/update_928_real_functions_rehearsal.sh'
-      - 'tests/fixtures/update_928_main_path_rehearsal.sh'
+      - 'tests/fixtures/update_928_*'
       - 'tests/update_preflight_test.sh'
       - '.github/workflows/game-uptime-preflight-diagnostics.yml'
   workflow_dispatch:
