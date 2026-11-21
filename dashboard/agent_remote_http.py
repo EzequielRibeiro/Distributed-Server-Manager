@@ -40,6 +40,7 @@ from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpa
 from game_uptime_heartbeat_compat import assess_authenticated_probe
 from game_uptime_remote_fence_evidence import receipt_for_authenticated_agent
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+from game_uptime_controller_http_inflight import track_controller_agent_mutation
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -79,6 +80,7 @@ def _mutating_agent_api_hold_response() -> tuple[int, dict[str, Any]] | None:
     }
 
 
+@track_controller_agent_mutation("enroll")
 def dispatch_enroll(payload: dict[str, Any] | None, *, backend) -> tuple[int, dict[str, Any]]:
     gate = _mutating_agent_api_hold_response()
     if gate is not None:
@@ -304,6 +306,7 @@ def _attach_backup_clone_state(result, *, agent_id, backend):
 
 
 
+@track_controller_agent_mutation("uninstall_result")
 def dispatch_uninstall_result(
     payload: dict[str, Any] | None,
     *,
@@ -457,6 +460,7 @@ def dispatch_fence_observation(
                  "live_no_drain_authorized": False}
 
 
+@track_controller_agent_mutation("heartbeat")
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
     gate = _mutating_agent_api_hold_response()
     if gate is not None:
