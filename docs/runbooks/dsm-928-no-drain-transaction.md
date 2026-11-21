@@ -822,3 +822,45 @@ aos Agents, manter o fence durante atualização e rollback, e somente
 então permitir recuperação. Esse coordenador ainda NÃO existe.
 Os outros Workers e o Agent Linux ainda não produzem evidências
 individualizadas de operação em voo nesta etapa; a #928 continua aberta.
+
+## Testemunho de operações em voo nos nove Workers locais (21/11/2026)
+
+A implementação de `tracked_operation()` da etapa anterior agora cobre **todos
+os nove Workers filhos de `dashboard/workers/worker.sh`**, não apenas a
+manutenção:
+
+- Automação, atualização de conteúdo, retenção de observabilidade,
+  retenção de uploads e inteligência de banco mantêm `flock` durante
+  a passagem completa de trabalho; o lock é solto somente após a conclusão
+  do ciclo ou do tratamento de exceção. O Worker de manutenção conserva
+  a proteção já homologada.
+- O Worker Hybrid mantém o lock ao executar `heartbeat_cycle()`, incluindo
+  reconciliação e processamento de comandos; o Workspace Hybrid o mantém
+  durante os comandos de arquivo, console e artefato, inclusive modo `once`.
+- O scheduler em shell executa cada `scheduler_update()` sob um subprocesso
+  controlado pelo helper Python, que conserva a trava até o encerramento.
+  Em caso de hold ativo, erro ou prova de lock indisponível, não executa
+  a gravação do ciclo normal.
+
+O observador `inspect_operation()` mantém exclusivamente os estados
+`operation_in_flight`, `lock_free_process_identity_unverified` e
+`unverified`, sempre com `live_no_drain_authorized=false`.
+A cobertura é validada por **um único teste agrupado**, sem duplicar
+suítes de PID, backup ou rollback.
+
+**Aviso de integridade transacional:** os lockfiles atuais ficam em
+`dashboard/state/dsm928-worker-operations`, no diretório substituível do
+produto. O atualizador não pode depender deles como barreira durável durante
+o swap de `/opt/dsm`: há risco de mudar os inodes e quebrar a identidade
+do lock. Antes de qualquer autorização de no-drain, migrar o mecanismo para
+um diretório operacional preservado, seguro e gerenciado por service/unit
+identidade estável, com o coordenador retendo o lock através do swap.
+
+Esta mudança comprova **atividade local observável**, não quiescência
+operacional concluída. Ainda faltam: prova de processo vivo para cada
+Worker, confirmação da ausência de subprocessos/jobs em andamento,
+barreira de comandos no Controller, `Agent.run_forever()` e executores
+privilegiados nos hosts, confirmação autenticada entre hosts, posse
+transacional do hold, atualização/rollback integrado e aceite em clone
+com serviços completos. `--no-drain` segue read-only/exit 2 e
+`live_no_drain_authorized=false`. **Não criar hold manual em produção**.
