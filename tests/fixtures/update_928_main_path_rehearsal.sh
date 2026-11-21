@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 [[ $# -eq 3 ]] || exit 2
 ROOT="$1"; UPDATER="$2"; MODE="$3"
-[[ "$MODE" == success || "$MODE" == fail_after_apply ]] || exit 2
+[[ "$MODE" =~ ^(success|fail_after_apply|no_drain_success|no_drain_fail_after_apply|no_drain_drift|no_drain_unknown_file|no_drain_no_env)$ ]] || exit 2
 [[ -d "$ROOT" && ! -L "$ROOT" && -f "$ROOT/fixture-owner" ]] || exit 2
 [[ "$(cat "$ROOT/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || exit 2
 ROOT="$(realpath -e -- "$ROOT")"
@@ -42,6 +42,25 @@ SYSTEMD_ENABLED=0
 ACTIVE_GAME_UNITS=()
 RESTORE_SERVICES=()
 mkdir -p "$BACKUP_DIR" "$SYSTEMD_DIR"
+
+# New #928 entrypoint is reached through the REAL update.sh main(), but it
+# runs only the Python disposable transaction and actual file functions.
+# No production-facing function is stubbed or invoked in this branch.
+if [[ "$MODE" == no_drain_* ]]; then
+    [[ ! -e "$ROOT/steps" ]] || exit 2
+    if [[ "$MODE" != no_drain_no_env ]]; then
+        export CAPIVARA_DSM928_DISPOSABLE_MAIN=1
+    else
+        unset CAPIVARA_DSM928_DISPOSABLE_MAIN
+    fi
+    export GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted
+    case "$MODE" in
+        no_drain_fail_after_apply) export DSM928_DISPOSABLE_MODE=fail_after_apply ;;
+        *) export DSM928_DISPOSABLE_MODE=success ;;
+    esac
+    main --dsm928-disposable-no-drain-main "$ROOT/new-payload"
+    exit $?
+fi
 
 # Anything that would interact with production services or credentials is stubbed.
 # File functions, version enforcement, actual main() ordering, and rollback are REAL.
