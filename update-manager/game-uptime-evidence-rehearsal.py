@@ -53,6 +53,7 @@ def execute_observed_fixture(
     apply_unit: Callable[[], None],
     rollback_unit: Callable[[], None],
     verify: Callable[[], None],
+    list_active_units: Callable[[], list[str]] | None = None,
 ) -> dict:
     """Wire diagnostic + hashed pinned ExecStart + two game identities, /tmp only.
 
@@ -60,6 +61,8 @@ def execute_observed_fixture(
     real release or an update. No I/O to Agent/Controller endpoints is done.
     """
     root = _COMPOSE._root(workspace, units)
+    if not callable(list_active_units):
+        raise EvidenceSafetyError("complete active game inventory callback required")
     if (minecraft_unit not in units or len(units) < 2
             or not isinstance(authenticated_agent_id, str)
             or not re.fullmatch(r"fixture-[a-zA-Z0-9_-]+", authenticated_agent_id)
@@ -124,7 +127,7 @@ def execute_observed_fixture(
         inspect=inspect, prepare_files=prepare_files,
         apply_files=apply_files, rollback_files=rollback_files,
         apply_unit=apply_unit, rollback_unit=rollback_unit,
-        verify=verify_after,
+        verify=verify_after, list_active_units=list_active_units,
     )
     return {
         **receipt,

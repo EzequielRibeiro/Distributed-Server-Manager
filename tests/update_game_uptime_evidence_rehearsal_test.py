@@ -29,7 +29,13 @@ class ObservedEvidenceFixtureTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         f = self.fixture
-        f.set_fixture_supervisors(installed="old", candidate="new")
+        # A pinned external supervisor may run unchanged, but a release that
+        # replaces Agent supervisor code must be classified as maintenance.
+        f.set_fixture_supervisors(installed="stable", candidate="stable")
+        target_data = f.root / "new-payload/data/database.txt"
+        target_data.parent.mkdir(parents=True, exist_ok=True)
+        target_data.write_bytes(
+            (f.root / "installed/data/database.txt").read_bytes())
         self.versions = f.root / "immutable-versions"
         self.versions.mkdir(mode=0o700)
         source = f.root / "observed-supervisor.py"
@@ -61,6 +67,16 @@ class ObservedEvidenceFixtureTests(unittest.TestCase):
             values.update(self.override_pinned)
         return values
 
+    def inspect_game_witness(self, unit):
+        f = self.fixture
+        result = f.inspect(unit)
+        # Hash test-only systemd unit bytes; no secrets or ExecStart persist.
+        result["unit_config_sha256"] = hashlib.sha256(
+            f.installed.read_bytes() if unit == UNIT
+            else b"dsm928-dayz-mock-systemd-unit"
+        ).hexdigest()
+        return result
+
     def execute(self, **overrides):
         f = self.fixture
         values = {
@@ -72,12 +88,14 @@ class ObservedEvidenceFixtureTests(unittest.TestCase):
             "versions_dir": self.versions,
             "supervisor_sha256": self.digest,
             "inspect_pinned": self.pin_observation,
-            "inspect": f.inspect,
+            "inspect": self.inspect_game_witness,
+            "list_active_units": lambda: list(f.states),
             "prepare_files": lambda: f.updater("prepare"),
             "apply_files": lambda: f.updater("apply"),
             "rollback_files": lambda: f.updater("rollback"),
-            "apply_unit": f.swap_unit,
-            "rollback_unit": f.restore_unit,
+            # The no-drain compatibility path cannot alter unit directives.
+            "apply_unit": lambda: None,
+            "rollback_unit": lambda: None,
             "verify": f.verify,
         }
         values.update(overrides)
@@ -105,8 +123,21 @@ class ObservedEvidenceFixtureTests(unittest.TestCase):
         self.assertEqual(self.fixture.states[DAYZ]["pid"], 22002)
         self.assertEqual((self.fixture.root / "installed/version").read_text(),
                          "2.0.999-fixture")
-        self.fixture.restore_unit()
         self.fixture.updater("rollback")
+
+    def test_authenticated_offer_does_not_replace_complete_game_inventory(self):
+        with self.assertRaisesRegex(observed.EvidenceSafetyError,
+                                    "complete active game inventory"):
+            self.execute(list_active_units=None)
+        self.assert_no_mutation()
+
+    def test_authenticated_offer_does_not_override_agent_runtime_change(self):
+        self.fixture.set_fixture_supervisors(installed="old", candidate="new")
+        with self.assertRaisesRegex(
+                observed._COMPOSE.CompositeSafetyError,
+                "disposable release tier blocked"):
+            self.execute()
+        self.assert_no_mutation()
 
     def test_replayed_heartbeat_offer_blocked_before_any_backup(self):
         another = observed._AGENT.build_probe("fixture-agent")
