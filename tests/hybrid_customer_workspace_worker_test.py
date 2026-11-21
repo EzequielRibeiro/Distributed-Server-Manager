@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from contextlib import nullcontext
 import sys
 import unittest
 from pathlib import Path
@@ -46,10 +47,14 @@ class HybridCustomerWorkspaceWorkerTest(unittest.TestCase):
             'AGENT_ID=""\nDSM_NODE_ROLE="controller"\n',
             encoding="utf-8",
         )
-        self.assertEqual(
-            workspace_cycle(self.root, backend=self.backend),
-            {"active": False, "reason": "not_hybrid"},
-        )
+        # This is a non-hybrid logic test, not a root-owned lock provision
+        # integration test. On ephemeral CI runners /run/capivara-dsm is absent.
+        with patch("hybrid_customer_workspace_worker.tracked_operation",
+                   return_value=nullcontext(True)):
+            self.assertEqual(
+                workspace_cycle(self.root, backend=self.backend),
+                {"active": False, "reason": "not_hybrid"},
+            )
 
     def test_file_cycle_uses_canonical_linux_executor(self):
         repository = Mock()
