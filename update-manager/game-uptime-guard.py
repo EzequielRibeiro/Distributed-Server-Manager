@@ -15,8 +15,15 @@ from typing import Callable
 UNIT = re.compile(r"^capivara-instance-[A-Za-z0-9_.-]+\.service$")
 CONTROL_PREFIXES = ("dsm-", "capivara-agent-", "capivara-hybrid-")
 CONTROL_EXACT = frozenset(("capivara-agent.service", "capivara-hybrid-agent.service"))
+# Evaluate both forward and reverse relations. A control-plane restart can
+# indirectly affect game units through Conflicts or reverse systemd links even
+# when the game's direct PartOf/BindsTo list looks safe. Unavailable properties
+# intentionally fail closed in the read-only no-drain diagnosis.
 DEPENDENCY_PROPERTIES = ("PartOf", "BindsTo", "Requires", "Requisite",
-                         "StopPropagatedFrom", "PropagatesStopTo")
+                         "Wants", "Upholds", "Conflicts", "Triggers",
+                         "StopPropagatedFrom", "PropagatesStopTo",
+                         "BoundBy", "ConsistsOf", "RequiredBy", "WantedBy",
+                         "UpheldBy", "ConflictedBy", "TriggeredBy")
 # Paths in lifecycle hooks and working-directory/environment directives can
 # reference replaceable DSM code even when the main game ExecStart is stable.
 LIFECYCLE_PROPERTIES = ("ExecCondition", "ExecStartPre", "ExecStartPost",
