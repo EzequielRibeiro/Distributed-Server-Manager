@@ -10,8 +10,11 @@ outside this contract.
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import os
+try:
+    import fcntl  # POSIX-only; Windows Controller requests must import safely.
+except ImportError:
+    fcntl = None
 from pathlib import Path
 import stat
 from typing import Iterator
@@ -64,6 +67,8 @@ def _open_witness(path: Path, *, expected_uid: int, expected_gid: int,
 
 
 def _acquire(fd: int, mode: int) -> None:
+    if fcntl is None:
+        raise ControllerHttpLockUnavailable("controller_http_flock_unsupported_platform")
     try:
         fcntl.flock(fd, mode | fcntl.LOCK_NB)
     except (OSError, BlockingIOError) as exc:
@@ -86,6 +91,9 @@ def shared_controller_agent_http_lock(
     if not active:
         yield False
         return
+    if fcntl is None:
+        # An opted-in Linux flock must NEVER silently degrade on Windows.
+        raise ControllerHttpLockUnavailable("controller_http_flock_unsupported_platform")
     path = Path(lock_path)
     uid = os.geteuid() if expected_uid is None else expected_uid
     gid = os.getegid() if expected_gid is None else expected_gid
@@ -112,6 +120,8 @@ def exclusive_controller_agent_http_lock(
     isolated tests have no privilege override for the real installed path.
     No hold is installed/renewed or removed and no ACK is emitted.
     """
+    if fcntl is None:
+        raise ControllerHttpLockUnavailable("controller_http_flock_unsupported_platform")
     path = Path(lock_path)
     if path == LOCK_PATH and os.geteuid() != 0:
         raise ControllerHttpLockUnavailable("root_only_controller_http_fence")
