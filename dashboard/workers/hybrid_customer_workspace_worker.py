@@ -26,6 +26,7 @@ from hybrid_agent_worker import (
     _read_shell_values,
 )
 from runtime_backend import backend_from_environment
+from maintenance_hold_gate import maintenance_paused
 from artifact_transfer_repository import ArtifactTransferRepository
 from instance_file_repository import InstanceFileRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
@@ -408,6 +409,8 @@ def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[st
 
 
 def workspace_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+    if maintenance_paused():
+        return {"active": False, "reason": "root_owned_maintenance_hold"}
     config = _read_shell_values(root / "config" / "agent.conf")
     if str(config.get("DSM_NODE_ROLE", "")).strip().lower() != "hybrid":
         return {"active": False, "reason": "not_hybrid"}
@@ -426,7 +429,12 @@ def workspace_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
 
 
 def run_forever(root: Path = ROOT) -> None:
+    while maintenance_paused():
+        time.sleep(1)
     while True:
+        if maintenance_paused():
+            time.sleep(1)
+            continue
         try:
             result = workspace_cycle(root)
             if result.get("active"):
