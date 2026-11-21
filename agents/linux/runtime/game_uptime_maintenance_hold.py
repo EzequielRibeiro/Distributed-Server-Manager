@@ -90,3 +90,8 @@ def observe(*, path: Path = HOLD_PATH, trusted_uid: int = 0,
     if current >= expires:
         return {"active": True, "reason": "hold_expired_requires_operator"}
     return {"active": True, "reason": "root_owned_maintenance_hold"}
+
+if __name__ == "__main__":
+    # A read-only check used by scheduler_worker.sh. An active, malformed,
+    # expired or unsafe hold exits nonzero and prevents that tick.
+    raise SystemExit(2 if observe()["active"] else 0)
