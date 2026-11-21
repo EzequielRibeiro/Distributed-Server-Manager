@@ -71,6 +71,9 @@ def save(config,instance_id):
 def lifecycle(config,instance_id,action):
  action=str(action or "").strip().lower()
  if action not in LIFECYCLE_ACTIONS:raise ValueError("unsupported instance lifecycle action")
+ if action in {"start","restart"}:
+  from relocation_fence import locked
+  if locked(instance_id):raise PermissionError("source is fenced for Agent relocation")
  from runtime_metrics import increment
  from runtime_operations import runtime_operation
  with runtime_operation(config,instance_id,f"lifecycle:{action}",lock_timeout_seconds=float(config.get("runtime_lock_timeout_seconds",5))):
@@ -99,7 +102,18 @@ def handle_command(config,command):
  try:
   _token(instance_id,"instance_id")
   if action not in VALID_ACTIONS:raise ValueError("unsupported instance action")
-  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else save(config,instance_id) if action=="save" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
+  actor=str(command.get("requested_by") or "")
+  if actor.startswith("relocation:"):
+   from relocation_fence import fence,unfence
+   match=re.fullmatch(r"(relocation:relocation-[0-9a-f]{32}):(source-fence|source-unfence|source-start|target-stop|target-start)",actor)
+   if not match:raise PermissionError("invalid relocation operation token")
+   token,phase=match.groups()
+   if phase=="source-fence" and action=="stop":payload=fence(config,instance_id,token)
+   elif phase=="source-unfence" and action=="stop":payload=unfence(config,instance_id,token)
+   elif (phase,action) in {("source-start","start"),("target-stop","stop"),("target-start","start")}:payload=lifecycle(config,instance_id,action)
+   else:raise PermissionError("invalid relocation lifecycle phase")
+  else:payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else save(config,instance_id) if action=="save" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action)
+  result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
  except Exception as exc:result={"command_id":command_id,"instance_id":instance_id or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
  _write(_history(command_id),result);_write(_result(command_id),result);return result
 def read_result():

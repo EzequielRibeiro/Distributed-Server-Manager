@@ -8,6 +8,7 @@ from typing import Any, Iterator
 import uuid
 
 from alert_repository import AlertSession, dialect_for_backend
+from instance_agent_relocation_gate import require_unlocked
 
 VALID_ACTIONS = {
     "list", "usage", "read_text", "write_text", "download", "upload",
@@ -71,7 +72,10 @@ class InstanceFileRepository:
             raise ValueError("agent_id, instance_id and requested_by are required")
         if action not in VALID_ACTIONS:
             raise ValueError("invalid instance file action")
-        self.initialize(); ph = self.dialect.placeholder
+        self.initialize()
+        if action not in {"list", "usage", "read_text", "download", "settings_surface"}:
+            require_unlocked(self.backend, instance_id, requested_by=requested_by)
+        ph = self.dialect.placeholder
         command_id = "instance-file-" + uuid.uuid4().hex
         with self.session(transaction=True) as session:
             instance = session.execute(

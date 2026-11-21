@@ -11,7 +11,9 @@ import uuid
 from alert_repository import AlertSession, dialect_for_backend
 from backend import DatabaseBackend
 from core.agent_health import utc_timestamp
+from instance_agent_relocation_gate import require_unlocked, active_relocation
 from instance_evidence_parameters import normalize_command_parameters
+
 
 VALID_ACTIONS = {"status", "doctor", "save", "start", "stop", "restart", "remove", "systemd_lifecycle_evidence"}
 LIFECYCLE_ACTIONS = {"start", "stop", "restart"}
@@ -54,7 +56,19 @@ class AgentInstanceRuntimeRepository:
         agent_id=str(agent_id or "").strip();instance_id=str(instance_id or "").strip();action=str(action or "").strip().lower()
         if not agent_id or not instance_id: raise ValueError("agent_id and instance_id are required")
         if action not in VALID_ACTIONS: raise ValueError("invalid instance runtime action")
+        if action not in {"status", "doctor"}: require_unlocked(self.backend, instance_id, requested_by=requested_by)
+        if str(requested_by or "").startswith("relocation:"):
+            migration = active_relocation(self.backend, instance_id)
+            prefix = ("relocation:" + migration["relocation_id"] + ":") if migration else ""
+            phase = str(requested_by or "")[len(prefix):] if prefix and str(requested_by).startswith(prefix) else ""
+            permitted = {
+                "source-fence": "stop", "source-unfence": "stop",
+                "source-start": "start", "target-stop": "stop", "target-start": "start",
+            }
+            if permitted.get(phase) != action:
+                raise PermissionError("invalid relocation phase for lifecycle command")
         normalized_parameters=normalize_command_parameters(action,parameters)
+
         ph=self.dialect.placeholder;existing_command_id=None
         with self.session(transaction=True) as session:
             agent=session.execute(f"SELECT status FROM agents WHERE id={ph}",(agent_id,)).fetchone()
@@ -94,11 +108,15 @@ class AgentInstanceRuntimeRepository:
         ph=self.dialect.placeholder
         with self.session() as session:row=session.execute("SELECT command_id FROM agent_instance_commands "+f"WHERE agent_id={ph} AND status IN ('queued','delivered') ORDER BY created_at ASC LIMIT 1",(agent_id,)).fetchone()
         if row is None:return None
-        state=self.snapshot(str(row["command_id"]));command={key:state[key] for key in ("command_id","agent_id","instance_id","action")}
+        state=self.snapshot(str(row["command_id"]))
+        command={key:state[key] for key in ("command_id","agent_id","instance_id","action")}
+        if str(state.get("requested_by") or "").startswith("relocation:"):
+            command["requested_by"]=state["requested_by"]
         if state["action"]=="systemd_lifecycle_evidence":
             params=normalize_command_parameters(state["action"],state.get("parameters"))
             command.update(params)
         return command
+
 
     def mark_delivered(self, command_id: str) -> dict[str, Any]:
         ph=self.dialect.placeholder;now=utc_timestamp()
@@ -159,6 +177,7 @@ class AgentInstanceRuntimeRepository:
                         reported_instance_id,
                         controller_status,
                     )
+
         if reported_action=="remove" and status=="completed":
             from admin_management_repository import AdminManagementRepository
             from dashboard_repository import DashboardRepository

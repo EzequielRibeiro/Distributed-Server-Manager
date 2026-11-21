@@ -24,6 +24,7 @@ from dayz_native_restart_schema import dayz_native_restart_ddl
 from dayz_management_schema import dayz_management_ddl
 from database_intelligence_schema import database_intelligence_ddl
 from native_restart_schema import native_restart_ddl
+from instance_agent_relocation_schema import instance_agent_relocation_ddl
 from maintenance_schema import maintenance_ddl
 from operation_diagnostics_schema import operation_diagnostics_ddl
 from server_update_schema import content_update_ddl, server_update_ddl
@@ -1029,6 +1030,15 @@ def _upgrade_dayz_management(backend: Any, connection: Any) -> None:
         raise DatabaseMigrationError("DayZ management baseline upgrade incomplete")
 
 
+def _upgrade_instance_agent_relocation(backend: Any, connection: Any) -> None:
+    required = {"instance_agent_relocations", "instance_agent_relocation_port_holds"}
+    existing = _table_names(backend, connection) & required
+    if existing and existing != required:
+        raise DatabaseMigrationError("partial instance Agent relocation schema")
+    if not existing:
+        _execute_script(backend, connection, instance_agent_relocation_ddl(backend.name))
+    if not required.issubset(_table_names(backend, connection)):
+        raise DatabaseMigrationError("instance Agent relocation schema incomplete")
 
 def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None:
     """Upgrade evidence command parameters without weakening unknown constraints.
@@ -1388,6 +1398,7 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
 
 
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -1411,6 +1422,8 @@ UPGRADES = (
     BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
     BaselineUpgrade(21, "dayz_management_operations", _upgrade_dayz_management),
     BaselineUpgrade(22, "instance_evidence_parameters", _upgrade_instance_evidence_parameters),
+    BaselineUpgrade(23, "instance_agent_relocation", _upgrade_instance_agent_relocation),
+
 )
 
 

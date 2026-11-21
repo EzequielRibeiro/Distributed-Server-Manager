@@ -1401,6 +1401,33 @@ def run(instance_id: str) -> dict[str, Any]:
         ).lower().startswith("minecraft.java."):
             content_files = _sync_private_minecraft_content(spec, config)
         operation = materializer.apply(spec)
+    elif action in {"relocation-disable-unit", "relocation-restore-unit"}:
+        import subprocess
+        if str(spec.get("adapter") or "") != "systemd":
+            raise RuntimeError("relocation startup fencing requires a managed systemd unit")
+        inspection = materializer.inspect(spec)
+        if not inspection.get("exists") or not inspection.get("owned"):
+            raise PermissionError("refusing to change startup of an unowned unit")
+        unit = str(inspection["unit"])
+        if action == "relocation-disable-unit":
+            args = ["systemctl", "disable", unit]
+        else:
+            state = subprocess.run(
+                ["systemctl", "show", unit, "--property=ActiveState", "--value"],
+                capture_output=True, text=True, timeout=10, check=False,
+            )
+            if state.returncode or state.stdout.strip() != "inactive":
+                raise RuntimeError("source must remain inactive to restore startup policy")
+            restore = request.get("restore_enabled")
+            if type(restore) is not bool:
+                raise ValueError("explicit prior enabled state required")
+            args = ["systemctl", "enable" if restore else "disable", unit]
+        result = subprocess.run(args, capture_output=True, text=True,
+                                timeout=30, check=False)
+        if result.returncode:
+            raise RuntimeError((result.stderr or result.stdout or "systemctl failed")[:500])
+        operation = {"unit": unit, "disabled": action == "relocation-disable-unit",
+                     "restore_enabled": request.get("restore_enabled")}
     elif action == "apply-dayz-battleye":
         operation = _apply_dayz_battleye_private(spec, config, materializer)
     elif action == "repair-dayz-dlc-ownership":
@@ -1416,6 +1443,7 @@ def run(instance_id: str) -> dict[str, Any]:
             raise RuntimeError("Minecraft content synchronization requires an owned runtime")
         content_files = _sync_private_minecraft_content(spec, config)
         operation = {"action": action, "changed": bool(content_files), "content_files": content_files}
+
     elif action == "remove":
         operation = materializer.remove(spec)
         removed_dayz_mod_aliases = _remove_dayz_mod_aliases(spec)

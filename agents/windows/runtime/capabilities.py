@@ -75,6 +75,7 @@ def detect_capabilities()->dict[str,object]:
   "java_runtimes":java_runtimes,
   "docker":shutil.which("docker.exe") is not None or shutil.which("docker") is not None,
   "wine":False,
+  "instance_relocation_fence_v1":True,
   "backup":True,
   "mod-management":True,
  }

@@ -23,6 +23,7 @@ from backup_platform import BackupValidationError, normalize_policy
 from core.workspace_resource_policy import resolve_workspace_resource_policy
 from event_platform import utc_now
 from instance_backup_policy_defaults import default_instance_backup_policy
+from instance_agent_relocation_gate import require_unlocked, active_relocation
 
 
 def _datetime(value: Any) -> datetime | None:
@@ -149,6 +150,7 @@ class BackupRepository:
             raise BackupValidationError("backup deletion is already queued")
 
     def request(self, instance_id, *, action="create", backup_id=None, reason="manual", requested_by=None):
+        require_unlocked(self.backend, instance_id, requested_by=requested_by)
         instance=self._instance(instance_id)
         if instance is None:raise BackupValidationError("instance does not exist")
         if str(action).strip().lower()=="delete":
@@ -418,6 +420,7 @@ class BackupRepository:
         self._ensure_workspace_policies(agent_id)
         now_utc=datetime.fromtimestamp(float(now_epoch),tz=timezone.utc) if now_epoch is not None else datetime.now(timezone.utc);now_value=now_utc.timestamp();created=[]
         for policy in self.list_policies(agent_id=agent_id):
+            if active_relocation(self.backend, policy["instance_id"]):continue
             if not policy["enabled"]:continue
             jobs=self.list_effective_jobs(instance_id=policy["instance_id"],limit=100)
             if any(job["status"] in {"pending","running"} for job in jobs):continue
@@ -529,7 +532,11 @@ class BackupRepository:
             days = self._age_retention_days(job["instance_id"])
             if days is not None:
                 policy["retention_days"] = days  # explicit no-count-prune contract to Agent
+            if str(job.get("reason") or "").startswith("agent_relocation:") and job["action"] == "create":
+                policy.update({"enabled":True,"mode":"full","consistency":"stopped",
+                               "compression":"gzip","include_paths":[],"exclude_paths":[],"retention_count":7})
             output.append({"schema_version":1,"kind":"CapivaraBackupCommand","command_id":job["command_id"],"action":job["action"],"instance_id":job["instance_id"],"agent_id":agent_id,"backup_id":job.get("backup_id"),"reason":job.get("reason"),"policy":policy,"requested_by":job.get("requested_by")})
+
         return output
 
     def record_agent_state(self, agent_id, reports: list[Mapping[str, Any]]):

@@ -166,12 +166,16 @@ class AgentPortRepository:
                 "ip.instance_id,ip.name,ip.protocol,"
                 "ip.port,ip.bind_address "
                 "FROM instance_ports ip "
-                "JOIN instances i "
-                "ON i.id=ip.instance_id "
+                "JOIN instances i ON i.id=ip.instance_id "
                 f"WHERE i.agent_id={ph} "
-                "ORDER BY ip.protocol,ip.port,"
-                "ip.instance_id,ip.name",
-                (agent_id,),
+                "UNION ALL "
+                "SELECT h.relocation_id AS instance_id,'relocation_hold' AS name,"
+                "h.protocol,h.port,'0.0.0.0' AS bind_address "
+                "FROM instance_agent_relocation_port_holds h "
+                "JOIN agents a ON a.node_id=h.node_id "
+                f"WHERE a.id={ph} "
+                "ORDER BY protocol,port,instance_id,name",
+                (agent_id, agent_id),
             ).fetchall()
 
         return [

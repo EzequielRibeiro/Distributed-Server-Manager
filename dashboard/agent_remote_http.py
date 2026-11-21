@@ -32,6 +32,7 @@ from agent_update_repository import AgentUpdateRepository
 from agent_uninstall_repository import AgentUninstallRepository
 from deleted_backup_vault_repository import DeletedBackupVaultRepository
 from instance_backup_clone_repository import InstanceBackupCloneRepository
+from instance_agent_relocation_repository import InstanceAgentRelocationRepository
 from instance_provisioning_projection import project_agent_provisioning
 from minecraft_recovery_heartbeat_claims import validated_heartbeat_recovery_claims
 from minecraft_recovery_event_persistence import persist_recovery_claims
@@ -276,6 +277,18 @@ def _attach_backup_clone_state(result, *, agent_id, backend):
 
 
 
+def _attach_agent_relocation_state(result, *, agent_id, backend):
+    try:
+        repo = InstanceAgentRelocationRepository(backend, ROOT)
+        result["agent_relocation_states"] = [
+            {key: item.get(key) for key in
+             ("relocation_id", "instance_id", "status", "last_error")}
+            for item in repo.reconcile_for_agent(agent_id)
+        ]
+    except Exception:
+        result["agent_relocation_states"] = [{"status": "unavailable"}]
+
+
 def dispatch_uninstall_result(
     payload: dict[str, Any] | None,
     *,
@@ -474,6 +487,7 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
         _attach_doctor_state(result, body, agent_id=agent_id, backend=backend)
         _reconcile_link_incident(result, body, agent_id=agent_id, backend=backend)
         _attach_backup_clone_state(result, agent_id=agent_id, backend=backend)
+        _attach_agent_relocation_state(result, agent_id=agent_id, backend=backend)
     except AgentHostIdentityCollision as exc:
         try:
             AgentIdentityIncidentRepository(backend).open_collision(

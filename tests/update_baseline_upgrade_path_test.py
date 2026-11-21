@@ -172,6 +172,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "instance_agent_relocation"),
                 ],
             )
 
@@ -220,6 +221,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 20, "name": "legacy_minecraft_contract_products"},
                     {"version": 21, "name": "dayz_management_operations"},
                     {"version": 22, "name": "instance_evidence_parameters"},
+                    {"version": 23, "name": "instance_agent_relocation"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -279,6 +281,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "instance_agent_relocation"),
                 ],
             )
 
@@ -330,6 +333,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "instance_agent_relocation"),
                 ],
             )
 
@@ -370,6 +374,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 20, "name": "legacy_minecraft_contract_products"},
                     {"version": 21, "name": "dayz_management_operations"},
                     {"version": 22, "name": "instance_evidence_parameters"},
+                    {"version": 23, "name": "instance_agent_relocation"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -413,6 +418,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "instance_agent_relocation"),
                 ],
             )
 
@@ -450,6 +456,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 20, "name": "legacy_minecraft_contract_products"},
                     {"version": 21, "name": "dayz_management_operations"},
                     {"version": 22, "name": "instance_evidence_parameters"},
+                    {"version": 23, "name": "instance_agent_relocation"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -487,6 +494,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "instance_agent_relocation"),
                 ],
             )
 
