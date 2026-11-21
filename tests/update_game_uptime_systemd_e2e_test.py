@@ -236,6 +236,156 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertEqual(resumed["agent_id"], first["agent_id"])
                 self._assert_unchanged(originals)
 
+    def test_real_dashboard_and_hybrid_worker_restart_around_disposable_update(self):
+        """Run actual DSM entrypoints under disposable systemd, never on DSM hosts.
+
+        This validates real Dashboard/Worker *process* startup, controlled
+        restart and HTTP liveness around the already guarded update.sh main()
+        test fixture, without calling the real updater on their installation.
+        The Worker is deliberately in non-hybrid mode: no managed games, Agent
+        commands, database changes or production node identity are admitted.
+        """
+        import socket
+        import sys
+        from urllib.request import urlopen
+        from urllib.error import URLError
+        from update_game_uptime_main_path_test import MainPathRehearsalTest
+
+        original_games = [self._start("dashboard-game-a"),
+                          self._start("dashboard-game-b")]
+        root = self.workspace / "isolated-control-plane"
+        for directory in ("dashboard/state", "data", "logs",
+                          "runtime/hybrid-agent-state", "config"):
+            (root / directory).mkdir(parents=True, exist_ok=True)
+        self.assertFalse((root / "config/agent.conf").exists())
+        self.assertFalse((root / "runtime/hybrid-agent-state/agent.json").exists())
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = reservation.getsockname()[1]
+        ping = f"http://127.0.0.1:{port}/ping"
+        pythonpath = os.pathsep.join(str(p) for p in (
+            ROOT, ROOT / "database", ROOT / "dashboard",
+            ROOT / "core", ROOT / "agents/linux/runtime",
+        ))
+        common = (
+            f"--setenv=DSM_ROOT={root}",
+            f"--setenv=DSM_DATABASE={root / 'data/capivara.db'}",
+            "--setenv=DSM_DATABASE_DRIVER=sqlite",
+            f"--setenv=PYTHONPATH={pythonpath}",
+        )
+
+        def start_control(role, generation):
+            unit = f"{self.prefix}-{role}-{generation}.service"
+            args = ["systemd-run", "--unit", unit[:-8], "--collect",
+                    "--property=Type=simple",
+                    "--property=NoNewPrivileges=yes",
+                    "--property=ProtectSystem=strict",
+                    f"--property=ReadWritePaths={self.workspace}",
+                    "--property=IPAddressDeny=any",
+                    "--property=IPAddressAllow=localhost",
+                    *common]
+            if role == "dashboard":
+                args.extend((
+                    "--setenv=DASHBOARD_HOST=127.0.0.1",
+                    f"--setenv=DASHBOARD_PORT={port}",
+                    sys.executable, str(ROOT / "dashboard/server.py"),
+                ))
+            else:
+                args.extend((
+                    "--setenv=DSM_HYBRID_HEARTBEAT_SECONDS=10",
+                    sys.executable,
+                    str(ROOT / "dashboard/workers/hybrid_agent_worker.py"),
+                ))
+            self._run(*args)
+            self.units.append(unit)
+            for _ in range(90):
+                snap = self._snapshot(unit)
+                if snap["state"] == "active" and snap["pid"] > 1:
+                    if role != "dashboard":
+                        return snap
+                    try:
+                        with urlopen(ping, timeout=0.5) as response:
+                            content = json.loads(response.read())
+                            if response.status == 200 and content.get("status") == "ok":
+                                return snap
+                    except (OSError, ValueError, URLError):
+                        pass
+                if snap["state"] == "failed":
+                    break
+                time.sleep(0.1)
+            status = subprocess.run(
+                ("systemctl", "status", unit, "--no-pager"),
+                text=True, capture_output=True, check=False, timeout=8)
+            self.fail(f"isolated {role} failed startup: {status.stdout[-1400:]}")
+
+        def stop_control(unit):
+            self._run("systemctl", "stop", unit)
+            for _ in range(50):
+                state = self._snapshot(unit)
+                if state["state"] in ("inactive", "failed"):
+                    return
+                time.sleep(0.1)
+            self.fail(f"isolated control-plane unit did not stop: {unit}")
+
+        def check_current(control):
+            self._assert_unchanged(original_games)
+            for entry in control.values():
+                self.assertEqual(self._snapshot(entry["unit"]), entry)
+                cmdline = (Path("/proc") / str(entry["pid"]) / "cmdline").read_bytes()
+                self.assertIn(b"hybrid_agent_worker.py" if "worker" in entry["unit"]
+                              else b"dashboard/server.py", cmdline)
+            with urlopen(ping, timeout=2) as response:
+                self.assertEqual(response.status, 200)
+                self.assertEqual(json.loads(response.read())["status"], "ok")
+
+        current = {
+            "dashboard": start_control("dashboard", "before"),
+            "worker": start_control("worker", "before"),
+        }
+        check_current(current)
+
+        for generation, mode, expected, journal in (
+            ("after-success", "no_drain_success", "2.0.999-fixture", "verified"),
+            ("after-rollback", "no_drain_fail_after_apply",
+             "2.0.998-fixture", "rolled_back"),
+        ):
+            with self.subTest(mode=mode):
+                main = MainPathRehearsalTest(
+                    "test_disposable_no_drain_actual_main_success_preserves_data_and_never_drains")
+                main.setUp()
+                self.addCleanup(main.doCleanups)
+                main.prepare_no_drain_fixture()
+                result = main_rehearsal(main.root, mode)
+                self.assertEqual(result.returncode, 0 if mode == "no_drain_success" else 2,
+                                 result.stdout[-900:] + result.stderr[-900:])
+                self.assertEqual((main.installed / "version").read_text().strip(), expected)
+                self.assertEqual(main.world.read_bytes(), b"saved-world-private-test")
+                self.assertEqual(main.upload.read_bytes(),
+                                 b"in-flight-upload-private-test")
+                self.assertFalse((main.root / "steps").exists())
+                receipt = json.loads((
+                    main.root / "dsm928-composite-journal/game-uptime-transaction.json"
+                ).read_text())
+                self.assertEqual(receipt["status"], journal)
+                self.assertFalse(receipt["live_no_drain_authorized"])
+                check_current(current)
+
+                # A deliberately orchestrated test-only control-plane restart;
+                # production update.sh is NOT wired to these actual services.
+                for service in ("worker", "dashboard"):
+                    stop_control(current[service]["unit"])
+                self._assert_unchanged(original_games)
+                current = {
+                    "dashboard": start_control("dashboard", generation),
+                    "worker": start_control("worker", generation),
+                }
+                check_current(current)
+                self.assertFalse((root / "config/agent.conf").exists())
+
+        self.assertFalse((root / "runtime/hybrid-agent-state/agent.json").exists())
+        self.assertFalse(Path("/opt/dsm/runtime/hybrid-instance-storage").exists())
+
     def test_two_real_systemd_processes_survive_actual_updater_file_functions(self):
         """Run actual update.sh backup/staging/apply/rollback on fake /tmp install."""
         originals = [self._start("real-alpha"), self._start("real-beta")]
