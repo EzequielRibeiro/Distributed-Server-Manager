@@ -51,6 +51,14 @@ from observability_repository import ObservabilityRepository
 from registry_repository import RegistryRepository
 from yarax_admin_operation_repository import YaraXAdminOperationRepository
 from runtime_backend import backend_from_environment
+
+# The shared reader lives with the Agent. Append (not prepend) its runtime
+# path so it cannot shadow Dashboard/DB imports. The marker itself is fixed
+# under root-owned /run, outside the replaceable DSM installation.
+_AGENT_RUNTIME = ROOT / "agents" / "linux" / "runtime"
+if str(_AGENT_RUNTIME) not in sys.path:
+    sys.path.append(str(_AGENT_RUNTIME))
+from game_uptime_maintenance_hold import observe as observe_no_drain_hold
 from universal_event_repository import UniversalEventRepository
 
 INTERVAL_SECONDS = max(10, int(os.environ.get("DSM_HYBRID_HEARTBEAT_SECONDS", "30")))
@@ -932,6 +940,15 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     agent_id = str(config.get("AGENT_ID", "")).strip()
     if not node_id or not agent_id:
         return {"active": False, "reason": "identity_incomplete"}
+
+    # Pause before even opening the database: local reconciliation and any
+    # queued mutating cycles remain untouched while the root-owned hold exists.
+    # Other worker.sh children are not fenced by this hook.
+    hold = observe_no_drain_hold()
+    if hold["active"]:
+        return {"active": True, "agent_id": agent_id,
+                "maintenance_hold": True, "reason": hold["reason"],
+                "log_message": "hybrid reconciliation held for operator-controlled maintenance"}
 
     effective_backend = backend or backend_from_environment(_database_environment(root))
     local_reconcile_error = None

@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from pathlib import Path
+import json
+import os
+import tempfile
+import time
 import sys
 import unittest
 from unittest.mock import patch
@@ -15,6 +19,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "agents/linux/runtime"))
 import agent as linux_agent
+from game_uptime_maintenance_hold import observe as observe_maintenance_hold
 
 
 class StopFixture(Exception):
@@ -22,6 +27,45 @@ class StopFixture(Exception):
 
 
 class AgentRunForeverLoopTests(unittest.TestCase):
+    def test_root_owned_maintenance_hold_fail_closed_and_no_agent_startup(self):
+        with tempfile.TemporaryDirectory(prefix="dsm928-protected-hold-") as temp:
+            folder = Path(temp) / "protected"
+            folder.mkdir(mode=0o700)
+            marker = folder / "maintenance.json"
+            now = int(time.time())
+            arguments = {"path": marker, "trusted_uid": os.geteuid(), "now": now}
+            self.assertFalse(observe_maintenance_hold(**arguments)["active"])
+            payload = {
+                "kind": "CapivaraDSMNoDrainMaintenanceHold",
+                "schema_version": 1,
+                "transaction_id": "a" * 32,
+                "issued_at": now - 10,
+                "expires_at": now + 300,
+            }
+            marker.write_text(json.dumps(payload))
+            marker.chmod(0o644)
+            self.assertEqual(observe_maintenance_hold(**arguments)["reason"],
+                             "root_owned_maintenance_hold")
+            self.assertEqual(
+                observe_maintenance_hold(path=marker, trusted_uid=os.geteuid(),
+                                         now=now + 301)["reason"],
+                "hold_expired_requires_operator")
+            marker.write_text("damaged")
+            self.assertTrue(observe_maintenance_hold(**arguments)["active"])
+            marker.chmod(0o666)
+            self.assertEqual(observe_maintenance_hold(**arguments)["reason"],
+                             "hold_file_untrusted")
+
+        # An active hold must stop the Agent BEFORE enrollment, recovery and
+        # any first reconciliation/heartbeat. No synthetic game mutations.
+        with patch.object(linux_agent, "observe_no_drain_hold",
+                          return_value={"active": True, "reason": "maintenance"}), \
+             patch.object(linux_agent, "_load_config",
+                          side_effect=AssertionError("Agent startup executed")), \
+             patch.object(linux_agent.time, "sleep", side_effect=StopFixture):
+            with self.assertRaises(StopFixture):
+                linux_agent.run_forever()
+
     def test_scheduler_recovers_after_heartbeat_failure_without_host_operations(self):
         config = {
             "agent_id": "dsm928-fixture-agent",
