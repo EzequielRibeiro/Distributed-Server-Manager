@@ -26,6 +26,7 @@ on:
       - 'release/build_agent_package.sh'
       - 'release/build_windows_agent_package.py'
       - 'tests/customer_instance_workspace_v2_test.py'
+      - 'tests/customer_dayz_fake_agent_browser_smoke_test.py'
       - 'tests/customer_instance_activity_test.py'
       - 'tests/customer_workspace_architecture_boundary_test.py'
       - 'tests/deleted_backup_vault_test.py'
@@ -57,6 +58,7 @@ on:
       - 'release/build_agent_package.sh'
       - 'release/build_windows_agent_package.py'
       - 'tests/customer_instance_workspace_v2_test.py'
+      - 'tests/customer_dayz_fake_agent_browser_smoke_test.py'
       - 'tests/customer_instance_activity_test.py'
       - 'tests/customer_workspace_architecture_boundary_test.py'
       - 'tests/deleted_backup_vault_test.py'
@@ -98,6 +100,7 @@ jobs:
             agents/windows/runtime/artifact_transfer_client.py \
             agents/windows/runtime/agent.py \
             tests/customer_instance_workspace_v2_test.py \
+            tests/customer_dayz_fake_agent_browser_smoke_test.py \
             tests/customer_instance_activity_test.py \
             tests/customer_workspace_architecture_boundary_test.py \
             tests/deleted_backup_vault_test.py \
@@ -113,6 +116,7 @@ jobs:
       - name: Run Workspace tests
         run: |
           python3 -m unittest tests/customer_instance_workspace_v2_test.py
+          python3 -m unittest tests/customer_dayz_fake_agent_browser_smoke_test.py
           python3 -m unittest tests/customer_instance_activity_test.py
           python3 -m unittest tests/customer_workspace_architecture_boundary_test.py
           python3 -m unittest tests/deleted_backup_vault_test.py

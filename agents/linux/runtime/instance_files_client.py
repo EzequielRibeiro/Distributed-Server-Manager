@@ -223,7 +223,10 @@ def _list(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]
         try: _guard_path_policy(rel, policy)
         except PermissionError: continue
         entries.append(_entry(root, child))
-    return {"path": directory.relative_to(root).as_posix() or ".", "entries": entries, "usage_bytes": _usage(root, policy), "limit_bytes": _quota(policy)}
+    # A directory read must not traverse the whole game tree. The explicit
+    # "usage" action remains responsible for the costly quota measurement.
+    # Keep the response key for older consumers, but do not claim 0 bytes.
+    return {"path": directory.relative_to(root).as_posix() or ".", "entries": entries, "usage_bytes": None, "limit_bytes": _quota(policy)}
 
 
 def _read_text(root: Path, path_value: Any, policy: dict[str, Any]) -> dict[str, Any]:
