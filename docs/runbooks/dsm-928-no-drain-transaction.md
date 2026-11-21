@@ -668,3 +668,48 @@ Controller de produção, não verifica TLS real, nem prova a pinagem do
 supervisor nos cgroups do host. A leitura de systemd e os jogos continuam
 simulados. O recibo da fixture continua com
 `live_no_drain_authorized=false`, sem integração ao `update.sh main()`.
+
+## Política de testes consolidada da #928 (21/11/2026)
+
+**Objetivo:** parar de abrir PRs individuais apenas para novos ensaios sintéticos.
+A homologação de no-drain continua **bloqueada até evidência operacional**
+e passa a usar quatro grupos de aceite, sem inflar indefinidamente a suíte:
+
+1. **Segurança do preflight:** mudanças incompatíveis, identidade, dependências,
+   credenciais e versão desconhecida bloqueiam o modo sem drenagem.
+2. **Controller + Agent:** rota HTTP integrada real, credencial autenticada,
+   reconexão após reinício e diagnóstico somente de leitura.
+3. **Transação:** sucesso e falha/rollback dos arquivos, journal persistente,
+   dados preservados e duas unidades-jogo com PID/start stamp inalterados.
+4. **Supervisor e continuidade operacional:** ciclo real `worker.sh`,
+   reinício do grupo, além da pendência de `Agent.run_forever()` e Workers
+   operacionais com reconciliação isolada. O ensaio com nove filhos `sleep`
+   verifica somente a lógica do supervisor, **não** homologa os daemons reais.
+
+**Execução escalonada em CI (sem remover testes):**
+
+| Alteração | Pré-validação | Ensaio systemd |
+| --- | --- | --- |
+| Runtime, sistema, updater, workflow, fixture ou caminho não reconhecido | Suíte completa de testes #928 | Todos os ensaios systemd |
+| Apenas arquivos de testes #928 | Núcleo fail-closed + cada arquivo modificado, sem repetir módulo | Três cenários decisivos; suíte completa se mudar o próprio E2E ou qualquer dependência relevante |
+| Apenas esta documentação | Núcleo de segurança e preflight | Dispensado |
+| Push na `main` ou disparo manual | **Suíte completa de testes #928** | **Todos os ensaios systemd** |
+
+As deleções/renomeações de testes obrigam **suíte completa** em vez de
+reduzir cobertura inadvertidamente. O workflow `game-uptime-preflight-diagnostics.yml`
+mantém `tests/update_preflight_test.sh` em todos os casos e a proteção
+`update_game_uptime_discovery_test.py` contra IDs de teste duplicados.
+**Nenhum teste anterior foi excluído nem desabilitado na `main`.**
+
+**Regra de encerramento do ciclo:** não criar outro teste para demonstrar
+novamente PID, rollback ou handshake já comprovados. Abrir prova nova
+**somente para uma lacuna operacional distinta** ou falha reproduzida.
+A próxima evidência realmente diferente é a execução segura de
+`Agent.run_forever()` e dos daemons Worker operacionais em clone isolado;
+enquanto ela não existir, registrar como **pendência**, não substituir por
+mais simulações equivalentes.
+
+Esta otimização **não** libera `update.sh --no-drain` em produção.
+`live_no_drain_authorized=false`; issue #928 permanece aberta,
+PR de release #1096 Draft e jogos reais não podem sofrer interrupção
+sem janela de manutenção aprovada.
