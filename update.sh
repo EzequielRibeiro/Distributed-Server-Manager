@@ -91,6 +91,8 @@ ALLOW_SAME_VERSION=0
 ALLOW_DOWNGRADE=0
 NO_BACKUP=0
 NO_DRAIN_REPORT=0
+# Test-only entrypoint; NOT a production flag or authorization.
+NO_DRAIN_DISPOSABLE_MAIN=0
 NEW_SRC=""
 BACKUP_FILE=""
 BACKUP_PART=""
@@ -162,6 +164,10 @@ parse_arguments() {
                 ;;
             --no-drain-report)
                 NO_DRAIN_REPORT=1
+                ;;
+            # Internal fixture-only main() exercise; deliberately undocumented.
+            --dsm928-disposable-no-drain-main)
+                NO_DRAIN_DISPOSABLE_MAIN=1
                 ;;
             -h|--help)
                 print_usage
@@ -1899,11 +1905,56 @@ update_summary() {
 # =============================================================
 # Fluxo principal de atualização | Main update flow
 # =============================================================
+# #928: Exercise main() -> authenticated/impact/witness transaction only
+# on GitHub-hosted disposable fixtures. This branch is never a live update.
+# The real --no-drain and --no-drain-report flags always remain read-only.
+run_dsm928_disposable_main() {
+    local FIXTURE_ROOT DRIVER
+    [[ "${CAPIVARA_DSM928_DISPOSABLE_MAIN:-0}" == 1 ]] || return 2
+    [[ "${GITHUB_ACTIONS:-false}" == true
+       && "${RUNNER_ENVIRONMENT:-}" == github-hosted ]] || return 2
+    # Never test on a machine with a DSM deployment, even if the environment
+    # variables were forged. Real clients/games must not be discoverable here.
+    [[ ! -e /opt/dsm && ! -L /opt/dsm ]] || return 2
+    [[ "${NO_DRAIN_REPORT}" -eq 0 && "${NO_BACKUP}" -eq 0 ]] || return 2
+    [[ "${INSTALL_DIR}" == /tmp/*/installed ]] || return 2
+    FIXTURE_ROOT="${INSTALL_DIR%/installed}"
+    [[ "${FIXTURE_ROOT}" != /tmp && "${INSTALL_DIR}" == "${FIXTURE_ROOT}/installed"
+       && "${NEW_SRC}" == "${FIXTURE_ROOT}/new-payload" ]] || return 2
+    [[ -d "${FIXTURE_ROOT}" && ! -L "${FIXTURE_ROOT}"
+       && -d "${INSTALL_DIR}" && ! -L "${INSTALL_DIR}"
+       && -d "${NEW_SRC}" && ! -L "${NEW_SRC}" ]] || return 2
+    [[ "$(realpath -e -- "${FIXTURE_ROOT}")" == "${FIXTURE_ROOT}"
+       && "$(realpath -e -- "${INSTALL_DIR}")" == "${INSTALL_DIR}"
+       && "$(realpath -e -- "${NEW_SRC}")" == "${NEW_SRC}" ]] || return 2
+    [[ -f "${FIXTURE_ROOT}/fixture-owner" && ! -L "${FIXTURE_ROOT}/fixture-owner"
+       && "$(cat -- "${FIXTURE_ROOT}/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || return 2
+    DRIVER="${SCRIPT_DIR}/tests/fixtures/update_928_no_drain_main.py"
+    [[ -f "${DRIVER}" && ! -L "${DRIVER}" ]] || return 2
+    case "${DSM928_DISPOSABLE_MODE:-success}" in
+        success|fail_after_apply) ;;
+        *) return 2 ;;
+    esac
+    # Never invoke ordinary update.sh backup/service/rollback handlers: they
+    # are designed for planned maintenance and may stop game processes.
+    PYTHONDONTWRITEBYTECODE=1 python3 "${DRIVER}" "${FIXTURE_ROOT}" "${DSM928_DISPOSABLE_MODE:-success}"
+}
+
 main() {
     echo
     echo "Iniciando atualização DSM..."
     echo "Starting DSM update..."
     parse_arguments "$@"
+    # Hidden disposable-only branch is isolated before all production
+    # initialization, root/service operations and normal updater traps.
+    if [[ "${NO_DRAIN_DISPOSABLE_MAIN}" -eq 1 ]]; then
+        if run_dsm928_disposable_main; then
+            return 0
+        fi
+        # Do not enter the production update_failed/rollback machinery when
+        # a deliberately isolated fixture is rejected.
+        exit 2
+    fi
     # This diagnostic must execute BEFORE root, logging, backup, daemon or
     # filesystem changes. Always exit 2: a report is never update approval.
     if [[ "${NO_DRAIN_REPORT}" -eq 1 ]]; then
