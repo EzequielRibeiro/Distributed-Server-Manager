@@ -1017,6 +1017,41 @@ def _sync_working_file_copies(spec: dict[str, Any]) -> list[dict[str, Any]]:
     return results
 
 
+def _ensure_dayz_addons_case_alias(source: Path) -> bool:
+    """Make a managed Workshop mod's addons visible to case-sensitive DayZ.
+
+    Steam Workshop revisions may ship with Addons/ instead of addons/. Create
+    only a relative alias inside the validated instance-owned mod root; never
+    rename, overwrite or copy PBOs, and fail closed on ambiguous/suspicious
+    existing entries.
+    """
+    lower = source / "addons"
+    if lower.is_symlink():
+        linked = os.readlink(lower)
+        if (Path(linked).name != linked or linked == "addons"
+                or linked.casefold() != "addons"
+                or not (source / linked).is_dir()
+                or (source / linked).is_symlink()):
+            raise RuntimeError("unsafe DayZ addons case alias")
+        return False
+    if lower.exists():
+        if not lower.is_dir():
+            raise RuntimeError("DayZ addons path is not a directory")
+        return False
+    candidates = [
+        child for child in source.iterdir()
+        if child.name.casefold() == "addons" and child.name != "addons"
+    ]
+    if any(child.is_symlink() or not child.is_dir() for child in candidates):
+        raise RuntimeError("unsafe DayZ addons directory")
+    if len(candidates) > 1:
+        raise RuntimeError("ambiguous DayZ addons directory casing")
+    if not candidates:
+        return False
+    lower.symlink_to(candidates[0].name, target_is_directory=True)
+    return True
+
+
 def _sync_dayz_mod_aliases(spec: dict[str, Any]) -> list[dict[str, Any]]:
     aliases = spec.get("content_dayz_mod_aliases") or []
     if not isinstance(aliases, list):
@@ -1049,6 +1084,7 @@ def _sync_dayz_mod_aliases(spec: dict[str, Any]) -> list[dict[str, Any]]:
             raise RuntimeError("DayZ mod alias source escapes instance content") from exc
         if not source.is_dir():
             raise RuntimeError("DayZ mod alias source is unavailable")
+        _ensure_dayz_addons_case_alias(source)
         target = working_root / alias
         if str(item.get("target") or "") != str(target):
             raise RuntimeError("DayZ mod alias target mismatch")
