@@ -20,7 +20,11 @@ def example(**changes):
         "ExecStart": "{ path=/usr/bin/java ; argv[]=/usr/bin/java -jar server.jar ; }",
         "FragmentPath": "/etc/systemd/system/capivara-instance-example.service",
         "PartOf": "", "BindsTo": "", "Requires": "sysinit.target",
-        "Requisite": "", "StopPropagatedFrom": "", "PropagatesStopTo": "",
+        "Requisite": "", "Wants": "network.target", "Upholds": "",
+        "Conflicts": "", "Triggers": "", "StopPropagatedFrom": "",
+        "PropagatesStopTo": "", "BoundBy": "", "ConsistsOf": "",
+        "RequiredBy": "", "WantedBy": "multi-user.target",
+        "UpheldBy": "", "ConflictedBy": "", "TriggeredBy": "",
         "ExecCondition": "", "ExecStartPre": "", "ExecStartPost": "",
         "ExecStop": "", "ExecStopPost": "", "ExecReload": "",
         "WorkingDirectory": "/var/lib/capivara-instances/example",
@@ -56,6 +60,54 @@ class UptimeGuardTests(unittest.TestCase):
             with self.subTest(prop=prop), self.assertRaises(guard.GateError):
                 guard.inspect("capivara-instance-example.service",
                               fake(example(**{prop:"dsm-dashboard-worker.service"})))
+
+    def test_reverse_dependency_via_worker_blocks_no_drain(self):
+        # Normal forward links are absent; a reverse control-plane relation
+        # must still be considered unsafe for a selective daemon restart.
+        for prop in ("BoundBy", "ConsistsOf", "RequiredBy", "WantedBy",
+                     "UpheldBy", "ConflictedBy", "TriggeredBy"):
+            with self.subTest(prop=prop), self.assertRaisesRegex(
+                    guard.GateError, "control-plane dependency"):
+                guard.inspect("capivara-instance-example.service",
+                              fake(example(**{prop: "dsm-dashboard-worker.service"})))
+
+    def test_conflicting_controller_unit_blocks_preflight(self):
+        with self.assertRaisesRegex(guard.GateError, "Conflicts"):
+            guard.inspect("capivara-instance-example.service",
+                          fake(example(Conflicts="dsm-dashboard.service")))
+
+    def test_benign_system_dependencies_do_not_block(self):
+        verified = guard.inspect("capivara-instance-example.service",
+                                 fake(example(
+                                     Wants="network.target sysinit.target",
+                                     WantedBy="multi-user.target",
+                                     RequiredBy="network-online.target")))
+        self.assertEqual(verified["main_pid"], 2031)
+        self.assertEqual(len(verified["unit_config_sha256"]), 64)
+
+    def test_reverse_link_change_invalidates_original_witness(self):
+        first = guard.inspect("capivara-instance-example.service",
+                              fake(example()))
+        with self.assertRaisesRegex(guard.GateError, "changed"):
+            guard.verify_unchanged(first,
+                fake(example(WantedBy="multi-user.target network-online.target")))
+
+    def test_missing_reverse_dependency_property_fails_closed(self):
+        raw = "\\n".join(line for line in example().splitlines()
+                        if not line.startswith("ConflictedBy="))
+        with self.assertRaisesRegex(guard.GateError, "incomplete"):
+            guard.inspect("capivara-instance-example.service", fake(raw))
+
+    def test_systemd_guard_is_strictly_read_only(self):
+        calls = []
+        def recorder(*args):
+            calls.append(args)
+            return example()
+        guard.inspect("capivara-instance-example.service", recorder)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][:2], ("systemctl", "show"))
+        self.assertIn("--property=ConflictedBy", calls[0])
+        self.assertIn("--property=UpheldBy", calls[0])
 
     def test_replaceable_lifecycle_hooks_fail_closed(self):
         for prop in guard.LIFECYCLE_PROPERTIES:
