@@ -27,6 +27,9 @@ class PersistentPendingHoldTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory(prefix="dsm928-pending-")
         self.addCleanup(tmp.cleanup)
         base = Path(tmp.name)
+        # tempfile defaults to 0700. Model the actual root-owned /run
+        # parent traversal policy without weakening the runtime guard.
+        base.chmod(0o755)
         self.state = base / "state"
         self.run = base / "run"
         self.state.mkdir(mode=0o755)
