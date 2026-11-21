@@ -33,6 +33,14 @@ tx_spec = importlib.util.spec_from_loader(tx_loader.name, tx_loader)
 transaction = importlib.util.module_from_spec(tx_spec)
 tx_loader.exec_module(transaction)
 
+guard_loader = SourceFileLoader(
+    "dsm928_disposable_reverse_dependency_guard",
+    str(ROOT / "update-manager/game-uptime-guard.py"),
+)
+guard_spec = importlib.util.spec_from_loader(guard_loader.name, guard_loader)
+guard = importlib.util.module_from_spec(guard_spec)
+guard_loader.exec_module(guard)
+
 from update_game_uptime_real_update_functions_test import (
     create_tiny_release_fixture, run_real_update_fns,
 )
@@ -120,6 +128,23 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
     def _assert_unchanged(self, originals):
         for prior in originals:
             self.assertEqual(self._snapshot(prior["unit"]), prior)
+
+    def test_systemd_exposes_every_reverse_dependency_for_fail_closed_preflight(self):
+        """Use a disposable transient unit to validate the host's systemd ABI.
+
+        Without this proof, extra reverse links in the read-only guard could
+        incorrectly mark otherwise safe game units as 'incomplete evidence'.
+        """
+        unit = self._start("reverse-dependencies")
+        properties = guard.DEPENDENCY_PROPERTIES
+        self.assertEqual(len(set(properties)), len(properties))
+        observed = self._run("systemctl", "show", unit["unit"],
+                             *(f"--property={name}" for name in properties),
+                             "--no-pager")
+        returned = {line.split("=", 1)[0] for line in observed.stdout.splitlines()
+                    if "=" in line}
+        self.assertEqual(set(properties), returned)
+        self.assertEqual(self._snapshot(unit["unit"]), unit)
 
     def test_two_systemd_processes_survive_actual_updater_main_and_failure_rollback(self):
         """Call actual update.sh main() with ONLY production-facing hooks stubbed."""
