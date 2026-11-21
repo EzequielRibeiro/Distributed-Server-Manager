@@ -50,7 +50,13 @@ class PersistentPendingHoldTests(unittest.TestCase):
                        trusted_uid=self.uid, now=1700000010)
 
     def test_durable_preparation_remains_negative_and_recovers_fail_closed(self):
-        result = self.prepare()
+        # A restrictive installer/systemd umask must not make the hold 0600.
+        # Its JSON contains no credentials; Agent/Worker users need read only.
+        previous_umask = os.umask(0o077)
+        try:
+            result = self.prepare()
+        finally:
+            os.umask(previous_umask)
         self.assertEqual(result["status"],
                          "persistent_hold_prepared_manual_recovery_required")
         self.assertFalse(result["live_no_drain_authorized"])
@@ -61,7 +67,12 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(journal["state"], "prepared_requires_distributed_fence")
         self.assertEqual(marker["kind"], "CapivaraDSMNoDrainMaintenanceHold")
         self.assertEqual(stat.S_IMODE(self.journal.stat().st_mode), 0o600)
-        self.assertEqual(stat.S_IMODE(self.marker.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(self.marker.stat().st_mode), 0o644)
+        self.assertEqual(self.marker.stat().st_uid, self.uid)
+        self.assertEqual(self.journal.stat().st_uid, self.uid)
+        self.assertFalse(self.marker.stat().st_mode & 0o022)
+        with os.fdopen(os.open(self.marker, os.O_RDONLY | os.O_NOFOLLOW), "r") as stream:
+            self.assertEqual(json.load(stream)["transaction_id"], self.tx)
         self.assertEqual(self.observation()["reason"], "root_owned_maintenance_hold")
 
         # Model a process crash/reboot removing only the /run marker. The
