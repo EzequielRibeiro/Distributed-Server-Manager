@@ -35,6 +35,7 @@ from agent_pairing_repository import AgentPairingRepository
 from agent_remote_http import (dispatch_heartbeat, dispatch_fence_observation,
                                dispatch_enroll, dispatch_uninstall_result)
 from game_uptime_agent_wire import build_probe, verify_offer
+from game_uptime_controller_http_inflight import observe_controller_agent_inflight
 
 
 class ActualDispatcherSqliteHttpTests(unittest.TestCase):
@@ -456,6 +457,87 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             code, resumed = self._request(self._payload())
             self.assertEqual(code, 200, resumed)
             self.assertEqual(resumed["health_status"], "online")
+
+
+    def test_three_controller_agent_mutations_are_counted_until_all_exit(self):
+        """Grouped concurrency and exception proof; never an update ACK.
+
+        Count one real invocation of each dispatcher while its maintenance
+        guard is still executing. Count must remain nonzero while in-flight,
+        and must return to zero on every exit.
+        """
+        from unittest.mock import patch
+
+        gate_barrier = threading.Barrier(4)
+        release = threading.Event()
+        completed = []
+        errors = []
+        denied = (423, {
+            "status": "blocked",
+            "reason": "controller_maintenance_hold_active",
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        })
+
+        def suspended_guard():
+            gate_barrier.wait(timeout=12)
+            if not release.wait(timeout=12):
+                raise AssertionError("inflight test release was not signalled")
+            return denied
+
+        calls = (
+            lambda: dispatch_enroll({"pairing_token": "not-used"}, backend=self.backend),
+            lambda: dispatch_heartbeat(self._payload(), headers={}, backend=self.backend),
+            lambda: dispatch_uninstall_result(
+                {"status": "completed"}, headers={}, backend=self.backend),
+        )
+
+        def run(call):
+            try:
+                completed.append(call())
+            except BaseException as exc:
+                errors.append(exc)
+
+        before = observe_controller_agent_inflight()
+        self.assertEqual(before["inflight_total"], 0)
+        threads = [threading.Thread(target=run, args=(call,), daemon=True)
+                   for call in calls]
+        try:
+            with patch("agent_remote_http._mutating_agent_api_hold_response",
+                       side_effect=suspended_guard):
+                for thread in threads:
+                    thread.start()
+                gate_barrier.wait(timeout=12)
+                while_running = observe_controller_agent_inflight()
+                self.assertEqual(while_running["inflight_total"], 3)
+                self.assertEqual(while_running["inflight"], {
+                    "enroll": 1, "heartbeat": 1, "uninstall_result": 1,
+                })
+                self.assertFalse(while_running["controller_http_acked"])
+                self.assertFalse(while_running["live_no_drain_authorized"])
+                self.assertEqual(while_running["scope"],
+                                 "three_agent_http_dispatchers_in_this_pid_only")
+        finally:
+            release.set()
+            for thread in threads:
+                thread.join(timeout=12)
+
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(completed, [denied] * 3)
+        after = observe_controller_agent_inflight()
+        self.assertEqual(after["inflight_total"], 0)
+        self.assertEqual(after["generation"], before["generation"] + 6)
+        self.assertFalse(after["controller_http_acked"])
+        self.assertFalse(after["remote_agents_acked"])
+        self.assertFalse(after["external_jobs_acked"])
+        self.assertFalse(after["live_no_drain_authorized"])
+
+        with patch("agent_remote_http._mutating_agent_api_hold_response",
+                   side_effect=RuntimeError("synthetic read error")):
+            with self.assertRaises(RuntimeError):
+                dispatch_heartbeat(self._payload(), headers={}, backend=self.backend)
+        self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
 
 
 if __name__ == "__main__":
