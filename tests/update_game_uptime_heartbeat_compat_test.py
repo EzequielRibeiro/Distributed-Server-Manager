@@ -29,7 +29,7 @@ def _load(name, path):
 
 agent_wire = _load("dsm928_agent_wire", ROOT/"agents/linux/runtime/game_uptime_agent_wire.py")
 controller_wire = _load("dsm928_controller_wire", ROOT/"dashboard/game_uptime_heartbeat_compat.py")
-from agent_remote_http import dispatch_heartbeat
+from agent_remote_http import dispatch_heartbeat, dispatch_fence_observation
 
 
 class WireContractTests(unittest.TestCase):
@@ -235,6 +235,147 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
             })
             self.assertEqual(status, 401)
             self.assertNotIn("no_drain_fence_receipt", rejected)
+
+    def test_hold_readonly_route_and_agent_transport_never_dispatch_commands(self):
+        """One grouped phase-2 proof: authenticated SELECT-only endpoint.
+
+        Exercise the real dispatcher and isolated Agent function body, not
+        any production service, network, storage, or background thread.
+        """
+        import os
+        import time
+        from types import SimpleNamespace
+        from game_uptime_remote_fence_evidence import (
+            receipt_for_authenticated_agent,
+        )
+        from game_uptime_maintenance_hold import observe as hold_observe
+        agent_evidence = _load(
+            "dsm928_hold_agent_evidence",
+            ROOT / "agents/linux/runtime/game_uptime_agent_fence_evidence.py",
+        )
+        now = int(time.time())
+        hold = {
+            "active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": "a" * 32,
+            "issued_at": now - 10, "expires_at": now + 80,
+        }
+        with patch.object(agent_evidence, "observe", return_value=hold):
+            evidence = agent_evidence.build_fence_evidence(
+                "trusted-agent", now=now)
+        self.assertIsNotNone(evidence)
+        self.auth.return_value.authenticate_readonly.return_value = {
+            "agent_id": "trusted-agent", "status": "active",
+        }
+        with patch("agent_remote_http.receipt_for_authenticated_agent",
+                   side_effect=receipt_for_authenticated_agent), patch(
+                   "game_uptime_remote_fence_evidence.observe",
+                   return_value=hold), patch(
+                   "agent_remote_http.record_agent_heartbeat",
+                   side_effect=AssertionError("heartbeat must never run")):
+            code, data = dispatch_fence_observation(
+                {"no_drain_fence_evidence": evidence},
+                headers=self.headers, backend=object())
+            self.assertEqual(code, 200)
+            self.assertEqual(set(data), {
+                "no_drain_fence_receipt", "remote_agent_quiescence_acked",
+                "live_no_drain_authorized"})
+            receipt = data["no_drain_fence_receipt"]
+            self.assertEqual(receipt["status"],
+                             "authenticated_evidence_received_unfenced")
+            self.assertFalse(data["remote_agent_quiescence_acked"])
+            self.assertFalse(data["live_no_drain_authorized"])
+            self.assertTrue(agent_evidence.verify_fence_receipt(
+                evidence, receipt, now=now)["wire_receipt_verified"])
+            self.auth.return_value.authenticate.assert_not_called()
+            self.auth.return_value.authenticate_readonly.assert_called_once()
+
+            for hostile in ({}, {"no_drain_fence_evidence": evidence,
+                                  "console_command": {}},
+                            {"no_drain_fence_evidence": evidence,
+                             "result_flush": False}):
+                status, rejected = dispatch_fence_observation(
+                    hostile, headers=self.headers, backend=object())
+                self.assertEqual(status, 400)
+                self.assertFalse(rejected["live_no_drain_authorized"])
+
+            bad = dict(evidence, agent_id="some-other-agent")
+            status, rejected = dispatch_fence_observation(
+                {"no_drain_fence_evidence": bad},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                rejected["no_drain_fence_receipt"]["status"], "blocked")
+            with patch("game_uptime_remote_fence_evidence.observe",
+                       return_value={"active": False, "reason": "hold_absent"}):
+                status, rejected = dispatch_fence_observation(
+                    {"no_drain_fence_evidence": evidence},
+                    headers=self.headers, backend=object())
+                self.assertEqual(status, 200)
+                self.assertEqual(rejected["no_drain_fence_receipt"]["status"],
+                                 "blocked")
+            from agent_pairing_repository import AgentCredentialInvalid
+            self.auth.return_value.authenticate_readonly.side_effect = (
+                AgentCredentialInvalid("bad"))
+            status, denied = dispatch_fence_observation(
+                {"no_drain_fence_evidence": evidence},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 401)
+            self.assertNotIn("no_drain_fence_receipt", denied)
+
+        # Verify SQL-level SELECT-only authentication and the routing guard.
+        pairing_source = (
+            ROOT / "database/agent_pairing_repository.py").read_text()
+        pairing_ast = ast.parse(pairing_source)
+        class_node = next(n for n in pairing_ast.body
+                          if isinstance(n, ast.ClassDef)
+                          and n.name == "AgentPairingRepository")
+        method = next(n for n in class_node.body
+                      if isinstance(n, ast.FunctionDef)
+                      and n.name == "authenticate_readonly")
+        self.assertIn("self.backend.connect()", ast.unparse(method))
+        self.assertNotIn("UPDATE agent_credentials", ast.unparse(method))
+        self.assertNotIn("self.backend.transaction()", ast.unparse(method))
+        route = (ROOT / "dashboard/server_part11.py").read_text()
+        self.assertIn("NO_DRAIN_OBSERVE_PATH", route)
+        self.assertIn("dispatch_fence_observation", route)
+
+        # Execute only the standalone Agent function with simulated transport.
+        agent_src = (ROOT / "agents/linux/runtime/agent.py").read_text()
+        node = next(n for n in ast.parse(agent_src).body
+                    if isinstance(n, ast.FunctionDef)
+                    and n.name == "observe_remote_fence_readonly")
+        self.assertNotIn("_inventory(", ast.unparse(node))
+        self.assertNotIn("heartbeat(", ast.unparse(node))
+        self.assertNotIn("_write_config(", ast.unparse(node))
+        observed = []
+        def post(url, payload, headers=None):
+            observed.append((url, payload, headers))
+            return {"no_drain_fence_receipt": receipt}
+        scope = {
+            "os": os, "build_fence_evidence": lambda aid: evidence,
+            "_post": post,
+            "verify_fence_receipt": agent_evidence.verify_fence_receipt,
+        }
+        exec(compile(ast.Module(body=[node], type_ignores=[]),
+                     "read_only_agent_fixture", "exec"), scope)
+        config = {"agent_id": "trusted-agent",
+                  "controller_url": "https://controller.example",
+                  "credential_id": "credential", "credential_secret": "secret",
+                  "fingerprint": "fingerprint"}
+        with patch.dict(os.environ, {"DSM928_REMOTE_FENCE_DIAGNOSTIC": "1"}):
+            result = scope["observe_remote_fence_readonly"](config)
+        self.assertEqual(result["wire_receipt_verified"], True)
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(observed[0][0],
+                         "https://controller.example/api/agent/no-drain/observe")
+        self.assertEqual(set(observed[0][1]), {"no_drain_fence_evidence"})
+        self.assertFalse(result["live_no_drain_authorized"])
+        # Existing Agent hold loop must call only the diagnostic path.
+        agent_run = next(n for n in ast.parse(agent_src).body
+                         if isinstance(n, ast.FunctionDef)
+                         and n.name == "run_forever")
+        self.assertIn("observe_remote_fence_readonly(config)",
+                      ast.unparse(agent_run))
 
     def test_absent_probe_preserves_old_heartbeat(self):
         status, data = self.post({"agent_id": "trusted-agent"})
