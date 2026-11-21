@@ -26,6 +26,11 @@ from hybrid_agent_worker import (
     _read_shell_values,
 )
 from runtime_backend import backend_from_environment
+# Resolve the sibling helper from this installed script, not the caller's
+# current working directory (runpy/remote launchers may omit this directory).
+_WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKERS_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKERS_MODULE_DIR)
 from maintenance_hold_gate import maintenance_paused
 from artifact_transfer_repository import ArtifactTransferRepository
 from instance_file_repository import InstanceFileRepository
