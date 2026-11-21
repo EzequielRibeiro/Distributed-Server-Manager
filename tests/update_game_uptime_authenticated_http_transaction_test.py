@@ -8,24 +8,20 @@ from __future__ import annotations
 
 import unittest
 
-from update_game_uptime_sqlite_http_integration_test import (
-    ActualDispatcherSqliteHttpTests,
-)
-from update_game_uptime_evidence_rehearsal_test import (
-    ObservedEvidenceFixtureTests,
-)
+import update_game_uptime_sqlite_http_integration_test as sqlite_http_fixture
+import update_game_uptime_evidence_rehearsal_test as evidence_fixture
 from update_game_uptime_evidence_rehearsal_test import observed
 
 
 class CredentialedTransportRehearsalTests(unittest.TestCase):
     def setUp(self):
-        self.controller = ActualDispatcherSqliteHttpTests(
+        self.controller = sqlite_http_fixture.ActualDispatcherSqliteHttpTests(
             methodName="test_credentialed_sqlite_controller_survives_restart_and_new_nonce")
         self.controller.fixture_agent_id = "fixture-agent"
         self.controller.setUp()
         self.addCleanup(self.controller.doCleanups)
 
-        self.rehearsal = ObservedEvidenceFixtureTests(
+        self.rehearsal = evidence_fixture.ObservedEvidenceFixtureTests(
             methodName="test_matching_observation_composes_transaction_but_never_authorizes")
         self.rehearsal.setUp()
         self.addCleanup(self.rehearsal.doCleanups)
