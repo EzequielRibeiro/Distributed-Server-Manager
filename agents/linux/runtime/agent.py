@@ -64,6 +64,7 @@ from minecraft_serverpack_report_outbox import (
 )
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
 from game_uptime_agent_wire import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
+from game_uptime_maintenance_hold import observe as observe_no_drain_hold
 from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
@@ -401,6 +402,11 @@ def heartbeat(config):
 
 
 def run_forever():
+    # A root-owned local transaction hold is checked before any startup hook.
+    # Invalid/expired evidence also pauses the loop for explicit operator
+    # recovery; nothing in this Agent authorizes a no-drain update.
+    while observe_no_drain_hold()["active"]:
+        time.sleep(1)
     config=_load_config()
     if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
     interrupted=recover_interrupted_operations(config)
@@ -410,6 +416,13 @@ def run_forever():
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
     finalization_supervisor=FinalizationWorkerSupervisor()
     while True:
+        if observe_no_drain_hold()["active"]:
+            # No reconcile or Controller command processing while this local
+            # host's hold exists. Background workers are NOT covered by this
+            # boundary; full no-drain authorization remains unavailable.
+            next_heartbeat=next_reconcile=0.0
+            time.sleep(1)
+            continue
         now=time.monotonic()
         if now>=next_reconcile:
             try:reconcile_all(config)
