@@ -93,14 +93,15 @@ def _open_lock(folder: Path, worker: str, *, create: bool) -> int:
     return fd
 
 @contextmanager
-def tracked_operation(worker: str, *, root: Path) -> Iterator[bool]:
+def tracked_operation(worker: str, *, root: Path,
+                      lock_dir: Path | None = None) -> Iterator[bool]:
     """Hold an exclusive kernel lock during an entire mutating Worker cycle.
 
     The hold is checked AFTER taking the lock, so a future coordinator can
     acquire and retain this same lock across the marker creation/transaction
     boundary. No operations run if the evidence file cannot be established.
     """
-    folder = _directory(root, create=True)
+    folder = _directory(root, create=True, lock_dir=lock_dir)
     fd = _open_lock(folder, worker, create=True)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -110,7 +111,8 @@ def tracked_operation(worker: str, *, root: Path) -> Iterator[bool]:
         os.close(fd)
 
 
-def inspect_operation(worker: str, *, root: Path) -> dict[str, object]:
+def inspect_operation(worker: str, *, root: Path,
+                      lock_dir: Path | None = None) -> dict[str, object]:
     """Read-only busy/unknown/lock-free evidence, NEVER an update approval."""
     result: dict[str, object] = {
         "worker": worker,
@@ -118,7 +120,7 @@ def inspect_operation(worker: str, *, root: Path) -> dict[str, object]:
         "live_no_drain_authorized": False,
     }
     try:
-        folder = _directory(root, create=False)
+        folder = _directory(root, create=False, lock_dir=lock_dir)
         fd = _open_lock(folder, worker, create=False)
     except (OSError, ValueError, RuntimeError):
         result["reason"] = "missing_or_untrusted_worker_evidence"
