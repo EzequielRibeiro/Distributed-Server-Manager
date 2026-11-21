@@ -69,7 +69,7 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
         self.assertIn('filePath==="."?"/":`/${filePath}`', source)
         # The overview must not report zero when the private root is not
         # readable but the same authenticated Agent can measure visible files.
-        self.assertIn('knownStorage===null&&can("files.read")', source)
+        self.assertIn('knownStorage===null&&String(inst.game_id||"").toLowerCase()==="dayz"&&can("files.read")', source)
         self.assertIn('const minimum=visible+(knownBackup??0)', source)
         self.assertIn('overview!==snapshot', source)
         self.assertIn('Pelo menos ${fmtBytes(minimum)}', source)
