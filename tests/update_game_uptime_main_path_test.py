@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import subprocess
 import json
+from importlib.machinery import SourceFileLoader
+import importlib.util
 import tempfile
 from pathlib import Path
 import unittest
@@ -12,6 +14,15 @@ HARNESS = ROOT / "tests/fixtures/update_928_main_path_rehearsal.sh"
 UPDATER = ROOT / "update.sh"
 
 from update_game_uptime_real_update_functions_test import create_tiny_release_fixture
+
+
+def fixture_signer():
+    path = ROOT / "update-manager/game-uptime-fixture-attestation.py"
+    loader = SourceFileLoader("dsm928_test_package_signer", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    helper = importlib.util.module_from_spec(spec)
+    loader.exec_module(helper)
+    return helper
 
 
 def main_rehearsal(workspace: Path, mode="success") -> subprocess.CompletedProcess:
@@ -48,6 +59,7 @@ class MainPathRehearsalTest(unittest.TestCase):
         target_db.write_bytes((self.installed / "data/database.txt").read_bytes())
         (self.installed / "version").write_text("2.0.998-fixture")
         (self.root / "new-payload/version").write_text("2.0.999-fixture")
+        fixture_signer().seal_test_fixture(self.root)
 
     def test_disposable_no_drain_actual_main_success_preserves_data_and_never_drains(self):
         self.prepare_no_drain_fixture()
@@ -62,6 +74,7 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.assertEqual(len(receipt["original_units"]), 2)
         self.assertFalse(receipt["live_no_drain_authorized"])
         self.assertIn("DSM928MainDisposableNoDrainRehearsal", outcome.stdout)
+        self.assertTrue(json.loads(outcome.stdout.strip().splitlines()[-1])["fixture_package_attested"])
         self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
         self.assertEqual(self.upload.read_bytes(), b"in-flight-upload-private-test")
         self.assertEqual(len(list((self.root / "backups").glob("*.tar.gz"))), 1)
@@ -96,10 +109,52 @@ class MainPathRehearsalTest(unittest.TestCase):
         unexpected = self.root / "new-payload/database/migrations/099.sql"
         unexpected.parent.mkdir(parents=True, exist_ok=True)
         unexpected.write_text("ALTER TABLE x")
+        # A newly signed package is still blocked by the independent impact
+        # classifier; HMAC verification must not override release safety.
+        fixture_signer().seal_test_fixture(self.root)
         outcome = main_rehearsal(self.root, "no_drain_unknown_file")
         self.assertEqual(outcome.returncode, 2, outcome.stderr[-1300:])
         self.assertEqual((self.installed / "version").read_text().strip(), "2.0.998-fixture")
         self.assertFalse((self.root / "dsm928-composite-journal").exists())
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
+
+    def test_disposable_no_drain_unsigned_payload_blocks_before_backup(self):
+        self.prepare_no_drain_fixture()
+        (self.root / ".dsm928-fixture-package-seal.json").unlink()
+        outcome = main_rehearsal(self.root, "no_drain_success")
+        self.assertEqual(outcome.returncode, 2)
+        self.assertEqual((self.installed / "version").read_text(), "2.0.998-fixture")
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+
+    def test_disposable_no_drain_modified_signed_payload_blocks_before_backup(self):
+        self.prepare_no_drain_fixture()
+        (self.root / "new-payload/dashboard/web/presentation.js").write_text("injected")
+        outcome = main_rehearsal(self.root, "no_drain_success")
+        self.assertEqual(outcome.returncode, 2)
+        self.assertEqual((self.installed / "version").read_text(), "2.0.998-fixture")
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
+
+    def test_disposable_no_drain_forged_mac_blocks_before_backup(self):
+        self.prepare_no_drain_fixture()
+        path = self.root / ".dsm928-fixture-package-seal.json"
+        forged = json.loads(path.read_text())
+        forged["hmac_sha256"] = "f" * 64
+        path.write_text(json.dumps(forged))
+        outcome = main_rehearsal(self.root, "no_drain_success")
+        self.assertEqual(outcome.returncode, 2)
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+        self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
+
+    def test_disposable_no_drain_key_symlink_blocks_before_backup(self):
+        self.prepare_no_drain_fixture()
+        key = self.root / ".dsm928-fixture-signer.key"
+        other = self.root / "different.key"
+        other.write_bytes(key.read_bytes())
+        key.unlink()
+        key.symlink_to(other)
+        outcome = main_rehearsal(self.root, "no_drain_success")
+        self.assertEqual(outcome.returncode, 2)
         self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
 
     def test_disposable_no_drain_main_refuses_without_explicit_fixture_opt_in(self):

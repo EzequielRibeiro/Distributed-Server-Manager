@@ -22,6 +22,15 @@ sys.path.insert(0, str(REPOSITORY / "tests"))
 from update_game_uptime_real_update_functions_test import run_real_update_fns
 
 
+def load_fixture_seal():
+    path = REPOSITORY / "update-manager/game-uptime-fixture-attestation.py"
+    loader = SourceFileLoader("dsm928_main_fixture_attestation", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    helper = importlib.util.module_from_spec(spec)
+    loader.exec_module(helper)
+    return helper
+
+
 def load_compose():
     path = REPOSITORY / "update-manager/game-uptime-isolated-compose.py"
     loader = SourceFileLoader("dsm928_main_disposable_composer", str(path))
@@ -75,6 +84,10 @@ def check_preserved(root: Path) -> None:
 
 
 def run(root: Path, mode: str) -> int:
+    attestation = load_fixture_seal()
+    attested = attestation.verify_fixture_attestation(root)
+    if attested["verified"] is not True or attested["live_no_drain_authorized"] is not False:
+        raise RuntimeError("unsafe or missing independent disposable payload proof")
     compose = load_compose()
     # These are deliberately fake identities: only the real systemd E2E
     # workflow supplies live transient systemd evidence, not this CLI test.
@@ -99,6 +112,10 @@ def run(root: Path, mode: str) -> int:
         return dict(state[unit])
 
     def file_step(step):
+        # Recheck exact release bytes immediately before preparing a snapshot
+        # and again after it, before invoking the real update.sh file swap.
+        if step in ("prepare", "apply"):
+            attestation.verify_fixture_attestation(root)
         result = run_real_update_fns(root, step)
         if result.returncode != 0:
             raise RuntimeError(
@@ -159,6 +176,7 @@ def run(root: Path, mode: str) -> int:
         "release_tier": receipt["reviewed_disposable_release_tier"],
         "units_witnessed": len(durable["original_units"]),
         "strict_inventory": True,
+        "fixture_package_attested": True,
         "live_no_drain_authorized": False,
     }, sort_keys=True))
     return 0
