@@ -239,17 +239,27 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
     def test_real_dashboard_and_hybrid_worker_restart_around_disposable_update(self):
         """Run actual DSM entrypoints under disposable systemd, never on DSM hosts.
 
-        This validates real Dashboard/Worker *process* startup, controlled
-        restart and HTTP liveness around the already guarded update.sh main()
-        test fixture, without calling the real updater on their installation.
-        The Worker is deliberately in non-hybrid mode: no managed games, Agent
-        commands, database changes or production node identity are admitted.
+        This validates the actual server_part22.py Dashboard entrypoint,
+        credentialed Linux Agent HTTP against its integrated route, and Worker
+        process restart around the guarded update.sh main() fixture. The Worker
+        remains non-hybrid, and Agent host inventory/mutations are blocked by
+        the reused fixture. Not a live no-drain update or complete Agent daemon.
         """
         import socket
         import sys
         from urllib.request import urlopen
         from urllib.error import URLError
         from update_game_uptime_main_path_test import MainPathRehearsalTest
+        import update_game_uptime_agent_runtime_restart_test as agent_fixture_module
+
+        # Reuse real ephemeral SQLite pairing/credentials, but route the Agent
+        # to the ACTUAL production Controller HTTP composition instead of the
+        # fixture's simplified dispatcher listener.
+        agent_fixture = agent_fixture_module.LinuxAgentProcessHeartbeatTests(
+            "test_real_agent_process_reconnects_to_restarted_controller")
+        agent_fixture.setUp()
+        self.addCleanup(agent_fixture.doCleanups)
+        agent_fixture.controller._stop_http()
 
         original_games = [self._start("dashboard-game-a"),
                           self._start("dashboard-game-b")]
@@ -270,7 +280,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         ))
         common = (
             f"--setenv=DSM_ROOT={root}",
-            f"--setenv=DSM_DATABASE={root / 'data/capivara.db'}",
+            f"--setenv=DSM_DATABASE={agent_fixture.controller.db_path}",
             "--setenv=DSM_DATABASE_DRIVER=sqlite",
             f"--setenv=PYTHONPATH={pythonpath}",
         )
@@ -282,6 +292,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     "--property=NoNewPrivileges=yes",
                     "--property=ProtectSystem=strict",
                     f"--property=ReadWritePaths={self.workspace}",
+                    f"--property=ReadWritePaths={agent_fixture.controller.db_path.parent}",
                     "--property=IPAddressDeny=any",
                     "--property=IPAddressAllow=localhost",
                     *common]
@@ -289,7 +300,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 args.extend((
                     "--setenv=DASHBOARD_HOST=127.0.0.1",
                     f"--setenv=DASHBOARD_PORT={port}",
-                    sys.executable, str(ROOT / "dashboard/server.py"),
+                    # Canonical systemd/dsm-dashboard.service ExecStart.
+                    sys.executable, str(ROOT / "dashboard/server_part22.py"),
                 ))
             else:
                 args.extend((
@@ -334,16 +346,42 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertEqual(self._snapshot(entry["unit"]), entry)
                 cmdline = (Path("/proc") / str(entry["pid"]) / "cmdline").read_bytes()
                 self.assertIn(b"hybrid_agent_worker.py" if "worker" in entry["unit"]
-                              else b"dashboard/server.py", cmdline)
+                              else b"dashboard/server_part22.py", cmdline)
             with urlopen(ping, timeout=2) as response:
                 self.assertEqual(response.status, 200)
                 self.assertEqual(json.loads(response.read())["status"], "ok")
+
+        def check_authenticated_agent(*, rejected=False):
+            # Separate Agent interpreter, real config/urllib heartbeat and
+            # no host discovery or mutation (the existing fixture forbids it).
+            agent_fixture.controller.url = (
+                f"http://127.0.0.1:{port}/api/agent/heartbeat")
+            # Keep this phase telemetry-only: new Controller enrollment can
+            # return an operational Doctor command, which must never be
+            # executed by an isolated update acceptance test.
+            result = agent_fixture.invoke(invalid_secret=rejected, read_only=True)
+            if rejected:
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Controller rejected request (401)",
+                              result.stderr[-1400:])
+                self._assert_unchanged(original_games)
+                return
+            self.assertEqual(result.returncode, 0,
+                             result.stderr[-1400:] + result.stdout[-600:])
+            details = json.loads(result.stdout.strip().splitlines()[-1])
+            self.assertTrue(details["wire_compatible"])
+            self.assertFalse(details["live_no_drain_authorized"])
+            self.assertEqual(details["agent_id"], agent_fixture.controller.agent_id)
+            self.assertEqual(details["health_status"], "online")
+            self._assert_unchanged(original_games)
 
         current = {
             "dashboard": start_control("dashboard", "before"),
             "worker": start_control("worker", "before"),
         }
         check_current(current)
+        check_authenticated_agent()
+        check_authenticated_agent(rejected=True)
 
         for generation, mode, expected, journal in (
             ("after-success", "no_drain_success", "2.0.999-fixture", "verified"),
@@ -381,6 +419,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     "worker": start_control("worker", generation),
                 }
                 check_current(current)
+                check_authenticated_agent()
                 self.assertFalse((root / "config/agent.conf").exists())
 
         self.assertFalse((root / "runtime/hybrid-agent-state/agent.json").exists())
