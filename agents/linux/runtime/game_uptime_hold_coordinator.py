@@ -27,12 +27,19 @@ class HoldPreparationBlocked(RuntimeError):
     """Operator recovery is required; never retry by deleting evidence."""
 
 
-def _trusted_directory(path: Path, uid: int) -> None:
-    """Refuse writable, symlinked or foreign storage, including its parent."""
+def _trusted_directory(path: Path, uid: int, *,
+                       runtime_readable: bool = False) -> None:
+    """Refuse writable, symlinked or foreign storage, including its parent.
+
+    An Agent/Worker may use a distinct UID and GID. The *ephemeral hold*
+    directory and its ancestors must therefore be traversable by others;
+    this never applies to the private persistent journal directory.
+    """
     for candidate in (path.parent, path):
         info = candidate.lstat()
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != uid
-                or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+                or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                or (runtime_readable and not info.st_mode & stat.S_IXOTH)):
             raise HoldPreparationBlocked("untrusted_maintenance_storage")
 
 
@@ -116,7 +123,7 @@ def prepare_root_only(
     # directories, replace files, follow links, unlink or overwrite evidence.
     try:
         _trusted_directory(journal_path.parent, trusted_uid)
-        _trusted_directory(hold_path.parent, trusted_uid)
+        _trusted_directory(hold_path.parent, trusted_uid, runtime_readable=True)
     except OSError as exc:
         raise HoldPreparationBlocked("evidence_directory_unavailable") from exc
 
