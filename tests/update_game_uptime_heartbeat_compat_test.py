@@ -344,9 +344,12 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
         node = next(n for n in ast.parse(agent_src).body
                     if isinstance(n, ast.FunctionDef)
                     and n.name == "observe_remote_fence_readonly")
-        self.assertNotIn("_inventory(", ast.unparse(node))
-        self.assertNotIn("heartbeat(", ast.unparse(node))
-        self.assertNotIn("_write_config(", ast.unparse(node))
+        invoked = {
+            c.func.id for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        }
+        self.assertFalse({"_inventory", "heartbeat", "_write_config",
+                          "reconcile_all", "handle_command"}.intersection(invoked))
         observed = []
         def post(url, payload, headers=None):
             observed.append((url, payload, headers))
