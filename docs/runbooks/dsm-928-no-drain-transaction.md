@@ -1148,3 +1148,58 @@ remota ou autorização `--no-drain`**. A próxima barreira deve usar locks
 interprocessos estáveis provisionados por root, revalidar journal/lease sob
 posse exclusiva e incluir os demais mutadores antes de integrar o updater.
 Issue #928 permanece aberta, `live_no_drain_authorized=false`.
+
+
+## Etapa 2 — fence interprocessos dos três Agent HTTP dispatchers (21/11/2026)
+
+Complemento da #1133, **sem habilitação automática**. O arquivo
+`dashboard/game_uptime_controller_agent_http_flock.py` implementa uma
+barreira **interprocessos** com `flock` em um inode estável:
+`/run/capivara-dsm/controller-agent-http.lock`. O arquivo fica fora de
+`/opt/dsm`, em diretório root-owned, não gravável por usuários não-root.
+Seu inode deve ser **provisionado pelo root** com proprietário usuário/grupo
+de serviço do Dashboard, modo `0600`, conteúdo vazio, um único hardlink e
+`O_NOFOLLOW`; a preparação idempotente rejeita permissões, proprietário,
+symlink ou hardlink existentes inseguros, sem substituir nem reparar
+automaticamente.
+
+`dashboard/prepare_controller_agent_http_lock.py` oferece o preparador
+privilegiado `--user/--group`. **Não está ligado a
+`dsm-dashboard.service`, updater, bootstrap ou Agent:** sua instalação e
+ativação ficam para uma futura homologação operacional isolada. Não executar
+em hosts com jogos ativos nesta etapa.
+
+Quando `DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1` estiver configurado em um
+**Controller descartável com o inode validamente provisionado**, os três
+despachantes `enroll`, `heartbeat`, `uninstall_result` seguram
+`LOCK_SH|LOCK_NB` durante sua execução completa, desde antes da checagem do
+hold root-owned, liberando em `finally` mesmo sob erro. Arquivo
+ausente/alterado/inseguro ou lock exclusivo ocupado gera HTTP `423`
+`controller_http_interprocess_fence_unavailable` sem atingir o código de
+autenticação mutadora. Sem opt-in, o contrato anterior permanece inalterado
+para não introduzir regressão nos Controllers existentes.
+
+Um futuro coordenador privilegiado pode tomar o **mesmo** inode com
+`LOCK_EX|LOCK_NB`, permanecendo exclusivamente dono do lock durante todo
+o bloco de contexto; uma chamada que já detenha lock compartilhado faz a
+tentativa falhar imediatamente, e uma nova chamada opt-in falha com 423
+enquanto o lock exclusivo estiver ocupado. A API de exclusividade fornece
+**somente evidência local negativa** (`controller_http_acked=false`,
+`remote_agents_acked=false`, `external_jobs_acked=false`,
+`live_no_drain_authorized=false`), sem instalar hold, limpar journal
+ou invocar updater. **Não é permissão para update.**
+
+O teste agrupado na suíte HTTP/SQLite já existente exercita provisionamento
+idempotente em diretório temporário, exclusão real entre **dois processos
+Python**, um heartbeat ainda em voo, recusa de nova requisição sob lock
+exclusivo e recusa de inode inseguro. O CI usa o gate completo de #928, sem
+repetir a bateria de PIDs/rollback.
+
+**O que ainda falta na Etapa 2:** habilitação/provisionamento somente após
+verificar que **todos** os processos Controller receberam a instrumentação;
+abranger demais rotas HTTP, Console Push e operações assíncronas, jobs
+externos e materializers; integrar posse de locks com hold/journal durável,
+reconciliação e ACK operacional autenticado de **cada Agent remoto**. Lock
+local livre ou exclusivo dos três handlers **jamais** prova quiescência
+distribuída. Issue #928 segue OPEN; `update.sh --no-drain` segue
+somente diagnóstico/exit 2, e release continua bloqueado.
