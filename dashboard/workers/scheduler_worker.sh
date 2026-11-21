@@ -9,7 +9,7 @@ STATE_DIR="${DSM_ROOT}/dashboard/state"
 OUTPUT="${STATE_DIR}/scheduler_state.json"
 
 JOBS_DB="${DSM_ROOT}/scheduler/jobs.db"
-HOLD_GATE="${WORKERS_DIR}/maintenance_hold_gate.py"
+HOLD_GATE="${DSM_ROOT}/dashboard/workers/maintenance_hold_gate.py"
 
 
 scheduler_update()
