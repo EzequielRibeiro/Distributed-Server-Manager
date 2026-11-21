@@ -152,6 +152,7 @@ def test_symlink_in_allowlisted_subtree_fails_closed(tmp_path):
     root, *rest = _fixture(tmp_path)
     external = tmp_path / "outside"
     external.mkdir()
+    original_mode = mode(external)
     (root / "profiles").symlink_to(external, target_is_directory=True)
     account = pwd.getpwuid(os.geteuid())
     group = SimpleNamespace(gr_gid=os.getegid())
@@ -159,7 +160,7 @@ def test_symlink_in_allowlisted_subtree_fails_closed(tmp_path):
          mock.patch.object(materialize_instance.grp, "getgrnam", return_value=group):
         with pytest.raises(RuntimeError, match="cannot be a symlink"):
             materialize_instance._grant_customer_files_access(_spec(root))
-    assert mode(external) == 0o755
+    assert mode(external) == original_mode  # Do not touch foreign target.
 
 
 def test_foreign_owner_rejected_for_customer_writable_tree(tmp_path):
