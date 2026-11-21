@@ -71,7 +71,7 @@ def run_forever(root:Path=ROOT,interval:int=INTERVAL_SECONDS)->None:
    time.sleep(1)
    continue
   try:
-   with tracked_operation("content_update_worker", root=ROOT) as admitted:
+   with tracked_operation("content_update_worker", root=root) as admitted:
     if admitted:
        try:
         report=worker.tick();detection=report.get('detection') or {}
