@@ -349,6 +349,98 @@ class AgentRunForeverLoopTests(unittest.TestCase):
                               reused["errors"])
                 self.assertFalse(reused["live_no_drain_authorized"])
 
+    def test_local_transaction_fence_holds_all_nine_locks_fail_closed(self):
+        """One grouped stage-2 contract; never authorizes a live updater."""
+        import fcntl
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+
+        workers = ROOT / "dashboard/workers"
+        with patch.object(sys, "path", [str(workers), *sys.path]):
+            # Runtime entrypoints import these sibling modules normally.
+            import local_worker_fence as fence
+            import maintenance_hold_gate as gate
+            import prepare_maintenance_worker_locks as initializer
+
+        valid = {
+            "active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": "a" * 32,
+            "issued_at": 100, "expires_at": 200,
+        }
+        names = tuple(sorted(gate._KNOWN_WORKERS))
+        identity = {
+            "status": "local_identity_verified_only",
+            "supervisor_verified": True, "workers_verified": True,
+            "workers": {name: {"pid": 1000 + index}
+                        for index, name in enumerate(names)},
+            "live_no_drain_authorized": False,
+        }
+        with tempfile.TemporaryDirectory(prefix="dsm928-stage2-fence-") as tmp:
+            root = Path(tmp)
+            folder = root / "root-owned" / "locks"
+            initializer.prepare(
+                os.geteuid(), os.getegid(),
+                directory=folder, parent_owner=os.geteuid())
+            opts = {"root": root, "lock_dir": folder}
+            with patch.object(fence, "observe", return_value=valid), \
+                 patch.object(fence, "inspect_worker_identity",
+                              return_value=identity):
+                with fence.local_worker_fence(**opts) as state:
+                    self.assertEqual(state["status"],
+                                     "tracked_local_worker_cycles_fenced")
+                    self.assertEqual(state["worker_count"], 9)
+                    self.assertEqual(state["transaction_id"], "a" * 32)
+                    self.assertFalse(state["remote_agents_acked"])
+                    self.assertFalse(state["external_jobs_acked"])
+                    self.assertFalse(state["live_no_drain_authorized"])
+                    for name in names:
+                        with self.subTest(worker=name):
+                            evidence = gate.inspect_operation(
+                                name, root=root, lock_dir=folder)
+                            self.assertEqual(evidence["status"],
+                                             "operation_in_flight")
+                    # Concurrent local coordinator must fail (no wait/retry).
+                    with self.assertRaises(fence.LocalFenceUnavailable):
+                        with fence.local_worker_fence(**opts):
+                            self.fail("must never enter a second fence")
+
+                for name in names:
+                    free = gate.inspect_operation(name, root=root, lock_dir=folder)
+                    self.assertEqual(free["status"],
+                                     "lock_free_process_identity_unverified")
+
+                denied = {"active": False, "reason": "hold_absent"}
+                with patch.object(fence, "observe", return_value=denied):
+                    with self.assertRaises(fence.LocalFenceUnavailable):
+                        with fence.local_worker_fence(**opts):
+                            self.fail("hold is mandatory")
+                with patch.object(fence, "inspect_worker_identity",
+                                  return_value={"status": "unverified"}):
+                    with self.assertRaises(fence.LocalFenceUnavailable):
+                        with fence.local_worker_fence(**opts):
+                            self.fail("process identity required")
+                changed = {**valid, "transaction_id": "b" * 32}
+                with patch.object(fence, "observe",
+                                  side_effect=[valid, changed]):
+                    with self.assertRaises(fence.LocalFenceUnavailable):
+                        with fence.local_worker_fence(**opts):
+                            self.fail("transaction ID switched")
+                # Even after failure in the middle, no preceding lock leaks.
+                last = folder / (names[-1] + ".lock")
+                fd = os.open(last, os.O_RDWR)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with self.assertRaises(fence.LocalFenceUnavailable):
+                        with fence.local_worker_fence(**opts):
+                            self.fail("busy Worker must block local fence")
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                    os.close(fd)
+                for name in names:
+                    self.assertEqual(gate.inspect_operation(
+                        name, root=root, lock_dir=folder)["status"],
+                        "lock_free_process_identity_unverified")
+
     def test_root_owned_maintenance_hold_fail_closed_and_no_agent_startup(self):
         with tempfile.TemporaryDirectory(prefix="dsm928-protected-hold-") as temp:
             folder = Path(temp) / "protected"
