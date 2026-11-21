@@ -719,5 +719,149 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
         self.assertEqual(observe_controller_agent_inflight()["inflight_total"], 0)
 
 
+    def test_console_push_stream_respects_shared_flock_and_midstream_hold(self):
+        """One grouped #928 proof: entry denial, inflight fence and frame stop.
+
+        Uses the real Console Push server path, real temporary flock inode,
+        and existing temporary SQLite fixture. Does not run a host daemon.
+        """
+        import io
+        import os
+        from unittest.mock import patch
+        import agent_console_push as push
+
+        uid, gid = os.geteuid(), os.getegid()
+        folder = Path(self.temp.name) / "console-stream-fence"
+        folder.mkdir(mode=0o755)
+        witness = folder / "controller-agent-http.lock"
+        provision_controller_agent_http_lock(
+            uid, gid, path=witness, parent_uid=uid)
+
+        def shared():
+            return shared_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid, enabled=True)
+
+        def exclusive():
+            return exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid)
+
+        class FakeConnection:
+            def settimeout(self, _value):
+                pass
+
+        class FakeHandler:
+            def __init__(self):
+                self.rfile = io.BytesIO()
+                self.connection = FakeConnection()
+                self.responses = []
+
+            def send_json(self, status, body):
+                self.responses.append((status, body))
+
+        headers = {
+            "Transfer-Encoding": "chunked",
+            "Content-Type": "application/x-ndjson",
+        }
+
+        # A root-owned hold must reject BEFORE credential lookup, even with
+        # the optional cross-process fence disabled on current Controllers.
+        held = FakeHandler()
+        with patch.object(push, "observe_no_drain_hold",
+                          return_value={"active": True}), \
+             patch.object(push, "_authenticate",
+                          side_effect=AssertionError("unexpected authentication")):
+            push.serve_agent_console_stream(
+                held, headers=headers, backend=self.backend)
+        self.assertEqual(held.responses[-1][0], 423)
+        self.assertFalse(held.responses[-1][1]["live_no_drain_authorized"])
+
+        # Occupied exclusive inode must reject BEFORE authentication.
+        unavailable = FakeHandler()
+        with patch.object(push, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch.object(push, "_authenticate",
+                          side_effect=AssertionError("unexpected authentication")):
+            with exclusive() as evidence:
+                self.assertFalse(evidence["controller_http_acked"])
+                push.serve_agent_console_stream(
+                    unavailable, headers=headers, backend=self.backend)
+        self.assertEqual(unavailable.responses[-1][0], 423)
+        self.assertEqual(
+            unavailable.responses[-1][1]["reason"],
+            "controller_http_interprocess_fence_unavailable")
+
+        # While an already-admitted stream is paused between chunks, its
+        # shared lock must prevent a future exclusive coordinator takeover.
+        first = json.dumps({
+            "kind": "console-batch", "events": [
+                {"instance_id": "console-928", "cursor": "c1", "line": "first"}
+            ],
+        }).encode()
+        second = json.dumps({
+            "kind": "console-batch", "events": [
+                {"instance_id": "console-928", "cursor": "c2", "line": "second"}
+            ],
+        }).encode()
+        ready = threading.Event()
+        release = threading.Event()
+        now_held = {"active": False}
+        count = [0]
+        exceptions = []
+        handler = FakeHandler()
+
+        def chunk_reader(_stream):
+            count[0] += 1
+            if count[0] == 1:
+                return first
+            if count[0] == 2:
+                ready.set()
+                if not release.wait(timeout=12):
+                    raise AssertionError("console stream hold test timed out")
+                now_held["active"] = True
+                return second
+            return b""
+
+        def ingest():
+            try:
+                push.serve_agent_console_stream(
+                    handler, headers=headers, backend=self.backend)
+            except BaseException as exc:
+                exceptions.append(exc)
+
+        with patch.object(push, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch.object(push, "observe_no_drain_hold",
+                          side_effect=lambda: dict(now_held)), \
+             patch.object(push, "_authenticate",
+                          return_value={"agent_id": self.agent_id}), \
+             patch.object(push, "_owned_instances",
+                          return_value={"console-928"}), \
+             patch.object(push, "_read_chunk", side_effect=chunk_reader):
+            thread = threading.Thread(target=ingest, daemon=True)
+            try:
+                thread.start()
+                self.assertTrue(ready.wait(timeout=12))
+                with self.assertRaises(ControllerHttpLockUnavailable):
+                    with exclusive():
+                        self.fail("exclusive fence must reject live stream")
+            finally:
+                release.set()
+                thread.join(timeout=12)
+            self.assertFalse(thread.is_alive())
+
+        self.assertEqual(exceptions, [])
+        self.assertEqual(handler.responses[-1][0], 423)
+        self.assertFalse(handler.responses[-1][1]["live_no_drain_authorized"])
+        snapshot = push.console_push_snapshot("console-928")
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(
+            [line["cursor"] for line in snapshot["lines"]], ["c1"])
+        with exclusive() as evidence:
+            self.assertFalse(evidence["controller_http_acked"])
+        self.assertFalse(now_held["active"] is False)
+
+
 if __name__ == "__main__":
     unittest.main()
