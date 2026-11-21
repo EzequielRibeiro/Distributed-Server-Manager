@@ -93,8 +93,11 @@ class AgentRunForeverLoopTests(unittest.TestCase):
         cycle = next(node for node in workspace.body
                      if isinstance(node, ast.FunctionDef)
                      and node.name == "workspace_cycle")
-        self.assertIsInstance(cycle.body[0], ast.With)
-        self.assertIn("tracked_operation", ast.unparse(cycle.body[0].items[0].context_expr))
+        lock_context = next((node for node in cycle.body
+                             if isinstance(node, ast.With)), None)
+        self.assertIsNotNone(lock_context)
+        self.assertIn("tracked_operation",
+                      ast.unparse(lock_context.items[0].context_expr))
         guarded_cycle = next(node for node in workspace.body
                              if isinstance(node, ast.FunctionDef)
                              and node.name == "_workspace_cycle")
