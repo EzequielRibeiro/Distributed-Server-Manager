@@ -863,5 +863,107 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
         self.assertFalse(now_held["active"] is False)
 
 
+    def test_agent_installation_post_respects_hold_and_interprocess_fence(self):
+        """Single grouped #928 proof: hold, fail-closed, exclusive and inflight."""
+        import os
+        from unittest.mock import patch
+        import agent_installation_http as installation
+
+        uid, gid = os.geteuid(), os.getegid()
+        folder = Path(self.temp.name) / "installation-http-fence"
+        folder.mkdir(mode=0o755)
+        witness = folder / "controller-agent-http.lock"
+        provision_controller_agent_http_lock(
+            uid, gid, path=witness, parent_uid=uid)
+
+        def shared():
+            return shared_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid, enabled=True)
+
+        def exclusive():
+            return exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid)
+
+        install_path = installation.AGENT_INSTALLATIONS_PATH
+        probe_path = installation.AGENT_INSTALLATION_TEST_PATH
+        user, payload = {"role": "admin"}, {"fixture": True}
+
+        def call(path):
+            return installation.dispatch_agent_installation_post(
+                path, payload, user=user, backend=self.backend)
+
+        with patch.object(installation, "shared_controller_agent_http_lock",
+                          side_effect=shared), \
+             patch.object(installation, "create_agent_installation_for_user",
+                          return_value={"installation_id": "temporary"}) as create, \
+             patch.object(installation, "test_agent_connection_for_user",
+                          return_value={"reachable": True}) as probe:
+            # Active/malformed/unreadable evidence blocks both routes before
+            # any outgoing SSH test or installer action.
+            for evidence in ({"active": True}, {"active": "unknown"}, None):
+                with patch.object(installation, "observe_no_drain_hold",
+                                  return_value=evidence):
+                    for path in (install_path, probe_path):
+                        code, body = call(path)
+                        self.assertEqual(code, 423, body)
+                        self.assertFalse(body["live_no_drain_authorized"])
+            with patch.object(installation, "observe_no_drain_hold",
+                              side_effect=OSError("cannot read hold")):
+                self.assertEqual(call(install_path)[0], 423)
+            create.assert_not_called()
+            probe.assert_not_called()
+
+            with patch.object(installation, "observe_no_drain_hold",
+                              return_value={"active": False}):
+                # A coordinator holding exclusive prevents new work.
+                with exclusive() as negative_evidence:
+                    self.assertFalse(negative_evidence["controller_http_acked"])
+                    for path in (install_path, probe_path):
+                        code, body = call(path)
+                        self.assertEqual(code, 423, body)
+                        self.assertEqual(
+                            body["reason"],
+                            "controller_http_interprocess_fence_unavailable")
+                create.assert_not_called()
+                probe.assert_not_called()
+
+                # Without maintenance, preserve both existing success paths.
+                self.assertEqual(call(install_path)[0], 201)
+                self.assertEqual(call(probe_path)[0], 200)
+                self.assertEqual(create.call_count, 1)
+                self.assertEqual(probe.call_count, 1)
+
+                # A live installation retains SH until the call has ended.
+                started, release = threading.Event(), threading.Event()
+                results = []
+
+                def in_flight(*_args):
+                    started.set()
+                    if not release.wait(timeout=10):
+                        raise RuntimeError("installation fixture timed out")
+                    return {"installation_id": "temporary"}
+
+                create.side_effect = in_flight
+                thread = threading.Thread(
+                    target=lambda: results.append(call(install_path)),
+                    daemon=True)
+                try:
+                    thread.start()
+                    self.assertTrue(started.wait(timeout=10))
+                    with self.assertRaises(ControllerHttpLockUnavailable):
+                        with exclusive():
+                            self.fail("must not fence in-flight installation")
+                finally:
+                    release.set()
+                    thread.join(timeout=10)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(results[0][0], 201)
+                with exclusive() as negative_evidence:
+                    self.assertFalse(negative_evidence["live_no_drain_authorized"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
