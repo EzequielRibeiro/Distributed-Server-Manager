@@ -93,7 +93,7 @@ class UptimeGuardTests(unittest.TestCase):
                 fake(example(WantedBy="multi-user.target network-online.target")))
 
     def test_missing_reverse_dependency_property_fails_closed(self):
-        raw = "\\n".join(line for line in example().splitlines()
+        raw = "\n".join(line for line in example().splitlines()
                         if not line.startswith("ConflictedBy="))
         with self.assertRaisesRegex(guard.GateError, "incomplete"):
             guard.inspect("capivara-instance-example.service", fake(raw))
