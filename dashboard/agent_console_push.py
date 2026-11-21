@@ -10,11 +10,17 @@ from __future__ import annotations
 from collections import deque
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import re
 import socket
+import sys
 import threading
 import time
 from typing import Any
+
+_AGENT_RUNTIME = Path(__file__).resolve().parents[1] / "agents/linux/runtime"
+if str(_AGENT_RUNTIME) not in sys.path:
+    sys.path.append(str(_AGENT_RUNTIME))
 
 from agent_pairing_repository import AgentCredentialInvalid, AgentPairingRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
