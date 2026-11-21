@@ -138,13 +138,13 @@ def execute(
     journal = root / "dsm928-composite-journal"
     if journal.exists() or journal.is_symlink():
         raise CompositeSafetyError("existing composite transaction requires manual review")
+    # Establish a complete, double-sampled process witness *before* creating
+    # any journal or preparing backups. On inventory drift, leave no artifact.
+    handoff = (_TRANSACTION.attest_handoff(units, inspect=inspect,
+                list_units=list_active_units) if list_active_units is not None else None)
     journal.mkdir(mode=0o700)
     if journal.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise CompositeSafetyError("composite transaction journal must be private")
-
-    # The handoff must be valid before even the disposable file backup starts.
-    handoff = (_TRANSACTION.attest_handoff(units, inspect=inspect,
-                list_units=list_active_units) if list_active_units is not None else None)
     # Backup fixture files before starting the process-preservation transaction.
     # If this fails, there are no changes to compensate.
     prepare_files()
