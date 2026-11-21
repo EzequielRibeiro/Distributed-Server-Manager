@@ -135,21 +135,39 @@ class IsolatedCompositionTests(unittest.TestCase):
             verify=self.verify,
         )
 
-    def run_gated(self, *, controller=None, agent=None, pinned=True):
+    def run_gated(self, *, controller=None, agent=None, pinned=True,
+                  watch="default", inject_apply=None):
+        # The DB is durable fixture state rather than a release-payload change.
+        # Supply unchanged data for accurate before/after release classification.
+        target_data = self.root / "new-payload/data/database.txt"
+        target_data.parent.mkdir(parents=True, exist_ok=True)
+        target_data.write_bytes(
+            (self.root / "installed/data/database.txt").read_bytes())
         contract = {"protocol": "v1", "schema": "22",
                     "controller_api": "v2", "agent_api": "v2"}
+        def inspector(unit):
+            value = self.inspect(unit)
+            # Derive the fake unit digest independently of the DSM release
+            # file swap: gated updates may not alter systemd unit definitions.
+            value["unit_config_sha256"] = hashlib.sha256(
+                self.installed.read_bytes() if unit == UNIT else b"mock-dayz-unit"
+            ).hexdigest()
+            return value
+        watcher = (lambda: list(self.states)) if watch == "default" else watch
         return compose.execute_with_compatibility_gate(
             self.root, [UNIT, DAYZ],
             controller_contract=contract if controller is None else controller,
             agent_contract=contract if agent is None else agent,
             supervisor_pinned_preview=pinned,
-            inspect=self.inspect,
+            inspect=inspector,
             prepare_files=lambda: self.updater("prepare"),
             apply_files=lambda: self.updater("apply"),
             rollback_files=lambda: self.updater("rollback"),
-            apply_unit=self.swap_unit,
-            rollback_unit=self.restore_unit,
+            # A strict no-drain transaction must not swap a systemd unit.
+            apply_unit=inject_apply or (lambda: None),
+            rollback_unit=lambda: None,
             verify=self.verify,
+            list_active_units=watcher,
         )
 
     def set_fixture_supervisors(self, *, installed="stable", candidate="stable"):
@@ -172,8 +190,13 @@ class IsolatedCompositionTests(unittest.TestCase):
         self.assertFalse(receipt["live_no_drain_authorized"])
         self.assertEqual(self.states[UNIT]["pid"], 22001)
         self.assertEqual(self.states[DAYZ]["pid"], 22002)
-        self.assertEqual(self.installed.read_bytes(), self.new)
-        self.restore_unit()
+        self.assertEqual(self.installed.read_bytes(), self.old)
+        receipt_path = self.root / "dsm928-composite-journal/game-uptime-transaction.json"
+        receipt_data = json.loads(receipt_path.read_text())
+        self.assertTrue(receipt_data["strict_inventory"])
+        self.assertEqual(receipt["reviewed_disposable_release_tier"],
+                         "control_plane_restart_candidate")
+        self.assertTrue(receipt["full_inventory_attested"])
         self.updater("rollback")
 
     def test_composite_gate_blocks_mismatch_before_any_update_or_snapshot(self):
@@ -186,18 +209,16 @@ class IsolatedCompositionTests(unittest.TestCase):
         self.assertFalse((self.root/"dsm928-composite-journal").exists())
         self.assertEqual(self.installed.read_bytes(), self.old)
 
-    def test_composite_gate_allows_changed_supervisor_only_with_pinned_preview(self):
+    def test_composite_gate_blocks_changed_supervisor_even_when_pinned(self):
         self.set_fixture_supervisors(installed="old", candidate="new")
         with self.assertRaisesRegex(compose.CompositeSafetyError,
                                     "minecraft_live_supervisor_replaceable"):
             self.run_gated(pinned=False)
         self.assertFalse((self.root/"backups").exists())
-        receipt = self.run_gated(pinned=True)
-        self.assertEqual(receipt["status"], "verified")
-        self.assertFalse(receipt["live_no_drain_authorized"])
-        self.restore_unit()
-        self.updater("rollback")
-        self.assertEqual(self.installed.read_bytes(), self.old)
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "disposable release tier blocked"):
+            self.run_gated(pinned=True)
+        self.assertFalse((self.root/"backups").exists())
 
     def test_composite_gate_rejects_unpinned_even_with_matching_bytes(self):
         self.set_fixture_supervisors()
@@ -227,6 +248,53 @@ class IsolatedCompositionTests(unittest.TestCase):
                                     "ownership marker"):
             self.run_gated()
         self.assertFalse((self.root/"backups").exists())
+
+
+    def test_gated_compatibility_refuses_missing_full_inventory_observer(self):
+        self.set_fixture_supervisors()
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "complete active game inventory callback"):
+            self.run_gated(watch=None)
+        self.assertFalse((self.root / "backups").exists())
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+
+    def test_gated_compatible_contract_does_not_override_unknown_file(self):
+        self.set_fixture_supervisors()
+        unexpected = self.root / "new-payload/database/migrations/0023.sql"
+        unexpected.parent.mkdir(parents=True, exist_ok=True)
+        unexpected.write_text("ALTER TABLE hidden")
+        with self.assertRaisesRegex(compose.CompositeSafetyError,
+                                    "disposable release tier blocked"):
+            self.run_gated()
+        self.assertFalse((self.root / "backups").exists())
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+
+    def test_gated_full_unit_set_change_refuses_before_backup(self):
+        self.set_fixture_supervisors()
+        counts = {"n": 0}
+        def changing_inventory():
+            counts["n"] += 1
+            return list(self.states) if counts["n"] == 1 else (
+                list(self.states) + ["dsm928-e2e-new-dayz.service"])
+        with self.assertRaisesRegex(
+                compose._TRANSACTION.TransactionSafetyError, "set changed"):
+            self.run_gated(watch=changing_inventory)
+        self.assertFalse((self.root / "backups").exists())
+        self.assertFalse((self.root / "dsm928-composite-journal").exists())
+
+    def test_gated_real_file_rollback_keeps_strict_inventory(self):
+        self.set_fixture_supervisors()
+        with self.assertRaisesRegex(
+                compose._TRANSACTION.TransactionSafetyError, "rollback completed"):
+            self.run_gated(inject_apply=lambda: (_ for _ in ()).throw(
+                RuntimeError("injected after file replacement")))
+        journal = self.root / "dsm928-composite-journal/game-uptime-transaction.json"
+        receipt = json.loads(journal.read_text())
+        self.assertEqual(receipt["status"], "rolled_back")
+        self.assertTrue(receipt["strict_inventory"])
+        self.assertEqual((self.root / "installed/version").read_text(),
+                         "2.0.998-fixture")
+        self.assertFalse(receipt["live_no_drain_authorized"])
 
     def test_success_composes_real_updater_functions_and_fake_reload(self):
         receipt = self.run_composed()
