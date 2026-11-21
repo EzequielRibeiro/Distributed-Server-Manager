@@ -363,3 +363,67 @@ jobs:
           path: ${{ runner.temp }}/dsm-rc7-artifacts/*
           if-no-files-found: error
           retention-days: 7
+
+  backup_create_systemd_rc7:
+    name: Real systemd protected DayZ backup + restore (disposable)
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 1096 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'homolog/2.0.133-rc.6-dayz-isolation-20261119'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert isolated disposable runner
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = "github-hosted"
+          test -d /run/systemd/system
+          test -n "$GITHUB_WORKSPACE"
+          test ! -d /opt/dsm
+          ! systemctl list-units --type=service --all --plain --no-legend 'capivara-instance-*.service' | grep -q '[^[:space:]]'
+          test -d /etc/polkit-1/rules.d
+      - name: Create real protected archive and restore safely in isolated systemd
+        run: |
+          set -euo pipefail
+          sudo env GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            bash tests/backup_privileged_create_systemd_e2e.sh
+
+  updater_disposable_rollback_rc7:
+    name: Disposable real systemd updater success and failure rollback
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 1096 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'homolog/2.0.133-rc.6-dayz-isolation-20261119'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert disposable runner and absence of DSM deployment
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = "github-hosted"
+          test -d /run/systemd/system
+          test ! -d /opt/dsm
+          ! systemctl list-units --type=service --all --plain --no-legend 'capivara-instance-*.service' | grep -q '[^[:space:]]'
+      - name: Exercise real systemd PID preservation and updater rollback on fake files
+        working-directory: tests
+        run: |
+          set -euo pipefail
+          sudo env CAPIVARA_DSM928_SYSTEMD_E2E=1 python3 -m unittest \
+            update_game_uptime_systemd_e2e_test.DisposableSystemdNoDrainTest.test_two_systemd_processes_survive_actual_updater_main_and_failure_rollback \
+            update_game_uptime_systemd_e2e_test.DisposableSystemdNoDrainTest.test_two_real_systemd_processes_survive_actual_updater_file_functions
