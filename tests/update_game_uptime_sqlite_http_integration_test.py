@@ -319,6 +319,71 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 1)
 
+        # The same real Controller route must handle a strictly read-only
+        # request under a matching root-owned transaction marker. No
+        # AgentPairingRepository last_used_at or runtime inventory writes.
+        import time
+        from unittest.mock import patch
+        from game_uptime_remote_fence_evidence import CONTRACT
+        when = int(time.time())
+        hold = {
+            "active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": "a" * 32,
+            "issued_at": when - 10, "expires_at": when + 80,
+        }
+        evidence = {
+            "kind": "CapivaraNoDrainFenceEvidence",
+            "schema_version": 1,
+            "agent_id": self.agent_id,
+            "request_id": "b" * 32,
+            "transaction_id": hold["transaction_id"],
+            "issued_at": hold["issued_at"],
+            "expires_at": hold["expires_at"],
+            "observed_at": when,
+            "contract": dict(CONTRACT),
+            "agent_workers_fenced": False,
+            "external_jobs_verified": False,
+            "live_no_drain_authorized": False,
+        }
+        with sqlite3.connect(self.db_path) as connection:
+            before_used = connection.execute(
+                "SELECT last_used_at FROM agent_credentials WHERE id=?",
+                (self.identity.credential_id,),
+            ).fetchone()[0]
+        self.url = "http://127.0.0.1:%d/api/agent/no-drain/observe" % self.server.server_port
+        with patch("game_uptime_remote_fence_evidence.observe",
+                   return_value=hold):
+            code, received = self._request({
+                "no_drain_fence_evidence": evidence,
+            })
+            self.assertEqual(code, 200, received)
+            self.assertEqual(
+                received["no_drain_fence_receipt"]["status"],
+                "authenticated_evidence_received_unfenced",
+            )
+            self.assertFalse(received["remote_agent_quiescence_acked"])
+            self.assertFalse(received["live_no_drain_authorized"])
+            code, denied = self._request(
+                {"no_drain_fence_evidence": evidence}, secret="bad-secret")
+            self.assertEqual(code, 401, denied)
+            self.assertNotIn("no_drain_fence_receipt", denied)
+            code, denied = self._request({
+                "no_drain_fence_evidence": evidence,
+                "console_command": {"command": "restart"},
+            })
+            self.assertEqual(code, 400, denied)
+        with sqlite3.connect(self.db_path) as connection:
+            after_used = connection.execute(
+                "SELECT last_used_at FROM agent_credentials WHERE id=?",
+                (self.identity.credential_id,),
+            ).fetchone()[0]
+            after_count = connection.execute(
+                "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                (self.agent_id,),
+            ).fetchone()[0]
+        self.assertEqual(before_used, after_used)
+        self.assertEqual(after_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()
