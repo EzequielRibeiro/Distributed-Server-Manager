@@ -20,7 +20,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 from runtime_workspace_catalog import runtime_workspace_capabilities
 INTERVAL_SECONDS=max(1,min(int(os.environ.get('DSM_MAINTENANCE_WORKER_SECONDS','5')),60))
 NATIVE_SHUTDOWN_TIMEOUT_SECONDS=max(30,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TIMEOUT_SECONDS','180')),900))
@@ -524,8 +524,12 @@ def run_forever(interval:int=INTERVAL_SECONDS)->None:
    time.sleep(1)
    continue
   try:
-   result=worker.tick()
-   if result['active'] or result['failed']:print(f"maintenance worker active={result['active']} planned={result['planned']} warnings={result['warnings']} saves={result['saves']} stops={result['stops']} game={result['game_activated']}/{result['game_committed']} content={result['content_dispatched']}/{result['content_aligned']} starts={result['starts']} completed={result['completed']} skipped={result['skipped']} failed={result['failed']}",flush=True)
+   # The lock is held until tick() finishes, including DayZ lifecycle and
+   # content coordination. Recheck the maintenance marker INSIDE the lock.
+   with tracked_operation("maintenance_worker",root=ROOT) as admitted:
+    if admitted:
+     result=worker.tick()
+     if result['active'] or result['failed']:print(f"maintenance worker active={result['active']} planned={result['planned']} warnings={result['warnings']} saves={result['saves']} stops={result['stops']} game={result['game_activated']}/{result['game_committed']} content={result['content_dispatched']}/{result['content_aligned']} starts={result['starts']} completed={result['completed']} skipped={result['skipped']} failed={result['failed']}",flush=True)
   except Exception as exc:print(f'maintenance worker failed: {exc}',file=sys.stderr,flush=True)
   time.sleep(max(1,int(interval)))
 if __name__=='__main__':run_forever()
