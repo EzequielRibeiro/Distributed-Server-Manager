@@ -37,6 +37,29 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertFalse(any(root.glob(".*.upload")))
 
+    def test_directory_listing_does_not_remeasure_entire_instance(self):
+        module = load("linux_instance_files_fast_list", ROOT / "agents/linux/runtime/instance_files_client.py")
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            mission = root / "mpmissions"
+            mission.mkdir()
+            (mission / "server.cfg").write_text("name=test", encoding="utf-8")
+            with patch.object(module, "_usage", side_effect=AssertionError("unexpected disk scan")) as usage:
+                result = module._list(root, "mpmissions", {})
+            usage.assert_not_called()
+            self.assertEqual([row["name"] for row in result["entries"]], ["server.cfg"])
+            self.assertIsNone(result["usage_bytes"])
+            # Explicit usage / quota enforcement must still work.
+            self.assertEqual(module._usage(root, {}), len("name=test"))
+
+    def test_customer_navigation_does_not_await_recursive_disk_usage(self):
+        source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
+        self.assertIn('fileUsagePending=fileCommand("usage",".")', source)
+        self.assertIn('if(fileUsageSnapshot)paintUsage(fileUsageSnapshot);else', source)
+        self.assertIn('void cachedFileUsage().then(paintUsage)', source)
+        self.assertNotIn('await fileCommand("usage", ".")', source)
+        self.assertIn('if(["write_text","upload","mkdir","delete","rename","move","extract"].includes(action))invalidateFileUsage()', source)
+
     def test_linux_extract_scans_archive_and_expanded_tree_before_materialization(self):
         module = load("linux_instance_files_extract_security", ROOT / "agents/linux/runtime/instance_files_client.py")
         with tempfile.TemporaryDirectory() as td:
