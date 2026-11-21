@@ -95,8 +95,8 @@ class AgentRunForeverLoopTests(unittest.TestCase):
         self.assertIsInstance(cycle.body[0], ast.If)
         self.assertTrue(is_guard(cycle.body[0].test))
 
-    def test_maintenance_worker_inflight_lock_is_observable_without_authorization(self):
-        """The real flock spans the entire operation; a stale file is not ACK."""
+    def test_all_nine_worker_inflight_locks_are_observable_without_authorization(self):
+        """One grouped contract: busy evidence for all nine, never live ACK."""
         from importlib.machinery import SourceFileLoader
         from importlib.util import module_from_spec, spec_from_loader
 
@@ -105,20 +105,42 @@ class AgentRunForeverLoopTests(unittest.TestCase):
             "dsm928_inflight_lock", str(filename)))
         gate = module_from_spec(spec)
         spec.loader.exec_module(gate)
+        names = {
+            "scheduler_worker",
+            "automation_worker",
+            "content_update_worker",
+            "maintenance_worker",
+            "observability_retention_worker",
+            "content_upload_retention_worker",
+            "database_intelligence_worker",
+            "hybrid_agent_worker",
+            "hybrid_customer_workspace_worker",
+        }
+        self.assertEqual(set(gate._KNOWN_WORKERS), names)
+        workers = ROOT / "dashboard" / "workers"
+        for name in sorted(names - {"scheduler_worker"}):
+            source = (workers / (name + ".py")).read_text(encoding="utf-8")
+            self.assertIn(f'with tracked_operation("{name}"', source, name)
+        scheduler = (workers / "scheduler_worker.sh").read_text(encoding="utf-8")
+        self.assertIn('--scheduler-tick', scheduler)
+        self.assertIn('tracked_operation("scheduler_worker"', filename.read_text())
         with tempfile.TemporaryDirectory(prefix="dsm928-inflight-") as temp:
             root = Path(temp)
-            first = gate.inspect_operation("maintenance_worker", root=root)
-            self.assertEqual(first["status"], "unverified")
-            self.assertFalse(first["live_no_drain_authorized"])
-            with patch.object(gate, "maintenance_paused", return_value=False):
-                with gate.tracked_operation("maintenance_worker", root=root) as admitted:
-                    self.assertTrue(admitted)
-                    during = gate.inspect_operation("maintenance_worker", root=root)
-                    self.assertEqual(during["status"], "operation_in_flight")
-                    self.assertFalse(during["live_no_drain_authorized"])
-            after = gate.inspect_operation("maintenance_worker", root=root)
-            self.assertEqual(after["status"], "lock_free_process_identity_unverified")
-            self.assertFalse(after["live_no_drain_authorized"])
+            for name in sorted(names):
+                with self.subTest(worker=name):
+                    first = gate.inspect_operation(name, root=root)
+                    self.assertEqual(first["status"], "unverified")
+                    self.assertFalse(first["live_no_drain_authorized"])
+                    with patch.object(gate, "maintenance_paused", return_value=False):
+                        with gate.tracked_operation(name, root=root) as admitted:
+                            self.assertTrue(admitted)
+                            busy = gate.inspect_operation(name, root=root)
+                            self.assertEqual(busy["status"], "operation_in_flight")
+                            self.assertFalse(busy["live_no_drain_authorized"])
+                    free = gate.inspect_operation(name, root=root)
+                    self.assertEqual(free["status"],
+                                     "lock_free_process_identity_unverified")
+                    self.assertFalse(free["live_no_drain_authorized"])
             with patch.object(gate, "maintenance_paused", return_value=True):
                 with gate.tracked_operation("maintenance_worker", root=root) as admitted:
                     self.assertFalse(admitted)
