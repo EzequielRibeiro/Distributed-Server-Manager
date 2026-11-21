@@ -1240,3 +1240,34 @@ remotos. As linhas já aceitas antes do hold são preservadas; a conexão
 pode continuar viva até o próximo chunk/timeout, mantendo SH nesse
 intervalo. Nenhuma evidência nesse fluxo é ACK positivo ou autorização de
 `update.sh --no-drain`. #928 segue aberta / Etapa 2 parcial.
+
+
+## Etapa 2 — admissão de instalação e teste de conexão de Agent (21/11/2026)
+
+Os dois POSTs do Controller `/api/agents/installations` e
+`/api/agents/installations/test-connection` agora obedecem ao mesmo leitor
+`game_uptime_maintenance_hold.observe()` já utilizado no fluxo Agent:
+hold ativo, inválido, ilegível ou journal pendente bloqueia com HTTP 423,
+**antes** de iniciar instalação remota ou prova de conexão. A ausência
+comprovada de hold preserva o comportamento existente.
+
+Quando `DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1` estiver explicitamente
+habilitado em homologação isolada, cada operação mantém o **mesmo**
+`shared_controller_agent_http_lock()` da #1134 durante toda a chamada;
+um `LOCK_EX` concorrente impede nova entrada e uma instalação já em voo
+impede a posse exclusiva até terminar. Nenhum novo lockfile, flag, writer ou
+protocolo foi criado. Falhas de aquisição são fail-closed; retornos continuam
+sempre com `live_no_drain_authorized=false` e ACKs negativos.
+
+A prova agrupada adicionada à suíte SQLite/HTTP #928 cobre ambas as rotas,
+hold ativo/inválido/ilegível, exclusividade, conservação dos caminhos
+originais na ausência de hold e chamada de instalação em voo. Nenhuma
+instalação remota real é iniciada pelo teste (funções de conexão/instalação
+são mocks). O novo módulo é incluído no filtro de CI de runtime.
+
+**Escopo limitado:** isso cobre somente esses dois POSTs; outras rotas
+administrativas, jobs, subprocessos já delegados, Agents remotos e
+instalações iniciadas por outros canais continuam fora da barreira. A flag
+interprocessos permanece **desabilitada por padrão**. Sem prova
+distribuída de quiescência, `update.sh --no-drain` continua exit 2,
+`live_no_drain_authorized=false`, issue #928 aberta e release bloqueado.
