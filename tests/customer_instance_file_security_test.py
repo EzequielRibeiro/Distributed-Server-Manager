@@ -54,7 +54,8 @@ class CustomerInstanceFileSecurityTest(unittest.TestCase):
 
     def test_customer_navigation_does_not_await_recursive_disk_usage(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text(encoding="utf-8")
-        self.assertIn('fileUsagePending=fileCommand("usage",".")', source)
+        self.assertIn('const pending=fileCommand("usage",".")', source)
+        self.assertIn('fileUsagePending=pending;return pending', source)
         self.assertIn('if(fileUsageSnapshot)paintUsage(fileUsageSnapshot);else', source)
         self.assertIn('void cachedFileUsage().then(paintUsage)', source)
         self.assertNotIn('await fileCommand("usage", ".")', source)
