@@ -9,7 +9,7 @@ STATE_DIR="${DSM_ROOT}/dashboard/state"
 OUTPUT="${STATE_DIR}/scheduler_state.json"
 
 JOBS_DB="${DSM_ROOT}/scheduler/jobs.db"
-HOLD_READER="${DSM_ROOT}/agents/linux/runtime/game_uptime_maintenance_hold.py"
+HOLD_GATE="${DSM_ROOT}/dashboard/workers/maintenance_hold_gate.py"
 
 
 scheduler_update()
@@ -74,12 +74,18 @@ main()
     do
         # Missing reader, unreadable/invalid marker or maintenance hold:
         # do not change scheduler state. This does not attest idle workers.
-        if [[ -f "${HOLD_READER}" ]] && python3 -B "${HOLD_READER}"; then
-            scheduler_update || true
+        # The common Python gate owns a flock during the entire single tick.
+        if [[ -f "${HOLD_GATE}" ]]; then
+            python3 -B "${HOLD_GATE}" --scheduler-tick || true
         fi
         sleep "$DSM_INTERVAL"
     done
 }
 
 
-main
+if [[ "${1:-}" == "--once" ]]; then
+    # Called by the gate while its flock is held; not a host-wide ACK.
+    scheduler_update
+else
+    main
+fi

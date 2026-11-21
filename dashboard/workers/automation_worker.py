@@ -18,7 +18,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 
 _ALLOWED_DB_KEYS={
  "DSM_DATABASE_DRIVER","DSM_DATABASE","DSM_DATABASE_HOST","DSM_DATABASE_PORT",
@@ -126,7 +126,12 @@ def run_forever(interval=5):
   if maintenance_paused():
    time.sleep(1)
    continue
-  try:worker.tick()
-  except Exception as exc:print(f"automation worker failed: {exc}",file=sys.stderr,flush=True)
+  try:
+   with tracked_operation("automation_worker", root=ROOT) as admitted:
+    if admitted:
+       try:worker.tick()
+       except Exception as exc:print(f"automation worker failed: {exc}",file=sys.stderr,flush=True)
+  except (OSError, RuntimeError) as exc:
+   print(f"in-flight Worker gate failed: {exc}", file=sys.stderr, flush=True)
   time.sleep(max(1,int(interval)))
 if __name__=="__main__":run_forever()

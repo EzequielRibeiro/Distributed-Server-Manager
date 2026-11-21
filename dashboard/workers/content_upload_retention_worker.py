@@ -27,7 +27,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 
 INTERVAL_SECONDS = max(60, min(int(os.environ.get("DSM_UPLOAD_WATCHDOG_SECONDS", "300")), 3600))
 STAGING_MINUTES = max(30, min(int(os.environ.get("DSM_UPLOAD_STAGING_TIMEOUT_MINUTES", "60")), 1440))
@@ -153,11 +153,16 @@ def run_forever():
             time.sleep(1)
             continue
         try:
-            report = sweep(repo)
-            if report["marked_failed"] or report["files_removed"]:
-                print("upload retention " + " ".join(f"{k}={v}" for k, v in report.items()), flush=True)
-        except Exception as exc:
-            print(f"upload retention failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+            with tracked_operation("content_upload_retention_worker", root=ROOT) as admitted:
+                if admitted:
+                            try:
+                                report = sweep(repo)
+                                if report["marked_failed"] or report["files_removed"]:
+                                    print("upload retention " + " ".join(f"{k}={v}" for k, v in report.items()), flush=True)
+                            except Exception as exc:
+                                print(f"upload retention failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+        except (OSError, RuntimeError) as exc:
+            print(f"in-flight Worker gate failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(INTERVAL_SECONDS)
 
 

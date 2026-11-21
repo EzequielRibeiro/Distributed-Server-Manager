@@ -22,7 +22,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 
 INTERVAL_SECONDS = max(60, min(int(os.environ.get("DSM_OBSERVABILITY_RETENTION_WORKER_SECONDS", "300")), 3600))
 RETENTION_DAYS = max(1, min(int(os.environ.get("DSM_OBSERVABILITY_RETENTION_DAYS", "7")), 365))
@@ -104,38 +104,43 @@ def run_forever(root: Path = ROOT, interval: int = INTERVAL_SECONDS) -> None:
             time.sleep(1)
             continue
         try:
-            report = worker.tick()
-            if report["deleted"] or report["pending"]:
-                print(
-                    f"observability retention cutoff={report['cutoff']} "
-                    f"pending={report['pending']} deleted={report['deleted']}",
-                    flush=True,
-                )
-        except Exception as exc:
-            print(f"observability retention worker failed: {exc}", file=sys.stderr, flush=True)
-        try:
-            if os.environ.get("DSM_ARTIFACT_CLEANUP_AUDIT", "0") == "1":
-                audit = artifact_transfers.audit_expired_content_uploads()
-                if audit["scanned"]:
-                    print(
-                        "artifact upload cleanup audit "
-                        f"scanned={audit['scanned']} "
-                        f"unreferenced={audit['unreferenced_expired']} "
-                        f"current_refs={audit['current_reference']} "
-                        f"historical_refs={audit['historical_reference']} "
-                        f"potential_bytes={audit['unreferenced_bytes']}",
-                        flush=True,
-                    )
-            expired = artifact_transfers.cleanup_expired()
-            cleanup_queued = artifact_transfers.enqueue_expired_content_upload_cleanup()
-            if expired or cleanup_queued:
-                print(
-                    f"artifact transfer retention expired={expired} "
-                    f"quarantine_cleanup_queued={cleanup_queued}",
-                    flush=True,
-                )
-        except Exception as exc:
-            print(f"artifact transfer retention failed: {exc}", file=sys.stderr, flush=True)
+            with tracked_operation("observability_retention_worker", root=root) as admitted:
+                if admitted:
+                            try:
+                                report = worker.tick()
+                                if report["deleted"] or report["pending"]:
+                                    print(
+                                        f"observability retention cutoff={report['cutoff']} "
+                                        f"pending={report['pending']} deleted={report['deleted']}",
+                                        flush=True,
+                                    )
+                            except Exception as exc:
+                                print(f"observability retention worker failed: {exc}", file=sys.stderr, flush=True)
+                            try:
+                                if os.environ.get("DSM_ARTIFACT_CLEANUP_AUDIT", "0") == "1":
+                                    audit = artifact_transfers.audit_expired_content_uploads()
+                                    if audit["scanned"]:
+                                        print(
+                                            "artifact upload cleanup audit "
+                                            f"scanned={audit['scanned']} "
+                                            f"unreferenced={audit['unreferenced_expired']} "
+                                            f"current_refs={audit['current_reference']} "
+                                            f"historical_refs={audit['historical_reference']} "
+                                            f"potential_bytes={audit['unreferenced_bytes']}",
+                                            flush=True,
+                                        )
+                                expired = artifact_transfers.cleanup_expired()
+                                cleanup_queued = artifact_transfers.enqueue_expired_content_upload_cleanup()
+                                if expired or cleanup_queued:
+                                    print(
+                                        f"artifact transfer retention expired={expired} "
+                                        f"quarantine_cleanup_queued={cleanup_queued}",
+                                        flush=True,
+                                    )
+                            except Exception as exc:
+                                print(f"artifact transfer retention failed: {exc}", file=sys.stderr, flush=True)
+        except (OSError, RuntimeError) as exc:
+            print(f"in-flight Worker gate failed: {exc}", file=sys.stderr, flush=True)
         time.sleep(max(60, int(interval)))
 
 

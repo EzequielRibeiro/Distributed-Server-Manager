@@ -17,7 +17,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 
 INTERVAL_SECONDS=max(10,int(os.environ.get('DSM_CONTENT_UPDATE_WORKER_SECONDS','30')))
 DETECTION_INTERVAL_SECONDS=max(60,min(int(os.environ.get('DSM_CONTENT_UPDATE_DETECT_SECONDS','900')),86400))
@@ -71,9 +71,14 @@ def run_forever(root:Path=ROOT,interval:int=INTERVAL_SECONDS)->None:
    time.sleep(1)
    continue
   try:
-   report=worker.tick();detection=report.get('detection') or {}
-   if report['due'] or report['failed'] or detection.get('checked'):print(f"content update worker detected={detection.get('checked',0)} available={detection.get('available',0)} due={report['due']} claimed={report['claimed']} updated={report['updated']} failed={report['failed']} instances={len(report['instances'])}",flush=True)
-  except Exception as exc:print(f'content update worker failed: {exc}',file=sys.stderr,flush=True)
+   with tracked_operation("content_update_worker", root=root) as admitted:
+    if admitted:
+       try:
+        report=worker.tick();detection=report.get('detection') or {}
+        if report['due'] or report['failed'] or detection.get('checked'):print(f"content update worker detected={detection.get('checked',0)} available={detection.get('available',0)} due={report['due']} claimed={report['claimed']} updated={report['updated']} failed={report['failed']} instances={len(report['instances'])}",flush=True)
+       except Exception as exc:print(f'content update worker failed: {exc}',file=sys.stderr,flush=True)
+  except (OSError, RuntimeError) as exc:
+   print(f"in-flight Worker gate failed: {exc}", file=sys.stderr, flush=True)
   time.sleep(max(10,int(interval)))
 
 

@@ -59,6 +59,10 @@ _AGENT_RUNTIME = ROOT / "agents" / "linux" / "runtime"
 if str(_AGENT_RUNTIME) not in sys.path:
     sys.path.append(str(_AGENT_RUNTIME))
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+_WORKER_MODULE_DIR = str(Path(__file__).resolve().parent)
+if _WORKER_MODULE_DIR not in sys.path:
+    sys.path.insert(0, _WORKER_MODULE_DIR)
+from maintenance_hold_gate import tracked_operation
 from universal_event_repository import UniversalEventRepository
 
 INTERVAL_SECONDS = max(10, int(os.environ.get("DSM_HYBRID_HEARTBEAT_SECONDS", "30")))
@@ -1069,10 +1073,21 @@ def heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     return response
 
 
+
+def tracked_heartbeat_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+    """Protect the daemon/once heartbeat without changing its public function body."""
+    with tracked_operation("hybrid_agent_worker", root=root) as admitted:
+        if not admitted:
+            return {"active": True, "maintenance_hold": True,
+                    "reason": "root_owned_maintenance_hold",
+                    "log_message": "hybrid reconciliation held for protected maintenance"}
+        return heartbeat_cycle(root, backend=backend)
+
+
 def run_forever(root: Path = ROOT) -> None:
     while True:
         try:
-            result = heartbeat_cycle(root)
+            result = tracked_heartbeat_cycle(root)
             if result.get("active"):
                 print(result.get("log_message") or "hybrid heartbeat ok", flush=True)
         except Exception as exc:
@@ -1085,7 +1100,7 @@ def run_forever(root: Path = ROOT) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "once":
-        result = heartbeat_cycle(ROOT)
+        result = tracked_heartbeat_cycle(ROOT)
         print(result)
         return 0
     run_forever(ROOT)
