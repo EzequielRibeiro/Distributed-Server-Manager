@@ -42,6 +42,7 @@ from game_uptime_remote_fence_evidence import receipt_for_authenticated_agent
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
+NO_DRAIN_OBSERVE_PATH = "/api/agent/no-drain/observe"
 UNINSTALL_RESULT_PATH = "/api/agent/uninstall/result"
 ROOT = Path(__file__).resolve().parents[1]
 _LAST_VAULT_CLEANUP = 0.0
@@ -382,6 +383,50 @@ def dispatch_uninstall_result(
         "agent_id": agent_id,
         "uninstall_state": state,
     }
+
+def dispatch_fence_observation(
+    payload: dict[str, Any] | None, *, headers, backend
+) -> tuple[int, dict[str, Any]]:
+    """Authenticated SELECT-only #928 observation; no dispatch or mutation.
+
+    Deliberately separated from dispatch_heartbeat() so a protected Agent can
+    observe while its normal heartbeat and command-processing loop are held.
+    """
+    body = payload if isinstance(payload, dict) else {}
+    if set(body) != {"no_drain_fence_evidence"}:
+        return 400, {"status": "blocked", "reason": "unexpected_payload",
+                     "remote_agent_quiescence_acked": False,
+                     "live_no_drain_authorized": False}
+    credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()
+    credential_secret = str(headers.get("X-Capivara-Agent-Secret", "")).strip()
+    fingerprint = str(headers.get("X-Capivara-Agent-Fingerprint", "")).strip() or None
+    try:
+        identity = AgentPairingRepository(backend).authenticate_readonly(
+            credential_id=credential_id,
+            credential_secret=credential_secret,
+            fingerprint=fingerprint,
+        )
+    except AgentCredentialInvalid:
+        return 401, {"error": "agent_authentication_failed",
+                     "remote_agent_quiescence_acked": False,
+                     "live_no_drain_authorized": False}
+    except Exception:
+        return 503, {"error": "observation_unavailable",
+                     "remote_agent_quiescence_acked": False,
+                     "live_no_drain_authorized": False}
+    try:
+        receipt = receipt_for_authenticated_agent(
+            body["no_drain_fence_evidence"],
+            authenticated_agent_id=str(identity["agent_id"]),
+        )
+    except (TypeError, ValueError, OSError, RuntimeError):
+        receipt = {"status": "blocked",
+                   "remote_agent_quiescence_acked": False,
+                   "live_no_drain_authorized": False}
+    return 200, {"no_drain_fence_receipt": receipt,
+                 "remote_agent_quiescence_acked": False,
+                 "live_no_drain_authorized": False}
+
 
 def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> tuple[int, dict[str, Any]]:
     credential_id = str(headers.get("X-Capivara-Agent-Credential", "")).strip()

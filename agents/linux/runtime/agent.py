@@ -274,6 +274,35 @@ def _flush_command_results(config):
             clear(str(state[id_key]))
     return response
 
+def observe_remote_fence_readonly(config):
+    """Only negative #928 wire evidence; never call mutating heartbeat.
+
+    This function never calls _inventory(), _write_config(), reconcile_all(),
+    processes command arrays or touches any game. The local marker is checked
+    again when generating the request, and the reply is never an update ACK.
+    """
+    if os.environ.get("DSM928_REMOTE_FENCE_DIAGNOSTIC") != "1":
+        return {"status": "disabled", "live_no_drain_authorized": False}
+    evidence = build_fence_evidence(str(config["agent_id"]))
+    if evidence is None:
+        return {"status": "local_hold_unverified",
+                "live_no_drain_authorized": False}
+    base = str(config["controller_url"]).rstrip("/")
+    response = _post(
+        base + "/api/agent/no-drain/observe",
+        {"no_drain_fence_evidence": evidence},
+        headers={
+            "X-Capivara-Agent-Credential": str(config["credential_id"]),
+            "X-Capivara-Agent-Secret": str(config["credential_secret"]),
+            "X-Capivara-Agent-Fingerprint": str(config["fingerprint"]),
+        },
+    )
+    if not isinstance(response, dict):
+        return {"status": "invalid_response",
+                "live_no_drain_authorized": False}
+    return verify_fence_receipt(evidence, response.get("no_drain_fence_receipt"))
+
+
 def heartbeat(config):
     global _SERVERPACK_OBSERVATION_PENDING, _SERVERPACK_LAST_SCANNED
     base=str(config["controller_url"]).rstrip("/")
@@ -431,12 +460,24 @@ def run_forever():
     start_content_update_inventory(config,logger=lambda message:_log(message,True))
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
     finalization_supervisor=FinalizationWorkerSupervisor()
+    next_fence_observation=0.0
     while True:
         if observe_no_drain_hold()["active"]:
             # No reconcile or Controller command processing while this local
             # host's hold exists. Background workers are NOT covered by this
             # boundary; full no-drain authorization remains unavailable.
             next_heartbeat=next_reconcile=0.0
+            if os.environ.get("DSM928_REMOTE_FENCE_DIAGNOSTIC") == "1":
+                observed_now = time.monotonic()
+                if observed_now >= next_fence_observation:
+                    next_fence_observation = observed_now + heartbeat_interval
+                    try:
+                        # Dedicated SELECT-only endpoint. This is NOT heartbeat.
+                        observe_remote_fence_readonly(config)
+                    except Exception as exc:
+                        # Only the exception class, no credential or response.
+                        print("fence observation unavailable: " +
+                              type(exc).__name__, file=sys.stderr, flush=True)
             time.sleep(1)
             continue
         now=time.monotonic()

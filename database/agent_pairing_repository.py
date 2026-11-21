@@ -291,6 +291,49 @@ class AgentPairingRepository:
             finally:
                 session.close()
 
+    def authenticate_readonly(
+        self, *, credential_id: str, credential_secret: str,
+        fingerprint: str | None = None,
+    ) -> dict[str, Any]:
+        """Verify permanent Agent credential using SELECT only.
+
+        Unlike authenticate(), this never updates last_used_at, agent state
+        or an incident record. Reserved for #928 observation during hold;
+        the ordinary heartbeat still uses authenticate().
+        """
+        credential_id = str(credential_id).strip()
+        secret = str(credential_secret).strip()
+        if not credential_id or not secret:
+            raise AgentCredentialInvalid("Agent credential is required")
+        ph = self.dialect.placeholder
+        with self.backend.connect() as connection:
+            session = AlertSession(self.backend, connection)
+            try:
+                row = session.execute(
+                    "SELECT c.agent_id,c.controller_id,c.secret_hash,c.fingerprint,c.status,a.status AS agent_status "
+                    "FROM agent_credentials c JOIN agents a ON a.id=c.agent_id "
+                    f"WHERE c.id={ph}",
+                    (credential_id,),
+                ).fetchone()
+                if row is None or str(row["status"]) != "active":
+                    raise AgentCredentialInvalid("invalid Agent credential")
+                if str(row["agent_status"] or "").strip().lower() == "decommissioned":
+                    raise AgentCredentialInvalid("decommissioned Agent cannot authenticate")
+                expected = str(row["secret_hash"] or "")
+                if not expected or not secrets_match(secret, expected):
+                    raise AgentCredentialInvalid("invalid Agent credential")
+                if fingerprint and str(fingerprint).strip() != str(row["fingerprint"]):
+                    raise AgentCredentialInvalid("Agent fingerprint mismatch")
+                return {
+                    "agent_id": str(row["agent_id"]),
+                    "controller_id": str(row["controller_id"]),
+                    "role": "agent",
+                    "status": str(row["agent_status"]),
+                    "credential_id": credential_id,
+                }
+            finally:
+                session.close()
+
     def revoke(self, credential_id: str, *, now: datetime | None = None) -> None:
         credential_id = str(credential_id).strip()
         if not credential_id:

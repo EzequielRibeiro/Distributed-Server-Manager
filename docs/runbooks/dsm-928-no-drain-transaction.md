@@ -1040,3 +1040,47 @@ externos e executores privilegiados.
 
 **Garantia atual:** #928 OPEN; update.sh --no-drain read-only/exit 2,
 live_no_drain_authorized=false. Nenhum host ou jogo foi alterado.
+
+## Etapa 2 — observação remota durante hold sem heartbeat mutador (21/11/2026)
+
+A conexão opt-in do Agent ao Controller agora possui um endpoint **separado**:
+POST /api/agent/no-drain/observe. A unidade de roteamento
+dashboard/server_part11.py envia esse endereço exclusivamente para
+dispatch_fence_observation(), em vez de dispatch_heartbeat().
+
+- O Controller usa AgentPairingRepository.authenticate_readonly():
+  valida credencial permanente, hash, fingerprint, estado da credencial
+  e identidade do Agent com apenas SELECT, sem UPDATE last_used_at,
+  registro de heartbeat, abertura de incidentes ou distribuição de jobs.
+- O endpoint só aceita um objeto contendo no_drain_fence_evidence.
+  Campo de comando, result_flush ou outros payloads são rejeitados
+  com 400 antes de autenticar; credenciais inválidas retornam 401.
+  Somente a função receipt_for_authenticated_agent(), já homologada
+  na PR #1126, pode produzir o recibo negativo vinculado ao marcador
+  root-owned do Controller.
+- Com DSM928_REMOTE_FENCE_DIAGNOSTIC=1, o Agent já em execução
+  **durante o hold** chama observe_remote_fence_readonly(config)
+  no máximo uma vez por intervalo de heartbeat (mínimo 10 s).
+  A função só constrói o envelope se o hold local for válido,
+  usa _post() no endpoint dedicado e verifica o recibo. Não chama
+  _inventory(), heartbeat(), _write_config(), reconcile_all(),
+  processos de instalação, tratamento de comandos ou jogos.
+  Erros geram apenas notificação de categoria em stderr, sem credenciais.
+  O heartbeat e a reconciliação normais permanecem pausados.
+- Quando o Agent arranca já com um marcador ativo, o guard anterior
+  à carga de config/enroll permanece inalterado, sem executar sequer
+  este diagnóstico. Isto é **fail closed** e deverá ser contemplado
+  pelo coordenador/recovery antes de liberar no-drain.
+- A autenticação do endpoint só lê o banco; não grava last_used_at.
+  Os testes agrupados verificam rejeição de comandos, autenticação
+  somente leitura, ausência de heartbeat mutador, credenciais erradas,
+  identidade falsa, marcador ausente, nonce e lease verificados.
+
+Esta capacidade permite **trocar recibos negativos durante o hold**
+somente quando ambos os hosts já possuem marcadores root-owned da
+mesma transação. Ainda não existe writer/coordenador que crie e recupere
+marcadores, replay cache durável, fence real de threads/background
+workers/executores privilegiados remotos, journal ou ACK positivo.
+Receber o recibo NÃO é quiescência. #928 permanece OPEN,
+live_no_drain_authorized=false, update.sh --no-drain continua
+diagnóstico/exit 2, e o release permanece bloqueado.
