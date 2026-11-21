@@ -32,7 +32,8 @@ from backend_factory import create_backend
 from registry import installation_profile_identity
 from registry_repository import RegistryRepository
 from agent_pairing_repository import AgentPairingRepository
-from agent_remote_http import dispatch_heartbeat, dispatch_fence_observation
+from agent_remote_http import (dispatch_heartbeat, dispatch_fence_observation,
+                               dispatch_enroll, dispatch_uninstall_result)
 from game_uptime_agent_wire import build_probe, verify_offer
 
 
@@ -383,6 +384,78 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(before_used, after_used)
         self.assertEqual(after_count, 1)
+
+
+    def test_controller_hold_blocks_agent_mutation_entries_without_database_writes(self):
+        """One grouped #928 regression: real HTTP/SQLite plus other dispatchers.
+
+        A held Controller must never admit a *new* heartbeat, enrollment or
+        uninstall result, but the normal heartbeat stays compatible after the
+        hold is absent. This does not prove in-flight work is drained.
+        """
+        from unittest.mock import patch
+
+        code, initial = self._request(self._payload())
+        self.assertEqual(code, 200, initial)
+        with sqlite3.connect(self.db_path) as db:
+            before = db.execute(
+                "SELECT last_used_at FROM agent_credentials WHERE id=?",
+                (self.identity.credential_id,),
+            ).fetchone()
+            inventory = db.execute(
+                "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                (self.agent_id,),
+            ).fetchone()
+
+        denied_cases = [
+            {"active": True, "reason": "root_owned_maintenance_hold"},
+            {"active": True, "reason": "hold_expired_requires_operator"},
+            {"active": True, "reason": "pending_journal_requires_operator_recovery"},
+        ]
+        for observed in denied_cases:
+            with self.subTest(observed=observed), \
+                 patch("agent_remote_http.observe_no_drain_hold",
+                       return_value=observed), \
+                 patch("agent_remote_http.enroll_remote_agent",
+                       side_effect=AssertionError("enroll called while held")), \
+                 patch("agent_remote_http.AgentPairingRepository",
+                       side_effect=AssertionError("credential write while held")):
+                code, response = self._request(self._payload())
+                self.assertEqual(code, 423, response)
+                self.assertEqual(response["reason"],
+                                 "controller_maintenance_hold_active")
+                self.assertFalse(response["remote_agent_quiescence_acked"])
+                self.assertFalse(response["live_no_drain_authorized"])
+                for name, (status, body) in (
+                    ("enroll", dispatch_enroll({"pairing_token": "test"},
+                                               backend=self.backend)),
+                    ("uninstall", dispatch_uninstall_result(
+                        {"status": "completed"}, headers={}, backend=self.backend)),
+                ):
+                    with self.subTest(endpoint=name):
+                        self.assertEqual(status, 423, body)
+                        self.assertFalse(body["live_no_drain_authorized"])
+
+        with patch("agent_remote_http.observe_no_drain_hold",
+                   side_effect=OSError("unreadable hold")):
+            code, response = self._request(self._payload())
+            self.assertEqual(code, 423, response)
+
+        with sqlite3.connect(self.db_path) as db:
+            self.assertEqual(before, db.execute(
+                "SELECT last_used_at FROM agent_credentials WHERE id=?",
+                (self.identity.credential_id,),
+            ).fetchone())
+            self.assertEqual(inventory, db.execute(
+                "SELECT COUNT(*) FROM agent_runtime_inventory WHERE agent_id=?",
+                (self.agent_id,),
+            ).fetchone())
+
+        with patch("agent_remote_http.observe_no_drain_hold",
+                   return_value={"active": False, "reason": "hold_absent"}):
+            code, resumed = self._request(self._payload())
+            self.assertEqual(code, 200, resumed)
+            self.assertEqual(resumed["health_status"], "online")
 
 
 if __name__ == "__main__":
