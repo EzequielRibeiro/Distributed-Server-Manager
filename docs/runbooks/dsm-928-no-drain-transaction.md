@@ -713,3 +713,42 @@ Esta otimização **não** libera `update.sh --no-drain` em produção.
 `live_no_drain_authorized=false`; issue #928 permanece aberta,
 PR de release #1096 Draft e jogos reais não podem sofrer interrupção
 sem janela de manutenção aprovada.
+
+## Bloqueio de reconciliação local — etapa de implementação (21/11/2026)
+
+O leitor de manutenção `agents/linux/runtime/game_uptime_maintenance_hold.py`
+é um **componente real de runtime** compartilhado pelos laços do Agent Linux
+(`run_forever()`) e do Worker Hybrid (`heartbeat_cycle()`). Por padrão, se
+não existir `/run/capivara-dsm/no-drain-maintenance.json`, o comportamento
+anterior é preservado sem qualquer pausa.
+
+Quando o arquivo estiver presente, o leitor aceita apenas um **arquivo
+regular, não-symlink, root-owned, sem escrita de grupo/outros, em diretório
+root-owned protegido**, com JSON compacto (`kind`, `schema_version=1`,
+`transaction_id` com 32 hex, `issued_at`, `expires_at` até 15 minutos).
+A presença de conteúdo danificado, diretório inseguro, troca de inode,
+data inválida ou expiração **também suspende** os laços abrangidos:
+a retomada exige remoção/reconciliação por operador e não é automática.
+O leitor é **somente leitura**; não gera, modifica nem apaga o marcador.
+
+O Agent verifica antes dos hooks de startup e em cada volta do agendador:
+durante o hold não realiza sua iteração de reconciliação nem a chamada
+regular de heartbeat que poderia despachar comandos. O Worker Hybrid
+verifica antes da reconciliação local e dos ciclos mutáveis de
+configuração, conteúdo, game-data, provisionamento ou backup. Nenhum
+dos dois aciona comandos de atualização por causa do marcador.
+
+**Limites obrigatórios:** ainda NÃO existe escritor/controle de ciclo de vida
+transacional deste arquivo, ACK autenticado em todas as máquinas ou barreira
+para os outros oito processos de `worker.sh`, threads de console/streaming,
+comandos externos e Agent remoto em outro host. Logo, a presença do marcador
+**não é evidência suficiente de que todos os mutadores foram pausados**.
+É proibido criar esse arquivo manualmente como tentativa de habilitar
+uma atualização: ele pode suspender operações de clientes sem proporcionar
+a segurança necessária. O `update.sh --no-drain` segue read-only/exit 2,
+`live_no_drain_authorized=false`.
+
+**Próximo trabalho de implementação**, não novo ensaio sintético:
+coordenar uma barreira com confirmação autenticada de todos os Agents e
+Workers mutadores, dono transacional durável/rollback e remocao verificável
+do hold; só então ligar o caminho de aplicação da atualização sem drenagem.
