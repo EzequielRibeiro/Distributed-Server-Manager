@@ -31,7 +31,7 @@ from runtime_backend import backend_from_environment
 _WORKERS_MODULE_DIR = str(Path(__file__).resolve().parent)
 if _WORKERS_MODULE_DIR not in sys.path:
     sys.path.insert(0, _WORKERS_MODULE_DIR)
-from maintenance_hold_gate import maintenance_paused
+from maintenance_hold_gate import maintenance_paused, tracked_operation
 from artifact_transfer_repository import ArtifactTransferRepository
 from instance_file_repository import InstanceFileRepository
 from instance_workspace_repository import InstanceWorkspaceRepository
@@ -413,7 +413,7 @@ def process_hybrid_artifact_cycle(backend, root: Path, agent_id: str) -> dict[st
     }
 
 
-def workspace_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+def _workspace_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
     if maintenance_paused():
         return {"active": False, "reason": "root_owned_maintenance_hold"}
     config = _read_shell_values(root / "config" / "agent.conf")
@@ -431,6 +431,15 @@ def workspace_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
         "console": process_hybrid_console_cycle(effective_backend, root, agent_id),
         "artifact": process_hybrid_artifact_cycle(effective_backend, root, agent_id),
     }
+
+
+
+def workspace_cycle(root: Path = ROOT, *, backend=None) -> dict[str, Any]:
+    """Track local file, console and artifact operations through completion."""
+    with tracked_operation("hybrid_customer_workspace_worker", root=root) as admitted:
+        if not admitted:
+            return {"active": False, "reason": "root_owned_maintenance_hold"}
+        return _workspace_cycle(root, backend=backend)
 
 
 def run_forever(root: Path = ROOT) -> None:
