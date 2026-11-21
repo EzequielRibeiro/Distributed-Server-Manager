@@ -38,6 +38,7 @@ from minecraft_recovery_event_persistence import persist_recovery_claims
 from minecraft_serverpack_heartbeat_recovery_offer import serverpack_recovery_offer
 from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpack_report_delivery
 from game_uptime_heartbeat_compat import assess_authenticated_probe
+from game_uptime_remote_fence_evidence import receipt_for_authenticated_agent
 
 ENROLL_PATH = "/api/agent/enroll"
 HEARTBEAT_PATH = "/api/agent/heartbeat"
@@ -419,6 +420,20 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
             except (ValueError, TypeError):
                 result["no_drain_compatibility_offer"] = {
                     "status": "blocked", "reason": "diagnostic_unavailable",
+                    "live_no_drain_authorized": False,
+                }
+        # Phase-2 #928 negative evidence receipt, AFTER credential auth.
+        # Does not make remote Agents quiescent or issue a no-drain command.
+        if "no_drain_fence_evidence" in body:
+            try:
+                result["no_drain_fence_receipt"] = receipt_for_authenticated_agent(
+                    body["no_drain_fence_evidence"],
+                    authenticated_agent_id=agent_id,
+                )
+            except (ValueError, TypeError, OSError, RuntimeError):
+                result["no_drain_fence_receipt"] = {
+                    "status": "blocked",
+                    "remote_agent_quiescence_acked": False,
                     "live_no_drain_authorized": False,
                 }
         # Authenticated, read-only proof for the Agent's post-commit recovery.
