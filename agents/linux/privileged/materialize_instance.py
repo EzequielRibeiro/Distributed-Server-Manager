@@ -1332,27 +1332,37 @@ def _prepare_dayz_customer_read_access(spec: dict[str, Any], config: dict[str, A
     agent_account = pwd.getpwnam(
         str(os.environ.get("CAPIVARA_AGENT_RESULT_USER") or "capivara-agent")
     )
-    root_stat = root_raw.lstat()
-    if (not stat.S_ISDIR(root_stat.st_mode) or root_stat.st_uid != runtime_account.pw_uid
-            or root_stat.st_gid != agent_group.gr_gid):
-        raise PermissionError("DayZ private instance root identity mismatch")
-    current = root_raw
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+    fds: list[int] = []
     changed = 0
-    for component in relative.parts:
-        current = current / component
-        metadata = current.lstat()
-        if (not stat.S_ISDIR(metadata.st_mode)
-                or metadata.st_uid not in {runtime_account.pw_uid, agent_account.pw_uid}
-                or metadata.st_gid not in {runtime_account.pw_gid, agent_account.pw_gid, agent_group.gr_gid}):
-            raise PermissionError("DayZ customer directory owner or type mismatch")
-        if metadata.st_gid != agent_group.gr_gid:
-            os.chown(current, -1, agent_group.gr_gid)
-            changed += 1
-        desired_mode = stat.S_IMODE(metadata.st_mode) | 0o050
-        if stat.S_IMODE(metadata.st_mode) != desired_mode:
-            os.chmod(current, desired_mode)
-            changed += 1
-    return {"action": "prepare-dayz-customer-read-access", "changed":bool(changed), "updated":changed}
+    try:
+        root_fd = os.open(root_raw, flags)
+        fds.append(root_fd)
+        root_stat = os.fstat(root_fd)
+        if (not stat.S_ISDIR(root_stat.st_mode) or root_stat.st_uid != runtime_account.pw_uid
+                or root_stat.st_gid != agent_group.gr_gid):
+            raise PermissionError("DayZ private instance root identity mismatch")
+        for component in relative.parts:
+            # dir_fd + O_NOFOLLOW prevents the game user from swapping a
+            # validated mission directory for a symlink before fchmod/fchown.
+            child_fd = os.open(component, flags, dir_fd=fds[-1])
+            fds.append(child_fd)
+            metadata = os.fstat(child_fd)
+            if (not stat.S_ISDIR(metadata.st_mode)
+                    or metadata.st_uid not in {runtime_account.pw_uid, agent_account.pw_uid}
+                    or metadata.st_gid not in {runtime_account.pw_gid, agent_account.pw_gid, agent_group.gr_gid}):
+                raise PermissionError("DayZ customer directory owner or type mismatch")
+            if metadata.st_gid != agent_group.gr_gid:
+                os.fchown(child_fd, -1, agent_group.gr_gid)
+                changed += 1
+            desired_mode = stat.S_IMODE(metadata.st_mode) | 0o050
+            if stat.S_IMODE(metadata.st_mode) != desired_mode:
+                os.fchmod(child_fd, desired_mode)
+                changed += 1
+    finally:
+        for fd in reversed(fds):
+            os.close(fd)
+    return {"action": "prepare-dayz-customer-read-access", "changed": bool(changed), "updated": changed}
 
 
 def _write_dayz_battleye_runtime(path: Path, record: dict[str, Any], owner) -> None:
