@@ -795,3 +795,30 @@ ACK autenticado de todos os mutadores, verificar fim de operações em voo,
 preservar PIDs, executar update/rollback e provar recuperação integral, a
 opção pública poderá ser considerada. Até então `--no-drain`
 permanece read-only/exit 2 e `live_no_drain_authorized=false`.
+
+## In-flight no Worker de manutenção — evidência local inicial (21/11/2026)
+
+O `maintenance_worker.py` agora envolve cada `tick()` em
+`tracked_operation("maintenance_worker", root=ROOT)`. A seção crítica usa
+`fcntl.flock(LOCK_EX)` até o retorno completo do ciclo, inclusive comandos
+de manutenção, parada/início DayZ e alterações de conteúdo. Dentro da trava,
+o Worker **relê o hold root-owned** e só executa quando não existe.
+Se a trava não puder ser criada/aberta de modo seguro, o ciclo falha
+antes de executar operações de clientes.
+
+O arquivo de lock fica em `dashboard/state/dsm928-worker-operations`,
+diretório privado, owner do processo Worker, sem leitura/escrita para grupo
+ou terceiros. O método `inspect_operation("maintenance_worker", root=...)`
+é **somente leitura**: distingue `operation_in_flight` de
+`lock_free_process_identity_unverified` e `unverified`; sempre devolve
+`live_no_drain_authorized=false`. Lock livre sozinho nunca demonstra que
+existe um Worker vivo, que não há jobs externos já despachados, nem que
+o Controller/Agent remoto foi drenado de operações.
+
+A trava é compatível com uma futura barreira: o coordenador precisará
+reter locks de **todos os mutadores**, instalar o hold root-owned sob
+coordenação atômica, confirmar identidade e término de trabalhos enviados
+aos Agents, manter o fence durante atualização e rollback, e somente
+então permitir recuperação. Esse coordenador ainda NÃO existe.
+Os outros Workers e o Agent Linux ainda não produzem evidências
+individualizadas de operação em voo nesta etapa; a #928 continua aberta.
