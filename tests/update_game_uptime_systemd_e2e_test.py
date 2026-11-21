@@ -575,6 +575,31 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             self.fail("disposable supervisor or UDP stand-in not ready")
         originals = [minecraft, dayz]
 
+        # Verify the *complete* transient game-unit set, not just these
+        # recorded PIDs. Derive an independent witness from real systemd
+        # directives without persisting potentially sensitive ExecStart data.
+        def list_active_game_standins():
+            result = self._run(
+                "systemctl", "list-units", "--all", "--type=service",
+                "--state=active", "--plain", "--no-legend",
+                "dsm928-e2e-*.service",
+            )
+            return [line.split()[0] for line in result.stdout.splitlines()
+                    if line.strip() and line.split()[0].endswith(".service")]
+
+        def systemd_witness(unit):
+            result = self._snapshot(unit)
+            properties = self._run(
+                "systemctl", "show", unit,
+                "-p", "ExecStart", "-p", "FragmentPath",
+                "-p", "DropInPaths", "-p", "User", "-p", "WorkingDirectory",
+                "-p", "PartOf", "-p", "BindsTo", "-p", "PropagatesStopTo",
+            )
+            result["unit_config_sha256"] = hashlib.sha256(
+                properties.stdout.encode("utf-8")
+            ).hexdigest()
+            return result
+
         def check_both():
             self._assert_unchanged(originals)
             self.assertEqual(hashlib.sha256(pinned.read_bytes()).hexdigest(),
@@ -615,11 +640,21 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     updater(fixture, "rollback")
                     check_both()
 
+                handoff = transaction.attest_handoff(
+                    [minecraft_unit, dayz_unit], inspect=systemd_witness,
+                    list_units=list_active_game_standins,
+                )
                 if mode == "success":
                     result = transaction.execute(
                         journal, [minecraft_unit, dayz_unit],
-                        inspect=self._snapshot, apply=apply, rollback=rollback,
+                        inspect=systemd_witness, apply=apply, rollback=rollback,
+                        handoff=handoff, list_units=list_active_game_standins,
                     )
+                    receipt = json.loads(
+                        (journal / "game-uptime-transaction.json").read_text())
+                    self.assertTrue(receipt["strict_inventory"])
+                    self.assertEqual(len(receipt["original_units"]), 2)
+                    self.assertEqual(len(receipt["original_units_sha256"]), 64)
                     self.assertEqual(result["status"], "verified")
                     self.assertEqual(
                         (fixture / "installed/version").read_text(),
@@ -631,8 +666,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     ):
                         transaction.execute(
                             journal, [minecraft_unit, dayz_unit],
-                            inspect=self._snapshot, apply=apply,
-                            rollback=rollback,
+                            inspect=systemd_witness, apply=apply,
+                            rollback=rollback, handoff=handoff,
+                            list_units=list_active_game_standins,
                         )
                     self.assertEqual(
                         (fixture / "installed/version").read_text(),
