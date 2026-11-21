@@ -20,6 +20,10 @@ Environment=CAPIVARA_STEAM_HOME=/opt/dsm
 Environment=DSM_WORKSHOP_UPDATE_DETECTION_ENABLED=1
 # Repair the bounded Hybrid YARA-X state subtree before dropping privileges.
 ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_hybrid_yarax_state.py --root /opt/dsm --user {{DSM_USER}} --group {{DSM_GROUP}}
+# Preserve stable Worker operation lock inodes outside the replaceable /opt/dsm tree.
+# Root creates/validates the root-owned directory and Worker-owned 0600 files.
+# An insecure pre-existing inode fails startup; never chown/replace an existing lock.
+ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_maintenance_worker_locks.py --user {{DSM_USER}} --group {{DSM_GROUP}}
 ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh
 Restart=always
 RestartSec=10

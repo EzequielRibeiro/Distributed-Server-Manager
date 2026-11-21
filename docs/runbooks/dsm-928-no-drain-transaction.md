@@ -806,9 +806,10 @@ o Worker **relê o hold root-owned** e só executa quando não existe.
 Se a trava não puder ser criada/aberta de modo seguro, o ciclo falha
 antes de executar operações de clientes.
 
-O arquivo de lock fica em `dashboard/state/dsm928-worker-operations`,
-diretório privado, owner do processo Worker, sem leitura/escrita para grupo
-ou terceiros. O método `inspect_operation("maintenance_worker", root=...)`
+**Histórico da PR #1119:** o arquivo de lock era criado em
+`dashboard/state/dsm928-worker-operations`, um diretório privado sob a
+árvore da instalação. Esse caminho foi substituído pela etapa de travas
+fixas em `/run` descrita ao final deste runbook. O método `inspect_operation("maintenance_worker", root=...)`
 é **somente leitura**: distingue `operation_in_flight` de
 `lock_free_process_identity_unverified` e `unverified`; sempre devolve
 `live_no_drain_authorized=false`. Lock livre sozinho nunca demonstra que
@@ -848,13 +849,12 @@ O observador `inspect_operation()` mantém exclusivamente os estados
 A cobertura é validada por **um único teste agrupado**, sem duplicar
 suítes de PID, backup ou rollback.
 
-**Aviso de integridade transacional:** os lockfiles atuais ficam em
-`dashboard/state/dsm928-worker-operations`, no diretório substituível do
-produto. O atualizador não pode depender deles como barreira durável durante
-o swap de `/opt/dsm`: há risco de mudar os inodes e quebrar a identidade
-do lock. Antes de qualquer autorização de no-drain, migrar o mecanismo para
-um diretório operacional preservado, seguro e gerenciado por service/unit
-identidade estável, com o coordenador retendo o lock através do swap.
+**Risco identificado na PR #1120 (corrigido na etapa seguinte):**
+nessa versão os lockfiles ficavam em
+`dashboard/state/dsm928-worker-operations`, substituível junto com
+`/opt/dsm`. A etapa de travas fixas abaixo elimina essa dependência,
+mas o coordenador ainda precisará reter seus próprios locks e validar
+todos os processos antes e depois de qualquer atualização.
 
 Esta mudança comprova **atividade local observável**, não quiescência
 operacional concluída. Ainda faltam: prova de processo vivo para cada
@@ -864,3 +864,42 @@ privilegiados nos hosts, confirmação autenticada entre hosts, posse
 transacional do hold, atualização/rollback integrado e aceite em clone
 com serviços completos. `--no-drain` segue read-only/exit 2 e
 `live_no_drain_authorized=false`. **Não criar hold manual em produção**.
+
+## Travas fixas em `/run` fora do swap de `/opt/dsm` (21/11/2026)
+
+O `maintenance_hold_gate.py` passa a usar exclusivamente
+`/run/capivara-dsm/worker-operations/<worker>.lock` em operação normal,
+independentemente de `DSM_ROOT`, caminho da release ou cwd. Os Workers
+**não criam, truncam nem removem** seus arquivos de lock; na ausência de
+provisionamento válido, os ciclos mutadores são bloqueados (fail-closed).
+O parâmetro opcional `lock_dir` do módulo existe apenas para testes
+isolados, não é configurável via variável de ambiente nem usado pelos
+entrypoints instalados.
+
+A unidade `dsm-dashboard-worker.service` executa, com privilégios root,
+`prepare_maintenance_worker_locks.py --user {{DSM_USER}} --group {{DSM_GROUP}}`
+**antes** do supervisor. O inicializador usa um pai `/run/capivara-dsm`
+e uma pasta `worker-operations` **root-owned**, sem escrita por grupo ou
+outros (0755). Pré-cria **nove arquivos regulares 0600** pertencentes ao
+usuário/grupo do Worker. Assim o Worker pode adquirir `flock`, mas não
+renomear nem excluir o inode, porque a pasta é de root. A inicialização é
+idempotente: reiniciar a unidade **não troca os inodes existentes**.
+Arquivo pré-existente com owner, grupo, modo, links ou tamanho incorreto,
+ou symlink, é recusado e impede a inicialização; não se tenta reaproveitar
+evidência insegura nem alterar seus dados.
+
+`/run` é estado operacional do sistema, independente do diretório de
+instalação e preservado durante o swap de uma release. **Não é persistente
+entre reinicializações do sistema**: o sistema recria os nove arquivos
+antes de iniciar o Worker após o boot; não existe confirmação automática
+de quiescência como resultado desse provisionamento.
+
+O teste agrupado existente prova ausência => bloqueio, criação segura,
+identidade de inode estável em reaplicação, `flock` ocupado/livre,
+hold ativo e recusa de symlink. A prova de processo vivo/versão correta,
+jobs despachados, Agent remoto, Controller HTTP, executor privilegiado
+e operação de update/rollback **continua pendente**. Ainda não existe
+coordenador nem writer da marca root-owned de manutenção, e o lock livre
+isoladamente continua `live_no_drain_authorized=false`.
+`update.sh --no-drain` permanece diagnóstico, exit 2. Sem deploy
+ou reinício de jogos cliente como parte desta implementação.

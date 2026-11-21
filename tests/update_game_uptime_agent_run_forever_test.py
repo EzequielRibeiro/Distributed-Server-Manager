@@ -133,29 +133,88 @@ class AgentRunForeverLoopTests(unittest.TestCase):
         scheduler = (workers / "scheduler_worker.sh").read_text(encoding="utf-8")
         self.assertIn('--scheduler-tick', scheduler)
         self.assertIn('tracked_operation("scheduler_worker"', filename.read_text())
+        # The installed lock location is independent of replaceable DSM
+        # code. Provisioning lives in a root-only systemd ExecStartPre.
+        self.assertEqual(str(gate.LOCK_DIRECTORY),
+                         "/run/capivara-dsm/worker-operations")
+        unit = (ROOT / "systemd/dsm-dashboard-worker.service").read_text()
+        self.assertIn("prepare_maintenance_worker_locks.py", unit)
+        initializer_path = workers / "prepare_maintenance_worker_locks.py"
+        init_spec = spec_from_loader(
+            "dsm928_lock_initializer",
+            SourceFileLoader("dsm928_lock_initializer", str(initializer_path)),
+        )
+        initializer = module_from_spec(init_spec)
+        with patch.dict(sys.modules, {"maintenance_hold_gate": gate}):
+            init_spec.loader.exec_module(initializer)
+
         with tempfile.TemporaryDirectory(prefix="dsm928-inflight-") as temp:
             root = Path(temp)
+            lock_dir = root / "protected" / "worker-operations"
+            first = gate.inspect_operation(
+                "maintenance_worker", root=root, lock_dir=lock_dir)
+            self.assertEqual(first["status"], "unverified")
+            with self.assertRaises((OSError, RuntimeError)):
+                with gate.tracked_operation(
+                        "maintenance_worker", root=root, lock_dir=lock_dir):
+                    self.fail("no operation without pre-provisioned lock")
+
+            initializer.prepare(
+                os.geteuid(), os.getegid(),
+                directory=lock_dir, parent_owner=os.geteuid())
+            original_inodes = {
+                name: (lock_dir / (name + ".lock")).stat().st_ino
+                for name in names
+            }
+            # Re-running ExecStartPre must not remove, recreate, or change
+            # existing inodes: flock identity must survive service restarts.
+            initializer.prepare(
+                os.geteuid(), os.getegid(),
+                directory=lock_dir, parent_owner=os.geteuid())
+            self.assertEqual(original_inodes, {
+                name: (lock_dir / (name + ".lock")).stat().st_ino
+                for name in names
+            })
+
             for name in sorted(names):
                 with self.subTest(worker=name):
-                    first = gate.inspect_operation(name, root=root)
-                    self.assertEqual(first["status"], "unverified")
-                    self.assertFalse(first["live_no_drain_authorized"])
-                    with patch.object(gate, "maintenance_paused", return_value=False):
-                        with gate.tracked_operation(name, root=root) as admitted:
+                    with patch.object(gate, "maintenance_paused",
+                                      return_value=False):
+                        with gate.tracked_operation(
+                                name, root=root, lock_dir=lock_dir) as admitted:
                             self.assertTrue(admitted)
-                            busy = gate.inspect_operation(name, root=root)
-                            self.assertEqual(busy["status"], "operation_in_flight")
+                            busy = gate.inspect_operation(
+                                name, root=root, lock_dir=lock_dir)
+                            self.assertEqual(busy["status"],
+                                             "operation_in_flight")
                             self.assertFalse(busy["live_no_drain_authorized"])
-                    free = gate.inspect_operation(name, root=root)
+                    free = gate.inspect_operation(
+                        name, root=root, lock_dir=lock_dir)
                     self.assertEqual(free["status"],
                                      "lock_free_process_identity_unverified")
                     self.assertFalse(free["live_no_drain_authorized"])
+
             with patch.object(gate, "maintenance_paused", return_value=True):
-                with gate.tracked_operation("maintenance_worker", root=root) as admitted:
+                with gate.tracked_operation(
+                        "maintenance_worker", root=root,
+                        lock_dir=lock_dir) as admitted:
                     self.assertFalse(admitted)
             with self.assertRaises(ValueError):
-                with gate.tracked_operation("../untrusted", root=root):
+                with gate.tracked_operation(
+                        "../untrusted", root=root, lock_dir=lock_dir):
                     pass
+
+            # A forged symlink must never become a valid lock witness.
+            victim = lock_dir / "scheduler_worker.lock"
+            victim.rename(lock_dir / "scheduler_worker.saved")
+            victim.symlink_to(lock_dir / "scheduler_worker.saved")
+            self.assertEqual(gate.inspect_operation(
+                "scheduler_worker", root=root, lock_dir=lock_dir)["status"],
+                "unverified")
+            with self.assertRaises((OSError, RuntimeError)):
+                initializer.prepare(
+                    os.geteuid(), os.getegid(),
+                    directory=lock_dir, parent_owner=os.geteuid())
 
     def test_root_owned_maintenance_hold_fail_closed_and_no_agent_startup(self):
         with tempfile.TemporaryDirectory(prefix="dsm928-protected-hold-") as temp:
