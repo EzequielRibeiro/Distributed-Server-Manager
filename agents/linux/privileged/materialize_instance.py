@@ -674,9 +674,26 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         _reject_symlinks(control_root, label="Agent control state")
     else:
         control_root.mkdir()
+    # DayZ's public verification keys are bind-mounted into the game process.
+    # Keep their directory owned by the Agent and readable by the runtime:
+    # a generic private-state chmod(0700)/chown(runtime) breaks both signature
+    # verification and the next unprivileged keyring reconciliation.
+    dayz_keyring = (
+        control_root / "dayz-keys"
+        if str(spec.get("game_id") or "").strip().lower() == "dayz"
+        else None
+    )
     for current in [control_root, *control_root.rglob("*")]:
         os.chown(current, agent_account.pw_uid, agent_group.gr_gid)
-        os.chmod(current, 0o700 if current.is_dir() else 0o600)
+        if dayz_keyring is not None and current == dayz_keyring:
+            if not current.is_dir():
+                raise RuntimeError("DayZ keyring must be a directory")
+            os.chmod(current, 0o755)
+        elif (dayz_keyring is not None and current.parent == dayz_keyring
+              and current.is_file() and current.suffix.casefold() == ".bikey"):
+            os.chmod(current, 0o644)
+        else:
+            os.chmod(current, 0o700 if current.is_dir() else 0o600)
 
     _prepare_dayz_content_directories(spec, state_root, account, agent_account, agent_group)
 
@@ -711,8 +728,15 @@ def _prepare_private_state(spec: dict[str, Any], account: pwd.struct_passwd, sto
         source = _within(state_root, str(item["source"]), "bind source")
         target = _within(working_root, str(item["target"]), "bind target")
         source.mkdir(parents=True, exist_ok=True)
-        os.chown(source, account.pw_uid, account.pw_gid)
-        os.chmod(source, 0o700)
+        if dayz_keyring is not None and source == dayz_keyring:
+            # Do not transfer ownership to the game's user or replace the
+            # directory inode: the Agent updates keys in place while systemd
+            # continues to mount the same directory into the running DayZ.
+            os.chown(source, agent_account.pw_uid, agent_group.gr_gid)
+            os.chmod(source, 0o755)
+        else:
+            os.chown(source, account.pw_uid, account.pw_gid)
+            os.chmod(source, 0o700)
         target.mkdir(parents=True, exist_ok=True)
 
 
