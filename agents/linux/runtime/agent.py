@@ -65,6 +65,7 @@ from minecraft_serverpack_report_outbox import (
 from minecraft_current_neoforge_collector import collect_current_neoforge_attestations
 from game_uptime_agent_wire import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+from game_uptime_agent_fence_evidence import build_fence_evidence, verify_fence_receipt
 from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
@@ -167,6 +168,15 @@ def _inventory(config):
             payload["no_drain_compatibility_probe"] = build_no_drain_probe(
                 str(config["agent_id"]))
         except (KeyError, ValueError, TypeError):
+            pass
+    if os.environ.get("DSM928_REMOTE_FENCE_DIAGNOSTIC") == "1":
+        # Opt-in negative evidence only; a local root-owned marker is needed.
+        # Neither an in-flight check nor a remote quiescence ACK is implied.
+        try:
+            evidence = build_fence_evidence(str(config["agent_id"]))
+            if evidence is not None:
+                payload["no_drain_fence_evidence"] = evidence
+        except (OSError, TypeError, ValueError, RuntimeError):
             pass
     # Every inventory record is Agent-owned and supplies instance_id.
     # Keep malformed inventory entries fail-closed without blocking heartbeat.
@@ -274,6 +284,12 @@ def heartbeat(config):
         result["no_drain_wire_diagnostic"] = verify_no_drain_offer(
             payload["no_drain_compatibility_probe"],
             result.get("no_drain_compatibility_offer"),
+        )
+    if "no_drain_fence_evidence" in payload:
+        # Validate correlation only; never stop, start or drain games here.
+        result["no_drain_fence_receipt_diagnostic"] = verify_fence_receipt(
+            payload["no_drain_fence_evidence"],
+            result.get("no_drain_fence_receipt"),
         )
     # Controller coordinates are received independently of the Agent's own GeoIP.
     received_controller_location=result.get("controller_location")
