@@ -274,7 +274,15 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         )
         self.assertEqual(status, 200)
         self.assertNotIn("instance_command", first)
-        prepared = first["native_restart_command"]
+        # Runtime queue is polled after the native queue in a heartbeat.
+        # Its first poll enqueues preparation; the next heartbeat delivers it.
+        status, second = dispatch_heartbeat(
+            {"agent_id": "agent-instance"}, headers=self.headers, backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("instance_command", second)
+        prepared = second["native_restart_command"]
+        self.assertIsInstance(prepared, dict)
         self.assertEqual(prepared["instance_id"], "instance-one")
         self.assertEqual(prepared["game_id"], "dayz")
 
