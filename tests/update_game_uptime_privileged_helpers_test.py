@@ -429,5 +429,147 @@ except PrivilegedHelperFenceUnavailable:
                 lock.chmod(0o600)
 
 
+    def test_customer_files_and_identity_share_privileged_fence(self):
+        """One grouped proof: admission, in-flight EX and no host mutation.
+
+        Only synthetic pre-mutation stops are used; no usermod, chmod,
+        instance writes or Agent service is invoked.
+        """
+        import os
+        import subprocess
+        import threading
+        from game_uptime_privileged_flock import (
+            provision_privileged_helper_lock,
+            shared_privileged_helper_lock,
+            exclusive_privileged_helper_lock,
+        )
+
+        customer = load(
+            "dsm928_customer_files_fence",
+            ROOT / "agents/linux/privileged/prepare_customer_files.py")
+        identity = load(
+            "dsm928_runtime_identity_fence",
+            ROOT / "agents/linux/privileged/reconcile_runtime_identity.py")
+        self.assertTrue(hasattr(customer.run, "__wrapped__"))
+        self.assertTrue(hasattr(identity.reconcile, "__wrapped__"))
+
+        with tempfile.TemporaryDirectory(prefix="dsm928-identity-files-") as temp:
+            folder = Path(temp) / "trusted"
+            folder.mkdir(mode=0o755)
+            lock = folder / "agent-privileged-operations.lock"
+            uid = os.geteuid()
+            provision_privileged_helper_lock(path=lock, trusted_uid=uid)
+
+            def shared():
+                return shared_privileged_helper_lock(
+                    path=lock, trusted_uid=uid, enabled=True)
+
+            def exclusive():
+                return exclusive_privileged_helper_lock(
+                    path=lock, trusted_uid=uid)
+
+            # All operations must fail before accessing the request or
+            # changing host identities while a maintenance hold is active.
+            with patch.object(admission, "shared_privileged_helper_lock",
+                              side_effect=shared), \
+                 patch.object(admission, "observe",
+                              return_value={"active": True}), \
+                 patch.object(os, "geteuid", return_value=0), \
+                 patch.object(Path, "read_text",
+                              side_effect=AssertionError("request read under hold")), \
+                 patch.object(identity.grp, "getgrnam",
+                              side_effect=AssertionError("group lookup under hold")):
+                with self.assertRaises(admission.PrivilegedMutationHold):
+                    customer.run("dayz-002")
+                with self.assertRaises(admission.PrivilegedMutationHold):
+                    identity.reconcile()
+
+            # Exclusive coordinator ownership rejects both entrypoints,
+            # even when the hold marker explicitly reports inactive.
+            with patch.object(admission, "shared_privileged_helper_lock",
+                              side_effect=shared), \
+                 patch.object(admission, "observe",
+                              return_value={"active": False}):
+                with exclusive() as witness:
+                    self.assertFalse(witness["live_no_drain_authorized"])
+                    for invoke in (
+                        lambda: customer.run("dayz-002"),
+                        identity.reconcile,
+                    ):
+                        with self.assertRaisesRegex(
+                                admission.PrivilegedMutationHold,
+                                "agent_privileged_inflight_fence_unavailable"):
+                            invoke()
+
+            witness_script = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from game_uptime_privileged_flock import (
+    exclusive_privileged_helper_lock, PrivilegedHelperFenceUnavailable,
+)
+try:
+    with exclusive_privileged_helper_lock(
+            path=Path(sys.argv[1]), trusted_uid=int(sys.argv[3])):
+        print("FREE")
+except PrivilegedHelperFenceUnavailable:
+    print("BUSY")
+"""
+
+            def remote_exclusive():
+                probe = subprocess.run(
+                    [sys.executable, "-c", witness_script, str(lock),
+                     str(ROOT / "agents/linux/runtime"), str(uid)],
+                    capture_output=True, text=True, check=True, timeout=12)
+                return probe.stdout.strip()
+
+            self.assertEqual(remote_exclusive(), "FREE")
+
+            # Each real decorated entrypoint retains SH until its
+            # pre-mutation fixture is explicitly released, across PIDs.
+            for name, invoke, target, method in (
+                ("customer_files", lambda: customer.run("dayz-002"),
+                 Path, "read_text"),
+                ("runtime_identity", identity.reconcile,
+                 identity.grp, "getgrnam"),
+            ):
+                with self.subTest(helper=name):
+                    entered = threading.Event()
+                    release = threading.Event()
+                    errors = []
+
+                    def pause_before_mutation(*_args, **_kwargs):
+                        entered.set()
+                        if not release.wait(timeout=12):
+                            raise AssertionError("in-flight fixture timed out")
+                        raise LookupError("synthetic stop before host mutation")
+
+                    def worker():
+                        try:
+                            invoke()
+                        except BaseException as exc:
+                            errors.append(exc)
+
+                    with patch.object(admission, "shared_privileged_helper_lock",
+                                      side_effect=shared), \
+                         patch.object(admission, "observe",
+                                      return_value={"active": False}), \
+                         patch.object(os, "geteuid", return_value=0), \
+                         patch.object(target, method,
+                                      side_effect=pause_before_mutation):
+                        thread = threading.Thread(target=worker, daemon=True)
+                        try:
+                            thread.start()
+                            self.assertTrue(entered.wait(timeout=12))
+                            self.assertEqual(remote_exclusive(), "BUSY")
+                        finally:
+                            release.set()
+                            thread.join(timeout=12)
+                        self.assertFalse(thread.is_alive())
+                    self.assertEqual(len(errors), 1)
+                    self.assertIsInstance(errors[0], LookupError)
+                    self.assertEqual(remote_exclusive(), "FREE")
+
+
 if __name__ == "__main__":
     unittest.main()

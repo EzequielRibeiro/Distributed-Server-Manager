@@ -16,6 +16,9 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 import instance_runtime
+from game_uptime_privileged_admission import (
+    fence_privileged_helper_run, require_privileged_mutation_admission,
+)
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 CONFIG_PATH = Path(os.environ.get("CAPIVARA_AGENT_CONFIG", "/etc/capivara-agent/agent.json"))
@@ -114,9 +117,11 @@ def _prepare_tree(root: Path, group_gid: int, executable_paths: set[Path] | None
     return {"directories": directories, "files": files}
 
 
+@fence_privileged_helper_run
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("customer files access helper must run as root")
+    require_privileged_mutation_admission()
     instance_id = _token(instance_id)
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     if not isinstance(config, dict):
