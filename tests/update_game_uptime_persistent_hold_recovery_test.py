@@ -268,6 +268,102 @@ class PersistentPendingHoldTests(unittest.TestCase):
         with fence() as evidence:
             self.assertFalse(evidence["live_no_drain_authorized"])
 
+        # Reuse the SAME durable transaction, now requiring EX on a second
+        # inode held by detached Minecraft finalization children. Test the
+        # combined witness once, without duplicating earlier lease tests.
+        from game_uptime_finalization_flock import (
+            FinalizationFenceUnavailable, provision_finalization_lock,
+            shared_finalization_lock,
+        )
+        from game_uptime_privileged_journal_witness import (
+            local_privileged_and_finalization_journal_witness,
+        )
+
+        final_dir = self.run / "finalization-locks"
+        final_dir.mkdir(mode=0o755)
+        child_inode = final_dir / "agent-finalization-operations.lock"
+        agent_gid = os.getegid()
+        provision_finalization_lock(
+            path=child_inode, trusted_uid=self.uid, group_gid=agent_gid,
+        )
+
+        def both():
+            return local_privileged_and_finalization_journal_witness(
+                expected_transaction_id=self.tx,
+                hold_path=self.marker, journal_path=self.journal,
+                privileged_lock_path=inode, finalization_lock_path=child_inode,
+                trusted_uid=self.uid, finalization_group_gid=agent_gid,
+                now=1700000010,
+            )
+
+        before_journal = self.journal.read_bytes()
+        with both() as witnessed:
+            self.assertEqual(witnessed["transaction_id"], self.tx)
+            self.assertEqual(witnessed["status"],
+                             "root_journal_two_lock_families_observed_local_only")
+            self.assertTrue(witnessed["finalization_child_lock_exclusive"])
+            for key in (
+                "all_finalization_children_opted_in_verified",
+                "all_helper_processes_opted_in_verified", "external_jobs_acked",
+                "remote_agents_acked", "live_no_drain_authorized",
+            ):
+                self.assertIs(witnessed[key], False)
+            with self.assertRaises(FinalizationFenceUnavailable):
+                with shared_finalization_lock(
+                    path=child_inode, enabled=True,
+                    trusted_uid=self.uid, group_gid=agent_gid,
+                ):
+                    self.fail("new child cannot bypass the combined EX")
+        self.assertEqual(self.journal.read_bytes(), before_journal)
+        self.assertEqual(self.marker.read_bytes(), before_marker)
+
+        # A child already inside SH prevents a false local completion.
+        with shared_finalization_lock(
+            path=child_inode, enabled=True,
+            trusted_uid=self.uid, group_gid=agent_gid,
+        ):
+            with self.assertRaisesRegex(
+                PrivilegedJournalWitnessBlocked,
+                "finalization_child_lock_not_exclusively_available",
+            ):
+                with both():
+                    self.fail("in-flight finalization must block coordinator")
+
+        # The privileged helper family is independently required as well.
+        with shared_privileged_helper_lock(
+            path=inode, trusted_uid=self.uid, enabled=True,
+        ):
+            with self.assertRaisesRegex(
+                PrivilegedJournalWitnessBlocked,
+                "privileged_helper_lock_not_exclusively_available",
+            ):
+                with both():
+                    self.fail("in-flight root helper must block coordinator")
+
+        # Fail closed when the second inode is corrupt, without repair.
+        child_inode.chmod(0o666)
+        try:
+            with self.assertRaisesRegex(
+                PrivilegedJournalWitnessBlocked,
+                "finalization_child_lock_not_exclusively_available",
+            ):
+                with both():
+                    self.fail("unsafe finalization inode must not be accepted")
+        finally:
+            child_inode.chmod(0o660)
+
+        # The observer must still reject a changed journal inside both EXs.
+        with self.assertRaisesRegex(
+            PrivilegedJournalWitnessBlocked, "root_hold_pending_lease_mismatch",
+        ):
+            with both():
+                pending = json.loads(before_journal)
+                pending["expires_at"] -= 1
+                self.journal.write_text(json.dumps(pending), encoding="utf-8")
+                self.journal.chmod(0o600)
+        self.journal.write_bytes(before_journal)
+        self.journal.chmod(0o600)
+
 
 if __name__ == "__main__":
     unittest.main()
