@@ -110,4 +110,127 @@ class WorkerTests(unittest.TestCase):
     publish.assert_not_called()
     recover.assert_not_called()
 
+
+ def test_finalization_child_sh_blocks_coordinator_ex_until_completion(self):
+  """Grouped real two-PID flock proof, all operational work mocked."""
+  import subprocess
+  import threading
+  from unittest.mock import Mock
+  from types import SimpleNamespace
+  import game_uptime_finalization_admission as admission
+  import game_uptime_finalization_flock as fence
+
+  folder=self.root/"trusted"
+  folder.mkdir(mode=0o755)
+  lock=folder/"agent-finalization-operations.lock"
+  uid,gid=os.geteuid(),os.getegid()
+  fence.provision_finalization_lock(
+      path=lock,trusted_uid=uid,group_gid=gid)
+  assert lock.stat().st_size == 0
+  # No opt-in must preserve the installed behavior.
+  with fence.shared_finalization_lock(path=lock,enabled=False,
+                                      trusted_uid=uid,group_gid=gid) as enabled:
+   self.assertFalse(enabled)
+
+  def shared():
+   return fence.shared_finalization_lock(
+       path=lock,enabled=True,trusted_uid=uid,group_gid=gid)
+
+  probe="""
+import sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[2])
+from game_uptime_finalization_flock import (
+    exclusive_finalization_lock,FinalizationFenceUnavailable)
+try:
+    with exclusive_finalization_lock(
+            path=Path(sys.argv[1]),trusted_uid=int(sys.argv[3]),
+            group_gid=int(sys.argv[4])) as state:
+        assert state["live_no_drain_authorized"] is False
+        assert state["external_jobs_acked"] is False
+        print("FREE")
+except FinalizationFenceUnavailable:
+    print("BUSY")
+"""
+
+  def exclusive_probe():
+   result=subprocess.run(
+       [sys.executable,"-c",probe,str(lock),
+        str(R/"agents/linux/runtime"),str(uid),str(gid)],
+       capture_output=True,text=True,check=True,timeout=12)
+   return result.stdout.strip()
+
+  self.assertEqual(exclusive_probe(),"FREE")
+  ready=threading.Event()
+  release=threading.Event()
+  finished=[]
+  errors=[]
+  dispatched=Mock()
+  def scan(**_kwargs):
+   ready.set()
+   if not release.wait(timeout=12):
+    raise AssertionError("detached-child fence fixture timed out")
+   return []
+
+  def child():
+   try:
+    finished.extend(w.execute_one(self.cfg,"sandbox-instance"))
+   except BaseException as exc:
+    errors.append(exc)
+
+  fake={"minecraft_serverpack_finalization_dispatcher":
+        SimpleNamespace(dispatch_published_completion=dispatched)}
+  with patch.dict(os.environ,self.env,clear=True), \
+       patch.dict(sys.modules,fake), \
+       patch.object(admission,"observe",return_value={"active":False}), \
+       patch.object(w,"shared_finalization_lock",side_effect=shared), \
+       patch.object(w,"scan_pending_finalizations",side_effect=scan):
+   t=threading.Thread(target=child,daemon=True)
+   try:
+    t.start()
+    self.assertTrue(ready.wait(timeout=12))
+    self.assertEqual(exclusive_probe(),"BUSY")
+   finally:
+    release.set()
+    t.join(timeout=12)
+   self.assertFalse(t.is_alive())
+  self.assertEqual(errors,[])
+  self.assertEqual(finished,[])
+  dispatched.assert_not_called()
+  self.assertEqual(exclusive_probe(),"FREE")
+
+  # EX ownership denies new children before reading provisioning journals.
+  scan=Mock()
+  with patch.dict(os.environ,self.env,clear=True), \
+       patch.dict(sys.modules,fake), \
+       patch.object(admission,"observe",return_value={"active":False}), \
+       patch.object(w,"shared_finalization_lock",side_effect=shared), \
+       patch.object(w,"scan_pending_finalizations",scan):
+   with fence.exclusive_finalization_lock(
+       path=lock,trusted_uid=uid,group_gid=gid):
+    with self.assertRaises(fence.FinalizationFenceUnavailable):
+     w.execute_one(self.cfg,"sandbox-instance")
+  scan.assert_not_called()
+
+  # Hold that appears after initial admission is caught inside the SH.
+  with patch.dict(os.environ,self.env,clear=True), \
+       patch.dict(sys.modules,fake), \
+       patch.object(admission,"observe",
+                    side_effect=[{"active":False},{"active":True}]), \
+       patch.object(w,"shared_finalization_lock",side_effect=shared), \
+       patch.object(w,"scan_pending_finalizations",scan):
+   with self.assertRaises(admission.FinalizationMaintenanceHold):
+    w.execute_one(self.cfg,"sandbox-instance")
+  scan.assert_not_called()
+
+  # Unsafe inode can never be interpreted as idle, or silently repaired.
+  lock.chmod(0o666)
+  try:
+   with self.assertRaises(fence.FinalizationFenceUnavailable):
+    with shared():
+     self.fail("unsafe lock accepted")
+  finally:
+   lock.chmod(0o660)
+  self.assertEqual(exclusive_probe(),"FREE")
+
 if __name__=="__main__":unittest.main()
