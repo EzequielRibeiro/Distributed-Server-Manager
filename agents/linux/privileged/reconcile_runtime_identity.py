@@ -8,7 +8,18 @@ import os
 import pwd
 import stat
 import subprocess
+import sys
 from pathlib import Path
+
+INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
+RUNTIME_DIR = INSTALL_ROOT / "runtime"
+if not RUNTIME_DIR.is_dir():
+    RUNTIME_DIR = Path(__file__).resolve().parents[1] / "runtime"
+if str(RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_DIR))
+from game_uptime_privileged_admission import (
+    fence_privileged_helper_run, require_privileged_mutation_admission,
+)
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
 RUNTIME_USER = "capivara-instance"
@@ -72,9 +83,11 @@ def _write_canonical_host_identity(group_gid: int) -> None:
     os.chmod(HOST_IDENTITY_PATH, 0o640)
 
 
+@fence_privileged_helper_run
 def reconcile() -> None:
     if os.geteuid() != 0:
         raise RuntimeError("runtime identity reconciliation must run as root")
+    require_privileged_mutation_admission()
     try:
         group = grp.getgrnam(AGENT_GROUP)
     except KeyError as exc:
