@@ -74,7 +74,7 @@ class TwoAgentDaemonBootstrapTest(unittest.TestCase):
         from agent_instance_runtime_repository import AgentInstanceRuntimeRepository
         from dayz_native_restart_repository import DayZNativeRestartRepository
         from maintenance_repository import MaintenanceRepository
-        from agent_runtime_repository import AgentRuntimeRepository
+        from agent_runtime_repository import AgentRuntimeRepository, AgentRuntimeNotFound
         from external_controller_agent_network_e2e import ControllerHandler
         from maintenance_controller_agent_e2e import _certificate
 
@@ -198,7 +198,7 @@ class TwoAgentDaemonBootstrapTest(unittest.TestCase):
                             str(runtime_states.snapshot(aid,refresh_health=False).get("status") or "").lower()=="active"
                             for aid in agents
                         )
-                    except (KeyError,ValueError):
+                    except (AgentRuntimeNotFound,KeyError,ValueError):
                         return False
                 wait_for(active_agents,"both authenticated daemons",timeout=40)
 
