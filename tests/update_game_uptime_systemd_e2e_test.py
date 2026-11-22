@@ -201,6 +201,79 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertFalse((fixture / "steps").exists())
         self._assert_unchanged(originals)
 
+        # #928 stage 2.3: the same verified release archive is also the
+        # BASELINE of a compatible *synthetic* candidate. Only presentation
+        # and fixture-version bytes differ, never Agent/systemd/supervisor.
+        # This derivative is not an authentic, releasable DSM package and
+        # cannot be used to authorize --no-drain on installed hosts.
+        import hashlib
+        checksum = output / (archive.name + ".sha256")
+        expected_hash, filename = checksum.read_text().strip().split()
+        self.assertEqual(filename, archive.name)
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),
+                         expected_hash)
+        real_tree = expanded / name
+        self.assertTrue((real_tree / "agents/linux/runtime/console_supervisor.py").is_file())
+        for mode, expected_version, expected_status in (
+            ("no_drain_success", "2.0.999-fixture", "verified"),
+            ("no_drain_fail_after_apply", "2.0.998-fixture", "rolled_back"),
+        ):
+            with self.subTest(stage="2.3", mode=mode):
+                workspace = self.workspace / ("real-package-compatible-" + mode)
+                workspace.mkdir(mode=0o700)
+                create_tiny_release_fixture(workspace)
+                installed = workspace / "installed"
+                candidate = workspace / "new-payload"
+                for root, fixture_version in (
+                    (installed, "2.0.998-fixture"),
+                    (candidate, "2.0.999-fixture"),
+                ):
+                    shutil.copytree(real_tree, root, dirs_exist_ok=True)
+                    (root / "version").write_text(fixture_version)
+                web = Path("dashboard/web/presentation.js")
+                original_web = (installed / web).read_bytes()
+                (candidate / web).write_bytes(
+                    original_web + b"\n// DSM928 fixture-only compatible presentation update\n"
+                )
+                impact = plan.analyze(installed, candidate)
+                self.assertEqual(impact["change_tier"],
+                                 "control_plane_restart_candidate")
+                self.assertFalse(impact["live_no_drain_authorized"])
+                fixture_signer().seal_test_fixture(workspace)
+                self._assert_unchanged(originals)
+                outcome = main_rehearsal(workspace, mode)
+                self.assertEqual(outcome.returncode,
+                                 0 if mode == "no_drain_success" else 2,
+                                 outcome.stderr[-1700:] + outcome.stdout[-800:])
+                self.assertEqual((installed / "version").read_text().strip(),
+                                 expected_version)
+                self.assertEqual(
+                    (installed / web).read_bytes(),
+                    (candidate / web).read_bytes()
+                    if mode == "no_drain_success" else original_web,
+                )
+                journal = json.loads((
+                    workspace / "dsm928-composite-journal/game-uptime-transaction.json"
+                ).read_text())
+                self.assertEqual(journal["status"], expected_status)
+                self.assertTrue(journal["strict_inventory"])
+                self.assertFalse(journal["live_no_drain_authorized"])
+                self.assertEqual(
+                    (installed / "runtime/hybrid-instance-storage/minecraft005"
+                     "/world/level.dat").read_bytes(), b"saved-world-private-test")
+                self.assertEqual(
+                    (installed / "runtime/artifact-transfers/job-001/upload.part"
+                     ).read_bytes(), b"in-flight-upload-private-test")
+                self.assertEqual(
+                    (installed / "runtime/hybrid-agent-state/backup-index/keep.txt"
+                     ).read_text(), "protected")
+                self.assertEqual(
+                    (installed / "data/database.txt").read_text(), "db durable")
+                self.assertEqual(len(list(
+                    (workspace / "backups").glob("*.tar.gz"))), 1)
+                self.assertFalse((workspace / "steps").exists())
+                self._assert_unchanged(originals)
+
     def test_two_systemd_processes_survive_actual_updater_main_and_failure_rollback(self):
         """Call actual update.sh main() with ONLY production-facing hooks stubbed."""
         originals = [self._start("main-alpha"), self._start("main-beta")]
