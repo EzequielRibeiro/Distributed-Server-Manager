@@ -226,24 +226,24 @@ class TwoAgentDaemonBootstrapTest(unittest.TestCase):
 
                 # Wait for real authenticated Agent heartbeats and ACKs.
                 # The next heartbeat interval leaves a window to crash Agent A.
-                def prepared_both():
-                    for aid,iid in zip(agents,instances):
-                        due=maintenance.snapshot(iid)["state"]["next_due_at"]
-                        item=native.for_instance_due(iid,due)
-                        if item is None or item.get("status")!="completed":
-                            return False
-                    return True
-                wait_for(prepared_both,"native ACK from both Agents")
+                def prepared(aid):
+                    iid=instances[agents.index(aid)]
+                    due=maintenance.snapshot(iid)["state"]["next_due_at"]
+                    item=native.for_instance_due(iid,due)
+                    return item is not None and item.get("status")=="completed"
 
                 first=agents[0]
-                # Crash/restart after native ACK. Agent-owned preparation history
-                # must survive, and neither game may have started prematurely.
+                # Kill A as soon as *its* native ACK is committed; waiting
+                # for B could allow A's next heartbeat to start the game.
+                wait_for(lambda:prepared(first),"native ACK from first Agent")
                 self.assertFalse(Path(configs[first]["state_file"]).exists(),
                                  "instance started before Agent crash gate")
                 workers[first].kill()
                 workers[first].wait(timeout=5)
                 logs[first].close()
                 spawn(first)
+
+                wait_for(lambda:prepared(agents[1]),"native ACK from second Agent")
 
                 def both_started():
                     return all(
