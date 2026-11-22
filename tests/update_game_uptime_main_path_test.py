@@ -330,5 +330,111 @@ class MainPathRehearsalTest(unittest.TestCase):
                     self.assertIn("restore-database-stub", steps)
 
 
+    def test_independently_signed_release_provenance_is_not_update_approval(self):
+        """#928: real RSA verification, but test keys can NEVER authorize live no-drain."""
+        import hashlib
+        import io
+        import tarfile
+
+        loader = SourceFileLoader(
+            "dsm928_signed_release_identity",
+            str(ROOT / "update-manager/game-uptime-release-provenance.py"),
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        verifier = importlib.util.module_from_spec(spec)
+        loader.exec_module(verifier)
+
+        commit = "a" * 40
+        version = "2.0.133-rc.7"
+        name = "capivara-dsm-" + version
+        archive = self.root / (name + ".tar.gz")
+        manifest = self.root / (name + ".manifest.json")
+        statement = self.root / (name + ".provenance.json")
+        signature = self.root / (name + ".provenance.sig")
+        private = self.root / "release-test-private.pem"
+        public = self.root / "release-test-public.pem"
+
+        release_manifest = {
+            "kind": "CapivaraReleaseManifest",
+            "schema_version": 1,
+            "name": "capivara-dsm",
+            "version": version,
+            "git_commit": commit,
+            "archive": archive.name,
+            "file_count": 2,
+        }
+        manifest_bytes = (json.dumps(release_manifest, sort_keys=True,
+                                     indent=2) + "\n").encode("utf-8")
+        manifest.write_bytes(manifest_bytes)
+        with tarfile.open(archive, "w:gz") as package:
+            member = tarfile.TarInfo(name + "/release-manifest.json")
+            member.size = len(manifest_bytes)
+            package.addfile(member, io.BytesIO(manifest_bytes))
+
+        signed_body = {
+            "kind": "CapivaraDSMReleaseProvenance",
+            "schema_version": 1,
+            "repository": "EzequielRibeiro/Distributed-Server-Manager",
+            "git_commit": commit,
+            "version": version,
+            "archive": archive.name,
+            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        }
+        statement.write_text(json.dumps(
+            signed_body, sort_keys=True, separators=(",", ":")) + "\n")
+        subprocess.run(
+            ("openssl", "genpkey", "-algorithm", "RSA",
+             "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)),
+            check=True, capture_output=True, timeout=30,
+        )
+        subprocess.run(
+            ("openssl", "pkey", "-in", str(private),
+             "-pubout", "-out", str(public)),
+            check=True, capture_output=True, timeout=15,
+        )
+        subprocess.run(
+            ("openssl", "dgst", "-sha256", "-sign", str(private),
+             "-out", str(signature), str(statement)),
+            check=True, capture_output=True, timeout=15,
+        )
+
+        def verify(**kwargs):
+            return verifier.verify_signed_release(
+                archive, manifest, statement, signature,
+                expected_commit=kwargs.pop("expected_commit", commit),
+                trusted_public_key=public,
+                disposable_fixture=kwargs.pop("disposable_fixture", True),
+                **kwargs,
+            )
+
+        proven = verify()
+        self.assertTrue(proven["artifact_signature_verified"])
+        self.assertEqual(proven["scope"], "disposable_fixture_only")
+        self.assertFalse(proven["live_no_drain_authorized"])
+        self.assertFalse(proven["remote_agent_quiescence_acked"])
+        self.assertFalse(proven["external_jobs_acked"])
+
+        # A caller cannot turn a fixture key into the root-owned trust anchor.
+        with self.assertRaises(verifier.ReleaseProvenanceBlocked):
+            verify(disposable_fixture=False)
+        with self.assertRaises(verifier.ReleaseProvenanceBlocked):
+            verify(expected_commit="b" * 40)
+
+        # Integrity without the reviewable signature is insufficient.
+        original_signature = signature.read_bytes()
+        signature.write_bytes(b"x" * len(original_signature))
+        with self.assertRaises(verifier.ReleaseProvenanceBlocked):
+            verify()
+        signature.write_bytes(original_signature)
+
+        original_archive = archive.read_bytes()
+        archive.write_bytes(original_archive + b"tampered")
+        with self.assertRaises(verifier.ReleaseProvenanceBlocked):
+            verify()
+        archive.write_bytes(original_archive)
+        self.assertTrue(verify()["artifact_signature_verified"])
+
+
 if __name__ == "__main__":
     unittest.main()
