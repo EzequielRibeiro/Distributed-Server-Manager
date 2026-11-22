@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import stat
 from typing import Any
@@ -41,9 +42,21 @@ def _read_tree(root: Path, relative: str) -> tuple[ast.Module | None, str | None
         meta = path.lstat()
         if not stat.S_ISREG(meta.st_mode) or not (0 < meta.st_size <= _MAX_BYTES):
             return None, "invalid_source_file"
-        data = path.read_bytes()
-        if len(data) != meta.st_size:
-            return None, "changed_during_read"
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        fd = os.open(path, flags)
+        try:
+            actual = os.fstat(fd)
+            if (not stat.S_ISREG(actual.st_mode)
+                    or (actual.st_dev, actual.st_ino) != (meta.st_dev, meta.st_ino)
+                    or actual.st_size != meta.st_size):
+                return None, "changed_during_read"
+            with os.fdopen(fd, "rb", closefd=False) as reader:
+                data = reader.read(_MAX_BYTES + 1)
+            if len(data) != meta.st_size:
+                return None, "changed_during_read"
+        finally:
+            os.close(fd)
         return ast.parse(data, filename=relative), hashlib.sha256(data).hexdigest()
     except (OSError, SyntaxError, UnicodeError, ValueError):
         return None, "source_unreadable_or_invalid"
