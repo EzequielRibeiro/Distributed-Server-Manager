@@ -212,6 +212,42 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(filename, archive.name)
         self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),
                          expected_hash)
+        # Stage 2.5: check the real TAR with independently supplied commit,
+        # version and digest pins before using it as test baseline. This
+        # remains INTEGRITY ONLY, not a publisher signature/no-drain approval.
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import module_from_spec, spec_from_loader
+        verifier_path=ROOT / "update-manager/game-uptime-release-integrity.py"
+        verifier_spec=spec_from_loader(
+            "dsm928_pinned_release_integrity",
+            SourceFileLoader("dsm928_pinned_release_integrity",str(verifier_path)),
+        )
+        verifier=module_from_spec(verifier_spec)
+        verifier_spec.loader.exec_module(verifier)
+        commit=subprocess.check_output(
+            ("git","rev-parse","HEAD"),cwd=ROOT,text=True,
+        ).strip()
+        verified=verifier.verify_pinned_archive(
+            archive,expected_sha256=expected_hash,
+            expected_git_commit=commit,expected_version=version,
+        )
+        self.assertTrue(verified["checksum_matches_trusted_pin"])
+        self.assertTrue(verified["manifest_bound_to_commit"])
+        self.assertFalse(verified["release_origin_authenticated"])
+        self.assertFalse(verified["remote_agent_quiescence_acked"])
+        self.assertFalse(verified["live_no_drain_authorized"])
+        for changes in (
+            {"expected_sha256":"0"*64},
+            {"expected_git_commit":"0"*40},
+            {"expected_version":"0.0.0-test"},
+        ):
+            with self.subTest(stage="2.5",rejected_pin=tuple(changes)):
+                pins={"expected_sha256":expected_hash,
+                      "expected_git_commit":commit,
+                      "expected_version":version}
+                pins.update(changes)
+                with self.assertRaises(verifier.ReleaseIntegrityError):
+                    verifier.verify_pinned_archive(archive,**pins)
         # Stage 2.2 moved the extracted tree into the incompatible fixture.
         # Reuse that verified package instead of its now-empty old path.
         real_tree = fixture / "new-payload"
