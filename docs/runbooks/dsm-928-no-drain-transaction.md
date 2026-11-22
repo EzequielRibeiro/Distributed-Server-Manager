@@ -1438,3 +1438,47 @@ do lease. `DSM928_AGENT_PRIVILEGED_FLOCK` permanece **off** por padrão;
 não ligar em Horizon/VPS antes da homologação operacional. `update.sh
 --no-drain` continua somente diagnóstico/exit 2, issue #928 aberta e
 release bloqueado.
+
+
+## Etapa 2 — operações root de backup e firewall no mesmo fence em voo (21/11/2026)
+
+Foram adicionados **três entrypoints privilegiados** ao mecanismo opt-in já
+adotado por `materialize_instance.py` e `native_command.py`:
+`create_instance_backup.py`, `restore_instance_backup.py` e
+`reconcile_firewall.py`. Os cinco processos root compartilham **um único
+inode**, `/run/capivara-dsm/agent-privileged-operations.lock`,
+protegido por `flock(LOCK_SH|LOCK_NB)` durante toda a função `run()`.
+O coordenador só consegue adquirir `LOCK_EX|LOCK_NB` quando nenhum dos
+cinco *pais de helpers instrumentados e com opt-in ativo* está executando.
+O diagnóstico de posse EX passou a nomear cinco funções, mantendo todos
+os flags de ACK e autorização em **false**.
+
+O leitor root-owned de hold/journal pendente é consultado **antes** de ler
+o request ou iniciar `backup_client`, restauração de world/save ou
+`reconcile_ufw`. Sob hold ativo/inválido/ilegível/journal pendente, novas
+operações de backup e firewall são recusadas. No reconciliador firewall,
+o comportamento anterior de produzir resultado de falha é preservado;
+um lock EX já ocupado impede a execução antes da criação de side effects.
+A ausência comprovada de hold, com
+`DSM928_AGENT_PRIVILEGED_FLOCK` desligada (padrão), conserva o fluxo
+existente. Não foram alterados serviços systemd, portas, ACLs ou
+arquivos de jogo.
+
+A prova **agrupada** em
+`tests/update_game_uptime_privileged_helpers_test.py` carrega as três
+funções reais com mocks de leitura/resultado, confirma bloqueio antes
+do request, mantém cada helper em voo e usa um **segundo PID Python**
+para provar que a posse exclusiva é recusada. Quando EX já está em
+posse, todos os três são negados antes de I/O; inode adulterado é
+recusado. Os testes de backup, firewall, runtime e rollback existentes
+continuam aplicáveis, sem criar cópias da bateria de PIDs.
+
+**Limite essencial:** o lock não atesta jobs não instrumentados,
+filhos destacados, estados do Supervisor, backup em threads do Agent
+ou Agents remotos; nem prova que todos os processos foram atualizados
+e receberam a flag opt-in. `game_uptime_privileged_journal_witness`
+continua somente diagnóstico local e
+`all_helper_processes_opted_in_verified=false`. A flag permanece
+desativada por padrão e não foi ligada a installer/updater/serviços;
+`update.sh --no-drain` segue bloqueado (exit 2), a issue #928 aberta,
+release #1096 Draft. Não houve deploy/restart de produção.
