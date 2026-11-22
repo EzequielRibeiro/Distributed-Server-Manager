@@ -370,6 +370,61 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             )
             self.assertFalse(received["remote_agent_quiescence_acked"])
             self.assertFalse(received["live_no_drain_authorized"])
+            # Reuse this credentialed HTTP/SQLite fixture for the complete
+            # host-set correlation. Even one valid, matching Agent remains
+            # receipt-only; duplicates, omissions and tampering fail closed.
+            from game_uptime_remote_fence_evidence import (
+                correlate_authenticated_fence_receipts,
+            )
+            from copy import deepcopy
+            envelope = {
+                "authenticated_agent_id": self.agent_id,
+                "receipt": received["no_drain_fence_receipt"],
+            }
+            def correlate(rows, agent_ids=None):
+                return correlate_authenticated_fence_receipts(
+                    [self.agent_id] if agent_ids is None else agent_ids,
+                    rows, transaction_id=hold["transaction_id"], now=when,
+                )
+            valid = correlate([envelope])
+            self.assertTrue(valid["receipt_set_correlated"])
+            self.assertEqual(
+                valid["status"],
+                "all_authenticated_wire_receipts_correlated_not_quiesced",
+            )
+            for flag in (
+                "installed_process_identity_verified",
+                "all_runtime_flags_verified",
+                "all_external_jobs_inventoried",
+                "external_jobs_acked",
+                "remote_agents_acked",
+                "remote_agent_quiescence_acked",
+                "live_no_drain_authorized",
+            ):
+                self.assertIs(valid[flag], False)
+            for sample in (
+                [],
+                [envelope, envelope],
+                [{"authenticated_agent_id": "different-agent",
+                  "receipt": envelope["receipt"]}],
+                [{"authenticated_agent_id": self.agent_id, "receipt": {
+                    **deepcopy(envelope["receipt"]),
+                    "transaction_id": "f" * 32,
+                }}],
+                [{"authenticated_agent_id": self.agent_id, "receipt": {
+                    **deepcopy(envelope["receipt"]),
+                    "remote_agent_quiescence_acked": True,
+                }}],
+            ):
+                with self.subTest(sample=sample):
+                    blocked = correlate(sample)
+                    self.assertEqual(blocked["status"], "blocked")
+                    self.assertFalse(blocked["receipt_set_correlated"])
+                    self.assertFalse(blocked["live_no_drain_authorized"])
+            self.assertEqual(
+                correlate([envelope], [self.agent_id, "expected-other"])[
+                    "status"], "blocked",
+            )
             code, denied = self._request(
                 {"no_drain_fence_evidence": evidence}, secret="bad-secret")
             self.assertEqual(code, 401, denied)
