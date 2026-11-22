@@ -146,5 +146,128 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertTrue(self.observation()["active"])
 
 
+    def test_root_journal_and_privileged_exclusive_witness_is_local_and_negative(self):
+        """Grouped read-only lease proof; EX refuses in-flight parent helper.
+
+        Uses only a temporary durable journal, temporary /run marker and
+        temporary flock witness. No real root, service, Agent or update.
+        """
+        import json
+        from game_uptime_privileged_flock import (
+            provision_privileged_helper_lock, shared_privileged_helper_lock,
+        )
+        from game_uptime_privileged_journal_witness import (
+            PrivilegedJournalWitnessBlocked, local_privileged_journal_witness,
+        )
+
+        directory = self.run / "helper-locks"
+        directory.mkdir(mode=0o755)
+        inode = directory / "agent-privileged-operations.lock"
+        provision_privileged_helper_lock(path=inode, trusted_uid=self.uid)
+        self.prepare()
+
+        def fence(**kwargs):
+            values = {
+                "expected_transaction_id": self.tx,
+                "hold_path": self.marker,
+                "journal_path": self.journal,
+                "lock_path": inode,
+                "trusted_uid": self.uid,
+                "now": 1700000010,
+            }
+            values.update(kwargs)
+            return local_privileged_journal_witness(**values)
+
+        before_marker = self.marker.read_bytes()
+        before_journal = self.journal.read_bytes()
+        with fence() as evidence:
+            self.assertEqual(evidence["transaction_id"], self.tx)
+            self.assertTrue(evidence["journal_lease_matched_locally"])
+            for key in (
+                "all_helper_processes_opted_in_verified",
+                "privileged_helper_acked", "controller_http_acked",
+                "external_jobs_acked", "remote_agents_acked",
+                "live_no_drain_authorized",
+            ):
+                self.assertIs(evidence[key], False)
+            # A writer that arrived later must be refused while EX is held.
+            from game_uptime_privileged_flock import PrivilegedHelperFenceUnavailable
+            with self.assertRaises(PrivilegedHelperFenceUnavailable):
+                with shared_privileged_helper_lock(
+                    path=inode, trusted_uid=self.uid, enabled=True):
+                    self.fail("EX cannot permit a new helper")
+
+        self.assertEqual(self.marker.read_bytes(), before_marker)
+        self.assertEqual(self.journal.read_bytes(), before_journal)
+
+        # The same SH held by an already-admitted helper denies EX even if
+        # the journal and hold are otherwise valid. No positive fallback.
+        with shared_privileged_helper_lock(
+                path=inode, trusted_uid=self.uid, enabled=True):
+            with self.assertRaisesRegex(
+                    PrivilegedJournalWitnessBlocked,
+                    "privileged_helper_lock_not_exclusively_available"):
+                with fence():
+                    self.fail("local EX must not bypass an in-flight helper")
+
+        for values in (
+            {"expected_transaction_id": "f" * 32},
+            {"now": 1700001000},   # lease expired
+            {"expected_transaction_id": "bad"},
+        ):
+            with self.subTest(values=values):
+                with self.assertRaises(PrivilegedJournalWitnessBlocked):
+                    with fence(**values):
+                        self.fail("mismatched transaction/lease cannot authorize")
+
+        # A well-formed marker alone is not sufficient: durable pending
+        # evidence must match byte-for-byte contract fields and ownership.
+        original = self.journal.read_bytes()
+        pending = json.loads(original)
+        pending["transaction_id"] = "f" * 32
+        self.journal.write_text(json.dumps(pending), encoding="utf-8")
+        self.journal.chmod(0o600)
+        try:
+            with self.assertRaises(PrivilegedJournalWitnessBlocked):
+                with fence():
+                    self.fail("cross-transaction journal mismatch")
+        finally:
+            self.journal.write_bytes(original)
+            self.journal.chmod(0o600)
+
+        # An active observer must detect evidence modified *during* EX
+        # before emitting a completed local observation.
+        with self.assertRaisesRegex(
+                PrivilegedJournalWitnessBlocked, "root_hold_pending_lease_mismatch"):
+            with fence():
+                pending = json.loads(original)
+                pending["expires_at"] -= 1
+                self.journal.write_text(json.dumps(pending), encoding="utf-8")
+                self.journal.chmod(0o600)
+        self.journal.write_bytes(original)
+        self.journal.chmod(0o600)
+
+        # The path must never be followed through a symlink to arbitrary
+        # root-readable files, even if it contains a valid journal.
+        destination = self.state / "protected-target.json"
+        destination.write_bytes(original)
+        destination.chmod(0o600)
+        self.journal.unlink()
+        self.journal.symlink_to(destination)
+        try:
+            with self.assertRaises(PrivilegedJournalWitnessBlocked):
+                with fence():
+                    self.fail("unsafe journal symlink")
+            self.assertEqual(destination.read_bytes(), original)
+        finally:
+            self.journal.unlink()
+            self.journal.write_bytes(original)
+            self.journal.chmod(0o600)
+
+        self.assertEqual(self.marker.read_bytes(), before_marker)
+        with fence() as evidence:
+            self.assertFalse(evidence["live_no_drain_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()
