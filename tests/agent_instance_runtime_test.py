@@ -300,6 +300,8 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         self.assertEqual(second["native_restart_state"]["status"], "completed")
         self.assertEqual(second["instance_command"]["command_id"], start["command_id"])
         self.assertEqual(second["instance_command"]["action"], "start")
+        self.assertEqual(second["instance_command"]["native_bootstrap"]["command_id"], prepared["command_id"])
+        self.assertEqual(second["instance_command"]["native_bootstrap"]["due_at"], prepared["due_at"])
 
     def test_result_flush_acknowledges_without_delivering_next_command(self):
         created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="restart")
