@@ -26,12 +26,23 @@ class DayZNativeRestartAgentParityTest(unittest.TestCase):
             self.assertIn("materialize_shutdown_messages_xml", source)
             self.assertIn("get_instance", source)
             self.assertIn("require_stopped_instance", source)
+            self.assertIn("read_history", source)
             self.assertIn("runtime_operation", source)
             self.assertIn("instance belongs to another Agent", source)
             self.assertIn("native restart command requires DayZ instance", source)
 
             self.assertNotIn("shell=True", source)
             self.assertNotIn("os.system(", source)
+
+    def test_agent_start_rechecks_prepared_mission_and_xml(self):
+        for relative in (
+            "agents/linux/runtime/instance_runtime.py",
+            "agents/windows/runtime/instance_runtime.py",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertIn("require_prepared_start", text)
+            self.assertIn("native_bootstrap", text)
+            self.assertIn("read_history", text)
 
     def test_controller_payload_is_generic_and_remains_pathless(self):
         source = (
