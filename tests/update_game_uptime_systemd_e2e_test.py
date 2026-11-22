@@ -520,6 +520,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             self.assertFalse(details["live_no_drain_authorized"])
             self.assertEqual(details["agent_id"], agent_fixture.controller.agent_id)
             self.assertEqual(details["health_status"], "online")
+            self.assertEqual(details["agent_source_path"],
+                             str((runtime_source_root / "agents/linux/runtime/agent.py").resolve()))
             self._assert_unchanged(original_games)
 
         current = {
