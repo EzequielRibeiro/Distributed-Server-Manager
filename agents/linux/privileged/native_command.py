@@ -32,7 +32,9 @@ for value in (
         )
 
 import instance_runtime
-from game_uptime_privileged_admission import require_privileged_mutation_admission
+from game_uptime_privileged_admission import (
+    require_privileged_mutation_admission, fence_privileged_helper_run,
+)
 from minecraft_rcon_secret import (
     MinecraftRconSecretError,
     read_password,
@@ -299,6 +301,7 @@ def _minecraft_rcon(
     )
 
 
+@fence_privileged_helper_run
 def run(
     command_id: str,
 ) -> dict[str, Any]:

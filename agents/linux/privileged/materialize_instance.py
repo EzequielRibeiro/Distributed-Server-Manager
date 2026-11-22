@@ -29,6 +29,7 @@ from materializers import resolve_materializer
 from runtime_spec import validate_runtime_spec
 from game_uptime_privileged_admission import (
     require_privileged_mutation_admission, privileged_mutation_blocked,
+    fence_privileged_helper_run, shared_privileged_helper_lock,
 )
 from storage_pools import resolve_storage_pool
 
@@ -1478,6 +1479,7 @@ def _apply_dayz_battleye_private(spec: dict[str, Any], config: dict[str, Any], m
             "idempotent":False,"runtime_spec_persisted":True}
 
 
+@fence_privileged_helper_run
 def run(instance_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged materializer helper must run as root")
@@ -1604,17 +1606,19 @@ def main() -> int:
         return 0
     except Exception as exc:
         try:
-            request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
-            request = json.loads(request_path.read_text(encoding="utf-8"))
-            # Do not run the legacy ACL repair while a maintenance hold
-            # blocks the original privileged operation.
-            if (str(request.get("action") or "").strip().lower() == "apply"
-                    and not privileged_mutation_blocked()):
-                config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-                local_agent_id = str(config.get("agent_id") or "").strip()
-                spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
-                if spec.get("instance_id") == _token(instance_id):
-                    _grant_customer_files_access(spec)
+            # ACL fallback is itself a privileged mutation. It must hold
+            # the same optional witness for its entire lifetime; a failed
+            # shared acquisition may never fall back to unfenced repair.
+            with shared_privileged_helper_lock():
+                if not privileged_mutation_blocked():
+                    request_path = REQUEST_ROOT / f"{_token(instance_id)}.request.json"
+                    request = json.loads(request_path.read_text(encoding="utf-8"))
+                    if str(request.get("action") or "").strip().lower() == "apply":
+                        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+                        local_agent_id = str(config.get("agent_id") or "").strip()
+                        spec = validate_runtime_spec(request.get("spec"), expected_agent_id=local_agent_id)
+                        if spec.get("instance_id") == _token(instance_id):
+                            _grant_customer_files_access(spec)
         except Exception:
             pass
         _write_result(result_path, {"status": "failed", "instance_id": instance_id, "error": str(exc)[:2000]})

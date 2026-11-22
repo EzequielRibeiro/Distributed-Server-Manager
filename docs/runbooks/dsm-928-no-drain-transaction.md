@@ -1339,3 +1339,56 @@ admitida antes de surgir o hold pode continuar. Não considerar quiescência
 ou autorização de atualização sem drenagem; #928 OPEN,
 `live_no_drain_authorized=false`, `update.sh --no-drain` exit 2,
 release #1096 Draft.
+
+
+## Etapa 2 — rastreio de operações em voo dos dois helpers privilegiados (21/11/2026)
+
+Depois da PR #1139, `materialize_instance.py` e `native_command.py`
+já recusavam **novas admissões** sob hold/journal. Esta alteração acrescenta
+um mecanismo separado de **trava interprocessos**, ainda opt-in, cobrindo a
+duração completa da função `run()` de ambos os helpers, e não apenas a
+verificação inicial.
+
+`agents/linux/runtime/game_uptime_privileged_flock.py` usa um inode fixo
+`/run/capivara-dsm/agent-privileged-operations.lock` fora da árvore
+substituída do Agent. O contexto `shared_privileged_helper_lock()` mantém
+`flock(LOCK_SH|LOCK_NB)` até o fim da operação ou exceção. O futuro
+coordenador root pode exigir `LOCK_EX|LOCK_NB` para comprovar que **os dois
+tipos de helpers instrumentados** não estão em execução no host e bloquear
+novas chamadas opt-in durante a posse exclusiva. A identidade do inode é
+verificada com `O_NOFOLLOW`, proprietário, grupo, modo `0600`,
+`nlink=1`, tamanho zero, inode/dispositivo estáveis e pais root-owned sem
+escrita por terceiros. A função de preparação idempotente cria somente inode
+ausente e **não substitui, limpa ou repara** artefatos existentes inseguros.
+
+O recurso depende **explicitamente** de
+`DSM928_AGENT_PRIVILEGED_FLOCK=1`. Ele permanece **desativado por padrão**
+e o provisionador **não é chamado por installer, updater ou systemd**.
+Sob opt-in, arquivo ausente, inseguro ou ocupado falha fechado antes de
+ler requisição/configuração ou executar ações de jogo. O main de erro do
+materializador também exige uma trava SH durante a possível correção de
+ACL, além do leitor de hold; um EX ocupado impede essa mutação de recuperação.
+A emissão de um resultado diagnóstico de falha permanece permitida.
+
+A prova agrupada da suíte
+`tests/update_game_uptime_privileged_helpers_test.py` carrega as **duas
+funções `run()` reais**, sem executar ações externas; cada uma é
+suspensa antes de ler o request, enquanto um **segundo PID Python** tenta
+adquirir EX e é recusado. Após terminar cada operação, o EX passa.
+Um EX mantido pelo teste rejeita novas invocações dos dois helpers e impede
+a recuperação de ACL; inode adulterado é recusado. Todos os arquivos e
+processos são temporários. Os testes de permissões, PIDs e rollback já
+existentes não foram duplicados.
+
+**Limitações decisivas:** a posse EX cobre somente esses dois pontos de
+entrada **e apenas se todos os processos instrumentados tiverem o opt-in
+habilitado previamente**. Subprocessos que continuem após a saída da
+função pai, jobs disparados por outros caminhos, serviços privilegiados
+adicionais, threads do Agent, Controller/Worker e outros hosts seguem fora
+da barreira. O lock usa `O_CLOEXEC` e não pretende representar a duração
+de processos filhos destacados. O exclusivo retorna obrigatoriamente
+`privileged_helper_acked=false`, `external_jobs_acked=false`,
+`remote_agents_acked=false` e `live_no_drain_authorized=false`.
+Não é um lease distribuído, não cria/renova/recupera journal e não
+habilita `update.sh --no-drain`. A issue #928 segue aberta, Etapa 2
+parcial e release bloqueado. Nenhum host em produção foi modificado.
