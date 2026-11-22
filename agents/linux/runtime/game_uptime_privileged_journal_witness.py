@@ -158,3 +158,74 @@ def local_privileged_journal_witness(
     except PrivilegedHelperFenceUnavailable as exc:
         raise PrivilegedJournalWitnessBlocked(
             "privileged_helper_lock_not_exclusively_available") from exc
+
+
+
+@contextmanager
+def local_privileged_and_finalization_journal_witness(
+    *, expected_transaction_id: str,
+    hold_path: Path = HOLD_PATH, journal_path: Path = PENDING_PATH,
+    privileged_lock_path: Path = LOCK_PATH,
+    finalization_lock_path: Path | None = None,
+    trusted_uid: int = 0, finalization_group_gid: int | None = None,
+    now: int | None = None,
+) -> Iterator[dict[str, object]]:
+    """Witness TWO local in-flight lock families under the SAME journal lease.
+
+    Retain the finalization EX while the existing privileged-helper witness
+    acquires EX, checks the root-owned hold/pending journal, yields, and
+    rechecks the journal before exit. Neither lock is created or repaired.
+    A free lock cannot attest that every process enabled its opt-in flag.
+    """
+    from game_uptime_finalization_flock import (
+        LOCK_PATH as FINALIZATION_LOCK_PATH,
+        FinalizationFenceUnavailable, exclusive_finalization_lock,
+    )
+
+    child_lock = Path(
+        FINALIZATION_LOCK_PATH if finalization_lock_path is None
+        else finalization_lock_path
+    )
+    privileged = Path(privileged_lock_path)
+    marker, pending = Path(hold_path), Path(journal_path)
+    if (not child_lock.is_absolute()
+            or child_lock in (privileged, marker, pending)
+            or type(trusted_uid) is not int
+            or (child_lock == FINALIZATION_LOCK_PATH
+                and finalization_group_gid is not None)
+            or (child_lock != FINALIZATION_LOCK_PATH
+                and type(finalization_group_gid) is not int)):
+        raise PrivilegedJournalWitnessBlocked(
+            "finalization_witness_paths_or_identity_invalid"
+        )
+
+    # Installed lock identities are fixed inside the finalization module.
+    # Test-only paths carry explicit UID/GID and do not bypass its checks.
+    identity = (
+        {} if child_lock == FINALIZATION_LOCK_PATH else
+        {"trusted_uid": trusted_uid, "group_gid": finalization_group_gid}
+    )
+    try:
+        with exclusive_finalization_lock(path=child_lock, **identity):
+            with local_privileged_journal_witness(
+                expected_transaction_id=expected_transaction_id,
+                hold_path=marker,
+                journal_path=pending,
+                lock_path=privileged,
+                trusted_uid=trusted_uid,
+                now=now,
+            ) as helper:
+                yield {
+                    **helper,
+                    "status": "root_journal_two_lock_families_observed_local_only",
+                    "scope": "cooperating_helper_parents_and_finalization_children_one_host_only",
+                    "finalization_child_lock_exclusive": True,
+                    "all_finalization_children_opted_in_verified": False,
+                    "external_jobs_acked": False,
+                    "remote_agents_acked": False,
+                    "live_no_drain_authorized": False,
+                }
+    except FinalizationFenceUnavailable as exc:
+        raise PrivilegedJournalWitnessBlocked(
+            "finalization_child_lock_not_exclusively_available"
+        ) from exc
