@@ -26,7 +26,7 @@ PRIVILEGED = {
     "reconcile_runtime_identity.py": "reconcile",
 }
 NONCOOPERATING = {
-    "uninstall_agent.py": "destructive_uninstall_and_detached_finalizer_unfenced",
+    "uninstall_agent.py": "detached_uninstall_finalizer_runtime_coverage_unverified",
 }
 READ_ONLY = {"console_journal_reader.py"}
 CHILD_PATH = "agents/linux/runtime/minecraft_serverpack_finalization_worker.py"
@@ -135,15 +135,24 @@ def assess(source_root: Path) -> dict[str, Any]:
 
     for filename, reason in NONCOOPERATING.items():
         tree, fingerprint = _read_tree(root, f"{_PRIVILEGED}/{filename}")
+        main = _named(tree, "main")
+        admitted = bool(
+            _decorated(main, "fence_privileged_helper_run")
+            and _call_found(main, "require_privileged_mutation_admission")
+        )
         records.append({
             "entrypoint": f"{filename}:main",
-            "source_guard_markers_found": False,
+            "source_guard_markers_found": admitted,
             "source_sha256": fingerprint if tree is not None else None,
             "runtime_opt_in_verified": False,
             "in_flight_quiescence_verified": False,
             "reason": reason,
         })
+        # Even with source admission, an already scheduled detached child
+        # cannot be attested by markers in the parent. Always stay negative.
         blockers.append(reason)
+        if not admitted:
+            blockers.append(f"missing_source_guard:{filename}:main")
         if tree is None:
             blockers.append(f"missing_privileged_source:{filename}")
 
