@@ -6,6 +6,7 @@ from typing import Any,Mapping
 from core.maintenance_platform import normalize_capabilities,normalize_policy
 from customer_instance_workspace_service import CustomerInstanceWorkspaceService
 from maintenance_repository import MaintenanceRepository
+from dayz_native_restart_repository import DayZNativeRestartRepository
 from runtime_workspace_catalog import runtime_workspace_capabilities
 
 _POLICY_FIELDS=frozenset({"enabled","schedule_mode","timezone","weekdays","start_time","interval_seconds","warning_offsets_seconds","warning_template","broadcast_enabled","coalesce_updates"})
@@ -18,6 +19,16 @@ def _run_view(run:Mapping[str,Any])->dict[str,Any]:
   if not isinstance(item,Mapping):continue
   pending.append({key:item.get(key) for key in ("kind","ref","available_version","desired_revision","status","error") if item.get(key) is not None})
  return {key:run.get(key) for key in ("run_id","due_at","status","stage","error_code","error_detail","created_at","started_at","completed_at")}|{"warnings_sent":list(run.get("warnings_sent") or []),"pending_work":pending}
+
+
+def _native_preparation_state(preparation:Mapping[str,Any]|None)->str:
+ """Presentation only: an XML ACK never proves the DayZ loaded a countdown."""
+ if preparation is None:return "bootstrap_required"
+ status=str(preparation.get("status") or "").strip().lower()
+ if status in {"queued","delivered"}:return "preparing"
+ if status=="completed":return "configuration_prepared"
+ if status=="failed":return "preparation_failed"
+ return "status_unavailable"
 
 
 class CustomerMaintenanceWorkspaceService:
@@ -35,7 +46,17 @@ class CustomerMaintenanceWorkspaceService:
    configured=False;snapshot={"policy":normalize_policy({}),"state":None,"runs":[]}
   policy=normalize_policy(snapshot.get("policy") if isinstance(snapshot.get("policy"),Mapping) else {})
   state=snapshot.get("state") if isinstance(snapshot.get("state"),Mapping) else {}
-  return {"instance_id":str(instance_id),"configured":configured,"editable":self._editable(user,instance_id),"policy":policy,"capabilities":caps,"state":{"next_due_at":state.get("next_due_at"),"last_started_at":state.get("last_started_at"),"last_completed_at":state.get("last_completed_at"),"last_error":state.get("last_error"),"active":bool(state.get("active_run_id"))},"runs":[_run_view(run) for run in (snapshot.get("runs") or [])[:10] if isinstance(run,Mapping)]}
+  native_state=None
+  if policy["enabled"] and caps["native_countdown"]:
+   due=state.get("next_due_at")
+   if not due:native_state="schedule_unavailable"
+   else:
+    try:
+     preparation=DayZNativeRestartRepository(self.backend).for_instance_due(instance_id,due)
+     native_state=_native_preparation_state(preparation)
+    except (ValueError,TypeError,KeyError,RuntimeError):
+     native_state="status_unavailable"
+  return {"instance_id":str(instance_id),"configured":configured,"editable":self._editable(user,instance_id),"policy":policy,"capabilities":caps,"state":{"next_due_at":state.get("next_due_at"),"last_started_at":state.get("last_started_at"),"last_completed_at":state.get("last_completed_at"),"last_error":state.get("last_error"),"active":bool(state.get("active_run_id")),"native_preparation_state":native_state},"runs":[_run_view(run) for run in (snapshot.get("runs") or [])[:10] if isinstance(run,Mapping)]}
  def save(self,user,instance_id:str,body:Mapping[str,Any]|None)->dict[str,Any]:
   self.workspace.require(user,instance_id,"instance.restart");self.workspace.require(user,instance_id,"settings.write");_,caps=self._context_capabilities(user,instance_id,"instance.view")
   if not isinstance(body,Mapping):raise ValueError("maintenance policy must be an object")
