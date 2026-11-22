@@ -232,6 +232,13 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 ):
                     shutil.copytree(real_tree, root, dirs_exist_ok=True)
                     (root / "version").write_text(fixture_version)
+                # A durable database file belongs to the protected fixture
+                # state, not to release impact. Mirror its metadata in the
+                # candidate as the existing compatible harness already does.
+                target_db = candidate / "data/database.txt"
+                target_db.parent.mkdir(parents=True, exist_ok=True)
+                target_db.write_bytes(
+                    (installed / "data/database.txt").read_bytes())
                 web = Path("dashboard/web/presentation.js")
                 original_web = (installed / web).read_bytes()
                 (candidate / web).write_bytes(
