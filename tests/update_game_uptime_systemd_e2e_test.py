@@ -411,18 +411,23 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
         ping = f"http://127.0.0.1:{port}/ping"
-        pythonpath = os.pathsep.join(str(p) for p in (
-            ROOT, ROOT / "database", ROOT / "dashboard",
-            ROOT / "core", ROOT / "agents/linux/runtime",
-        ))
-        common = (
-            f"--setenv=DSM_ROOT={root}",
-            f"--setenv=DSM_DATABASE={agent_fixture.controller.db_path}",
-            "--setenv=DSM_DATABASE_DRIVER=sqlite",
-            f"--setenv=PYTHONPATH={pythonpath}",
-        )
+        # Switch to the actually installed package source for the 2.4
+        # integrated rehearsal. Earlier 2.1–2.3 coverage uses checkout code.
+        runtime_source_root = ROOT
 
         def start_control(role, generation):
+            pythonpath = os.pathsep.join(str(p) for p in (
+                runtime_source_root, runtime_source_root / "database",
+                runtime_source_root / "dashboard", runtime_source_root / "core",
+                runtime_source_root / "agents/linux/runtime",
+            ))
+            common = (
+                f"--setenv=DSM_ROOT={root}",
+                f"--setenv=DSM_DATABASE={agent_fixture.controller.db_path}",
+                "--setenv=DSM_DATABASE_DRIVER=sqlite",
+                "--setenv=PYTHONDONTWRITEBYTECODE=1",
+                f"--setenv=PYTHONPATH={pythonpath}",
+            )
             unit = f"{self.prefix}-{role}-{generation}.service"
             args = ["systemd-run", "--unit", unit[:-8], "--collect",
                     "--property=Type=simple",
@@ -438,13 +443,13 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     "--setenv=DASHBOARD_HOST=127.0.0.1",
                     f"--setenv=DASHBOARD_PORT={port}",
                     # Canonical systemd/dsm-dashboard.service ExecStart.
-                    sys.executable, str(ROOT / "dashboard/server_part22.py"),
+                    sys.executable, str(runtime_source_root / "dashboard/server_part22.py"),
                 ))
             else:
                 args.extend((
                     "--setenv=DSM_HYBRID_HEARTBEAT_SECONDS=10",
                     sys.executable,
-                    str(ROOT / "dashboard/workers/hybrid_agent_worker.py"),
+                    str(runtime_source_root / "dashboard/workers/hybrid_agent_worker.py"),
                 ))
             self._run(*args)
             self.units.append(unit)
@@ -482,8 +487,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             for entry in control.values():
                 self.assertEqual(self._snapshot(entry["unit"]), entry)
                 cmdline = (Path("/proc") / str(entry["pid"]) / "cmdline").read_bytes()
-                self.assertIn(b"hybrid_agent_worker.py" if "worker" in entry["unit"]
-                              else b"dashboard/server_part22.py", cmdline)
+                expected_path = (runtime_source_root / "dashboard/workers/hybrid_agent_worker.py"
+                                 if "worker" in entry["unit"]
+                                 else runtime_source_root / "dashboard/server_part22.py")
+                self.assertIn(os.fsencode(str(expected_path)), cmdline)
             with urlopen(ping, timeout=2) as response:
                 self.assertEqual(response.status, 200)
                 self.assertEqual(json.loads(response.read())["status"], "ok")
@@ -496,7 +503,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             # Keep this phase telemetry-only: new Controller enrollment can
             # return an operational Doctor command, which must never be
             # executed by an isolated update acceptance test.
-            result = agent_fixture.invoke(invalid_secret=rejected, read_only=True)
+            result = agent_fixture.invoke(
+                invalid_secret=rejected, read_only=True,
+                source_root=runtime_source_root if runtime_source_root != ROOT else None,
+            )
             if rejected:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Controller rejected request (401)",
@@ -510,6 +520,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             self.assertFalse(details["live_no_drain_authorized"])
             self.assertEqual(details["agent_id"], agent_fixture.controller.agent_id)
             self.assertEqual(details["health_status"], "online")
+            self.assertEqual(details["agent_source_path"],
+                             str((runtime_source_root / "agents/linux/runtime/agent.py").resolve()))
             self._assert_unchanged(original_games)
 
         current = {
@@ -561,6 +573,136 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
 
         self.assertFalse((root / "runtime/hybrid-agent-state/agent.json").exists())
         self.assertFalse(Path("/opt/dsm/runtime/hybrid-instance-storage").exists())
+
+        # #928 stage 2.4: run the genuine packaged Controller/Worker/Agent
+        # source through the existing systemd+HTTP rehearsal, instead of
+        # executing checkout code detached from the update under test.
+        # Only protected fixture state and disposable units can be mutated.
+        import hashlib
+        import tarfile
+        from update_game_uptime_main_path_test import fixture_signer
+        from update_game_uptime_real_update_functions_test import create_tiny_release_fixture
+
+        output = self.workspace / "integrated-release-artifact"
+        output.mkdir()
+        build = subprocess.run(
+            ("bash", str(ROOT / "release/build_release.sh"), "HEAD", str(output)),
+            text=True, capture_output=True, timeout=150, check=False,
+        )
+        self.assertEqual(build.returncode, 0,
+                         build.stderr[-1500:] + build.stdout[-800:])
+        version = (ROOT / "version").read_text().strip()
+        name = "capivara-dsm-" + version
+        archive = output / (name + ".tar.gz")
+        sha_path = output / (archive.name + ".sha256")
+        digest, filename = sha_path.read_text().strip().split()
+        self.assertEqual(filename, archive.name)
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), digest)
+        unpack = self.workspace / "integrated-release-unpacked"
+        unpack.mkdir()
+        with tarfile.open(archive, "r:gz") as package:
+            package.extractall(unpack, filter="data")
+        release_source = unpack / name
+        for required in ("dashboard/server_part22.py",
+                         "dashboard/workers/hybrid_agent_worker.py",
+                         "agents/linux/runtime/agent.py",
+                         "agents/linux/runtime/game_uptime_agent_wire.py",
+                         "agents/linux/runtime/console_supervisor.py"):
+            self.assertTrue((release_source / required).is_file(), required)
+
+        for mode, expected_version, expected_status in (
+            ("no_drain_success", "2.0.999-fixture", "verified"),
+            ("no_drain_fail_after_apply", "2.0.998-fixture", "rolled_back"),
+        ):
+            with self.subTest(stage="2.4", mode=mode):
+                fixture = self.workspace / ("integrated-packaged-" + mode)
+                fixture.mkdir(mode=0o700)
+                create_tiny_release_fixture(fixture)
+                installed = fixture / "installed"
+                candidate = fixture / "new-payload"
+                for tree, fixture_version in (
+                    (installed, "2.0.998-fixture"),
+                    (candidate, "2.0.999-fixture"),
+                ):
+                    shutil.copytree(release_source, tree, dirs_exist_ok=True)
+                    (tree / "version").write_text(fixture_version)
+                candidate_db = candidate / "data/database.txt"
+                candidate_db.parent.mkdir(parents=True, exist_ok=True)
+                candidate_db.write_bytes((installed / "data/database.txt").read_bytes())
+                presentation = Path("dashboard/web/presentation.js")
+                original_presentation = (installed / presentation).read_bytes()
+                (candidate / presentation).write_bytes(
+                    original_presentation + b"\n// disposable stage 2.4 presentation delta\n"
+                )
+                impact = plan.analyze(installed, candidate)
+                self.assertEqual(impact["change_tier"],
+                                 "control_plane_restart_candidate")
+                self.assertFalse(impact["live_no_drain_authorized"])
+                fixture_signer().seal_test_fixture(fixture)
+
+                # Start the actual packaged entrypoints against the existing
+                # isolated controller DB. Neither Agent inventory nor any
+                # production command is enabled.
+                for service in ("worker", "dashboard"):
+                    stop_control(current[service]["unit"])
+                self._assert_unchanged(original_games)
+                runtime_source_root = installed
+                generation = ("package-" + mode)
+                current = {
+                    "dashboard": start_control("dashboard", generation + "-before"),
+                    "worker": start_control("worker", generation + "-before"),
+                }
+                check_current(current)
+                check_authenticated_agent()
+                check_authenticated_agent(rejected=True)
+
+                # Exercise actual update.sh main() fixture file swap while
+                # Controller/Worker execute code from that installation root.
+                result = main_rehearsal(fixture, mode)
+                self.assertEqual(
+                    result.returncode,
+                    0 if mode == "no_drain_success" else 2,
+                    result.stderr[-1600:] + result.stdout[-900:],
+                )
+                self.assertEqual((installed / "version").read_text().strip(),
+                                 expected_version)
+                self.assertEqual((installed / presentation).read_bytes(),
+                                 (candidate / presentation).read_bytes()
+                                 if mode == "no_drain_success"
+                                 else original_presentation)
+                self.assertEqual(
+                    (installed / "runtime/hybrid-instance-storage/minecraft005"
+                     "/world/level.dat").read_bytes(), b"saved-world-private-test")
+                self.assertEqual(
+                    (installed / "runtime/artifact-transfers/job-001/upload.part"
+                     ).read_bytes(), b"in-flight-upload-private-test")
+                self.assertEqual(
+                    (installed / "data/database.txt").read_text(), "db durable")
+                self.assertFalse((fixture / "steps").exists())
+                receipt = json.loads(
+                    (fixture / "dsm928-composite-journal/game-uptime-transaction.json")
+                    .read_text())
+                self.assertEqual(receipt["status"], expected_status)
+                self.assertTrue(receipt["strict_inventory"])
+                self.assertFalse(receipt["live_no_drain_authorized"])
+                check_current(current)
+                self._assert_unchanged(original_games)
+
+                # Stop/restart only the isolated control plane; the new
+                # generation loads its code from the updated/rolled-back
+                # installed tree and Agent talks to the restarted HTTP route.
+                for service in ("worker", "dashboard"):
+                    stop_control(current[service]["unit"])
+                self._assert_unchanged(original_games)
+                current = {
+                    "dashboard": start_control("dashboard", generation + "-after"),
+                    "worker": start_control("worker", generation + "-after"),
+                }
+                check_current(current)
+                check_authenticated_agent()
+                self._assert_unchanged(original_games)
+
+        self.assertFalse(Path("/opt/dsm").exists())
 
     def test_real_worker_supervisor_group_restarts_without_draining_game_units(self):
         """Exercise unchanged worker.sh, nine harmless children, and real systemd.

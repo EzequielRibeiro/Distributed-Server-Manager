@@ -122,6 +122,7 @@ print(json.dumps({
     "live_no_drain_authorized": False,
     "health_status": result["health_status"],
     "agent_id": result["agent_id"],
+    "agent_source_path": str(Path(linux_agent.__file__).resolve()),
     "controller_location_persisted":
         isinstance(saved.get("controller_location"), dict),
 }, sort_keys=True))
@@ -141,7 +142,21 @@ class LinuxAgentProcessHeartbeatTests(unittest.TestCase):
         self.state = self.root / "runtime"
         self.state.mkdir(mode=0o700)
 
-    def invoke(self, mode="diagnostic", *, invalid_secret=False, read_only=False):
+    def invoke(self, mode="diagnostic", *, invalid_secret=False,
+               read_only=False, source_root=None):
+        # Stage 2.4 may exercise the actual Agent bytes from a throwaway
+        # installed release. Never accept an arbitrary host installation.
+        agent_source = ROOT
+        if source_root is not None:
+            requested = Path(source_root)
+            temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
+            resolved = requested.resolve(strict=True)
+            if (requested.is_symlink() or resolved == temp_root
+                    or temp_root not in resolved.parents
+                    or not (resolved / "agents/linux/runtime/agent.py").is_file()
+                    or not (resolved / "agents/linux/runtime/game_uptime_agent_wire.py").is_file()):
+                raise ValueError("Agent source must be a disposable release under /tmp")
+            agent_source = resolved
         cfg = {
             "controller_url": self.controller.url.rsplit("/api/agent/heartbeat", 1)[0],
             "agent_id": self.controller.agent_id,
@@ -164,7 +179,7 @@ class LinuxAgentProcessHeartbeatTests(unittest.TestCase):
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         result = subprocess.run(
-            [sys.executable, "-c", _CHILD, str(ROOT), mode],
+            [sys.executable, "-c", _CHILD, str(agent_source), mode],
             cwd=self.root, env=env,
             capture_output=True, text=True, timeout=25, check=False)
         return result
