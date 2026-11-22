@@ -38,7 +38,9 @@ from minecraft_recovery_event_persistence import persist_recovery_claims
 from minecraft_serverpack_heartbeat_recovery_offer import serverpack_recovery_offer
 from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpack_report_delivery
 from game_uptime_heartbeat_compat import assess_authenticated_probe
-from game_uptime_remote_fence_evidence import receipt_for_authenticated_agent
+from game_uptime_remote_fence_evidence import (
+    receipt_for_authenticated_agent, correlate_authenticated_fence_receipts,
+)
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
 from game_uptime_controller_http_inflight import track_controller_agent_mutation
 
@@ -455,6 +457,20 @@ def dispatch_fence_observation(
         receipt = {"status": "blocked",
                    "remote_agent_quiescence_acked": False,
                    "live_no_drain_authorized": False}
+    # Correlate the credentialed receipt with the exact authenticated host
+    # in this read-only request. Multi-host callers must explicitly collect
+    # every expected Agent: this does NOT certify remote quiescence.
+    correlation = correlate_authenticated_fence_receipts(
+        [str(identity["agent_id"])],
+        [{"authenticated_agent_id": str(identity["agent_id"]),
+          "receipt": receipt}],
+        transaction_id=str(receipt.get("transaction_id") or ""),
+    )
+    # Keep the existing exact wire response contract: correlation only
+    # downgrades a newly-invalid receipt, never adds an unverified ACK field.
+    if (receipt.get("status") == "authenticated_evidence_received_unfenced"
+            and not correlation["receipt_set_correlated"]):
+        receipt = {**receipt, "status": "blocked"}
     return 200, {"no_drain_fence_receipt": receipt,
                  "remote_agent_quiescence_acked": False,
                  "live_no_drain_authorized": False}
