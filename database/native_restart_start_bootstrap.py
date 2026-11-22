@@ -112,6 +112,12 @@ def authorize_dispatch(repository, command, *, now=None):
                     and str(prepared.get("strategy") or "") == "dayz-shutdown-messages"
                     and str(prepared.get("agent_id") or "") == str(command["agent_id"])
                 ):
+                    # A per-command, pathless proof is forwarded to the Agent.
+                    # The Agent still validates its own mission and XML before start.
+                    command["native_bootstrap"] = {
+                        "command_id": str(prepared["command_id"]),
+                        "due_at": due.isoformat().replace("+00:00", "Z"),
+                    }
                     return True
                 _fail_queued_start(
                     repository, command,
