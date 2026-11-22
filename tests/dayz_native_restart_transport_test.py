@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 import os
 import sys
 import tempfile
@@ -22,6 +23,7 @@ for item in (
         sys.path.insert(0, value)
 
 import dayz_native_restart_client as client
+from dayz_native_preparation_guard import require_prepared_start
 
 
 class DayZNativeRestartClientTest(unittest.TestCase):
@@ -62,7 +64,22 @@ class DayZNativeRestartClientTest(unittest.TestCase):
         client.RESULT_DIR = self.state / "dayz-native-restart-results"
         client.HISTORY_DIR = self.state / "dayz-native-restart-history"
 
+        self.status_patch = patch.object(
+            client, "instance_status",
+            return_value={
+                "observed_state": "stopped",
+                "adapter_state": {"available": True, "active_state": "inactive"},
+            },
+        )
+        self.operation_patch = patch.object(
+            client, "runtime_operation", side_effect=lambda *args, **kwargs: nullcontext(),
+        )
+        self.status_patch.start()
+        self.operation_patch.start()
+
     def tearDown(self):
+        self.operation_patch.stop()
+        self.status_patch.stop()
         client.STATE_DIR = self.old_state
         client.RESULT_DIR = self.old_result
         client.HISTORY_DIR = self.old_history
@@ -89,6 +106,86 @@ class DayZNativeRestartClientTest(unittest.TestCase):
         xml = target.read_text(encoding="utf-8")
         self.assertIn("<shutdown>1</shutdown>", xml)
         self.assertIn("Capivara maintenance:", xml)
+
+    def test_running_instance_cannot_prepare_startup_countdown(self):
+        with patch.object(client, "get_instance", return_value=self.record):
+            with patch.object(client, "instance_status", return_value={
+                "observed_state": "running",
+                "adapter_state": {"available": True, "active_state": "active"},
+            }):
+                result = client.handle_command(self.config, self.command())
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("verified stopped instance", result["error"])
+        self.assertFalse((self.db / "messages.xml").exists())
+
+    def test_unverified_stopped_state_is_not_sufficient(self):
+        with patch.object(client, "get_instance", return_value=self.record):
+            with patch.object(client, "instance_status", return_value={
+                "observed_state": "stopped",
+                "adapter_state": None,
+            }):
+                result = client.handle_command(self.config, self.command())
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("verified stopped instance", result["error"])
+        self.assertFalse((self.db / "messages.xml").exists())
+
+    def test_mission_switch_prepares_only_new_mission_directory(self):
+        with patch.object(client, "get_instance", return_value=self.record):
+            first = self.command()
+            initial = client.handle_command(self.config, first)
+            self.assertEqual(initial["status"], "completed")
+            previous_xml = (self.db / "messages.xml").read_bytes()
+
+            new_mission = self.instance_root / "mpmissions" / "hardcore.namalsk"
+            new_mission.mkdir(parents=True)
+            (self.instance_root / "serverDZ.cfg").write_text(
+                'class Missions { class DayZ { template="hardcore.namalsk"; }; };\n',
+                encoding="utf-8",
+            )
+            next_command = {
+                **self.command(),
+                "command_id": "dayz-maint-new-mission",
+                "due_at": (
+                    datetime.now(timezone.utc) + timedelta(hours=2)
+                ).isoformat().replace("+00:00", "Z"),
+            }
+            result = client.handle_command(self.config, next_command)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["result"]["mission"], "hardcore.namalsk")
+        self.assertEqual((self.db / "messages.xml").read_bytes(), previous_xml)
+        new_xml = new_mission / "db" / "messages.xml"
+        self.assertTrue(new_xml.is_file())
+        self.assertIn("<shutdown>1</shutdown>", new_xml.read_text(encoding="utf-8"))
+
+    def test_start_rejects_mission_changed_after_native_ack(self):
+        with patch.object(client,"get_instance",return_value=self.record):
+            command=self.command()
+            result=client.handle_command(self.config,command)
+        self.assertEqual(result["status"],"completed")
+        requirement={"command_id":command["command_id"],"due_at":command["due_at"]}
+        read=client.read_history(command["command_id"])
+        require_prepared_start(self.record, requirement, read)
+
+        (self.instance_root / "serverDZ.cfg").write_text(
+            'class Missions { class DayZ { template="hardcore.namalsk"; }; };\\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError,"mission changed"):
+            require_prepared_start(self.record, requirement, read)
+
+    def test_start_rejects_modified_messages_xml_and_wrong_ack(self):
+        with patch.object(client,"get_instance",return_value=self.record):
+            command=self.command()
+            result=client.handle_command(self.config,command)
+        self.assertEqual(result["status"],"completed")
+        requirement={"command_id":command["command_id"],"due_at":command["due_at"]}
+        read=client.read_history(command["command_id"])
+        with self.assertRaisesRegex(RuntimeError,"command ID"):
+            require_prepared_start(self.record,{"command_id":"other","due_at":command["due_at"]},read)
+        (self.db / "messages.xml").write_text("<messages></messages>",encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError,"changed after preparation"):
+            require_prepared_start(self.record, requirement, read)
 
     def test_result_is_idempotent(self):
         command = self.command()

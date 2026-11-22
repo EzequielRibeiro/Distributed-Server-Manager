@@ -147,7 +147,7 @@ def save(config:dict[str,Any],instance_id:str)->dict[str,Any]:
     with runtime_operation(config,instance_id,"maintenance:save",lock_timeout_seconds=limits.lock_timeout_seconds):
         record=_owned(config,instance_id);adapter=resolve_adapter(record);result=adapter.save(record);increment("maintenance_save")
         return {"schema_version":1,"kind":"CapivaraInstanceSave","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"adapter":adapter.name,"operation":result}
-def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str, Any]:
+def lifecycle(config: dict[str, Any], instance_id: str, action: str, *, native_bootstrap=None) -> dict[str, Any]:
     action=str(action or "").strip().lower()
     if action not in LIFECYCLE_ACTIONS:raise ValueError("unsupported instance lifecycle action")
     from runtime_limits import runtime_limits
@@ -156,6 +156,17 @@ def lifecycle(config: dict[str, Any], instance_id: str, action: str) -> dict[str
     limits=runtime_limits(config)
     with runtime_operation(config,instance_id,f"lifecycle:{action}",lock_timeout_seconds=limits.lock_timeout_seconds):
         record=_owned(config,instance_id);firewall=None
+        if action=="start" and native_bootstrap is not None:
+            if str(record.get("game_id") or "").lower()!="dayz":
+                raise ValueError("native bootstrap start requirement is only valid for DayZ")
+            from dayz_native_restart_client import read_history
+            from dayz_native_preparation_guard import require_prepared_start
+            if not isinstance(native_bootstrap,dict):
+                raise ValueError("invalid native bootstrap start requirement")
+            require_prepared_start(
+                record, native_bootstrap,
+                read_history(str(native_bootstrap.get("command_id") or "")),
+            )
         if action in {"start","restart"} and isinstance(record.get("catalog_runtime_policy"),dict):
             from privileged_firewall import reconcile as reconcile_firewall
             firewall=reconcile_firewall(record)
@@ -197,7 +208,7 @@ def handle_command(config:dict[str,Any],command:dict[str,Any])->dict[str,Any]:
         elif action=="doctor":payload=doctor(config,instance_id)
         elif action=="save":payload=save(config,instance_id)
         elif action=="remove":payload=remove(config,instance_id)
-        else:payload=lifecycle(config,instance_id,action)
+        else:payload=lifecycle(config,instance_id,action,native_bootstrap=command.get("native_bootstrap") if action=="start" else None)
         result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
     except Exception as exc:result={"command_id":command_id,"instance_id":instance_id or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
     _write(_history(command_id),result);_write(_result(command_id),result);return result

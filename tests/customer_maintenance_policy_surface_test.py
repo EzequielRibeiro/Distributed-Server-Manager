@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT,ROOT/'core',ROOT/'database',ROOT/'dashboard'):
  if str(path) not in sys.path:sys.path.insert(0,str(path))
-from customer_maintenance_workspace import _run_view
+from customer_maintenance_workspace import _run_view,_native_preparation_state
 
 
 class CustomerMaintenancePolicySurfaceTest(unittest.TestCase):
@@ -13,6 +13,13 @@ class CustomerMaintenancePolicySurfaceTest(unittest.TestCase):
   raw={'run_id':'r1','agent_id':'agent-secret','instance_id':'i1','due_at':'2026-09-16T15:00:00Z','status':'running','stage':'stopping','preflight_command_id':'cmd-pre','save_command_id':'cmd-save','stop_command_id':'cmd-stop','start_command_id':'cmd-start','readiness_command_id':'cmd-doctor','event':{'pending_work':[{'kind':'content-update','ref':'mod-a','available_version':'2','desired_revision':3,'status':'dispatched'}]},'warnings_sent':[300,60]}
   view=_run_view(raw);self.assertEqual(view['run_id'],'r1');self.assertEqual(view['pending_work'][0]['ref'],'mod-a')
   for key in ('agent_id','instance_id','preflight_command_id','save_command_id','stop_command_id','start_command_id','readiness_command_id'):self.assertNotIn(key,view)
+ def test_native_preparation_labels_are_advisory_and_pathless(self):
+  self.assertEqual(_native_preparation_state(None),"bootstrap_required")
+  self.assertEqual(_native_preparation_state({"status":"queued"}),"preparing")
+  self.assertEqual(_native_preparation_state({"status":"delivered"}),"preparing")
+  self.assertEqual(_native_preparation_state({"status":"completed","command_id":"secret"}),"configuration_prepared")
+  self.assertEqual(_native_preparation_state({"status":"failed"}),"preparation_failed")
+  self.assertEqual(_native_preparation_state({}),"status_unavailable")
  def test_service_enforces_customer_permissions_and_server_owned_contract(self):
   text=(ROOT/'dashboard/customer_maintenance_workspace.py').read_text(encoding='utf-8')
   self.assertIn('self.workspace.require(user,instance_id,"instance.restart")',text);self.assertIn('self.workspace.require(user,instance_id,"settings.write")',text)
@@ -24,6 +31,8 @@ class CustomerMaintenancePolicySurfaceTest(unittest.TestCase):
   text=(ROOT/'dashboard/web/customer-maintenance.js').read_text(encoding='utf-8')
   self.assertIn('/api/customer/instance/workspace/maintenance',text);self.assertIn('native_countdown',text);self.assertIn('coalesce_updates',text);self.assertIn('settings.write', (ROOT/'dashboard/customer_maintenance_workspace.py').read_text(encoding='utf-8'))
   self.assertIn('Intl.supportedValuesOf("timeZone")',text);self.assertIn('mode==="fixed"',text);self.assertIn('offset<intervalSeconds',text);self.assertIn('syncWarnings()',text)
+  self.assertIn('native_preparation_state',text)
+  self.assertIn('Isso não confirma que o DayZ carregou',text)
   self.assertIn('renderLoadError',text);self.assertIn('Tentar novamente',text);self.assertIn('let section=document.getElementById("view-maintenance")',text);self.assertIn('maintenanceBound',text)
   self.assertNotIn('createElement("input");timezone.id="maintenance-timezone"',text)
   self.assertIn('const controls=[enabled,mode,timeHour,timeMinute,interval,timezone',text)

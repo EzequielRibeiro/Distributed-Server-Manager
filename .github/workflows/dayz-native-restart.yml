@@ -4,16 +4,27 @@ on:
   pull_request:
     paths:
       - 'agents/common/dayz_messages.py'
+      - 'agents/common/dayz_native_preparation_guard.py'
+      - 'tests/dayz_native_preparation_guard_test.py'
       - 'agents/linux/runtime/**'
       - 'agents/windows/runtime/**'
       - 'database/dayz_native_restart_repository.py'
+      - 'database/native_restart_start_bootstrap.py'
+      - 'database/agent_instance_runtime_repository.py'
+      - 'tests/agent_instance_runtime_lifecycle_arbitration_test.py'
+      - 'tests/agent_instance_runtime_test.py'
       - 'database/dayz_native_restart_schema.py'
       - 'database/maintenance_repository.py'
       - 'database/schema_baseline.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/workers/maintenance_worker.py'
+      - 'dashboard/customer_maintenance_workspace.py'
+      - 'dashboard/web/customer-maintenance.js'
+      - 'tests/customer_maintenance_policy_surface_test.py'
       - 'tests/dayz_native_messages_test.py'
       - 'tests/dayz_native_restart_transport_test.py'
+      - 'tests/dayz_native_two_agent_process_test.py'
+      - 'tests/dayz_native_two_agent_daemon_test.py'
       - 'tests/dayz_native_restart_agent_parity_test.py'
       - 'tests/dayz_native_maintenance_worker_test.py'
       - 'catalog/v2/games/dayz/**'
@@ -24,16 +35,27 @@ on:
     branches: [main]
     paths:
       - 'agents/common/dayz_messages.py'
+      - 'agents/common/dayz_native_preparation_guard.py'
+      - 'tests/dayz_native_preparation_guard_test.py'
       - 'agents/linux/runtime/**'
       - 'agents/windows/runtime/**'
       - 'database/dayz_native_restart_repository.py'
+      - 'database/native_restart_start_bootstrap.py'
+      - 'database/agent_instance_runtime_repository.py'
+      - 'tests/agent_instance_runtime_lifecycle_arbitration_test.py'
+      - 'tests/agent_instance_runtime_test.py'
       - 'database/dayz_native_restart_schema.py'
       - 'database/maintenance_repository.py'
       - 'database/schema_baseline.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/workers/maintenance_worker.py'
+      - 'dashboard/customer_maintenance_workspace.py'
+      - 'dashboard/web/customer-maintenance.js'
+      - 'tests/customer_maintenance_policy_surface_test.py'
       - 'tests/dayz_native_messages_test.py'
       - 'tests/dayz_native_restart_transport_test.py'
+      - 'tests/dayz_native_two_agent_process_test.py'
+      - 'tests/dayz_native_two_agent_daemon_test.py'
       - 'tests/dayz_native_restart_agent_parity_test.py'
       - 'tests/dayz_native_maintenance_worker_test.py'
       - 'catalog/v2/games/dayz/**'
@@ -55,16 +77,26 @@ jobs:
         run: |
           python3 -m py_compile \
             agents/common/dayz_messages.py \
+            agents/common/dayz_native_preparation_guard.py \
             agents/linux/runtime/dayz_native_restart_client.py \
             agents/linux/runtime/agent.py \
             agents/windows/runtime/dayz_native_restart_client.py \
             agents/windows/runtime/agent.py \
             database/dayz_native_restart_repository.py \
+            database/native_restart_start_bootstrap.py \
+            database/agent_instance_runtime_repository.py \
+            tests/agent_instance_runtime_lifecycle_arbitration_test.py \
+            tests/agent_instance_runtime_test.py \
             database/maintenance_repository.py \
             dashboard/agent_heartbeat_api.py \
             dashboard/workers/maintenance_worker.py \
+            dashboard/customer_maintenance_workspace.py \
+            tests/customer_maintenance_policy_surface_test.py \
             tests/dayz_native_messages_test.py \
+            tests/dayz_native_preparation_guard_test.py \
             tests/dayz_native_restart_transport_test.py \
+            tests/dayz_native_two_agent_process_test.py \
+            tests/dayz_native_two_agent_daemon_test.py \
             tests/dayz_native_restart_agent_parity_test.py \
             tests/dayz_native_maintenance_worker_test.py
 
@@ -73,7 +105,13 @@ jobs:
           PYTHONPATH: .
         run: |
           python3 tests/dayz_native_messages_test.py
+          python3 tests/dayz_native_preparation_guard_test.py
+          python3 tests/agent_instance_runtime_lifecycle_arbitration_test.py
+          python3 tests/agent_instance_runtime_test.py
+          python3 tests/customer_maintenance_policy_surface_test.py
           python3 tests/dayz_native_restart_transport_test.py
+          python3 tests/dayz_native_two_agent_process_test.py
+          python3 tests/dayz_native_two_agent_daemon_test.py
           python3 tests/dayz_native_restart_agent_parity_test.py
           python3 tests/dayz_native_maintenance_worker_test.py
 
