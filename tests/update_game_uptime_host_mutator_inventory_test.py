@@ -21,10 +21,10 @@ class MutatorInventoryTests(unittest.TestCase):
                          "source_inventory_only_no_quiescence")
         self.assertEqual(current["privileged_expected_modules"], 9)
         self.assertEqual(current["privileged_observed_modules"], 9)
-        self.assertEqual(current["guarded_source_entrypoints"], 8)
+        self.assertEqual(current["guarded_source_entrypoints"], 9)
         self.assertEqual(current["privileged_unclassified_modules"], [])
         self.assertIn(
-            "destructive_uninstall_and_detached_finalizer_unfenced",
+            "detached_uninstall_finalizer_runtime_coverage_unverified",
             current["blockers"])
         for key in ("installed_process_identity_verified",
                     "all_runtime_flags_verified",
@@ -45,7 +45,7 @@ class MutatorInventoryTests(unittest.TestCase):
             shutil.copy2(ROOT / CHILD_PATH, child_path)
 
             ready = assess(stage)
-            self.assertEqual(ready["guarded_source_entrypoints"], 8)
+            self.assertEqual(ready["guarded_source_entrypoints"], 9)
             self.assertFalse(ready["live_no_drain_authorized"])
             self.assertIn("all_external_jobs_not_inventoried", ready["blockers"])
 
@@ -65,6 +65,18 @@ class MutatorInventoryTests(unittest.TestCase):
                              ["new_privileged_job.py"])
             self.assertIn("unclassified_privileged_executables",
                           unsafe["blockers"])
+
+            uninstall = privileged / "uninstall_agent.py"
+            source = uninstall.read_text()
+            self.assertIn("@fence_privileged_helper_run", source)
+            uninstall.write_text(source.replace(
+                "@fence_privileged_helper_run",
+                "# missing uninstall guard in fixture", 1,
+            ))
+            missing_uninstall = assess(stage)
+            self.assertIn("missing_source_guard:uninstall_agent.py:main",
+                          missing_uninstall["blockers"])
+            self.assertFalse(missing_uninstall["live_no_drain_authorized"])
 
             child_path.unlink()
             child_path.symlink_to(ROOT / CHILD_PATH)
