@@ -195,7 +195,7 @@ class DayZTwoAgentProcessTest(unittest.TestCase):
                     # Kill/relaunch Agent A *after* the native preparation
                     # is durably recorded but *before* the authorized start.
                     first=agents[0]
-                    exchange(first,"exit")
+                    processes[first].kill()  # Abrupt Agent loss, not graceful exit.
                     processes[first].wait(timeout=5)
                     spawn(first)
 
