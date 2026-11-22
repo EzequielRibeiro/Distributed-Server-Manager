@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""DSM #928: opt-in in-flight kernel lock for TWO privileged Linux Agent helpers.
+"""DSM #928: opt-in in-flight kernel lock for FIVE privileged Linux Agent helpers.
 
 Root-owned, fixed inode outside /opt/capivara-agent. Shared locks witness
-only explicitly instrumented processes, not their detached children, other
+only five explicitly instrumented parent processes, not detached children, other
 services, Controller requests or remote Agents. Never emit a positive ACK.
 """
 from __future__ import annotations
@@ -105,8 +105,8 @@ def exclusive_privileged_helper_lock(*, path: Path = LOCK_PATH,
         _acquire(fd, fcntl.LOCK_EX)
         try:
             yield {
-                "status": "two_privileged_helpers_exclusively_locked_only",
-                "scope": "two_opted_in_linux_root_helper_runs_on_this_host",
+                "status": "five_privileged_helpers_exclusively_locked_only",
+                "scope": "five_opted_in_linux_root_helper_runs_on_this_host",
                 "privileged_helper_acked": False,
                 "external_jobs_acked": False,
                 "remote_agents_acked": False,

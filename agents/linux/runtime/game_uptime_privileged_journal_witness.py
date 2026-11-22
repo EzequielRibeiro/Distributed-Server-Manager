@@ -3,7 +3,7 @@
 
 A read-only, scoped negative observation: NO remote ACK, updater hook, lease
 renewal, journal cleanup, or permission for live no-drain. Lock EX only means
-that two *opted-in* parent helper entrypoints on this host are not inside
+that five *opted-in* parent helper entrypoints on this host are not inside
 their protected run() at that instant. It says nothing about detached jobs
 or whether every deployed helper has the opt-in feature enabled.
 """
@@ -138,8 +138,8 @@ def local_privileged_journal_witness(
                 hold_path=hold_path, journal_path=journal_path,
                 trusted_uid=trusted_uid, now=now)
             yield {
-                "status": "root_hold_and_two_helper_parents_observed_local_only",
-                "scope": "opted_in_privileged_helper_parent_runs_on_this_host_only",
+                "status": "root_hold_and_five_helper_parents_observed_local_only",
+                "scope": "five_opted_in_privileged_helper_parent_runs_on_this_host_only",
                 "transaction_id": initial[0],
                 "journal_lease_matched_locally": True,
                 "all_helper_processes_opted_in_verified": False,

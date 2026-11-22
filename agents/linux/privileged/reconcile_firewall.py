@@ -8,6 +8,16 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+
+INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent"))
+RUNTIME_DIR = INSTALL_ROOT / "runtime"
+if not RUNTIME_DIR.is_dir():
+    RUNTIME_DIR = Path(__file__).resolve().parents[1] / "runtime"
+if str(RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_DIR))
+from game_uptime_privileged_admission import (
+    fence_privileged_helper_run, require_privileged_mutation_admission,
+)
 from typing import Any, Callable
 
 STATE_DIR = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
@@ -209,11 +219,13 @@ def _atomic_json(
             pass
 
 
+@fence_privileged_helper_run
 def run(instance_id: str, runner: Runner = _default_runner) -> dict[str, Any]:
     instance_id = _token(instance_id, "instance_id")
     request_path = REQUEST_DIR / f"{instance_id}.request.json"
     result_path = REQUEST_DIR / f"{instance_id}.result.json"
     try:
+        require_privileged_mutation_admission()
         request = json.loads(request_path.read_text(encoding="utf-8"))
         if not isinstance(request, dict) or request.get("kind") != "CapivaraPrivilegedFirewallRequest":
             raise ValueError("invalid privileged firewall request")

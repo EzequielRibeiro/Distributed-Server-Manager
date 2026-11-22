@@ -18,6 +18,9 @@ if str(RUNTIME_DIR) not in sys.path:
     sys.path.insert(0, str(RUNTIME_DIR))
 
 import backup_client
+from game_uptime_privileged_admission import (
+    fence_privileged_helper_run, require_privileged_mutation_admission,
+)
 import prepare_customer_files
 
 STATE_DIR = Path(
@@ -88,9 +91,11 @@ def _validate_external_target(config: dict[str, Any], instance_id: str, *,
         raise PermissionError("privileged restore target is outside the approved instance storage root")
 
 
+@fence_privileged_helper_run
 def run(command_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged backup restore helper must run as root")
+    require_privileged_mutation_admission()
 
     command_id = _token(command_id, "command_id")
     request_path = REQUEST_ROOT / f"{command_id}.request.json"
