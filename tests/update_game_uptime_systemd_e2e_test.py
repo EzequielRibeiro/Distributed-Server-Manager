@@ -212,7 +212,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(filename, archive.name)
         self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(),
                          expected_hash)
-        real_tree = expanded / name
+        # Stage 2.2 moved the extracted tree into the incompatible fixture.
+        # Reuse that verified package instead of its now-empty old path.
+        real_tree = fixture / "new-payload"
         self.assertTrue((real_tree / "agents/linux/runtime/console_supervisor.py").is_file())
         for mode, expected_version, expected_status in (
             ("no_drain_success", "2.0.999-fixture", "verified"),
