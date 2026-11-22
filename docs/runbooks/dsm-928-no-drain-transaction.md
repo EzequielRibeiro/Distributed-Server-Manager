@@ -1392,3 +1392,49 @@ de processos filhos destacados. O exclusivo retorna obrigatoriamente
 Não é um lease distribuído, não cria/renova/recupera journal e não
 habilita `update.sh --no-drain`. A issue #928 segue aberta, Etapa 2
 parcial e release bloqueado. Nenhum host em produção foi modificado.
+
+
+## Etapa 2 — observação local conjunta do journal e trava dos helpers root (21/11/2026)
+
+Depois da PR #1140, `game_uptime_privileged_journal_witness.py`
+acrescenta um **leitor somente diagnóstico** que mantém a posse exclusiva
+`LOCK_EX|LOCK_NB` do inode de helpers
+`/run/capivara-dsm/agent-privileged-operations.lock`, enquanto verifica
+o hold root-owned e o **journal persistente da mesma transação**.
+
+O leitor exige transaction_id hexadecimal esperado, UID root nos caminhos
+instalados, `O_NOFOLLOW`, arquivo de journal regular com inode estável,
+`0600`, `nlink=1`, conteúdo bounded, pais seguros, contrato exato
+`CapivaraDSMNoDrainPendingJournal` e `state=prepared_requires_distributed_fence`.
+As identidades da transação (`transaction_id`, `issued_at`,
+`expires_at`) devem corresponder exatamente ao marcador de hold e a
+janela de lease não pode estar expirada. Faz uma **segunda verificação antes
+de soltar EX**. Qualquer ausência, adulteração, troca de inode, erro de
+leitura, SH ocupado ou transação cruzada falha fechado. Não escreve,
+renova ou apaga journal/hold; caminhos temporários/UID injetáveis são
+somente para testes descartáveis.
+
+A evidência exposta tem escopo explícito **dois helpers root parent
+opt-in neste host**. Mesmo com journal local consistente e trava EX em
+posse, o retorno mantém `privileged_helper_acked=false`,
+`controller_http_acked=false`, `external_jobs_acked=false`,
+`remote_agents_acked=false`, `live_no_drain_authorized=false` e
+`all_helper_processes_opted_in_verified=false`. O coordenador de
+manutenção distribuído **não** chama esse leitor automaticamente. Não
+incorpora autorização de update ou rollback e não afirma que os outros
+processos usam o lock.
+
+**Teste agrupado** na suíte persistente #928: prepara journal e hold em
+arquivos temporários; exige EX; mantém SH de helper em voo e comprova
+negação, expiração de lease, ID divergente, journal alterado, alteração
+durante a posse de EX, symlink e integridade de arquivos sem escrita pelo
+leitor. Não cria outra bateria de PID ou systemd.
+
+Permanecem pendentes na Etapa 2: comprovar instrumentação e posse de lock
+de **todos** os processos de cada host, incluir Controller/Workers,
+subprocessos destacados e demais jobs, materializar barreira distribuída
+com ACK autenticado/anti-replay por Agent e coordenar renovação/recovery
+do lease. `DSM928_AGENT_PRIVILEGED_FLOCK` permanece **off** por padrão;
+não ligar em Horizon/VPS antes da homologação operacional. `update.sh
+--no-drain` continua somente diagnóstico/exit 2, issue #928 aberta e
+release bloqueado.
