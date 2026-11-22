@@ -466,8 +466,12 @@ def dispatch_fence_observation(
           "receipt": receipt}],
         transaction_id=str(receipt.get("transaction_id") or ""),
     )
+    # Keep the existing exact wire response contract: correlation only
+    # downgrades a newly-invalid receipt, never adds an unverified ACK field.
+    if (receipt.get("status") == "authenticated_evidence_received_unfenced"
+            and not correlation["receipt_set_correlated"]):
+        receipt = {**receipt, "status": "blocked"}
     return 200, {"no_drain_fence_receipt": receipt,
-                 "no_drain_fence_correlation": correlation,
                  "remote_agent_quiescence_acked": False,
                  "live_no_drain_authorized": False}
 
