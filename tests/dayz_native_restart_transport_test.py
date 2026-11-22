@@ -23,6 +23,7 @@ for item in (
         sys.path.insert(0, value)
 
 import dayz_native_restart_client as client
+from dayz_native_preparation_guard import require_prepared_start
 
 
 class DayZNativeRestartClientTest(unittest.TestCase):
@@ -156,6 +157,35 @@ class DayZNativeRestartClientTest(unittest.TestCase):
         new_xml = new_mission / "db" / "messages.xml"
         self.assertTrue(new_xml.is_file())
         self.assertIn("<shutdown>1</shutdown>", new_xml.read_text(encoding="utf-8"))
+
+    def test_start_rejects_mission_changed_after_native_ack(self):
+        with patch.object(client,"get_instance",return_value=self.record):
+            command=self.command()
+            result=client.handle_command(self.config,command)
+        self.assertEqual(result["status"],"completed")
+        requirement={"command_id":command["command_id"],"due_at":command["due_at"]}
+        read=client.read_history(command["command_id"])
+        require_prepared_start(self.record, requirement, read)
+
+        (self.instance_root / "serverDZ.cfg").write_text(
+            'class Missions { class DayZ { template="hardcore.namalsk"; }; };\\n',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError,"mission changed"):
+            require_prepared_start(self.record, requirement, read)
+
+    def test_start_rejects_modified_messages_xml_and_wrong_ack(self):
+        with patch.object(client,"get_instance",return_value=self.record):
+            command=self.command()
+            result=client.handle_command(self.config,command)
+        self.assertEqual(result["status"],"completed")
+        requirement={"command_id":command["command_id"],"due_at":command["due_at"]}
+        read=client.read_history(command["command_id"])
+        with self.assertRaisesRegex(RuntimeError,"command ID"):
+            require_prepared_start(self.record,{"command_id":"other","due_at":command["due_at"]},read)
+        (self.db / "messages.xml").write_text("<messages></messages>",encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError,"changed after preparation"):
+            require_prepared_start(self.record, requirement, read)
 
     def test_result_is_idempotent(self):
         command = self.command()
