@@ -24,6 +24,7 @@ on:
       - 'tests/dayz_native_messages_test.py'
       - 'tests/dayz_native_restart_transport_test.py'
       - 'tests/dayz_native_two_agent_process_test.py'
+      - 'tests/dayz_native_two_agent_daemon_test.py'
       - 'tests/dayz_native_restart_agent_parity_test.py'
       - 'tests/dayz_native_maintenance_worker_test.py'
       - 'catalog/v2/games/dayz/**'
@@ -54,6 +55,7 @@ on:
       - 'tests/dayz_native_messages_test.py'
       - 'tests/dayz_native_restart_transport_test.py'
       - 'tests/dayz_native_two_agent_process_test.py'
+      - 'tests/dayz_native_two_agent_daemon_test.py'
       - 'tests/dayz_native_restart_agent_parity_test.py'
       - 'tests/dayz_native_maintenance_worker_test.py'
       - 'catalog/v2/games/dayz/**'
@@ -94,6 +96,7 @@ jobs:
             tests/dayz_native_preparation_guard_test.py \
             tests/dayz_native_restart_transport_test.py \
             tests/dayz_native_two_agent_process_test.py \
+            tests/dayz_native_two_agent_daemon_test.py \
             tests/dayz_native_restart_agent_parity_test.py \
             tests/dayz_native_maintenance_worker_test.py
 
@@ -108,6 +111,7 @@ jobs:
           python3 tests/customer_maintenance_policy_surface_test.py
           python3 tests/dayz_native_restart_transport_test.py
           python3 tests/dayz_native_two_agent_process_test.py
+          python3 tests/dayz_native_two_agent_daemon_test.py
           python3 tests/dayz_native_restart_agent_parity_test.py
           python3 tests/dayz_native_maintenance_worker_test.py
 
