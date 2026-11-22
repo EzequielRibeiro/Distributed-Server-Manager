@@ -160,6 +160,10 @@ def handle_command(
     return result
 
 
+def read_history(command_id: str) -> dict[str, Any] | None:
+    return _read(_history(command_id))
+
+
 def read_result() -> dict[str, Any] | None:
     try:
         paths = sorted(RESULT_DIR.glob("*.json"))
@@ -185,4 +189,5 @@ __all__ = [
     "clear_result",
     "handle_command",
     "read_result",
+    "read_history",
 ]
