@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,21 @@ INSTALL_ROOT = Path(os.environ.get("CAPIVARA_AGENT_ROOT", "/opt/capivara-agent")
 CONFIG_DIR = Path(os.environ.get("CAPIVARA_AGENT_CONFIG_DIR", "/etc/capivara-agent"))
 SYSTEMD_DIR = Path(os.environ.get("SYSTEMD_DIR", "/etc/systemd/system"))
 FINALIZER = Path("/run/capivara-agent-uninstall-finalize.sh")
+
+# Import only existing #928 admission/fence helpers. The module is loaded
+# before any uninstall removes the Agent runtime tree.
+RUNTIME_DIR = INSTALL_ROOT / "runtime"
+if not RUNTIME_DIR.is_dir():
+    RUNTIME_DIR = Path(__file__).resolve().parents[1] / "runtime"
+if str(RUNTIME_DIR) not in sys.path:
+    sys.path.insert(0, str(RUNTIME_DIR))
+from game_uptime_privileged_admission import (
+    PrivilegedMutationHold, fence_privileged_helper_run,
+    require_privileged_mutation_admission,
+)
+from game_uptime_privileged_flock import ENABLE_ENV, LOCK_PATH
+from game_uptime_maintenance_hold import HOLD_PATH, PENDING_PATH
+
 _ALLOWED_DEFAULT_DATA_ROOTS = {
     Path("/var/lib/capivara-instances"),
     Path("/var/lib/capivara-agent/instances"),
@@ -125,6 +141,8 @@ def _safe_data_root(raw: str) -> Path | None:
 
 
 def _remove_payload(request: dict) -> dict:
+    # Also gate direct invocations before stopping services or deleting data.
+    require_privileged_mutation_admission()
     cleanup = {"service_stopped": False, "runtime_removed": False, "data_removed": False, "mode": request["mode"]}
     _stop_runtime()
     cleanup["service_stopped"] = True
@@ -162,6 +180,7 @@ def _remove_payload(request: dict) -> dict:
 
 
 def _schedule_finalizer() -> None:
+    require_privileged_mutation_admission()
     units = [
         "capivara-agent.service",
         "capivara-agent-console-reader.service",
@@ -171,7 +190,28 @@ def _schedule_finalizer() -> None:
         "capivara-agent-uninstall.path",
         "capivara-agent-uninstall.service",
     ]
+    # The finalizer starts in its OWN process after the parent exits. It
+    # cannot import helpers from /opt: uninstall may already have removed them.
+    # A pending root journal or hold marker must block it before any rm.
+    # Even a dangling symlink is treated as a block.
+    hold_check = (
+        "for p in " + shlex.quote(str(HOLD_PATH)) + " "
+        + shlex.quote(str(PENDING_PATH))
+        + "; do if [ -e \"$p\" ] || [ -L \"$p\" ]; then exit 2; fi; done"
+    )
     lines = ["#!/bin/sh", "set -eu"]
+    if os.environ.get(ENABLE_ENV) == "1":
+        # Capture opt-in at scheduling; do not silently disable it in the
+        # child. Acquire SH for the ENTIRE delayed finalization. A missing,
+        # symlinked or malformed inode must not be treated as a free lock.
+        path = shlex.quote(str(LOCK_PATH))
+        lines.extend([
+            f"[ -f {path} ] && [ ! -L {path} ] || exit 2",
+            f"[ \"$(stat -c '%u:%g:%a:%s:%h' -- {path})\" = \"0:$(id -g):600:0:1\" ] || exit 2",
+            f"exec 9< {path}",
+            "flock -s -n 9 || exit 2",
+        ])
+    lines.append(hold_check)
     for unit in units:
         lines.append(f"rm -f {SYSTEMD_DIR / unit}")
     lines += [
@@ -192,15 +232,24 @@ def _schedule_finalizer() -> None:
     )
 
 
+@fence_privileged_helper_run
 def main() -> int:
     if os.geteuid() != 0:
         print("Capivara uninstall executor must run as root", file=sys.stderr)
+        return 2
+    # Refuse the uninstall BEFORE reporting committed or touching services.
+    # Do not send a "failed" HTTP report under a maintenance hold.
+    try:
+        require_privileged_mutation_admission()
+    except PrivilegedMutationHold:
+        print("Capivara uninstall blocked by DSM maintenance hold", file=sys.stderr)
         return 2
     try:
         request = _load_request()
         _report(request, "committed")
         cleanup = _remove_payload(request)
         _report(request, "completed", host_cleanup=cleanup)
+        require_privileged_mutation_admission()
         _schedule_finalizer()
         return 0
     except Exception as exc:
