@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 import os
 import sys
 import tempfile
@@ -62,7 +63,22 @@ class DayZNativeRestartClientTest(unittest.TestCase):
         client.RESULT_DIR = self.state / "dayz-native-restart-results"
         client.HISTORY_DIR = self.state / "dayz-native-restart-history"
 
+        self.status_patch = patch.object(
+            client, "instance_status",
+            return_value={
+                "observed_state": "stopped",
+                "adapter_state": {"available": True, "active_state": "inactive"},
+            },
+        )
+        self.operation_patch = patch.object(
+            client, "runtime_operation", side_effect=lambda *args, **kwargs: nullcontext(),
+        )
+        self.status_patch.start()
+        self.operation_patch.start()
+
     def tearDown(self):
+        self.operation_patch.stop()
+        self.status_patch.stop()
         client.STATE_DIR = self.old_state
         client.RESULT_DIR = self.old_result
         client.HISTORY_DIR = self.old_history
@@ -89,6 +105,28 @@ class DayZNativeRestartClientTest(unittest.TestCase):
         xml = target.read_text(encoding="utf-8")
         self.assertIn("<shutdown>1</shutdown>", xml)
         self.assertIn("Capivara maintenance:", xml)
+
+    def test_running_instance_cannot_prepare_startup_countdown(self):
+        with patch.object(client, "get_instance", return_value=self.record):
+            with patch.object(client, "instance_status", return_value={
+                "observed_state": "running",
+                "adapter_state": {"available": True, "active_state": "active"},
+            }):
+                result = client.handle_command(self.config, self.command())
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("verified stopped instance", result["error"])
+        self.assertFalse((self.db / "messages.xml").exists())
+
+    def test_unverified_stopped_state_is_not_sufficient(self):
+        with patch.object(client, "get_instance", return_value=self.record):
+            with patch.object(client, "instance_status", return_value={
+                "observed_state": "stopped",
+                "adapter_state": None,
+            }):
+                result = client.handle_command(self.config, self.command())
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("verified stopped instance", result["error"])
+        self.assertFalse((self.db / "messages.xml").exists())
 
     def test_result_is_idempotent(self):
         command = self.command()
