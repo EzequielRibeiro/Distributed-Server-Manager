@@ -283,6 +283,53 @@ class LinuxPrivilegedUninstallExecutorTest(unittest.TestCase):
             events,
         )
 
+    def test_928_hold_blocks_uninstall_before_commit_or_stop(self):
+        from game_uptime_privileged_admission import PrivilegedMutationHold
+
+        with mock.patch.dict(executor.os.environ,
+                             {"DSM928_AGENT_PRIVILEGED_FLOCK": "0"}), \
+             mock.patch.object(executor.os, "geteuid", return_value=0), \
+             mock.patch.object(
+                 executor, "require_privileged_mutation_admission",
+                 side_effect=PrivilegedMutationHold("maintenance_hold")), \
+             mock.patch.object(executor, "_load_request") as load, \
+             mock.patch.object(executor, "_report") as report, \
+             mock.patch.object(executor, "_stop_runtime") as stop, \
+             mock.patch.object(executor, "_schedule_finalizer") as finalizer:
+            self.assertEqual(executor.main(), 2)
+        load.assert_not_called()
+        report.assert_not_called()
+        stop.assert_not_called()
+        finalizer.assert_not_called()
+
+    def test_928_finalizer_script_checks_hold_and_retains_opt_in_lock(self):
+        finalizer = self.root / "delayed-finalizer.sh"
+        pending = self.root / "root-pending.json"
+        hold = self.root / "root-hold.json"
+        with mock.patch.object(executor, "FINALIZER", finalizer), \
+             mock.patch.object(executor, "HOLD_PATH", hold), \
+             mock.patch.object(executor, "PENDING_PATH", pending), \
+             mock.patch.object(executor, "SYSTEMD_DIR", self.root / "units"), \
+             mock.patch.object(executor, "require_privileged_mutation_admission"), \
+             mock.patch.dict(executor.os.environ, {executor.ENABLE_ENV: "1"}), \
+             mock.patch.object(executor.subprocess, "Popen") as spawn:
+            executor._schedule_finalizer()
+
+        script = finalizer.read_text()
+        self.assertIn("flock -s -n 9 || exit 2", script)
+        self.assertIn("exec 9<", script)
+        self.assertIn("for p in ", script)
+        self.assertIn(str(hold), script)
+        self.assertIn(str(pending), script)
+        self.assertLess(script.index("flock -s -n 9"),
+                        script.index("for p in "))
+        self.assertLess(script.index("for p in "),
+                        script.index("rm -rf"))
+        self.assertEqual(finalizer.stat().st_mode & 0o777, 0o700)
+        spawn.assert_called_once()
+        self.assertTrue(self.install.exists())
+        self.assertTrue(self.state.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
