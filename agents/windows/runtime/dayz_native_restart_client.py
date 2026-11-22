@@ -19,12 +19,14 @@ for candidate in (RUNTIME_DIR, COMMON_DIR):
     if value not in sys.path:
         sys.path.insert(0, value)
 
+from dayz_native_preparation_guard import require_stopped_instance
 from dayz_messages import (
     deadline_minutes_for_due,
     materialize_shutdown_messages_xml,
     native_restart_plan,
 )
-from instance_runtime import get_instance
+from instance_runtime import get_instance, status as instance_status
+from runtime_operations import runtime_operation
 
 PROGRAM_DATA = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
 STATE_DIR = Path(
@@ -117,15 +119,14 @@ def handle_command(
         due_at = command.get("due_at")
         deadline_minutes = deadline_minutes_for_due(due_at)
 
-        plan = native_restart_plan(
-            record,
-            deadline_minutes,
-        )
-
-        materialize_shutdown_messages_xml(
-            Path(plan.messages_path),
-            plan.message,
-        )
+        # Serialize with lifecycle:start; never report preparation completed
+        # when the game's process remains running or is unobservable.
+        with runtime_operation(config, instance_id, "maintenance:dayz-native-restart"):
+            require_stopped_instance(instance_status(config, instance_id))
+            plan = native_restart_plan(record, deadline_minutes)
+            materialize_shutdown_messages_xml(
+                Path(plan.messages_path), plan.message,
+            )
 
         result = {
             "command_id": command_id,
