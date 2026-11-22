@@ -122,6 +122,7 @@ print(json.dumps({
     "live_no_drain_authorized": False,
     "health_status": result["health_status"],
     "agent_id": result["agent_id"],
+    "agent_source_path": str(Path(linux_agent.__file__).resolve()),
     "controller_location_persisted":
         isinstance(saved.get("controller_location"), dict),
 }, sort_keys=True))
