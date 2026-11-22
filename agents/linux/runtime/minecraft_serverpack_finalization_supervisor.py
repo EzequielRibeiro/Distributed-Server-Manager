@@ -12,6 +12,8 @@ import sys
 import time
 from typing import Any, Callable
 
+from game_uptime_finalization_admission import require_finalization_admission
+
 
 class FinalizationWorkerSupervisor:
     def __init__(self, *, minimum_retry_seconds: float = 120,
@@ -37,6 +39,9 @@ class FinalizationWorkerSupervisor:
         last = self._last_attempt.get(instance_id)
         if last is not None and now - last < self._minimum_retry:
             return "cooldown"
+        # The Agent heartbeat hold gate is not enough: this detached child
+        # can outlive its parent. Block before creating logs or spawning.
+        require_finalization_admission()
         worker = Path(__file__).with_name("minecraft_serverpack_finalization_worker.py")
         if not worker.is_file():
             raise RuntimeError("finalization worker is missing")

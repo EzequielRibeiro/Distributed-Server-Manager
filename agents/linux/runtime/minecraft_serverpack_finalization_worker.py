@@ -14,11 +14,14 @@ import sys
 from minecraft_serverpack_finalization_scheduler import scan_pending_finalizations
 from runtime_lock import instance_lock
 from runtime_operations import read_operation
+from game_uptime_finalization_admission import require_finalization_admission
 
 
 def execute_one(config_path: Path, instance_id: str) -> list[dict[str, str]]:
     if not instance_id or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-" for c in instance_id):
         raise ValueError("invalid instance")
+    # Recheck in the independent child; parent admission is not inherited.
+    require_finalization_admission()
     # No recovery permitted without a fresh explicit policy check.
     allowed = os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE", "")
     recover = (os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER") == "1"
@@ -47,10 +50,13 @@ def execute_one(config_path: Path, instance_id: str) -> list[dict[str, str]]:
         if outer.get("instance_id") != instance_id or result.get("instance_id") != instance_id:
             return False
         if result.get("status") == "completed" and (reconcile or recover):
+            # A root hold can be created after this child was launched.
+            require_finalization_admission()
             dispatch_published_completion(
                 outer, result, agent_id=agent_id, allowed_instance_id=instance_id)
             return True
         if result.get("status") == "running" and recover:
+            require_finalization_admission()
             recover_pending_operational(
                 config=config, operation=outer, provisioning=result,
                 allowed_instance_id=instance_id)
