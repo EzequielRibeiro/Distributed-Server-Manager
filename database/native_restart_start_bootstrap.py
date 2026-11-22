@@ -43,7 +43,7 @@ def authorize_dispatch(repository, command, *, now=None):
     """
     if str(command.get("action") or "") != "start":
         return True
-    if str(command.get("status") or "") != "queued":
+    if str(command.get("status") or "") not in {"queued", "delivered"}:
         return True
     if str(command.get("requested_by") or "") == "maintenance-worker":
         return True
@@ -135,6 +135,11 @@ def authorize_dispatch(repository, command, *, now=None):
                 return False
             _fail_queued_start(repository, command, "Unrecognized DayZ native preparation state")
             return False
+    # Never create a *new* countdown for a start that was already
+    # delivered: the Agent may have received it and must see the same proof
+    # on all redeliveries, not an unbound restart.
+    if str(command.get("status") or "") == "delivered":
+        return False
     try:
         native.enqueue(
             agent_id=str(command["agent_id"]),
