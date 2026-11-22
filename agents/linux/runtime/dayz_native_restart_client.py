@@ -19,6 +19,7 @@ for candidate in (RUNTIME_DIR, COMMON_DIR):
     if value not in sys.path:
         sys.path.insert(0, value)
 
+from dayz_native_preparation_guard import require_stopped_instance
 from dayz_messages import (
     DayZMessagesError,
     deadline_minutes_for_due,
@@ -26,7 +27,8 @@ from dayz_messages import (
     native_restart_plan,
 )
 from dayz_shutdown_diagnostic import suspected_linux_130_messages_issue
-from instance_runtime import get_instance
+from instance_runtime import get_instance, status as instance_status
+from runtime_operations import runtime_operation
 
 STATE_DIR = Path(
     os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent")
@@ -116,15 +118,14 @@ def handle_command(
         due_at = command.get("due_at")
         deadline_minutes = deadline_minutes_for_due(due_at)
 
-        plan = native_restart_plan(
-            record,
-            deadline_minutes,
-        )
-
-        path = materialize_shutdown_messages_xml(
-            Path(plan.messages_path),
-            plan.message,
-        )
+        # Native XML is startup configuration, not a live countdown. Use the
+        # same lock as lifecycle:start and require real adapter stopped state.
+        with runtime_operation(config, instance_id, "maintenance:dayz-native-restart"):
+            require_stopped_instance(instance_status(config, instance_id))
+            plan = native_restart_plan(record, deadline_minutes)
+            path = materialize_shutdown_messages_xml(
+                Path(plan.messages_path), plan.message,
+            )
 
         compatibility_warning = suspected_linux_130_messages_issue(record)
 
