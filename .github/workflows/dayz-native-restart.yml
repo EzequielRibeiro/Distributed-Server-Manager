@@ -12,6 +12,7 @@ on:
       - 'database/native_restart_start_bootstrap.py'
       - 'database/agent_instance_runtime_repository.py'
       - 'tests/agent_instance_runtime_lifecycle_arbitration_test.py'
+      - 'tests/agent_instance_runtime_test.py'
       - 'database/dayz_native_restart_schema.py'
       - 'database/maintenance_repository.py'
       - 'database/schema_baseline.py'
@@ -37,6 +38,7 @@ on:
       - 'database/native_restart_start_bootstrap.py'
       - 'database/agent_instance_runtime_repository.py'
       - 'tests/agent_instance_runtime_lifecycle_arbitration_test.py'
+      - 'tests/agent_instance_runtime_test.py'
       - 'database/dayz_native_restart_schema.py'
       - 'database/maintenance_repository.py'
       - 'database/schema_baseline.py'
@@ -74,6 +76,7 @@ jobs:
             database/native_restart_start_bootstrap.py \
             database/agent_instance_runtime_repository.py \
             tests/agent_instance_runtime_lifecycle_arbitration_test.py \
+            tests/agent_instance_runtime_test.py \
             database/maintenance_repository.py \
             dashboard/agent_heartbeat_api.py \
             dashboard/workers/maintenance_worker.py \
@@ -90,6 +93,7 @@ jobs:
           python3 tests/dayz_native_messages_test.py
           python3 tests/dayz_native_preparation_guard_test.py
           python3 tests/agent_instance_runtime_lifecycle_arbitration_test.py
+          python3 tests/agent_instance_runtime_test.py
           python3 tests/dayz_native_restart_transport_test.py
           python3 tests/dayz_native_restart_agent_parity_test.py
           python3 tests/dayz_native_maintenance_worker_test.py
