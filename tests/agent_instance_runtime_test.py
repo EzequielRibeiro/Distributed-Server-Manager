@@ -256,6 +256,43 @@ class ControllerInstanceRuntimeQueueTest(unittest.TestCase):
         self.assertEqual(completed["instance_state"]["status"], "completed")
         self.assertNotIn("instance_command", completed)
 
+    def test_dayz_start_bootstrap_waits_for_authenticated_native_result(self):
+        from maintenance_repository import MaintenanceRepository
+        with self.backend.transaction() as connection:
+            connection.execute("UPDATE instances SET game_id='dayz' WHERE id=?", ("instance-one",))
+        MaintenanceRepository(self.backend).set_policy("instance-one", {
+            "enabled": True, "schedule_mode": "interval",
+            "interval_seconds": 28800, "warning_offsets_seconds": [],
+            "broadcast_enabled": False,
+        })
+        start = self.commands.enqueue(
+            agent_id="agent-instance", instance_id="instance-one", action="start",
+            requested_by="customer-command",
+        )
+        status, first = dispatch_heartbeat(
+            {"agent_id": "agent-instance"}, headers=self.headers, backend=self.backend,
+        )
+        self.assertEqual(status, 200)
+        self.assertNotIn("instance_command", first)
+        prepared = first["native_restart_command"]
+        self.assertEqual(prepared["instance_id"], "instance-one")
+        self.assertEqual(prepared["game_id"], "dayz")
+
+        status, second = dispatch_heartbeat({
+            "agent_id": "agent-instance",
+            "native_restart_result": {
+                "command_id": prepared["command_id"], "instance_id": "instance-one",
+                "status": "completed", "result": {
+                    "kind": "CapivaraDayZNativeRestartPrepared",
+                    "materialized": True, "due_at": prepared["due_at"],
+                },
+            },
+        }, headers=self.headers, backend=self.backend)
+        self.assertEqual(status, 200)
+        self.assertEqual(second["native_restart_state"]["status"], "completed")
+        self.assertEqual(second["instance_command"]["command_id"], start["command_id"])
+        self.assertEqual(second["instance_command"]["action"], "start")
+
     def test_result_flush_acknowledges_without_delivering_next_command(self):
         created = self.commands.enqueue(agent_id="agent-instance", instance_id="instance-one", action="restart")
         status, delivered = dispatch_heartbeat({"agent_id": "agent-instance"}, headers=self.headers, backend=self.backend)
