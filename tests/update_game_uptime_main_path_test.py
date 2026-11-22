@@ -225,5 +225,110 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.assertFalse((self.root/"steps").exists())
 
 
+    def test_real_release_archive_applies_and_rolls_back_only_in_disposable_fixture(self):
+        """#928 stage 2.1: real release artifact, real updater file swap, fake services.
+
+        Production-affecting main() hooks remain stubbed by the existing
+        owner-marked /tmp harness. The ordinary updater's drain sequence is
+        verified as a BLOCKER, not advertised as no-drain compatibility.
+        """
+        import hashlib
+        from pathlib import PurePosixPath
+        import shutil
+        import tarfile
+
+        output = self.root / "release-artifact"
+        output.mkdir()
+        build = subprocess.run(
+            ("bash", str(ROOT / "release/build_release.sh"), "HEAD", str(output)),
+            text=True, capture_output=True, check=False, timeout=120,
+        )
+        self.assertEqual(
+            build.returncode, 0, build.stderr[-1800:] + build.stdout[-900:])
+        version = (ROOT / "version").read_text(encoding="utf-8").strip()
+        release_name = "capivara-dsm-" + version
+        archive = output / (release_name + ".tar.gz")
+        checksum = output / (archive.name + ".sha256")
+        manifest = json.loads(
+            (output / (release_name + ".manifest.json")).read_text())
+        expected_hash, filename = checksum.read_text().strip().split()
+        self.assertEqual(filename, archive.name)
+        self.assertEqual(
+            hashlib.sha256(archive.read_bytes()).hexdigest(), expected_hash)
+        commit = subprocess.run(
+            ("git", "-C", str(ROOT), "rev-parse", "HEAD"),
+            text=True, capture_output=True, check=True, timeout=10,
+        ).stdout.strip()
+        self.assertEqual(manifest["git_commit"], commit)
+        self.assertEqual(manifest["version"], version)
+
+        # Inspect the release archive before extraction; no symlinks, hardlinks,
+        # absolute names, traversal, or unknown members are allowed.
+        with tarfile.open(archive, "r:gz") as package:
+            members = package.getmembers()
+            self.assertTrue(members)
+            self.assertEqual(manifest["file_count"],
+                             sum(member.isfile() for member in members))
+            for member in members:
+                parts = PurePosixPath(member.name).parts
+                self.assertTrue(parts and parts[0] == release_name
+                                and ".." not in parts
+                                and not member.name.startswith("/"),
+                                member.name)
+                self.assertTrue(member.isfile() or member.isdir(),
+                                member.name)
+
+        for mode in ("success", "fail_after_apply"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(
+                    prefix="dsm928-packaged-main-") as tmp:
+                workspace = Path(tmp)
+                create_tiny_release_fixture(workspace)
+                installed = workspace / "installed"
+                # The real built release is newer than this synthetic baseline.
+                (installed / "version").write_text("2.0.0")
+                shutil.rmtree(workspace / "new-payload")
+                expanded = workspace / "expanded"
+                expanded.mkdir()
+                with tarfile.open(archive, "r:gz") as package:
+                    package.extractall(expanded, filter="data")
+                (expanded / release_name).rename(workspace / "new-payload")
+
+                outcome = main_rehearsal(workspace, mode)
+                self.assertEqual(
+                    outcome.returncode == 0, mode == "success",
+                    outcome.stderr[-1600:] + outcome.stdout[-900:])
+                expected_version = version if mode == "success" else "2.0.0"
+                self.assertEqual(
+                    (installed / "version").read_text().strip(),
+                    expected_version)
+                self.assertEqual(
+                    (installed / "runtime/hybrid-instance-storage"
+                     "/minecraft005/world/level.dat").read_bytes(),
+                    b"saved-world-private-test")
+                self.assertEqual(
+                    (installed / "runtime/artifact-transfers"
+                     "/job-001/upload.part").read_bytes(),
+                    b"in-flight-upload-private-test")
+                self.assertEqual(
+                    (installed / "runtime/hybrid-agent-state"
+                     "/backup-index/keep.txt").read_text(), "protected")
+                self.assertEqual(
+                    (installed / "data/database.txt").read_text(), "db durable")
+                self.assertEqual(
+                    len(list((workspace / "backups").glob("*.tar.gz"))), 1)
+                steps = (workspace / "steps").read_text().splitlines()
+                # This is the existing draining updater, not no-drain.
+                self.assertIn("stop-controller", steps)
+                self.assertIn("stop-games", steps)
+                self.assertNotIn("UNEXPECTED-SYSTEMCTL", steps)
+                self.assertFalse((workspace / "installed.update-preserved").exists())
+                if mode == "success":
+                    self.assertEqual(
+                        json.loads((installed / "release-manifest.json")
+                                   .read_text()), manifest)
+                else:
+                    self.assertIn("restore-database-stub", steps)
+
+
 if __name__ == "__main__":
     unittest.main()
