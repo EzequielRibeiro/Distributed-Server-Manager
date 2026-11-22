@@ -78,10 +78,16 @@ def authorize_dispatch(repository, command, *, now=None):
         )
         return False
 
+    start_created = _utc(command["created_at"])
+    if current - start_created > timedelta(minutes=5):
+        _fail_queued_start(
+            repository, command, "DayZ native preparation was not confirmed within 5 minutes"
+        )
+        return False
+
     from dayz_native_restart_repository import DayZNativeRestartRepository, DayZNativeRestartCommandConflict
     native = DayZNativeRestartRepository(repository.backend)
     prepared = native.for_instance_due(str(command["instance_id"]), due)
-    start_created = _utc(command["created_at"])
 
     # An old XML preparation does not automatically survive a new stop/start.
     if prepared is not None:
@@ -89,7 +95,29 @@ def authorize_dispatch(repository, command, *, now=None):
         prepare_created = _utc(prepared["created_at"])
         if prepare_created >= start_created:
             if status == "completed" and prepared.get("completed_at"):
-                return _utc(prepared["completed_at"]) >= start_created
+                envelope = prepared.get("result")
+                payload = envelope.get("result") if isinstance(envelope, dict) else None
+                try:
+                    reported_due_matches = (
+                        isinstance(payload, dict)
+                        and _utc(payload.get("due_at")) == due
+                    )
+                except (TypeError, ValueError):
+                    reported_due_matches = False
+                if (
+                    _utc(prepared["completed_at"]) >= start_created
+                    and reported_due_matches
+                    and payload.get("kind") == "CapivaraDayZNativeRestartPrepared"
+                    and payload.get("materialized") is True
+                    and str(prepared.get("strategy") or "") == "dayz-shutdown-messages"
+                    and str(prepared.get("agent_id") or "") == str(command["agent_id"])
+                ):
+                    return True
+                _fail_queued_start(
+                    repository, command,
+                    "DayZ native preparation acknowledgement is incomplete or mismatched",
+                )
+                return False
             if status in {"queued", "delivered"}:
                 return False
             if status == "failed":
