@@ -146,6 +146,61 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(set(properties), returned)
         self.assertEqual(self._snapshot(unit["unit"]), unit)
 
+    def test_real_release_package_cannot_bypass_no_drain_gate_with_live_disposable_pids(self):
+        """#928 stage 2.2: actual DSM release bytes must fail closed.
+
+        Two genuinely active transient systemd game stand-ins survive an
+        attempted no-drain update with the real release TAR. The fixture
+        signer proves only disposable origin, never operational compatibility.
+        This test does not execute a live updater or authorize --no-drain.
+        """
+        import tarfile
+        from update_game_uptime_main_path_test import fixture_signer
+
+        originals = [self._start("real-release-dayz"),
+                     self._start("real-release-minecraft")]
+        fixture = self.workspace / "real-package-no-drain"
+        fixture.mkdir(mode=0o700)
+        create_tiny_release_fixture(fixture)
+        (fixture / "installed/version").write_text("2.0.0")
+        output = self.workspace / "release-artifact"
+        output.mkdir()
+        build = subprocess.run(
+            ("bash", str(ROOT / "release/build_release.sh"), "HEAD", str(output)),
+            text=True, capture_output=True, check=False, timeout=150,
+        )
+        self.assertEqual(build.returncode, 0,
+                         build.stderr[-1600:] + build.stdout[-600:])
+        version = (ROOT / "version").read_text(encoding="utf-8").strip()
+        name = "capivara-dsm-" + version
+        archive = output / (name + ".tar.gz")
+        self.assertTrue(archive.is_file(), str(archive))
+        expanded = self.workspace / "expanded-release"
+        expanded.mkdir()
+        with tarfile.open(archive, "r:gz") as package:
+            package.extractall(expanded, filter="data")
+        shutil.rmtree(fixture / "new-payload")
+        (expanded / name).rename(fixture / "new-payload")
+        # Fixture-only signature must not turn a real, incompatible release
+        # into a no-drain candidate. The policy must reject before backup,
+        # even while the two real systemd processes are active.
+        fixture_signer().seal_test_fixture(fixture)
+        self._assert_unchanged(originals)
+        result = main_rehearsal(fixture, "no_drain_success")
+        self.assertEqual(result.returncode, 2,
+                         result.stdout[-800:] + result.stderr[-1200:])
+        self.assertIn("DISPOSABLE_REHEARSAL_BLOCKED", result.stderr)
+        self.assertTrue(
+            "compatibility gate blocked" in result.stderr
+            or "release tier blocked" in result.stderr,
+            result.stderr[-1400:],
+        )
+        self.assertEqual((fixture / "installed/version").read_text(), "2.0.0")
+        self.assertFalse((fixture / "dsm928-composite-journal").exists())
+        self.assertEqual(list((fixture / "backups").glob("*.tar.gz")), [])
+        self.assertFalse((fixture / "steps").exists())
+        self._assert_unchanged(originals)
+
     def test_two_systemd_processes_survive_actual_updater_main_and_failure_rollback(self):
         """Call actual update.sh main() with ONLY production-facing hooks stubbed."""
         originals = [self._start("main-alpha"), self._start("main-beta")]
