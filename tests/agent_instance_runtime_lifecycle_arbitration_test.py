@@ -377,10 +377,12 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
             "interval_seconds": 14400, "warning_offsets_seconds": [],
             "broadcast_enabled": False,
         })
-        self.assertNotEqual(
-            str(maintenance.snapshot(self.instance_ids[0])["state"]["next_due_at"]),
-            str(old_due),
-        )
+        from datetime import datetime, timezone
+        new_due = maintenance.snapshot(self.instance_ids[0])["state"]["next_due_at"]
+        old_utc = datetime.fromisoformat(str(old_due).replace("Z","+00:00")).astimezone(timezone.utc)
+        new_utc = datetime.fromisoformat(str(new_due).replace("Z","+00:00")).astimezone(timezone.utc)
+        self.assertNotEqual(new_utc, old_utc)
+        self.assertLess(new_utc, old_utc)
         # The old command must never authorize the reconfigured schedule.
         self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
         state = self.runtime.snapshot(start["command_id"])
