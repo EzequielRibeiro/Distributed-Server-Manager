@@ -92,18 +92,25 @@ class AgentInstanceRuntimeRepository:
 
     def command_for_agent(self, agent_id: str) -> dict[str, Any] | None:
         ph=self.dialect.placeholder
-        with self.session() as session:row=session.execute("SELECT command_id FROM agent_instance_commands "+f"WHERE agent_id={ph} AND status IN ('queued','delivered') ORDER BY created_at ASC LIMIT 1",(agent_id,)).fetchone()
-        if row is None:return None
-        state=self.snapshot(str(row["command_id"]))
-        # Bootstrap startup-only native countdown before delivering an
-        # authorized DayZ start; preserve all other commands unchanged.
+        with self.session() as session:
+            rows=session.execute(
+                "SELECT command_id FROM agent_instance_commands "
+                + f"WHERE agent_id={ph} AND status IN ('queued','delivered') ORDER BY created_at ASC",
+                (agent_id,),
+            ).fetchall()
         from native_restart_start_bootstrap import authorize_dispatch
-        if not authorize_dispatch(self,state):return None
-        command={key:state[key] for key in ("command_id","agent_id","instance_id","action")}
-        if state["action"]=="systemd_lifecycle_evidence":
-            params=normalize_command_parameters(state["action"],state.get("parameters"))
-            command.update(params)
-        return command
+        for row in rows:
+            state=self.snapshot(str(row["command_id"]))
+            if str(state.get("status") or "") not in {"queued","delivered"}:continue
+            # A user start may await its own DayZ preparation. Do not starve
+            # unrelated queued instance commands on the same Agent.
+            if not authorize_dispatch(self,state):continue
+            command={key:state[key] for key in ("command_id","agent_id","instance_id","action")}
+            if state["action"]=="systemd_lifecycle_evidence":
+                params=normalize_command_parameters(state["action"],state.get("parameters"))
+                command.update(params)
+            return command
+        return None
 
     def mark_delivered(self, command_id: str) -> dict[str, Any]:
         ph=self.dialect.placeholder;now=utc_timestamp()
