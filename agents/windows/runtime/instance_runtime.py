@@ -68,13 +68,19 @@ def save(config,instance_id):
  from runtime_operations import runtime_operation
  with runtime_operation(config,instance_id,"maintenance:save",lock_timeout_seconds=float(config.get("runtime_lock_timeout_seconds",5))):
   record=_owned(config,instance_id);adapter=resolve_adapter(record);result=adapter.save(record);increment("maintenance_save");return {"schema_version":1,"kind":"CapivaraInstanceSave","scope":"instance-local","instance_id":record["instance_id"],"agent_id":record["agent_id"],"adapter":adapter.name,"operation":result}
-def lifecycle(config,instance_id,action):
+def lifecycle(config,instance_id,action,*,native_bootstrap=None):
  action=str(action or "").strip().lower()
  if action not in LIFECYCLE_ACTIONS:raise ValueError("unsupported instance lifecycle action")
  from runtime_metrics import increment
  from runtime_operations import runtime_operation
  with runtime_operation(config,instance_id,f"lifecycle:{action}",lock_timeout_seconds=float(config.get("runtime_lock_timeout_seconds",5))):
   record=_owned(config,instance_id);managed=isinstance(record.get("catalog_runtime_policy"),dict);firewall=None
+  if action=="start" and native_bootstrap is not None:
+   if str(record.get("game_id") or "").lower()!="dayz":raise ValueError("native bootstrap start requirement is only valid for DayZ")
+   from dayz_native_restart_client import read_history
+   from dayz_native_preparation_guard import require_prepared_start
+   if not isinstance(native_bootstrap,dict):raise ValueError("invalid native bootstrap start requirement")
+   require_prepared_start(record,native_bootstrap,read_history(str(native_bootstrap.get("command_id") or "")))
   if action in {"start","restart"} and managed:firewall=managed_firewall.reconcile(record)
   adapter=resolve_adapter(record);result=getattr(adapter,action)(record);state=result.get("state") if isinstance(result,dict) else None;observed_state=_observed_state(state if isinstance(state,dict) else None,record.get("observed_state"));updated=dict(record);updated["desired_state"]="stopped" if action=="stop" else "running";updated["observed_state"]=observed_state;register_instance(updated)
   if action=="stop" and managed:firewall=managed_firewall.remove(record)
@@ -99,7 +105,7 @@ def handle_command(config,command):
  try:
   _token(instance_id,"instance_id")
   if action not in VALID_ACTIONS:raise ValueError("unsupported instance action")
-  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else save(config,instance_id) if action=="save" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
+  payload=status(config,instance_id) if action=="status" else doctor(config,instance_id) if action=="doctor" else save(config,instance_id) if action=="save" else remove(config,instance_id) if action=="remove" else lifecycle(config,instance_id,action,native_bootstrap=command.get("native_bootstrap") if action=="start" else None);result={"command_id":command_id,"instance_id":instance_id,"action":action,"status":"completed","result":payload,"generated_at":_now()}
  except Exception as exc:result={"command_id":command_id,"instance_id":instance_id or None,"action":action or None,"status":"failed","error":str(exc)[:2000],"generated_at":_now()}
  _write(_history(command_id),result);_write(_result(command_id),result);return result
 def read_result():
