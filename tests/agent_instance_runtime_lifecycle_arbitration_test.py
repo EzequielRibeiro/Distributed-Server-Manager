@@ -231,6 +231,18 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         self.assertEqual(self.runtime.snapshot(start["command_id"])["status"], "queued")
         self.assertEqual(self._lifecycle_count(), 1)
 
+    def test_waiting_bootstrap_does_not_starve_unrelated_instance(self):
+        self._enable_dayz_maintenance()
+        waiting = self._enqueue("start", self.instance_ids[0])
+        unrelated = self._enqueue("status", self.instance_ids[1])
+        dispatched = self.runtime.command_for_agent(self.agent_id)
+        self.assertEqual(dispatched["command_id"], unrelated["command_id"])
+        self.assertEqual(dispatched["action"], "status")
+        self.assertEqual(self.runtime.snapshot(waiting["command_id"])["status"], "queued")
+        from dayz_native_restart_repository import DayZNativeRestartRepository
+        native = DayZNativeRestartRepository(self.backend)
+        self.assertIsNotNone(native.command_for_agent(self.agent_id))
+
     def test_failed_native_preparation_blocks_start_and_releases_command(self):
         _, native = self._enable_dayz_maintenance()
         start = self._enqueue("start")
