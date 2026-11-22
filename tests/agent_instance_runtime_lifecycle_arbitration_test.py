@@ -246,6 +246,36 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         self.assertIn("already running", status["last_error"])
         self.assertEqual(self._active_lifecycle_count(), 0)
 
+    def test_native_bootstrap_rejects_mismatched_success_payload(self):
+        _, native = self._enable_dayz_maintenance()
+        start = self._enqueue("start")
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        issued = native.command_for_agent(self.agent_id)
+        native.apply_result(self.agent_id, {
+            "command_id": issued["command_id"], "instance_id": self.instance_ids[0],
+            "status": "completed",
+            "result": {"kind": "CapivaraDayZNativeRestartPrepared",
+                       "materialized": True, "due_at": "2026-01-01T01:00:00Z"},
+        })
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        state = self.runtime.snapshot(start["command_id"])
+        self.assertEqual(state["status"], "failed")
+        self.assertIn("mismatched", state["last_error"])
+
+    def test_native_bootstrap_pending_start_has_a_bounded_deadline(self):
+        from datetime import datetime, timedelta, timezone
+        self._enable_dayz_maintenance()
+        start = self._enqueue("start")
+        with self.backend.transaction() as connection:
+            connection.execute(
+                "UPDATE agent_instance_commands SET created_at=? WHERE command_id=?",
+                ((datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(), start["command_id"]),
+            )
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        state = self.runtime.snapshot(start["command_id"])
+        self.assertEqual(state["status"], "failed")
+        self.assertIn("within 5 minutes", state["last_error"])
+
     def test_no_maintenance_policy_retains_normal_lifecycle_delivery(self):
         start = self._enqueue("start")
         dispatched = self.runtime.command_for_agent(self.agent_id)
