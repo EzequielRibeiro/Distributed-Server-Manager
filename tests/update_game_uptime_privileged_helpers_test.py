@@ -99,5 +99,170 @@ class PrivilegedHelperAdmissionTests(unittest.TestCase):
             self.assertIn("maintenance_hold_active", result["error"])
 
 
+    def test_root_helpers_share_real_cross_process_inflight_lock(self):
+        """Grouped #928 proof: 2 real helper functions and a second Python PID.
+
+        All paths live under a temporary directory. No actual systemd units,
+        game commands, ACL changes, or privileged host writes are executed.
+        """
+        import os
+        import stat
+        import subprocess
+        import threading
+        from unittest.mock import Mock
+        import game_uptime_privileged_flock as witness
+
+        uid = os.geteuid()
+        with tempfile.TemporaryDirectory(prefix="dsm928-helper-flock-") as temp:
+            root = Path(temp)
+            folder = root / "fixed-locks"
+            folder.mkdir(mode=0o755)
+            lock_path = folder / "agent-privileged-operations.lock"
+
+            witness.provision_privileged_helper_lock(
+                path=lock_path, trusted_uid=uid)
+            inode = lock_path.stat().st_ino
+            witness.provision_privileged_helper_lock(
+                path=lock_path, trusted_uid=uid)
+            self.assertEqual(lock_path.stat().st_ino, inode)
+            self.assertEqual(stat.S_IMODE(lock_path.stat().st_mode), 0o600)
+
+            # No opt-in must preserve installed old semantics.
+            with witness.shared_privileged_helper_lock(
+                    path=lock_path, trusted_uid=uid, enabled=False) as active:
+                self.assertFalse(active)
+
+            def shared():
+                return witness.shared_privileged_helper_lock(
+                    path=lock_path, trusted_uid=uid, enabled=True)
+
+            def exclusive():
+                return witness.exclusive_privileged_helper_lock(
+                    path=lock_path, trusted_uid=uid)
+
+            probe = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from game_uptime_privileged_flock import (
+    exclusive_privileged_helper_lock, PrivilegedHelperFenceUnavailable,
+)
+try:
+    with exclusive_privileged_helper_lock(
+            path=Path(sys.argv[1]), trusted_uid=int(sys.argv[3])) as result:
+        print("EXCLUSIVE:" + str(result["live_no_drain_authorized"]))
+except PrivilegedHelperFenceUnavailable:
+    print("BUSY")
+"""
+
+            def child_exclusive():
+                done = subprocess.run(
+                    [sys.executable, "-c", probe, str(lock_path),
+                     str(ROOT / "agents/linux/runtime"), str(uid)],
+                    capture_output=True, check=True, text=True, timeout=12)
+                return done.stdout.strip()
+
+            self.assertEqual(child_exclusive(), "EXCLUSIVE:False")
+
+            materializer = load(
+                "dsm928_materialize_inflight",
+                ROOT / "agents/linux/privileged/materialize_instance.py")
+            native = load(
+                "dsm928_native_inflight",
+                ROOT / "agents/linux/privileged/native_command.py")
+
+            for helper, ident in (
+                (materializer, "dayz-002"),
+                (native, "native-command-123"),
+            ):
+                with self.subTest(helper=helper.__name__):
+                    self.assertTrue(hasattr(helper.run, "__wrapped__"))
+                    entered = threading.Event()
+                    release = threading.Event()
+                    errors = []
+
+                    def pause_request_read(*_args, **_kwargs):
+                        entered.set()
+                        if not release.wait(timeout=12):
+                            raise AssertionError("helper witness timeout")
+                        raise LookupError("synthetic pre-mutation stop")
+
+                    def worker():
+                        try:
+                            helper.run(ident)
+                        except BaseException as exc:
+                            errors.append(exc)
+
+                    with patch.object(
+                            admission, "shared_privileged_helper_lock",
+                            side_effect=shared), patch.object(
+                            admission, "observe",
+                            return_value={"active": False}), patch.object(
+                            helper.os, "geteuid", return_value=0), patch.object(
+                            Path, "read_text", side_effect=pause_request_read):
+                        thread = threading.Thread(
+                            target=worker, daemon=True)
+                        try:
+                            thread.start()
+                            self.assertTrue(entered.wait(timeout=12))
+                            self.assertEqual(child_exclusive(), "BUSY")
+                        finally:
+                            release.set()
+                            thread.join(timeout=12)
+                        self.assertFalse(thread.is_alive())
+                    self.assertEqual(len(errors), 1)
+                    self.assertIsInstance(errors[0], LookupError)
+                    self.assertEqual(child_exclusive(), "EXCLUSIVE:False")
+
+            # A coordinator holding EX denies *both* new helpers before
+            # either reads a request, even if the hold marker is absent.
+            with patch.object(
+                    admission, "shared_privileged_helper_lock",
+                    side_effect=shared), patch.object(
+                    admission, "observe",
+                    return_value={"active": False}), patch.object(
+                    Path, "read_text",
+                    side_effect=AssertionError("request must not be read")):
+                with exclusive() as negative:
+                    self.assertFalse(negative["privileged_helper_acked"])
+                    self.assertFalse(negative["live_no_drain_authorized"])
+                    for helper, ident in (
+                        (materializer, "dayz-002"),
+                        (native, "native-command-123"),
+                    ):
+                        with patch.object(helper.os, "geteuid", return_value=0):
+                            with self.assertRaisesRegex(
+                                    admission.PrivilegedMutationHold,
+                                    "agent_privileged_inflight_fence_unavailable"):
+                                helper.run(ident)
+
+            # Recovery ACL path must not bypass EX even after a failed run.
+            with patch.object(
+                    admission, "shared_privileged_helper_lock",
+                    side_effect=shared), patch.object(
+                    materializer.os, "geteuid", return_value=0), patch.object(
+                    materializer.sys, "argv",
+                    ["materialize_instance.py", "dayz-002"]), patch.object(
+                    Path, "read_text",
+                    side_effect=AssertionError("forbidden recovery read")), patch.object(
+                    materializer, "_grant_customer_files_access") as grant, patch.object(
+                    materializer, "_write_result") as write_result:
+                with exclusive():
+                    self.assertEqual(materializer.main(), 1)
+                grant.assert_not_called()
+                self.assertEqual(write_result.call_args.args[1]["status"], "failed")
+
+            # No accidental recovery from missing/unsafe inode under opt-in.
+            lock_path.chmod(0o666)
+            try:
+                with self.assertRaises(
+                        witness.PrivilegedHelperFenceUnavailable):
+                    with shared():
+                        self.fail("unsafe existing inode must be refused")
+            finally:
+                lock_path.chmod(0o600)
+            self.assertEqual(child_exclusive(), "EXCLUSIVE:False")
+
+
 if __name__ == "__main__":
     unittest.main()
