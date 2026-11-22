@@ -106,6 +106,8 @@ class AgentInstanceRuntimeRepository:
             # unrelated queued instance commands on the same Agent.
             if not authorize_dispatch(self,state):continue
             command={key:state[key] for key in ("command_id","agent_id","instance_id","action")}
+            if state.get("native_bootstrap") is not None:
+                command["native_bootstrap"] = dict(state["native_bootstrap"])
             if state["action"]=="systemd_lifecycle_evidence":
                 params=normalize_command_parameters(state["action"],state.get("parameters"))
                 command.update(params)
