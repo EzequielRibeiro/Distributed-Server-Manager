@@ -192,6 +192,75 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         self.assertEqual(command_ids[0], command_ids[1])
         self.assertEqual(self._lifecycle_count(), 1)
 
+    def _enable_dayz_maintenance(self):
+        from maintenance_repository import MaintenanceRepository
+        from dayz_native_restart_repository import DayZNativeRestartRepository
+        policy = MaintenanceRepository(self.backend)
+        policy.set_policy(self.instance_ids[0], {
+            "enabled": True, "schedule_mode": "interval",
+            "interval_seconds": 28800,
+            "warning_offsets_seconds": [],
+            "broadcast_enabled": False,
+        })
+        return policy, DayZNativeRestartRepository(self.backend)
+
+    def test_dayz_start_waits_for_native_agent_ack_and_due_alignment(self):
+        from datetime import datetime, timezone
+        policy, native = self._enable_dayz_maintenance()
+        start = self._enqueue("start")
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        issued = native.command_for_agent(self.agent_id)
+        self.assertIsNotNone(issued)
+        self.assertEqual(str(issued["instance_id"]), self.instance_ids[0])
+        due = policy.snapshot(self.instance_ids[0])["state"]["next_due_at"]
+        self.assertEqual(
+            datetime.fromisoformat(str(issued["due_at"]).replace("Z","+00:00")),
+            datetime.fromisoformat(str(due).replace("Z","+00:00")),
+        )
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        native.apply_result(self.agent_id, {
+            "command_id": issued["command_id"],
+            "instance_id": self.instance_ids[0],
+            "status": "completed",
+            "result": {"kind": "CapivaraDayZNativeRestartPrepared",
+                       "materialized": True, "due_at": issued["due_at"]},
+        })
+        dispatched = self.runtime.command_for_agent(self.agent_id)
+        self.assertEqual(dispatched["command_id"], start["command_id"])
+        self.assertEqual(dispatched["action"], "start")
+        self.assertEqual(self.runtime.snapshot(start["command_id"])["status"], "queued")
+        self.assertEqual(self._lifecycle_count(), 1)
+
+    def test_failed_native_preparation_blocks_start_and_releases_command(self):
+        _, native = self._enable_dayz_maintenance()
+        start = self._enqueue("start")
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        issued = native.command_for_agent(self.agent_id)
+        native.apply_result(self.agent_id, {
+            "command_id": issued["command_id"], "instance_id": self.instance_ids[0],
+            "status": "failed", "error": "Agent confirmed server already running",
+        })
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        status = self.runtime.snapshot(start["command_id"])
+        self.assertEqual(status["status"], "failed")
+        self.assertIn("already running", status["last_error"])
+        self.assertEqual(self._active_lifecycle_count(), 0)
+
+    def test_no_maintenance_policy_retains_normal_lifecycle_delivery(self):
+        start = self._enqueue("start")
+        dispatched = self.runtime.command_for_agent(self.agent_id)
+        self.assertEqual(dispatched["command_id"], start["command_id"])
+        self.assertEqual(dispatched["action"], "start")
+
+    def test_maintenance_worker_start_keeps_its_existing_ordering(self):
+        self._enable_dayz_maintenance()
+        start = self.runtime.enqueue(
+            agent_id=self.agent_id, instance_id=self.instance_ids[0],
+            action="start", requested_by="maintenance-worker",
+        )
+        dispatched = self.runtime.command_for_agent(self.agent_id)
+        self.assertEqual(dispatched["command_id"], start["command_id"])
+
     def test_remove_deduplication_is_preserved(self):
         first = self._enqueue("remove")
         second = self._enqueue("remove")
