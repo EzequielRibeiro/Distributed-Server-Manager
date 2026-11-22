@@ -15,6 +15,7 @@ from minecraft_serverpack_finalization_scheduler import scan_pending_finalizatio
 from runtime_lock import instance_lock
 from runtime_operations import read_operation
 from game_uptime_finalization_admission import require_finalization_admission
+from game_uptime_finalization_flock import shared_finalization_lock
 
 
 def execute_one(config_path: Path, instance_id: str) -> list[dict[str, str]]:
@@ -68,13 +69,19 @@ def execute_one(config_path: Path, instance_id: str) -> list[dict[str, str]]:
     state_dir = Path(os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent"))
     if not state_dir.is_absolute():
         raise ValueError("invalid Agent state directory")
-    results = scan_pending_finalizations(
-        state_root=state_dir, agent_id=agent_id,
-        lock_instance=lambda iid: instance_lock(
-            iid, "minecraft_serverpack_finalization_worker", timeout_seconds=0.25),
-        read_operation=read_operation, dispatch=apply, enabled=True,
-        max_candidates=4, target_instance_id=instance_id,
-    )
+    # A detached process may outlive its Agent parent. Under explicit opt-in
+    # retain SH for the entire scan, reconciliation and possible recovery.
+    # Recheck the hold INSIDE SH, closing the gap before dispatch; a future
+    # local root coordinator must retain EX while its hold is active.
+    with shared_finalization_lock():
+        require_finalization_admission()
+        results = scan_pending_finalizations(
+            state_root=state_dir, agent_id=agent_id,
+            lock_instance=lambda iid: instance_lock(
+                iid, "minecraft_serverpack_finalization_worker", timeout_seconds=0.25),
+            read_operation=read_operation, dispatch=apply, enabled=True,
+            max_candidates=4, target_instance_id=instance_id,
+        )
     return [x for x in results if x.get("instance_id") == instance_id]
 
 
