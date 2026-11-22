@@ -121,7 +121,6 @@ def verify_pinned_archive(
                     raise ReleaseIntegrityError("release manifest diverges from trusted pins or archive")
                 required = manifest["required_files"]
                 if (any(type(item) is not str or not item
-                        or "/" + item not in ("/" + item)
                         or item.startswith("/")
                         or any(part in ("", ".", "..") for part in item.split("/"))
                         for item in required)
