@@ -243,6 +243,52 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         native = DayZNativeRestartRepository(self.backend)
         self.assertIsNotNone(native.command_for_agent(self.agent_id))
 
+    def test_redelivery_of_prepared_start_keeps_identical_agent_guard(self):
+        from dayz_native_restart_repository import DayZNativeRestartRepository
+        self._enable_dayz_maintenance()
+        start=self._enqueue("start")
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        native=DayZNativeRestartRepository(self.backend)
+        prep=native.command_for_agent(self.agent_id)
+        native.apply_result(self.agent_id,{
+            "command_id":prep["command_id"],
+            "instance_id":self.instance_ids[0],
+            "status":"completed",
+            "result":{"kind":"CapivaraDayZNativeRestartPrepared",
+                      "materialized":True,"due_at":prep["due_at"]},
+        })
+        first=self.runtime.command_for_agent(self.agent_id)
+        self.assertEqual(first["native_bootstrap"]["command_id"],prep["command_id"])
+        self.runtime.mark_delivered(start["command_id"])
+        duplicate=self.runtime.command_for_agent(self.agent_id)
+        self.assertEqual(duplicate["command_id"],start["command_id"])
+        self.assertEqual(duplicate["native_bootstrap"],first["native_bootstrap"])
+
+    def test_redelivery_does_not_rebind_to_changed_schedule(self):
+        from dayz_native_restart_repository import DayZNativeRestartRepository
+        from maintenance_repository import MaintenanceRepository
+        self._enable_dayz_maintenance()
+        start=self._enqueue("start")
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        native=DayZNativeRestartRepository(self.backend)
+        prep=native.command_for_agent(self.agent_id)
+        native.apply_result(self.agent_id,{
+            "command_id":prep["command_id"],
+            "instance_id":self.instance_ids[0],
+            "status":"completed",
+            "result":{"kind":"CapivaraDayZNativeRestartPrepared",
+                      "materialized":True,"due_at":prep["due_at"]},
+        })
+        self.assertIsNotNone(self.runtime.command_for_agent(self.agent_id))
+        self.runtime.mark_delivered(start["command_id"])
+        MaintenanceRepository(self.backend).set_policy(self.instance_ids[0], {
+            "enabled":True,"schedule_mode":"interval",
+            "interval_seconds":14400,"warning_offsets_seconds":[],
+            "broadcast_enabled":False,
+        })
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        self.assertEqual(self.runtime.snapshot(start["command_id"])["status"],"delivered")
+
     def test_failed_native_preparation_blocks_start_and_releases_command(self):
         _, native = self._enable_dayz_maintenance()
         start = self._enqueue("start")
