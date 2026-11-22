@@ -18,6 +18,9 @@ on:
       - 'database/schema_baseline.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/workers/maintenance_worker.py'
+      - 'dashboard/customer_maintenance_workspace.py'
+      - 'dashboard/web/customer-maintenance.js'
+      - 'tests/customer_maintenance_policy_surface_test.py'
       - 'tests/dayz_native_messages_test.py'
       - 'tests/dayz_native_restart_transport_test.py'
       - 'tests/dayz_native_restart_agent_parity_test.py'
@@ -44,6 +47,9 @@ on:
       - 'database/schema_baseline.py'
       - 'dashboard/agent_heartbeat_api.py'
       - 'dashboard/workers/maintenance_worker.py'
+      - 'dashboard/customer_maintenance_workspace.py'
+      - 'dashboard/web/customer-maintenance.js'
+      - 'tests/customer_maintenance_policy_surface_test.py'
       - 'tests/dayz_native_messages_test.py'
       - 'tests/dayz_native_restart_transport_test.py'
       - 'tests/dayz_native_restart_agent_parity_test.py'
@@ -80,6 +86,8 @@ jobs:
             database/maintenance_repository.py \
             dashboard/agent_heartbeat_api.py \
             dashboard/workers/maintenance_worker.py \
+            dashboard/customer_maintenance_workspace.py \
+            tests/customer_maintenance_policy_surface_test.py \
             tests/dayz_native_messages_test.py \
             tests/dayz_native_preparation_guard_test.py \
             tests/dayz_native_restart_transport_test.py \
@@ -94,6 +102,7 @@ jobs:
           python3 tests/dayz_native_preparation_guard_test.py
           python3 tests/agent_instance_runtime_lifecycle_arbitration_test.py
           python3 tests/agent_instance_runtime_test.py
+          python3 tests/customer_maintenance_policy_surface_test.py
           python3 tests/dayz_native_restart_transport_test.py
           python3 tests/dayz_native_restart_agent_parity_test.py
           python3 tests/dayz_native_maintenance_worker_test.py
