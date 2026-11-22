@@ -128,6 +128,35 @@ class DayZNativeRestartClientTest(unittest.TestCase):
         self.assertIn("verified stopped instance", result["error"])
         self.assertFalse((self.db / "messages.xml").exists())
 
+    def test_mission_switch_prepares_only_new_mission_directory(self):
+        with patch.object(client, "get_instance", return_value=self.record):
+            first = self.command()
+            initial = client.handle_command(self.config, first)
+            self.assertEqual(initial["status"], "completed")
+            previous_xml = (self.db / "messages.xml").read_bytes()
+
+            new_mission = self.instance_root / "mpmissions" / "hardcore.namalsk"
+            new_mission.mkdir(parents=True)
+            (self.instance_root / "serverDZ.cfg").write_text(
+                'class Missions { class DayZ { template="hardcore.namalsk"; }; };\n',
+                encoding="utf-8",
+            )
+            next_command = {
+                **self.command(),
+                "command_id": "dayz-maint-new-mission",
+                "due_at": (
+                    datetime.now(timezone.utc) + timedelta(hours=2)
+                ).isoformat().replace("+00:00", "Z"),
+            }
+            result = client.handle_command(self.config, next_command)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["result"]["mission"], "hardcore.namalsk")
+        self.assertEqual((self.db / "messages.xml").read_bytes(), previous_xml)
+        new_xml = new_mission / "db" / "messages.xml"
+        self.assertTrue(new_xml.is_file())
+        self.assertIn("<shutdown>1</shutdown>", new_xml.read_text(encoding="utf-8"))
+
     def test_result_is_idempotent(self):
         command = self.command()
 
