@@ -24,6 +24,9 @@ if str(INSTALL_ROOT / "privileged") not in sys.path:
     sys.path.insert(0, str(INSTALL_ROOT / "privileged"))
 
 import backup_client
+from game_uptime_privileged_admission import (
+    fence_privileged_helper_run, require_privileged_mutation_admission,
+)
 from restore_instance_backup import (
     _token, _write_result, _validate_external_target,
 )
@@ -34,9 +37,11 @@ REQUEST_ROOT = STATE / "privileged-backup-create"
 EXPECTED_BACKUPS = STATE / "backups"
 
 
+@fence_privileged_helper_run
 def run(command_id: str) -> dict[str, Any]:
     if os.geteuid() != 0:
         raise RuntimeError("privileged backup creator must run as root")
+    require_privileged_mutation_admission()
     if os.environ.get("CAPIVARA_AGENT_MODE") == "hybrid":
         raise PermissionError("external backup creator does not support hybrid pools")
     command_id = _token(command_id, "command_id")
