@@ -264,5 +264,170 @@ except PrivilegedHelperFenceUnavailable:
             self.assertEqual(child_exclusive(), "EXCLUSIVE:False")
 
 
+    def test_backup_create_restore_and_firewall_join_same_inflight_fence(self):
+        """Grouped #928 test: three real run() paths, one inode, second PID.
+
+        External side effects stop before reading requests. No backup restore,
+        UFW command, host writes, Agent service or game is invoked.
+        """
+        import os
+        import stat
+        import subprocess
+        import threading
+        from game_uptime_privileged_flock import (
+            provision_privileged_helper_lock, shared_privileged_helper_lock,
+            exclusive_privileged_helper_lock, PrivilegedHelperFenceUnavailable,
+        )
+
+        uid = os.geteuid()
+        creator = load(
+            "dsm928_backup_create_inflight",
+            ROOT / "agents/linux/privileged/create_instance_backup.py")
+        restorer = load(
+            "dsm928_backup_restore_inflight",
+            ROOT / "agents/linux/privileged/restore_instance_backup.py")
+        firewall = load(
+            "dsm928_firewall_inflight",
+            ROOT / "agents/linux/privileged/reconcile_firewall.py")
+        candidates = (
+            (creator, "backup-928-create"),
+            (restorer, "backup-928-restore"),
+            (firewall, "dayz-002"),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="dsm928-backup-firewall-flock-") as temp:
+            folder = Path(temp) / "trusted"
+            folder.mkdir(mode=0o755)
+            lock = folder / "agent-privileged-operations.lock"
+            provision_privileged_helper_lock(path=lock, trusted_uid=uid)
+            self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+
+            def shared():
+                return shared_privileged_helper_lock(
+                    path=lock, trusted_uid=uid, enabled=True)
+
+            def exclusive():
+                return exclusive_privileged_helper_lock(
+                    path=lock, trusted_uid=uid)
+
+            probe = """
+import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[2])
+from game_uptime_privileged_flock import (
+    exclusive_privileged_helper_lock, PrivilegedHelperFenceUnavailable,
+)
+try:
+    with exclusive_privileged_helper_lock(
+            path=Path(sys.argv[1]), trusted_uid=int(sys.argv[3])) as evidence:
+        print("EX:" + str(evidence["live_no_drain_authorized"]))
+except PrivilegedHelperFenceUnavailable:
+    print("BUSY")
+"""
+
+            def child_probe():
+                done = subprocess.run([
+                    sys.executable, "-c", probe, str(lock),
+                    str(ROOT / "agents/linux/runtime"), str(uid),
+                ], capture_output=True, check=True, text=True, timeout=12)
+                return done.stdout.strip()
+
+            self.assertEqual(child_probe(), "EX:False")
+
+            # Root hold must be consulted before any request or UFW action.
+            with patch.object(admission, "observe", return_value={"active": True}), \
+                 patch.object(admission, "shared_privileged_helper_lock",
+                              side_effect=shared), \
+                 patch.object(Path, "read_text",
+                              side_effect=AssertionError("request read under hold")), \
+                 patch.object(firewall, "_atomic_json") as save:
+                for helper, ident in candidates:
+                    with self.subTest(hold=helper.__name__):
+                        with patch.object(helper.os, "geteuid", return_value=0):
+                            if helper is firewall:
+                                response = helper.run(ident)
+                                self.assertEqual(response["status"], "failed")
+                                self.assertIn("maintenance_hold_active", response["error"])
+                            else:
+                                with self.assertRaises(admission.PrivilegedMutationHold):
+                                    helper.run(ident)
+                self.assertEqual(save.call_count, 1)
+
+            # While each of the three parent processes is still in run(),
+            # a separate PID cannot obtain the coordinator's exclusive EX.
+            for helper, ident in candidates:
+                with self.subTest(in_flight=helper.__name__):
+                    ready = threading.Event()
+                    release = threading.Event()
+                    errors, responses = [], []
+
+                    def pending_read(*_args, **_kwargs):
+                        ready.set()
+                        if not release.wait(timeout=12):
+                            raise AssertionError("helper in-flight fixture timeout")
+                        raise LookupError("fixture read stopped")
+
+                    def operate():
+                        try:
+                            responses.append(helper.run(ident))
+                        except BaseException as exc:
+                            errors.append(exc)
+
+                    with patch.object(admission, "observe",
+                                      return_value={"active": False}), \
+                         patch.object(admission, "shared_privileged_helper_lock",
+                                      side_effect=shared), \
+                         patch.object(helper.os, "geteuid", return_value=0), \
+                         patch.object(Path, "read_text",
+                                      side_effect=pending_read), \
+                         patch.object(firewall, "_atomic_json"):
+                        worker = threading.Thread(target=operate, daemon=True)
+                        try:
+                            worker.start()
+                            self.assertTrue(ready.wait(timeout=12))
+                            self.assertEqual(child_probe(), "BUSY")
+                        finally:
+                            release.set()
+                            worker.join(timeout=12)
+                        self.assertFalse(worker.is_alive())
+                    if helper is firewall:
+                        self.assertEqual(errors, [])
+                        self.assertEqual(responses[0]["status"], "failed")
+                    else:
+                        self.assertEqual(len(errors), 1)
+                        self.assertIsInstance(errors[0], LookupError)
+                    self.assertEqual(child_probe(), "EX:False")
+
+            # A coordinator already holding EX must reject all three
+            # entrypoints *before* reading a request.
+            with patch.object(admission, "shared_privileged_helper_lock",
+                              side_effect=shared), \
+                 patch.object(admission, "observe",
+                              return_value={"active": False}), \
+                 patch.object(Path, "read_text",
+                              side_effect=AssertionError("bypassed EX")), \
+                 patch.object(firewall, "_atomic_json") as save:
+                with exclusive() as proof:
+                    self.assertFalse(proof["live_no_drain_authorized"])
+                    self.assertFalse(proof["privileged_helper_acked"])
+                    self.assertIn("five_", proof["scope"])
+                    for helper, ident in candidates:
+                        with patch.object(helper.os, "geteuid", return_value=0):
+                            with self.assertRaisesRegex(
+                                    admission.PrivilegedMutationHold,
+                                    "agent_privileged_inflight_fence_unavailable"):
+                                helper.run(ident)
+                save.assert_not_called()
+
+            # Invalid inode can never be treated as an idle helper.
+            lock.chmod(0o666)
+            try:
+                with self.assertRaises(PrivilegedHelperFenceUnavailable):
+                    with shared():
+                        self.fail("unsafe witness must be rejected")
+            finally:
+                lock.chmod(0o600)
+
+
 if __name__ == "__main__":
     unittest.main()
