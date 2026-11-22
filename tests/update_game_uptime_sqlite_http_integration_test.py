@@ -370,6 +370,12 @@ class ActualDispatcherSqliteHttpTests(unittest.TestCase):
             )
             self.assertFalse(received["remote_agent_quiescence_acked"])
             self.assertFalse(received["live_no_drain_authorized"])
+            # The existing real route now exposes only negative correlation,
+            # never an ACK or a new command.
+            from_route = received["no_drain_fence_correlation"]
+            self.assertTrue(from_route["receipt_set_correlated"])
+            self.assertFalse(from_route["remote_agent_quiescence_acked"])
+            self.assertFalse(from_route["live_no_drain_authorized"])
             # Reuse this credentialed HTTP/SQLite fixture for the complete
             # host-set correlation. Even one valid, matching Agent remains
             # receipt-only; duplicates, omissions and tampering fail closed.
