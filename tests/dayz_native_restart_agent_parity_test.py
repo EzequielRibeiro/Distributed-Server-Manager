@@ -25,6 +25,8 @@ class DayZNativeRestartAgentParityTest(unittest.TestCase):
             self.assertIn("native_restart_plan", source)
             self.assertIn("materialize_shutdown_messages_xml", source)
             self.assertIn("get_instance", source)
+            self.assertIn("require_stopped_instance", source)
+            self.assertIn("runtime_operation", source)
             self.assertIn("instance belongs to another Agent", source)
             self.assertIn("native restart command requires DayZ instance", source)
 
