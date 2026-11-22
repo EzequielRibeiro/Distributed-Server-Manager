@@ -276,6 +276,107 @@ class AgentInstanceRuntimeLifecycleArbitrationTest(unittest.TestCase):
         self.assertEqual(state["status"], "failed")
         self.assertIn("within 5 minutes", state["last_error"])
 
+    def test_two_agents_prepare_independently_without_cross_delivery(self):
+        from maintenance_repository import MaintenanceRepository
+        from dayz_native_restart_repository import DayZNativeRestartRepository
+        other_agent = "agent-lifecycle-second"
+        other_node = "node-lifecycle-second"
+        other_instance = "instance-other-agent"
+        pairing = AgentPairingRepository(self.backend)
+        token = pairing.issue_token(controller_id=self.controller_id, created_by="test")
+        pairing.enroll(
+            pairing_token=token.token, agent_id=other_agent, node_id=other_node,
+            name="Second Agent", fingerprint="sha256:lifecycle-second-agent",
+            hostname="second-lifecycle-host", os_name="linux", architecture="x86_64",
+            address="192.0.2.81",
+        )
+        with self.backend.transaction() as connection:
+            connection.execute("UPDATE agents SET status='active' WHERE id=?", (other_agent,))
+            connection.execute("UPDATE nodes SET status='online' WHERE id=?", (other_node,))
+            connection.execute(
+                "INSERT INTO instances("
+                "id,node_id,game_id,name,status,controller_id,agent_id,customer_id"
+                ") VALUES(?,?,?,?,?,?,?,?)",
+                (other_instance, other_node, "dayz", "Second Agent DayZ",
+                 "offline", self.controller_id, other_agent, self.customer_id),
+            )
+        maintenance = MaintenanceRepository(self.backend)
+        options = {
+            "enabled": True, "schedule_mode": "interval",
+            "interval_seconds": 28800, "warning_offsets_seconds": [],
+            "broadcast_enabled": False,
+        }
+        maintenance.set_policy(self.instance_ids[0], options)
+        maintenance.set_policy(other_instance, options)
+        native = DayZNativeRestartRepository(self.backend)
+        first_start = self._enqueue("start")
+        second_start = self.runtime.enqueue(
+            agent_id=other_agent, instance_id=other_instance,
+            action="start", requested_by="test",
+        )
+
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        self.assertIsNone(self.runtime.command_for_agent(other_agent))
+        first = native.command_for_agent(self.agent_id)
+        second = native.command_for_agent(other_agent)
+        self.assertEqual(first["instance_id"], self.instance_ids[0])
+        self.assertEqual(second["instance_id"], other_instance)
+        self.assertNotEqual(first["command_id"], second["command_id"])
+
+        second_ack = {
+            "command_id": second["command_id"], "instance_id": other_instance,
+            "status": "completed", "result": {
+                "kind": "CapivaraDayZNativeRestartPrepared",
+                "materialized": True, "due_at": second["due_at"],
+            },
+        }
+        with self.assertRaises(PermissionError):
+            native.apply_result(self.agent_id, second_ack)
+
+        first_ack = {
+            "command_id": first["command_id"], "instance_id": self.instance_ids[0],
+            "status": "completed", "result": {
+                "kind": "CapivaraDayZNativeRestartPrepared",
+                "materialized": True, "due_at": first["due_at"],
+            },
+        }
+        native.apply_result(self.agent_id, first_ack)
+        self.assertEqual(
+            self.runtime.command_for_agent(self.agent_id)["command_id"],
+            first_start["command_id"],
+        )
+        self.assertIsNone(self.runtime.command_for_agent(other_agent))
+        native.apply_result(other_agent, second_ack)
+        self.assertEqual(
+            self.runtime.command_for_agent(other_agent)["command_id"],
+            second_start["command_id"],
+        )
+
+    def test_schedule_changed_with_old_native_command_fails_closed(self):
+        from maintenance_repository import MaintenanceRepository
+        maintenance, native = self._enable_dayz_maintenance()
+        start = self._enqueue("start")
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        old = native.command_for_agent(self.agent_id)
+        old_due = old["due_at"]
+
+        maintenance.set_policy(self.instance_ids[0], {
+            "enabled": True, "schedule_mode": "interval",
+            "interval_seconds": 14400, "warning_offsets_seconds": [],
+            "broadcast_enabled": False,
+        })
+        self.assertNotEqual(
+            str(maintenance.snapshot(self.instance_ids[0])["state"]["next_due_at"]),
+            str(old_due),
+        )
+        # The old command must never authorize the reconfigured schedule.
+        self.assertIsNone(self.runtime.command_for_agent(self.agent_id))
+        state = self.runtime.snapshot(start["command_id"])
+        self.assertEqual(state["status"], "failed")
+        self.assertIn("bootstrap blocked", state["last_error"])
+        self.assertEqual(self._active_lifecycle_count(), 0)
+        self.assertEqual(native.snapshot(old["command_id"])["status"], "queued")
+
     def test_no_maintenance_policy_retains_normal_lifecycle_delivery(self):
         start = self._enqueue("start")
         dispatched = self.runtime.command_for_agent(self.agent_id)
