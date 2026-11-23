@@ -263,14 +263,37 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
             evidence = agent.build_fence_evidence("trusted-agent", now=now)
         self.assertEqual(evidence["contract"], agent.CONTRACT_V2)
         self.assertEqual(evidence["release_sha256"], sha)
+        self.auth.return_value.authenticate_readonly.return_value = {
+            "agent_id": "trusted-agent", "status": "active"}
+        committed_proof = {
+            "status": "negative_v2_receipt_durably_recorded",
+            "transaction_id": evidence["transaction_id"],
+            "release_sha256": sha,
+            "request_id": evidence["request_id"],
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        }
         with patch.object(controller, "observe", return_value=hold), patch.object(
                 controller, "binding_for_hold", return_value=binding), patch(
                 "agent_remote_http.receipt_for_authenticated_agent",
-                side_effect=controller.receipt_for_authenticated_agent):
-            status, response = self.post({
+                side_effect=controller.receipt_for_authenticated_agent), patch(
+                "agent_remote_http.commit_authenticated_negative_v2_receipt",
+                return_value=committed_proof) as journal:
+            # Heartbeats cannot bypass durable v2 replay accounting.
+            status, ordinary = self.post({
                 "no_drain_fence_evidence": evidence})
             self.assertEqual(status, 200)
+            self.assertEqual(ordinary["no_drain_fence_receipt"]["status"],
+                             "blocked")
+            journal.assert_not_called()
+            # Dedicated credentialed observation admits v2 receipt only after
+            # a privileged journal reports successful unique-nonce commit.
+            status, response = dispatch_fence_observation(
+                {"no_drain_fence_evidence": evidence},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 200)
             receipt = response["no_drain_fence_receipt"]
+            journal.assert_called_once()
             self.assertEqual(receipt["status"],
                              "authenticated_evidence_received_unfenced")
             self.assertEqual(receipt["release_sha256"], sha)
@@ -288,7 +311,9 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
             self.assertFalse(correlated["remote_agents_acked"])
             self.assertFalse(correlated["live_no_drain_authorized"])
             divergent = dict(evidence, release_sha256="e"*64)
-            status, wrong = self.post({"no_drain_fence_evidence": divergent})
+            status, wrong = dispatch_fence_observation(
+                {"no_drain_fence_evidence": divergent},
+                headers=self.headers, backend=object())
             self.assertEqual(status, 200)
             self.assertEqual(
                 wrong["no_drain_fence_receipt"]["status"], "blocked")
@@ -309,6 +334,22 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
                 }], transaction_id="a"*32,
                 expected_release_sha256="f"*64, now=now)
             self.assertFalse(wrong_pin["receipt_set_correlated"])
+
+        # No privileged nonce journal on an installed unprivileged Dashboard:
+        # a matching release pin and authenticated Agent are NOT enough.
+        with patch.object(controller, "observe", return_value=hold), patch.object(
+                controller, "binding_for_hold", return_value=binding), patch(
+                "agent_remote_http.receipt_for_authenticated_agent",
+                side_effect=controller.receipt_for_authenticated_agent), patch(
+                "agent_remote_http.commit_authenticated_negative_v2_receipt",
+                side_effect=PermissionError("privileged_journal_unavailable")):
+            status, refused = dispatch_fence_observation(
+                {"no_drain_fence_evidence": evidence},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 200)
+            self.assertEqual(refused["no_drain_fence_receipt"]["status"],
+                             "blocked")
+            self.assertFalse(refused["live_no_drain_authorized"])
 
         with patch.object(controller, "observe", return_value=hold), patch.object(
                 controller, "binding_for_hold", return_value=None):
