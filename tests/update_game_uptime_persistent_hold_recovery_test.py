@@ -123,6 +123,90 @@ class PersistentPendingHoldTests(unittest.TestCase):
                          trusted_uid=self.uid)
         self.assertFalse(proof["live_no_drain_authorized"])
 
+    def test_root_only_wire_nonce_journal_survives_restarts_without_ack(self):
+        """One grouped replay/crash test on the existing disposable fixture."""
+        from game_uptime_durable_wire_replay import (
+            DurableWireReplayBlocked, record_authenticated_negative_receipt,
+        )
+        import importlib
+        import game_uptime_durable_wire_replay as replay_module
+
+        sha = "a" * 64
+        binding = self.state / "no-drain-release-binding.json"
+        self.prepare(release_sha256=sha, binding_path=binding)
+        receipts = self.state / "no-drain-wire-receipts"
+        receipts.mkdir(mode=0o700)
+        now = 1700000010
+        def make_receipt(agent_id, nonce):
+            return {
+                "kind": "CapivaraNoDrainFenceEvidenceReceipt",
+                "schema_version": 1, "agent_id": agent_id,
+                "request_id": nonce, "transaction_id": self.tx,
+                "release_sha256": sha, "issued_at": 1700000000,
+                "expires_at": 1700000600,
+                "contract": {
+                    "protocol": "dsm928-fence-evidence-release-bound-readonly-v2",
+                    "schema": "2",
+                },
+                "status": "authenticated_evidence_received_unfenced",
+                "scope": "authenticated_heartbeat_wire_only",
+                "agent_workers_fenced": False,
+                "remote_agent_quiescence_acked": False,
+                "live_no_drain_authorized": False,
+            }
+        scope = {
+            "expected_agent_ids": ["agent-A", "agent-B"],
+            "expected_transaction_id": self.tx,
+            "expected_release_sha256": sha,
+            "journal_dir": receipts, "hold_path": self.marker,
+            "pending_path": self.journal, "binding_path": binding,
+            "trusted_uid": self.uid, "now": now, "fixture_only": True,
+        }
+        nonce = "a" * 32
+        first = make_receipt("agent-A", nonce)
+        witness = record_authenticated_negative_receipt(
+            authenticated_agent_id="agent-A", receipt=first, **scope)
+        self.assertTrue(witness["wire_receipt_received"])
+        self.assertFalse(witness["transport_authentication_independently_verified"])
+        self.assertFalse(witness["remote_agent_quiescence_acked"])
+        self.assertFalse(witness["live_no_drain_authorized"])
+        record_path = receipts / (nonce + ".json")
+        self.assertEqual(stat.S_IMODE(record_path.stat().st_mode), 0o600)
+        original = record_path.read_bytes()
+        # Re-import simulates a freshly booted coordinator: same disk nonce
+        # cannot be accepted again, even under a different allowed Agent ID.
+        importlib.reload(replay_module)
+        with self.assertRaisesRegex(
+                DurableWireReplayBlocked, "replayed_or_existing_wire_nonce"):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-A", receipt=first, **scope)
+        with self.assertRaisesRegex(
+                DurableWireReplayBlocked, "replayed_or_existing_wire_nonce"):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-B",
+                receipt=make_receipt("agent-B", nonce), **scope)
+        self.assertEqual(record_path.read_bytes(), original)
+        # A new nonce is accepted only for a member of the fixed Agent set.
+        with self.assertRaises(DurableWireReplayBlocked):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="unknown",
+                receipt=make_receipt("unknown", "b" * 32), **scope)
+        with self.assertRaises(DurableWireReplayBlocked):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-B",
+                receipt={**make_receipt("agent-B", "b"*32),
+                         "release_sha256": "f"*64}, **scope)
+        self.assertFalse((receipts / ("b"*32 + ".json")).exists())
+        # Loss of the ephemeral /run hold with durable pending journal
+        # must block any new witness, without deleting historical evidence.
+        self.marker.unlink()
+        with self.assertRaises(DurableWireReplayBlocked):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-B",
+                receipt=make_receipt("agent-B", "b"*32), **scope)
+        self.assertEqual(record_path.read_bytes(), original)
+        self.assertFalse((receipts / ("b"*32 + ".json")).exists())
+
     def test_partial_journal_blocks_after_crash_before_marker_write(self):
         self.journal.write_bytes(b"{incomplete")
         self.journal.chmod(0o600)
