@@ -163,6 +163,47 @@ class BackupClientInstanceRootTest(unittest.TestCase):
         self.assertIn("save.txt", names)
         self.assertNotIn("shared-only.txt", names)
 
+    def test_dayz_workshop_addons_alias_is_safe_and_not_double_counted(self):
+        workshop = self.private / "content" / "workshop" / "steam-workshop:2289456201"
+        addons = workshop / "Addons"
+        addons.mkdir(parents=True)
+        payload = b"namalsk-test-payload"
+        (addons / "namalsk_data.pbo").write_bytes(payload)
+        (workshop / "addons").symlink_to("Addons", target_is_directory=True)
+
+        expected_private_bytes = (self.private / "save.txt").stat().st_size + len(payload)
+        snapshot = backup_client.quota_snapshot(self.record, backup_client.BACKUP_ROOT)
+        self.assertEqual(expected_private_bytes, snapshot["instance_used_bytes"])
+        self.assertEqual(0, snapshot["backup_used_bytes"])
+
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            created = backup_client._create(self.config, self.command())
+
+        with tarfile.open(created["artifact_path"], "r:*") as archive:
+            members = archive.getmembers()
+            names = {item.name.lstrip("./") for item in members}
+            self.assertIn(
+                "content/workshop/steam-workshop:2289456201/Addons/namalsk_data.pbo",
+                names,
+            )
+            self.assertFalse(any(item.issym() or item.islnk() for item in members))
+            self.assertNotIn(
+                "content/workshop/steam-workshop:2289456201/addons",
+                names,
+            )
+
+    def test_unsafe_workshop_link_still_blocks_backup(self):
+        workshop = self.private / "content" / "workshop" / "steam-workshop:2289461232"
+        workshop.mkdir(parents=True)
+        (workshop / "addons").symlink_to(
+            self.shared, target_is_directory=True
+        )
+        with self.assertRaisesRegex(OSError, "symlink in managed storage tree"):
+            backup_client.quota_snapshot(self.record, backup_client.BACKUP_ROOT)
+        with patch.object(backup_client, "get_instance", return_value=self.record):
+            with self.assertRaisesRegex(OSError, "symlink in managed storage tree"):
+                backup_client._create(self.config, self.command())
+
     def test_single_operational_defers_pruning_until_controller_ack(self):
         command = self.command()
         command["policy"]["keep_single_operational"] = True
