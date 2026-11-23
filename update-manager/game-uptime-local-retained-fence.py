@@ -44,12 +44,18 @@ def _open_existing(path: Path) -> int:
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK
                  | getattr(os, "O_NOFOLLOW", 0)
                  | getattr(os, "O_CLOEXEC", 0))
-    after = os.fstat(fd)
-    if ((before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
-            or not stat.S_ISREG(after.st_mode)):
+    try:
+        after = os.fstat(fd)
+        if ((before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)
+                or not stat.S_ISREG(after.st_mode)
+                or after.st_nlink != 1
+                or after.st_uid != before.st_uid
+                or stat.S_IMODE(after.st_mode) != 0o600):
+            raise RetainedFenceBlocked("lock_inode_changed")
+        return fd
+    except BaseException:
         os.close(fd)
-        raise RetainedFenceBlocked("lock_inode_changed")
-    return fd
+        raise
 
 
 @contextmanager
@@ -77,6 +83,20 @@ def retain_local_fences() -> Iterator[dict[str, object]]:
             except (OSError, ValueError) as exc:
                 raise RetainedFenceBlocked("lock_missing_or_untrusted") from exc
             acquired.append(fd)
+            # Check the pathname still names the locked inode. A replaced
+            # lock file would otherwise leave an apparently retained fence
+            # that no Worker or Controller actually observes.
+            try:
+                named = path.lstat()
+                locked = os.fstat(fd)
+                if ((named.st_dev, named.st_ino) !=
+                        (locked.st_dev, locked.st_ino)
+                        or named.st_nlink != 1
+                        or named.st_uid != locked.st_uid
+                        or stat.S_IMODE(named.st_mode) != 0o600):
+                    raise RetainedFenceBlocked("locked_path_replaced")
+            except OSError as exc:
+                raise RetainedFenceBlocked("locked_path_unavailable") from exc
         yield {
             "status": "local_kernel_locks_retained_only",
             "lock_count": len(acquired),
