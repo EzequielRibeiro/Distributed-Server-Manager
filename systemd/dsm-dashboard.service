@@ -12,6 +12,9 @@ Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
 EnvironmentFile=-/opt/dsm/config/dsm.conf
 WorkingDirectory=/opt/dsm/dashboard
+# Provision stable Controller lock and empty persistent evidence storage only.
+# No hold, receipt, key, inventory or live update permission is created.
+ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_maintenance_worker_locks.py --user {{DSM_USER}} --group {{DSM_GROUP}} --controller-only
 # Composition chain retained by dashboard/server_part22.py: Database Intelligence -> YARA-X admin -> server_part20.py -> server_part19.py -> server_part18.py -> server_part17.py
 ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part22.py
 Restart=always

@@ -288,6 +288,39 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(record_path.read_bytes(), original)
         self.assertFalse((receipts / ("b"*32 + ".json")).exists())
 
+    def test_controller_startup_provisions_empty_storage_without_recovery(self):
+        workers = str(ROOT / "dashboard/workers")
+        sys.path.insert(0, workers)
+        try:
+            from prepare_maintenance_worker_locks import prepare_controller
+        finally:
+            sys.path.remove(workers)
+        def prepare():
+            return prepare_controller(
+                self.uid, os.getegid(), runtime=self.run,
+                state=self.state, parent_owner=self.uid)
+
+        lock = prepare()
+        self.assertEqual(lock.name, "controller-agent-http.lock")
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+        receipts = self.state / "no-drain-wire-receipts"
+        self.assertEqual(stat.S_IMODE(receipts.stat().st_mode), 0o700)
+        self.assertFalse(self.marker.exists())
+        self.assertFalse(self.journal.exists())
+        self.assertFalse((self.state / "no-drain-release-binding.json").exists())
+        self.assertEqual(list(receipts.iterdir()), [])
+        original = lock.stat().st_ino
+        self.journal.write_bytes(b"interrupted")
+        self.journal.chmod(0o600)
+        self.assertEqual(prepare().stat().st_ino, original)
+        self.assertEqual(self.journal.read_bytes(), b"interrupted")
+        self.assertTrue(self.observation()["active"])
+        lock.chmod(0o666)
+        with self.assertRaises(RuntimeError):
+            prepare()
+        self.assertEqual(lock.stat().st_ino, original)
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o666)
+
     def test_partial_journal_blocks_after_crash_before_marker_write(self):
         self.journal.write_bytes(b"{incomplete")
         self.journal.chmod(0o600)
