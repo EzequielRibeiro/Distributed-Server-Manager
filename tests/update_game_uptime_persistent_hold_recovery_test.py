@@ -93,9 +93,26 @@ class PersistentPendingHoldTests(unittest.TestCase):
         )
         binding_path = self.state / "no-drain-release-binding.json"
         sha = "d" * 64
+        from game_uptime_wire_replay_service import read_inventory
+        ids = ["agent-B", "agent-A", "agent-offline"]
+        with self.assertRaises(HoldPreparationBlocked):
+            self.prepare(release_sha256=sha, binding_path=binding_path,
+                         expected_agent_ids=["agent-A", "agent-A"])
+        self.assertFalse(self.journal.exists())
         proof = self.prepare(
-            release_sha256=sha, binding_path=binding_path)
+            release_sha256=sha, binding_path=binding_path,
+            expected_agent_ids=ids)
         self.assertTrue(proof["release_identity_bound_locally"])
+        self.assertTrue(proof["operator_agent_inventory_persisted"])
+        inventory_path = self.state / "no-drain-agent-inventory.json"
+        inventory = read_inventory(path=inventory_path, trusted_uid=self.uid)
+        self.assertEqual(inventory["agent_ids"], sorted(ids))
+        self.assertEqual(inventory["release_sha256"], sha)
+        self.assertEqual(inventory["transaction_id"], self.tx)
+        self.assertEqual(inventory["issued_at"], 1700000000)
+        self.assertEqual(inventory["expires_at"], 1700000600)
+        self.assertEqual(stat.S_IMODE(inventory_path.stat().st_mode), 0o600)
+        original_inventory = inventory_path.read_bytes()
         self.assertFalse(proof["publisher_signature_verified"])
         self.assertFalse(proof["remote_agents_acked"])
         self.assertEqual(stat.S_IMODE(binding_path.stat().st_mode), 0o644)
@@ -116,6 +133,7 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(read_binding(
             path=binding_path, now=1700000010,
             trusted_uid=self.uid)["release_sha256"], sha)
+        self.assertEqual(inventory_path.read_bytes(), original_inventory)
         # Tampered root evidence never downgrades into trusted release proof.
         binding_path.write_text(binding_path.read_text().replace(sha, "e"*63+"Z"))
         with self.assertRaises(ReleaseBindingBlocked):

@@ -22,6 +22,7 @@ from game_uptime_maintenance_hold import HOLD_PATH, PENDING_PATH
 from game_uptime_transaction_binding import BINDING_PATH
 
 _ID = re.compile(r"[0-9a-f]{32}\Z")
+_AGENT_ID = re.compile(r"[A-Za-z0-9._-]{1,191}\Z")
 
 
 class HoldPreparationBlocked(RuntimeError):
@@ -45,7 +46,7 @@ def _trusted_directory(path: Path, uid: int, *,
 
 
 def _write_once(path: Path, payload: dict[str, object], uid: int,
-                *, mode: int = 0o600) -> None:
+                *, mode: int = 0o600, max_bytes: int = 2048) -> None:
     """Exclusive create + fsync; partial evidence remains fail-closed.
 
     The journal must stay 0600. Only the non-secret ephemeral hold uses 0644:
@@ -58,7 +59,7 @@ def _write_once(path: Path, payload: dict[str, object], uid: int,
              | getattr(os, "O_CLOEXEC", 0))
     data = (json.dumps(payload, sort_keys=True, separators=(",", ":"))
             + "\n").encode("utf-8")
-    if len(data) > 2048:
+    if len(data) > max_bytes:
         raise HoldPreparationBlocked("evidence_too_large")
     try:
         fd = os.open(path, flags, 0o600)
@@ -100,6 +101,7 @@ def prepare_root_only(
     trusted_uid: int = 0, now: int | None = None,
     release_sha256: str | None = None,
     binding_path: Path = BINDING_PATH,
+    expected_agent_ids: list[str] | None = None,
 ) -> dict[str, object]:
     """Prepare a single pending transaction, with no implicit activation.
 
@@ -126,6 +128,18 @@ def prepare_root_only(
                 or not binding_path.is_absolute()
                 or binding_path in (journal_path, hold_path)):
             raise HoldPreparationBlocked("invalid_release_binding_scope")
+    inventory_path = journal_path.parent / "no-drain-agent-inventory.json"
+    if expected_agent_ids is not None:
+        if (release_sha256 is None or type(expected_agent_ids) is not list
+                or not 1 <= len(expected_agent_ids) <= 64
+                or any(type(agent) is not str or not _AGENT_ID.fullmatch(agent)
+                       for agent in expected_agent_ids)
+                or len(set(expected_agent_ids)) != len(expected_agent_ids)
+                or inventory_path in (journal_path, hold_path, binding_path)):
+            raise HoldPreparationBlocked("invalid_operator_agent_inventory")
+        # Copy once; the inventory is supplied by the trusted coordinator,
+        # never obtained from a single Agent or its heartbeat receipt.
+        expected_agent_ids = sorted(expected_agent_ids)
     started = int(time.time()) if now is None else now
     if type(started) is not int or started <= 0:
         raise HoldPreparationBlocked("invalid_issue_time")
@@ -158,6 +172,20 @@ def prepare_root_only(
         "expires_at": expires,
     }
     try:
+        # Refuse an existing scope before creating any new evidence. O_EXCL
+        # below is still authoritative if a competing root writer races us.
+        paths = [journal_path, hold_path]
+        if release_sha256 is not None:
+            paths.extend((binding_path, inventory_path))
+        for evidence in paths:
+            try:
+                evidence.lstat()
+            except FileNotFoundError:
+                continue
+            raise HoldPreparationBlocked("existing_evidence_requires_review")
+        # Persist the recovery sentinel FIRST. A crash during either
+        # subsequent scope write must block even without the /run marker.
+        _write_once(journal_path, pending, trusted_uid)
         if release_sha256 is not None:
             # Bind operator-pinned release bytes before hold exposure.
             # This SHA is NOT a publisher signature or an update approval.
@@ -171,7 +199,16 @@ def prepare_root_only(
                 "scope": "root_pinned_release_identity_only",
                 "live_no_drain_authorized": False,
             }, trusted_uid, mode=0o644)
-        _write_once(journal_path, pending, trusted_uid)
+        if expected_agent_ids is not None:
+            _write_once(inventory_path, {
+                "kind": "DSM928OperatorAgentInventory",
+                "schema_version": 1,
+                "transaction_id": transaction_id,
+                "release_sha256": release_sha256,
+                "issued_at": started,
+                "expires_at": expires,
+                "agent_ids": expected_agent_ids,
+            }, trusted_uid, max_bytes=16384)
         _write_once(hold_path, marker, trusted_uid, mode=0o644)
     except OSError as exc:
         raise HoldPreparationBlocked("evidence_write_failed_manual_recovery") from exc
@@ -179,6 +216,7 @@ def prepare_root_only(
         "status": "persistent_hold_prepared_manual_recovery_required",
         "transaction_id": transaction_id,
         "release_identity_bound_locally": release_sha256 is not None,
+        "operator_agent_inventory_persisted": expected_agent_ids is not None,
         "publisher_signature_verified": False,
         "remote_agents_acked": False,
         "controller_http_acked": False,
