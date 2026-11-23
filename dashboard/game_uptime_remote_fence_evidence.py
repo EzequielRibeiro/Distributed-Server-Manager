@@ -18,8 +18,13 @@ _AGENT_RUNTIME = Path(__file__).resolve().parents[1] / "agents/linux/runtime"
 if str(_AGENT_RUNTIME) not in sys.path:
     sys.path.append(str(_AGENT_RUNTIME))
 from game_uptime_maintenance_hold import observe
+from game_uptime_transaction_binding import (
+    ReleaseBindingBlocked, binding_for_hold,
+)
 
 CONTRACT = {"protocol": "dsm928-fence-evidence-readonly-v1", "schema": "1"}
+CONTRACT_V2 = {"protocol": "dsm928-fence-evidence-release-bound-readonly-v2", "schema": "2"}
+_SHA = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9._-]{1,191}\Z")
 _NONCE = re.compile(r"[0-9a-f]{32}\Z")
 _EVIDENCE_KEYS = {
@@ -46,8 +51,12 @@ def receipt_for_authenticated_agent(
     nonce = p.get("request_id")
     tx = p.get("transaction_id")
     issued, expires = p.get("issued_at"), p.get("expires_at")
+    version_two = p.get("contract") == CONTRACT_V2
+    expected_contract = CONTRACT_V2 if version_two else CONTRACT
+    required_evidence = (_EVIDENCE_KEYS | {"release_sha256"}
+                         if version_two else _EVIDENCE_KEYS)
     valid = (
-        set(p) == _EVIDENCE_KEYS
+        set(p) == required_evidence
         and p.get("kind") == "CapivaraNoDrainFenceEvidence"
         and type(p.get("schema_version")) is int and p["schema_version"] == 1
         and p.get("agent_id") == authenticated_agent_id
@@ -60,7 +69,10 @@ def receipt_for_authenticated_agent(
         and 0 < issued <= when + 30
         and issued < expires <= issued + 900
         and issued <= when < expires
-        and p.get("contract") == CONTRACT
+        and p.get("contract") == expected_contract
+        and (not version_two or
+             type(p.get("release_sha256")) is str and
+             bool(_SHA.fullmatch(p["release_sha256"])))
         and p.get("agent_workers_fenced") is False
         and p.get("external_jobs_verified") is False
         and p.get("live_no_drain_authorized") is False
@@ -76,7 +88,14 @@ def receipt_for_authenticated_agent(
             and type(local.get("expires_at")) is int
             and local["expires_at"] == expires
         )
-    return {
+        if valid and version_two:
+            try:
+                bound = binding_for_hold(local, now=when)
+            except ReleaseBindingBlocked:
+                bound = None
+            valid = bool(bound and
+                         bound.get("release_sha256") == p.get("release_sha256"))
+    receipt = {
         "kind": "CapivaraNoDrainFenceEvidenceReceipt",
         "schema_version": 1,
         "agent_id": authenticated_agent_id,
@@ -86,7 +105,7 @@ def receipt_for_authenticated_agent(
                           and _NONCE.fullmatch(tx) else None,
         "issued_at": issued if type(issued) is int else None,
         "expires_at": expires if type(expires) is int else None,
-        "contract": dict(CONTRACT),
+        "contract": dict(expected_contract),
         "status": ("authenticated_evidence_received_unfenced"
                    if valid else "blocked"),
         "scope": "authenticated_heartbeat_wire_only",
@@ -94,6 +113,10 @@ def receipt_for_authenticated_agent(
         "remote_agent_quiescence_acked": False,
         "live_no_drain_authorized": False,
     }
+    if version_two:
+        receipt["release_sha256"] = (
+            p.get("release_sha256") if valid else None)
+    return receipt
 
 
 
