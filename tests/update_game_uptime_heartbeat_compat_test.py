@@ -620,5 +620,48 @@ class AgentHeartbeatScopeTests(unittest.TestCase):
         }.intersection(heartbeat_calls))
 
 
+
+class PositiveClaimFailClosedTests(unittest.TestCase):
+    """Claims alone must never be promoted to operational quiescence ACKs."""
+
+    def test_positive_claim_cannot_authorize_without_independent_fencing(self):
+        from dashboard.game_uptime_credentialed_replay_admission import (
+            inspect_positive_quiescence_claim,
+        )
+        tx, sha = "a" * 32, "b" * 64
+        inventory = {"controller": {"pid": 123}, "worker": {"pid": 456}}
+        claim = {"transaction_id": tx, "release_sha256": sha,
+                 "live_no_drain_authorized": False,
+                 "controller_mutations_acked": True,
+                 "worker_cycles_acked": True,
+                 "remote_agents_acked": True,
+                 "external_jobs_acked": True}
+        result = inspect_positive_quiescence_claim(
+            claim, transaction_id=tx, release_sha256=sha,
+            expected_processes=inventory)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("positive_process_fencing_not_independently_verified",
+                      result["blockers"])
+        for key in ("controller_mutations_acked", "worker_cycles_acked",
+                    "remote_agents_acked", "external_jobs_acked",
+                    "live_no_drain_authorized"):
+            self.assertIs(result[key], False)
+
+    def test_mismatched_transaction_release_or_inventory_blocks(self):
+        from dashboard.game_uptime_credentialed_replay_admission import (
+            inspect_positive_quiescence_claim,
+        )
+        result = inspect_positive_quiescence_claim(
+            {"transaction_id": "c" * 32, "release_sha256": "d" * 64,
+             "live_no_drain_authorized": True},
+            transaction_id="a" * 32, release_sha256="b" * 64,
+            expected_processes={})
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue({"transaction_mismatch", "release_mismatch",
+                         "authoritative_process_inventory_missing",
+                         "authorization_claim_forbidden"}.issubset(
+                             set(result["blockers"])))
+
+
 if __name__ == "__main__":
     unittest.main()
