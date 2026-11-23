@@ -371,33 +371,51 @@ class MainPathRehearsalTest(unittest.TestCase):
             member.size = len(manifest_bytes)
             package.addfile(member, io.BytesIO(manifest_bytes))
 
-        signed_body = {
-            "kind": "CapivaraDSMReleaseProvenance",
-            "schema_version": 1,
-            "repository": "EzequielRibeiro/Distributed-Server-Manager",
-            "git_commit": commit,
-            "version": version,
-            "archive": archive.name,
-            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-        }
-        statement.write_text(json.dumps(
-            signed_body, sort_keys=True, separators=(",", ":")) + "\n")
+        # Exercise the SAME signing entrypoint used by the official
+        # release workflow, with a disposable CI key outside source.
         subprocess.run(
             ("openssl", "genpkey", "-algorithm", "RSA",
              "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)),
             check=True, capture_output=True, timeout=30,
         )
+        private.chmod(0o600)
         subprocess.run(
             ("openssl", "pkey", "-in", str(private),
              "-pubout", "-out", str(public)),
             check=True, capture_output=True, timeout=15,
         )
-        subprocess.run(
-            ("openssl", "dgst", "-sha256", "-sign", str(private),
-             "-out", str(signature), str(statement)),
-            check=True, capture_output=True, timeout=15,
-        )
+        signer_loader = SourceFileLoader(
+            "dsm928_official_signing_entrypoint",
+            str(ROOT / "release/sign_official_release.py"))
+        signer_spec = importlib.util.spec_from_loader(
+            signer_loader.name, signer_loader)
+        signer = importlib.util.module_from_spec(signer_spec)
+        signer_loader.exec_module(signer)
+        publisher_pin = hashlib.sha256(public.read_bytes()).hexdigest()
+        with self.assertRaises(signer.ReleaseSigningBlocked):
+            signer.sign_release(
+                archive=archive, manifest=manifest, commit=commit,
+                private_key=private, trusted_public_key_sha256="0"*64,
+                output_dir=self.root)
+        self.assertFalse(statement.exists())
+        signed = signer.sign_release(
+            archive=archive, manifest=manifest, commit=commit,
+            private_key=private,
+            trusted_public_key_sha256=publisher_pin,
+            output_dir=self.root)
+        self.assertEqual(signed["status"],
+                         "official_release_provenance_signed")
+        self.assertEqual(signed["publisher_public_key_sha256"], publisher_pin)
+        self.assertFalse(signed["live_no_drain_authorized"])
+        self.assertFalse(signed["private_key_exported"])
+        with self.assertRaises(signer.ReleaseSigningBlocked):
+            signer.sign_release(
+                archive=archive, manifest=manifest, commit=commit,
+                private_key=private,
+                trusted_public_key_sha256=publisher_pin,
+                output_dir=self.root)
+        self.assertTrue(statement.exists())
+        self.assertTrue(signature.exists())
 
         def verify(**kwargs):
             return verifier.verify_signed_release(
