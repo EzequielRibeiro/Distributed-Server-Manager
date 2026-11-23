@@ -117,7 +117,7 @@ class PersistentPendingHoldTests(unittest.TestCase):
             path=binding_path, now=1700000010,
             trusted_uid=self.uid)["release_sha256"], sha)
         # Tampered root evidence never downgrades into trusted release proof.
-        binding_path.write_text(binding_path.read_text().replace(sha, "e"*64))
+        binding_path.write_text(binding_path.read_text().replace(sha, "e"*63+"Z"))
         with self.assertRaises(ReleaseBindingBlocked):
             read_binding(path=binding_path, now=1700000010,
                          trusted_uid=self.uid)
