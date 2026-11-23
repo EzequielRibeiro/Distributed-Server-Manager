@@ -117,3 +117,50 @@ def commit_authenticated_negative_v2_receipt(
     except (OSError, ValueError, TypeError, UnicodeError,
             socket.timeout) as exc:
         raise PrivilegedReplayUnavailable("writer_io_or_protocol_failure") from exc
+
+
+def inspect_positive_quiescence_claim(
+    claim: Mapping[str, Any], *, transaction_id: str,
+    release_sha256: str, expected_processes: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Conservative schema inspection only; NEVER an operational ACK.
+
+    An actual ACK requires independently authenticated, continuously fenced
+    processes and durable cross-host recovery. A caller-provided claim cannot
+    establish those facts. This function intentionally has no authorization
+    output that can be interpreted as True.
+    """
+    import re
+    reasons = []
+    if not isinstance(claim, Mapping):
+        reasons.append("claim_not_mapping")
+        claim = {}
+    if not isinstance(transaction_id, str) or not re.fullmatch(
+            r"[0-9a-f]{32}", transaction_id):
+        reasons.append("invalid_transaction")
+    if not isinstance(release_sha256, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", release_sha256):
+        reasons.append("invalid_release_pin")
+    if claim.get("transaction_id") != transaction_id:
+        reasons.append("transaction_mismatch")
+    if claim.get("release_sha256") != release_sha256:
+        reasons.append("release_mismatch")
+    if not isinstance(expected_processes, Mapping) or not expected_processes:
+        reasons.append("authoritative_process_inventory_missing")
+    elif not all(isinstance(k, str) and k and isinstance(v, Mapping)
+                 and v for k, v in expected_processes.items()):
+        reasons.append("invalid_process_inventory")
+    if claim.get("live_no_drain_authorized") is not False:
+        reasons.append("authorization_claim_forbidden")
+    # A positive assertion in untrusted JSON is not a kernel-backed fence.
+    reasons.append("positive_process_fencing_not_independently_verified")
+    reasons.append("cross_host_lease_and_recovery_not_verified")
+    return {
+        "status": "blocked",
+        "blockers": sorted(set(reasons)),
+        "controller_mutations_acked": False,
+        "worker_cycles_acked": False,
+        "remote_agents_acked": False,
+        "external_jobs_acked": False,
+        "live_no_drain_authorized": False,
+    }
