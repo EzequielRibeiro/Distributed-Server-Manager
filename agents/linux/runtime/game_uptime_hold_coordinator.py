@@ -19,6 +19,7 @@ import stat
 import time
 
 from game_uptime_maintenance_hold import HOLD_PATH, PENDING_PATH
+from game_uptime_transaction_binding import BINDING_PATH
 
 _ID = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -97,6 +98,8 @@ def prepare_root_only(
     *, transaction_id: str, ttl_seconds: int = 600,
     journal_path: Path = PENDING_PATH, hold_path: Path = HOLD_PATH,
     trusted_uid: int = 0, now: int | None = None,
+    release_sha256: str | None = None,
+    binding_path: Path = BINDING_PATH,
 ) -> dict[str, object]:
     """Prepare a single pending transaction, with no implicit activation.
 
@@ -107,7 +110,8 @@ def prepare_root_only(
     Injectable paths/uid are for disposable local tests only; installed
     callers must use the root-owned fixed paths and run as root.
     """
-    journal_path, hold_path = Path(journal_path), Path(hold_path)
+    journal_path, hold_path, binding_path = (
+        Path(journal_path), Path(hold_path), Path(binding_path))
     if (os.geteuid() != trusted_uid or not journal_path.is_absolute()
             or not hold_path.is_absolute() or journal_path == hold_path):
         raise HoldPreparationBlocked("root_only_evidence_required")
@@ -115,6 +119,13 @@ def prepare_root_only(
         raise HoldPreparationBlocked("invalid_transaction_id")
     if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 900:
         raise HoldPreparationBlocked("invalid_lease_window")
+    if release_sha256 is not None:
+        if (type(release_sha256) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", release_sha256)
+                or binding_path != journal_path.parent / "no-drain-release-binding.json"
+                or not binding_path.is_absolute()
+                or binding_path in (journal_path, hold_path)):
+            raise HoldPreparationBlocked("invalid_release_binding_scope")
     started = int(time.time()) if now is None else now
     if type(started) is not int or started <= 0:
         raise HoldPreparationBlocked("invalid_issue_time")
@@ -124,6 +135,8 @@ def prepare_root_only(
     try:
         _trusted_directory(journal_path.parent, trusted_uid)
         _trusted_directory(hold_path.parent, trusted_uid, runtime_readable=True)
+        if release_sha256 is not None:
+            _trusted_directory(binding_path.parent, trusted_uid)
     except OSError as exc:
         raise HoldPreparationBlocked("evidence_directory_unavailable") from exc
 
@@ -145,6 +158,19 @@ def prepare_root_only(
         "expires_at": expires,
     }
     try:
+        if release_sha256 is not None:
+            # Bind operator-pinned release bytes before hold exposure.
+            # This SHA is NOT a publisher signature or an update approval.
+            _write_once(binding_path, {
+                "kind": "CapivaraDSMNoDrainReleaseBinding",
+                "schema_version": 1,
+                "transaction_id": transaction_id,
+                "release_sha256": release_sha256,
+                "issued_at": started,
+                "expires_at": expires,
+                "scope": "root_pinned_release_identity_only",
+                "live_no_drain_authorized": False,
+            }, trusted_uid, mode=0o644)
         _write_once(journal_path, pending, trusted_uid)
         _write_once(hold_path, marker, trusted_uid, mode=0o644)
     except OSError as exc:
@@ -152,6 +178,8 @@ def prepare_root_only(
     return {
         "status": "persistent_hold_prepared_manual_recovery_required",
         "transaction_id": transaction_id,
+        "release_identity_bound_locally": release_sha256 is not None,
+        "publisher_signature_verified": False,
         "remote_agents_acked": False,
         "controller_http_acked": False,
         "external_jobs_acked": False,
