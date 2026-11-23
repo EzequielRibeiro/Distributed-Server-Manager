@@ -3,8 +3,9 @@
 
 Called only AFTER AgentPairingRepository authenticates the credential.
 The Controller also requires its own valid root-owned transaction marker,
-with identical transaction/issuance/expiry. No durable replay cache, remote
-operation fence, or transaction authority exists in this module.
+with identical transaction/issuance/expiry. The authenticated HTTP dispatcher
+separately requires a durable negative-only nonce record for v2; this module
+by itself grants no remote operation fence or transaction authority.
 """
 from __future__ import annotations
 
