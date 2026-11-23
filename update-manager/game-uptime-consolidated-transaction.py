@@ -112,12 +112,26 @@ def run_disposable_integrated(
     that performs apply and its internal rollback; this never invokes live
     updater callbacks or changes the production no-drain gate.
     """
+    # sudo in the existing systemd workflow drops GITHUB_ACTIONS and
+    # RUNNER_ENVIRONMENT. Reuse its stronger, host-visible isolation check:
+    # real DSM installation, active Capivara game units or missing opt-in
+    # always block before touching the disposable fixture.
     if (os.environ.get("CAPIVARA_DSM928_SYSTEMD_E2E") != "1"
-            or os.environ.get("GITHUB_ACTIONS") != "true"
-            or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
             or os.geteuid() != 0
+            or not Path("/run/systemd/system").is_dir()
             or Path("/opt/dsm").exists() or Path("/opt/dsm").is_symlink()):
-        raise ConsolidatedTransactionBlocked("not an isolated CI systemd runner")
+        raise ConsolidatedTransactionBlocked("not a disposable systemd runner")
+    import subprocess
+    try:
+        active = subprocess.run(
+            ("systemctl", "list-units", "--type=service", "--state=active",
+             "--all", "--no-legend", "--plain", "capivara-instance-*.service"),
+            capture_output=True, text=True, check=False, timeout=8,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ConsolidatedTransactionBlocked("live-game inventory unavailable") from exc
+    if active.returncode != 0 or active.stdout.strip():
+        raise ConsolidatedTransactionBlocked("refusing DSM host with active games")
     root = _fixture_root(workspace)
     security_root = _fixture_root(security_workspace)
     if security_root == root:
