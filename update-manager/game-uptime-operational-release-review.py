@@ -260,6 +260,26 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
         # No operational evidence is ever trusted on a failed verification.
         status["blockers"].append(
             "release_provenance_or_tree_blocked:" + str(exc)[:120])
+    # Re-sample installed process identities after the potentially lengthy
+    # signed-archive review. A restart during review invalidates the diagnostic
+    # witness, even when each isolated observation appears healthy. Neither
+    # stable identity nor this comparison is an operational ACK.
+    try:
+        if "identity_probe" not in locals():
+            raise OperationalReviewBlocked("initial_daemon_probe_unavailable")
+        second_observation = identity_probe.observe()
+        comparison = identity_probe.compare_installed_daemon_observations(
+            status["daemon_process_identity"], second_observation)
+        status["daemon_identity_drift_guard"] = comparison
+        if not comparison["identity_snapshots_stable"]:
+            status["blockers"].append("daemon_identity_changed_during_review")
+            status["blockers"].extend(comparison["blockers"])
+    except Exception:
+        status["daemon_identity_drift_guard"] = {
+            "status": "blocked", "identity_snapshots_stable": False,
+            "live_no_drain_authorized": False,
+        }
+        status["blockers"].append("daemon_identity_second_observation_unavailable")
     # Real Controller/Worker/Agent/external-job acknowledgements MUST be
     # implemented by their owners and persisted with replay-resistant IDs.
     # No synthetic fixture receipt from 2.6 can satisfy these requirements.
