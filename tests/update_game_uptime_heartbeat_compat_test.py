@@ -239,9 +239,7 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
     def test_authenticated_v2_release_pin_correlates_host_and_transaction_without_ack(self):
         """Use existing credentialed HTTP dispatch; no remote Agent is deployed."""
         import time
-        from agents.linux.runtime.game_uptime_transaction_binding import (
-            ReleaseBindingBlocked,
-        )
+        from game_uptime_transaction_binding import ReleaseBindingBlocked
         agent = _load(
             "dsm928_pinned_agent_fence",
             ROOT / "agents/linux/runtime/game_uptime_agent_fence_evidence.py")
