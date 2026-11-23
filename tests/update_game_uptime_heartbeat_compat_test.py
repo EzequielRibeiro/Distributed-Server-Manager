@@ -236,6 +236,93 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
             self.assertEqual(status, 401)
             self.assertNotIn("no_drain_fence_receipt", rejected)
 
+    def test_authenticated_v2_release_pin_correlates_host_and_transaction_without_ack(self):
+        """Use existing credentialed HTTP dispatch; no remote Agent is deployed."""
+        import time
+        from agents.linux.runtime.game_uptime_transaction_binding import (
+            ReleaseBindingBlocked,
+        )
+        agent = _load(
+            "dsm928_pinned_agent_fence",
+            ROOT / "agents/linux/runtime/game_uptime_agent_fence_evidence.py")
+        controller = _load(
+            "dsm928_pinned_controller_fence",
+            ROOT / "dashboard/game_uptime_remote_fence_evidence.py")
+        now = int(time.time())
+        hold = {
+            "active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": "a" * 32,
+            "issued_at": now - 5, "expires_at": now + 120,
+        }
+        sha = "d" * 64
+        binding = {
+            "transaction_id": hold["transaction_id"],
+            "issued_at": hold["issued_at"], "expires_at": hold["expires_at"],
+            "release_sha256": sha,
+        }
+        with patch.object(agent, "observe", return_value=hold), patch.object(
+                agent, "binding_for_hold", return_value=binding):
+            evidence = agent.build_fence_evidence("trusted-agent", now=now)
+        self.assertEqual(evidence["contract"], agent.CONTRACT_V2)
+        self.assertEqual(evidence["release_sha256"], sha)
+        with patch.object(controller, "observe", return_value=hold), patch.object(
+                controller, "binding_for_hold", return_value=binding), patch(
+                "agent_remote_http.receipt_for_authenticated_agent",
+                side_effect=controller.receipt_for_authenticated_agent):
+            status, response = self.post({
+                "no_drain_fence_evidence": evidence})
+            self.assertEqual(status, 200)
+            receipt = response["no_drain_fence_receipt"]
+            self.assertEqual(receipt["status"],
+                             "authenticated_evidence_received_unfenced")
+            self.assertEqual(receipt["release_sha256"], sha)
+            self.assertTrue(agent.verify_fence_receipt(
+                evidence, receipt, now=now)["wire_receipt_verified"])
+            self.assertFalse(receipt["remote_agent_quiescence_acked"])
+            self.assertFalse(receipt["live_no_drain_authorized"])
+            correlated = controller.correlate_authenticated_fence_receipts(
+                ["trusted-agent"], [{
+                    "authenticated_agent_id": "trusted-agent",
+                    "receipt": receipt,
+                }], transaction_id="a"*32,
+                expected_release_sha256=sha, now=now)
+            self.assertTrue(correlated["receipt_set_correlated"])
+            self.assertFalse(correlated["remote_agents_acked"])
+            self.assertFalse(correlated["live_no_drain_authorized"])
+            divergent = dict(evidence, release_sha256="e"*64)
+            status, wrong = self.post({"no_drain_fence_evidence": divergent})
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                wrong["no_drain_fence_receipt"]["status"], "blocked")
+            self.assertFalse(agent.verify_fence_receipt(
+                divergent, receipt, now=now)["wire_receipt_verified"])
+            missing = controller.correlate_authenticated_fence_receipts(
+                ["trusted-agent", "second-agent"], [{
+                    "authenticated_agent_id": "trusted-agent",
+                    "receipt": receipt,
+                }], transaction_id="a"*32,
+                expected_release_sha256=sha, now=now)
+            self.assertFalse(missing["receipt_set_correlated"])
+            self.assertIn("expected_agent_receipts_missing", missing["blockers"])
+            wrong_pin = controller.correlate_authenticated_fence_receipts(
+                ["trusted-agent"], [{
+                    "authenticated_agent_id": "trusted-agent",
+                    "receipt": receipt,
+                }], transaction_id="a"*32,
+                expected_release_sha256="f"*64, now=now)
+            self.assertFalse(wrong_pin["receipt_set_correlated"])
+
+        with patch.object(controller, "observe", return_value=hold), patch.object(
+                controller, "binding_for_hold", return_value=None):
+            denied = controller.receipt_for_authenticated_agent(
+                evidence, authenticated_agent_id="trusted-agent", now=now)
+            self.assertEqual(denied["status"], "blocked")
+        with patch.object(agent, "observe", return_value=hold), patch.object(
+                agent, "binding_for_hold",
+                side_effect=ReleaseBindingBlocked("corrupt")):
+            self.assertIsNone(agent.build_fence_evidence(
+                "trusted-agent", now=now))
+
     def test_hold_readonly_route_and_agent_transport_never_dispatch_commands(self):
         """One grouped phase-2 proof: authenticated SELECT-only endpoint.
 
