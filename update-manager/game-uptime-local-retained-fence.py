@@ -127,7 +127,14 @@ def retain_local_fences() -> Iterator[dict[str, object]]:
             except OSError as exc:
                 raise RetainedFenceBlocked("locked_path_unavailable") from exc
         verify_retained_fences(paths, acquired)
+        # The coordinator can call checkpoint() before/after each mutation.
+        # The closure retains the same file descriptors throughout the
+        # context and refuses to claim any distributed authorization.
+        def checkpoint() -> None:
+            verify_retained_fences(paths, acquired)
+
         yield {
+            "checkpoint": checkpoint,
             "status": "local_kernel_locks_retained_only",
             "lock_count": len(acquired),
             "controller_worker_lock_coverage_only": True,
