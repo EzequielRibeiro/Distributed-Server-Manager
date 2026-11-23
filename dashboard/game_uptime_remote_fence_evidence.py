@@ -35,6 +35,27 @@ _EVIDENCE_KEYS = {
 }
 
 
+def trusted_controller_release_pin_for_receipt(receipt: Mapping[str, Any]) -> str:
+    """Read SHA pinned independently by root; never trust remote claim alone."""
+    if (not isinstance(receipt, Mapping)
+            or receipt.get("contract") != CONTRACT_V2
+            or receipt.get("status") != "authenticated_evidence_received_unfenced"):
+        raise ValueError("not_a_valid_v2_negative_receipt")
+    observed = observe()
+    if (observed.get("active") is not True
+            or observed.get("reason") != "root_owned_maintenance_hold"
+            or any(observed.get(key) != receipt.get(key)
+                   for key in ("transaction_id", "issued_at", "expires_at"))):
+        raise ValueError("root_hold_does_not_match_receipt")
+    try:
+        pinned = binding_for_hold(observed)
+    except ReleaseBindingBlocked as exc:
+        raise ValueError("independent_release_pin_unavailable") from exc
+    if (pinned is None or pinned.get("release_sha256") != receipt.get("release_sha256")):
+        raise ValueError("independent_release_pin_mismatch")
+    return pinned["release_sha256"]
+
+
 def receipt_for_authenticated_agent(
     evidence: Any, *, authenticated_agent_id: str,
     now: int | None = None,
