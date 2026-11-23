@@ -1,63 +1,119 @@
 #!/usr/bin/env python3
-"""#928: persist authenticated NEGATIVE v2 fence receipts before HTTP success.
+"""#928: authenticated Controller to root-owned NEGATIVE v2 receipt writer.
 
-Called strictly AFTER the Controller verifies the Agent credential. The
-root-owned journal's exclusive nonce creation is atomic across Controller
-process restarts; no application update, remote ACK, lease recovery or host
-identity attestation is implied.
-
-When no privileged journal writer is installed (normal non-root Dashboard),
-fail CLOSED rather than accepting an unpersisted negative receipt.
+The Dashboard uses a preprovisioned root-owned AF_UNIX systemd socket. The
+server verifies SO_PEERCRED and the Dashboard cgroup/PID before allowing any
+one-use negative journal append. The socket is NOT enabled by a release or
+update automatically; absent or insecure infrastructure fails closed.
 """
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
-import sys
+import socket
+import stat
 from typing import Any, Mapping
 
-_AGENT_RUNTIME = Path(__file__).resolve().parents[1] / "agents/linux/runtime"
-if str(_AGENT_RUNTIME) not in sys.path:
-    sys.path.append(str(_AGENT_RUNTIME))
+SOCKET_PATH = Path("/run/capivara-dsm/dsm928-wire-replay.sock")
+PROTOCOL = "dsm928-root-negative-wire-writer-v1"
+EXPECTED_KEYS = frozenset({
+    "status", "transaction_id", "release_sha256", "request_id",
+    "remote_agent_quiescence_acked", "external_jobs_acked",
+    "live_no_drain_authorized",
+})
 
-from game_uptime_durable_wire_replay import (
-    DurableWireReplayBlocked, record_authenticated_negative_receipt,
-)
+
+class PrivilegedReplayUnavailable(RuntimeError):
+    pass
+
+
+def _connect_writer() -> socket.socket:
+    # All directories must be root-owned, non-writable by non-root and
+    # pre-existing. The socket inode itself is owned by the DSM user 0600.
+    for directory in (Path("/run"), SOCKET_PATH.parent):
+        try:
+            info = directory.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
+                    or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+                raise PrivilegedReplayUnavailable("writer_socket_parent_untrusted")
+        except OSError as exc:
+            raise PrivilegedReplayUnavailable("writer_socket_parent_missing") from exc
+    try:
+        before = SOCKET_PATH.lstat()
+        if (not stat.S_ISSOCK(before.st_mode)
+                or stat.S_IMODE(before.st_mode) != 0o600
+                or before.st_uid != os.geteuid()):
+            raise PrivilegedReplayUnavailable("privileged_socket_inode_untrusted")
+        wire = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        wire.settimeout(4.0)
+        try:
+            wire.connect(str(SOCKET_PATH))
+            after = SOCKET_PATH.lstat()
+            if (not stat.S_ISSOCK(after.st_mode)
+                    or (after.st_dev, after.st_ino) !=
+                    (before.st_dev, before.st_ino)):
+                raise PrivilegedReplayUnavailable("privileged_socket_replaced")
+            # SO_PEERCRED on the client side verifies that the accepting
+            # systemd unit is root-owned, not a user-supplied socket server.
+            import struct
+            values = wire.getsockopt(
+                socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+            _pid, uid, _gid = struct.unpack("3i", values)
+            if uid != 0:
+                raise PrivilegedReplayUnavailable("writer_peer_not_root")
+            return wire
+        except BaseException:
+            wire.close()
+            raise
+    except OSError as exc:
+        raise PrivilegedReplayUnavailable("root_wire_writer_unavailable") from exc
 
 
 def commit_authenticated_negative_v2_receipt(
-    *, authenticated_agent_id: str,
-    receipt: Mapping[str, Any],
+    *, authenticated_agent_id: str, receipt: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """Commit an authenticated negative receipt; never return an ACK.
-
-    The authenticated Agent ID comes ONLY from the credential dispatcher.
-    For single-Agent receipt recording, that ID is the exact permitted scope;
-    an authoritative cross-host Agent inventory is needed for global quorum.
-    """
-    if (not isinstance(receipt, Mapping)
+    """Send an already credentialed receipt; do not claim an operational ACK."""
+    if (type(authenticated_agent_id) is not str
+            or not isinstance(receipt, Mapping)
             or receipt.get("status") != "authenticated_evidence_received_unfenced"
             or receipt.get("contract") != {
                 "protocol": "dsm928-fence-evidence-release-bound-readonly-v2",
                 "schema": "2",
             }):
-        raise DurableWireReplayBlocked("only_credentialed_negative_v2_can_be_committed")
-    journal = record_authenticated_negative_receipt(
-        authenticated_agent_id=authenticated_agent_id,
-        expected_agent_ids=[authenticated_agent_id],
-        receipt=receipt,
-        expected_transaction_id=receipt.get("transaction_id"),
-        expected_release_sha256=receipt.get("release_sha256"),
-    )
-    if (journal.get("wire_receipt_received") is not True
-            or journal.get("remote_agent_quiescence_acked") is not False
-            or journal.get("live_no_drain_authorized") is not False):
-        raise DurableWireReplayBlocked("negative_journal_result_untrusted")
-    return {
-        "status": "negative_v2_receipt_durably_recorded",
-        "transaction_id": receipt["transaction_id"],
-        "release_sha256": receipt["release_sha256"],
-        "request_id": receipt["request_id"],
-        "remote_agent_quiescence_acked": False,
-        "external_jobs_acked": False,
-        "live_no_drain_authorized": False,
+        raise PrivilegedReplayUnavailable("only_authenticated_negative_v2_allowed")
+    request = {
+        "protocol": PROTOCOL,
+        "authenticated_agent_id": authenticated_agent_id,
+        "receipt": dict(receipt),
     }
+    try:
+        encoded = (json.dumps(request, sort_keys=True, separators=(",", ":"))
+                   + "\n").encode("ascii")
+        if len(encoded) > 8192:
+            raise PrivilegedReplayUnavailable("wire_request_oversized")
+        with _connect_writer() as wire:
+            wire.sendall(encoded)
+            response = bytearray()
+            while b"\n" not in response and len(response) < 4096:
+                packet = wire.recv(4096-len(response))
+                if not packet:
+                    break
+                response.extend(packet)
+        if (not response.endswith(b"\n") or b"\n" in response[:-1]
+                or len(response) > 4096):
+            raise PrivilegedReplayUnavailable("writer_response_malformed")
+        answer = json.loads(response)
+        if (not isinstance(answer, dict) or set(answer) != EXPECTED_KEYS
+                or answer.get("status") != "negative_v2_receipt_durably_recorded"
+                or answer.get("transaction_id") != receipt.get("transaction_id")
+                or answer.get("release_sha256") != receipt.get("release_sha256")
+                or answer.get("request_id") != receipt.get("request_id")
+                or answer.get("remote_agent_quiescence_acked") is not False
+                or answer.get("external_jobs_acked") is not False
+                or answer.get("live_no_drain_authorized") is not False):
+            raise PrivilegedReplayUnavailable("writer_response_untrusted_or_blocked")
+        return answer
+    except (OSError, ValueError, TypeError, UnicodeError,
+            socket.timeout) as exc:
+        raise PrivilegedReplayUnavailable("writer_io_or_protocol_failure") from exc
