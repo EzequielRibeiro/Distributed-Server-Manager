@@ -126,7 +126,7 @@ class PersistentPendingHoldTests(unittest.TestCase):
     def test_root_only_wire_nonce_journal_survives_restarts_without_ack(self):
         """One grouped replay/crash test on the existing disposable fixture."""
         from game_uptime_durable_wire_replay import (
-            DurableWireReplayBlocked, record_authenticated_negative_receipt,
+            record_authenticated_negative_receipt,
         )
         import importlib
         import game_uptime_durable_wire_replay as replay_module
@@ -189,11 +189,11 @@ class PersistentPendingHoldTests(unittest.TestCase):
                 receipt=make_receipt("agent-B", nonce), **scope)
         self.assertEqual(record_path.read_bytes(), original)
         # A new nonce is accepted only for a member of the fixed Agent set.
-        with self.assertRaises(DurableWireReplayBlocked):
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
             replay_module.record_authenticated_negative_receipt(
                 authenticated_agent_id="unknown",
                 receipt=make_receipt("unknown", "b" * 32), **scope)
-        with self.assertRaises(DurableWireReplayBlocked):
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
             replay_module.record_authenticated_negative_receipt(
                 authenticated_agent_id="agent-B",
                 receipt={**make_receipt("agent-B", "b"*32),
@@ -202,7 +202,7 @@ class PersistentPendingHoldTests(unittest.TestCase):
         # Loss of the ephemeral /run hold with durable pending journal
         # must block any new witness, without deleting historical evidence.
         self.marker.unlink()
-        with self.assertRaises(DurableWireReplayBlocked):
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
             replay_module.record_authenticated_negative_receipt(
                 authenticated_agent_id="agent-B",
                 receipt=make_receipt("agent-B", "b"*32), **scope)
