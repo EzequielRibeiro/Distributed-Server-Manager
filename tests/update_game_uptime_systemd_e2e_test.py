@@ -395,6 +395,16 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 unit_config.encode()).hexdigest()
             return state
 
+        # #928: real Controller/Worker flock ownership is retained for the
+        # entire disposable update/rollback, rather than merely sampled.
+        import fcntl
+        scope_loader = SourceFileLoader(
+            "dsm928_local_scope_lease",
+            str(ROOT / "update-manager/game-uptime-local-scope-lease.py"))
+        scope_spec = spec_from_loader(scope_loader.name, scope_loader)
+        local_scope = module_from_spec(scope_spec)
+        scope_spec.loader.exec_module(local_scope)
+
         # Stage 2.2 moved the extracted tree into the incompatible fixture.
         # Reuse that verified package instead of its now-empty old path.
         real_tree = fixture / "new-payload"
@@ -491,8 +501,71 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                                       "expected_publisher_key_sha256": "0"*64})
                 self.assertFalse((workspace / "backups").exists())
                 self.assertFalse((fence_root / "dsm928-security-fence.json").exists())
-                proof = bridge.run_disposable_integrated(
-                    workspace, **integrated_kwargs)
+                # Preprovision only /tmp lock inodes, never /run or /opt/dsm.
+                scope_root = self.workspace / ("local-scope-" + mode)
+                scope_root.mkdir(mode=0o700)
+                (scope_root / "fixture-owner").write_bytes(
+                    b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+                runtime_dir = scope_root / "run"
+                state_dir = scope_root / "state"
+                worker_dir = runtime_dir / "worker-operations"
+                for folder in (runtime_dir, state_dir, worker_dir):
+                    folder.mkdir(mode=0o700)
+                controller_lock = runtime_dir / "controller-agent-http.lock"
+                scoped_locks = [controller_lock] + [
+                    worker_dir / (worker + ".lock")
+                    for worker in local_scope.WORKERS
+                ]
+                for lockfile in scoped_locks:
+                    lockfile.touch(mode=0o600)
+                    lockfile.chmod(0o600)
+                hold_path = runtime_dir / "no-drain-maintenance.json"
+                pending_path = state_dir / "no-drain-pending.json"
+                hold_path.write_text(json.dumps({
+                    "kind": "CapivaraDSMNoDrainMaintenanceHold",
+                    "schema_version": 1,
+                    "transaction_id": nonce,
+                    "issued_at": int(time.time()),
+                    "expires_at": int(time.time()) + 300,
+                }))
+                hold_path.chmod(0o600)
+                lease_args = dict(
+                    transaction_id=nonce, release_sha256=expected_hash,
+                    expected_controller_uid=os.geteuid(),
+                    expected_worker_uid=os.geteuid(),
+                    controller_lock=controller_lock, worker_lock_dir=worker_dir,
+                    hold_path=hold_path, pending_path=pending_path,
+                    fixture_root=scope_root,
+                )
+                with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
+                    with local_scope.retain_local_scopes(
+                            **{**lease_args, "transaction_id": "f" * 32}):
+                        pass
+                with local_scope.retain_local_scopes(**lease_args) as scope:
+                    self.assertEqual(scope["controller_agent_http_routes_fenced"], 3)
+                    self.assertEqual(scope["known_worker_cycles_fenced"], 9)
+                    self.assertFalse(scope["remote_agents_acked"])
+                    self.assertFalse(scope["external_jobs_acked"])
+                    self.assertFalse(scope["live_no_drain_authorized"])
+                    for lockfile in scoped_locks:
+                        outsider = os.open(lockfile, os.O_RDWR)
+                        try:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        finally:
+                            os.close(outsider)
+                    # Actual file swap and injected rollback occur under
+                    # retained flocks; transient game PIDs remain unchanged.
+                    proof = bridge.run_disposable_integrated(
+                        workspace, **integrated_kwargs)
+                    self._assert_unchanged(originals)
+                # After exit, all file descriptors must be released.
+                outsider = os.open(controller_lock, os.O_RDWR)
+                try:
+                    fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    fcntl.flock(outsider, fcntl.LOCK_UN)
+                finally:
+                    os.close(outsider)
                 self.assertEqual(proof["journal_status"], expected_status)
                 self.assertEqual(proof["units_preserved"], 2)
                 self.assertTrue(proof["fixture_publisher_signed"])
