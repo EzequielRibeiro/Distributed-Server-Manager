@@ -62,11 +62,16 @@ def _safe_directory(path: Path, *, owner: int) -> None:
 def _directory_chain(path: Path, *, fixture_root: Path | None,
                      owner: int) -> None:
     if fixture_root is None:
-        # /run is the trust root for the installed preprovisioned locks.
-        if Path("/run") not in path.parents and path != Path("/run"):
-            raise LocalScopeLeaseBlocked("lock_outside_installed_run")
-        _safe_directory(Path("/run"), owner=0)
-        current = Path("/run")
+        # Locks/ephemeral hold live under /run; crash-recovery sentinel
+        # lives on persistent /var/lib. Both must have root-owned parents.
+        anchor = next((base for base in (Path("/run"), Path("/var/lib"))
+                       if base == path or base in path.parents), None)
+        if anchor is None:
+            raise LocalScopeLeaseBlocked("lock_outside_root_owned_state")
+        if anchor == Path("/var/lib"):
+            _safe_directory(Path("/var"), owner=0)
+        _safe_directory(anchor, owner=0)
+        current = anchor
         parts = path.relative_to(current).parts
     else:
         try:
