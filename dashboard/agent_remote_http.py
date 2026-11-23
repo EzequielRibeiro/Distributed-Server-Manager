@@ -40,6 +40,7 @@ from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpa
 from game_uptime_heartbeat_compat import assess_authenticated_probe
 from game_uptime_remote_fence_evidence import (
     receipt_for_authenticated_agent, correlate_authenticated_fence_receipts,
+    trusted_controller_release_pin_for_receipt,
 )
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
 from game_uptime_credentialed_replay_admission import (
@@ -463,11 +464,20 @@ def dispatch_fence_observation(
     # Correlate the credentialed receipt with the exact authenticated host
     # in this read-only request. Multi-host callers must explicitly collect
     # every expected Agent: this does NOT certify remote quiescence.
+    expected_release_pin = None
+    if (receipt.get("status") == "authenticated_evidence_received_unfenced"
+            and receipt.get("contract", {}).get("schema") == "2"):
+        try:
+            expected_release_pin = trusted_controller_release_pin_for_receipt(
+                receipt)
+        except Exception:
+            receipt = {**receipt, "status": "blocked"}
     correlation = correlate_authenticated_fence_receipts(
         [str(identity["agent_id"])],
         [{"authenticated_agent_id": str(identity["agent_id"]),
           "receipt": receipt}],
         transaction_id=str(receipt.get("transaction_id") or ""),
+        expected_release_sha256=expected_release_pin,
     )
     # Correlation is necessary but not sufficient. A v2 negative receipt
     # must also be DURABLY consumed by the privileged nonce journal before
