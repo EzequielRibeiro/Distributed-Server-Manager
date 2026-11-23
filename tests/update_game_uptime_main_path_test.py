@@ -472,8 +472,22 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
         snapshot = {
             "controller": {"identity_verified": True, "pid": 200,
                            "start_ticks": 500, "flock_opted_in_verified": True},
-            "worker_group": {"all_nine_workers_verified": True,
-                             "observed_worker_count": 9},
+            "worker_group": {
+                "all_nine_workers_verified": True,
+                "observed_worker_count": 9,
+                "supervisor_identity": {"pid": 300, "start_ticks": 600},
+                "worker_identities": {
+                    name: {"pid": 301 + i, "start_ticks": 601 + i}
+                    for i, name in enumerate((
+                        "scheduler_worker", "automation_worker",
+                        "content_update_worker", "maintenance_worker",
+                        "observability_retention_worker",
+                        "content_upload_retention_worker",
+                        "database_intelligence_worker", "hybrid_agent_worker",
+                        "hybrid_customer_workspace_worker",
+                    ))
+                },
+            },
             "live_no_drain_authorized": False,
         }
         result = module.compare_installed_daemon_observations(
