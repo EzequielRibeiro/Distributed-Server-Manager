@@ -1455,7 +1455,8 @@ update_systemd() {
     then
         for UNIT_TEMPLATE in \
             "${INSTALL_DIR}/systemd/"*.service \
-            "${INSTALL_DIR}/systemd/"*.timer
+            "${INSTALL_DIR}/systemd/"*.timer \
+            "${INSTALL_DIR}/systemd/"*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
@@ -1463,7 +1464,9 @@ update_systemd() {
 
         for UNIT_TEMPLATE in \
             "${SYSTEMD_DIR}/"dsm-*.service \
-            "${SYSTEMD_DIR}/"dsm-*.timer
+            "${SYSTEMD_DIR}/"dsm-*.timer \
+            "${SYSTEMD_DIR}/"dsm928*.service \
+            "${SYSTEMD_DIR}/"dsm*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             sed -i \
@@ -2191,7 +2194,8 @@ rollback() {
         local UNIT_TEMPLATE
         for UNIT_TEMPLATE in \
             "${INSTALL_DIR}/systemd/"*.service \
-            "${INSTALL_DIR}/systemd/"*.timer
+            "${INSTALL_DIR}/systemd/"*.timer \
+            "${INSTALL_DIR}/systemd/"*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
@@ -2201,7 +2205,9 @@ rollback() {
         # before systemd sees the restored units.
         for UNIT_TEMPLATE in \
             "${SYSTEMD_DIR}/"dsm-*.service \
-            "${SYSTEMD_DIR}/"dsm-*.timer
+            "${SYSTEMD_DIR}/"dsm-*.timer \
+            "${SYSTEMD_DIR}/"dsm928*.service \
+            "${SYSTEMD_DIR}/"dsm*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             sed -i \
@@ -2212,7 +2218,9 @@ rollback() {
 
         if grep -RqsE '\{\{DSM_(USER|GROUP)\}\}' \
             "${SYSTEMD_DIR}/"dsm-*.service \
-            "${SYSTEMD_DIR}/"dsm-*.timer 2>/dev/null
+            "${SYSTEMD_DIR}/"dsm-*.timer \
+            "${SYSTEMD_DIR}/"dsm928*.service \
+            "${SYSTEMD_DIR}/"dsm*.socket 2>/dev/null
         then
             echo "[ERROR] Rollback deixou placeholders DSM em unidades systemd." >&2
             echo "[ERROR] Rollback left DSM placeholders in systemd units." >&2
