@@ -2,15 +2,17 @@
 # Never starts an update, grants ACK, clears pending state or stops games.
 [Unit]
 Description=Capivara DSM #928 root negative receipt journal writer
-RequiresMountsFor=/opt/dsm /var/lib/capivara-dsm-928
+RequiresMountsFor=/usr/local/libexec/capivara-dsm-928 /var/lib/capivara-dsm-928
 After=local-fs.target
 
 [Service]
 Type=exec
 User=root
 Group=root
-WorkingDirectory=/opt/dsm
-ExecStart=/usr/bin/python3 /opt/dsm/agents/linux/runtime/game_uptime_wire_replay_service.py --expected-dashboard-user {{DSM_USER}}
+WorkingDirectory=/usr/local/libexec/capivara-dsm-928
+# Root-only audited snapshot, NEVER the writable /opt/dsm application tree.
+# Python isolated mode ignores user site and injected PYTHONPATH.
+ExecStart=/usr/bin/python3 -I -S /usr/local/libexec/capivara-dsm-928/game_uptime_wire_replay_service.py --expected-dashboard-user {{DSM_USER}}
 StandardInput=socket
 StandardOutput=journal
 StandardError=journal
