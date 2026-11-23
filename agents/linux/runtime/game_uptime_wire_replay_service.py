@@ -17,7 +17,45 @@ import pwd
 import socket
 import struct
 import sys
+import stat
 from typing import Any, Callable
+
+# Isolated Python (-I -S) does not put its script directory on sys.path.
+# ONLY the installed, root-owned executable may add the trusted immutable
+# module directory, before importing any privileged implementation modules.
+TRUSTED_LIBEXEC = Path("/usr/local/libexec/capivara-dsm-928")
+TRUSTED_MODULES = (
+    "game_uptime_wire_replay_service.py",
+    "game_uptime_durable_wire_replay.py",
+    "game_uptime_maintenance_hold.py",
+    "game_uptime_transaction_binding.py",
+)
+
+def _trusted_root_snapshot() -> bool:
+    try:
+        if (Path(__file__) !=
+                TRUSTED_LIBEXEC / "game_uptime_wire_replay_service.py"):
+            return False
+        for folder in (Path("/usr"), Path("/usr/local"),
+                       Path("/usr/local/libexec"), TRUSTED_LIBEXEC):
+            meta = folder.lstat()
+            if (not stat.S_ISDIR(meta.st_mode) or meta.st_uid != 0
+                    or meta.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+                return False
+        for file in TRUSTED_MODULES:
+            meta = (TRUSTED_LIBEXEC / file).lstat()
+            if (not stat.S_ISREG(meta.st_mode) or meta.st_uid != 0
+                    or meta.st_nlink != 1
+                    or meta.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
+                return False
+        return True
+    except OSError:
+        return False
+
+if __name__ == "__main__":
+    if not _trusted_root_snapshot():
+        raise SystemExit(2)
+    sys.path.insert(0, str(TRUSTED_LIBEXEC))
 
 from game_uptime_durable_wire_replay import (
     DurableWireReplayBlocked, record_authenticated_negative_receipt,
