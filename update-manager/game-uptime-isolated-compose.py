@@ -207,6 +207,7 @@ def execute_with_compatibility_gate(
     rollback_unit: Callable[[], None],
     verify: Callable[[], None],
     list_active_units: Callable[[], list[str]] | None = None,
+    local_fence_checkpoint: Callable[[], None] | None = None,
 ) -> dict:
     """Conservatively connect diagnostic compatibility to disposable execution.
 
