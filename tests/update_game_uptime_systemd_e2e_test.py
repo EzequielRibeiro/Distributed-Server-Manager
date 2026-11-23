@@ -346,6 +346,55 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             gate.verify_disposable_fence(security, **kwargs)
         self._assert_unchanged(originals)
 
+        # Unified final rehearsal: use the REAL release TAR and independent
+        # RSA signed provenance from the existing release-verification contract.
+        # These are ephemeral CI keys, never a production signing authority.
+        bridge_loader = SourceFileLoader(
+            "dsm928_consolidated_disposable_transaction",
+            str(ROOT / "update-manager/game-uptime-consolidated-transaction.py"))
+        bridge_spec = spec_from_loader(bridge_loader.name, bridge_loader)
+        bridge = module_from_spec(bridge_spec)
+        bridge_spec.loader.exec_module(bridge)
+        release_manifest = output / (name + ".manifest.json")
+        signed_statement = output / (name + ".provenance.json")
+        signed_signature = output / (name + ".provenance.sig")
+        publisher_private = security / "publisher-private-rsa.pem"
+        publisher_public = security / "publisher-public-rsa.pem"
+        self._run("openssl", "genpkey", "-algorithm", "RSA",
+                  "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(publisher_private))
+        self._run("openssl", "pkey", "-in", str(publisher_private),
+                  "-pubout", "-out", str(publisher_public))
+        statement_body = {
+            "kind": "CapivaraDSMReleaseProvenance",
+            "schema_version": 1,
+            "repository": "EzequielRibeiro/Distributed-Server-Manager",
+            "git_commit": commit,
+            "version": version,
+            "archive": archive.name,
+            "archive_sha256": expected_hash,
+            "manifest_sha256": hashlib.sha256(release_manifest.read_bytes()).hexdigest(),
+        }
+        signed_statement.write_text(
+            json.dumps(statement_body, sort_keys=True, separators=(",", ":")) + "\n")
+        self._run("openssl", "dgst", "-sha256", "-sign",
+                  str(publisher_private), "-out", str(signed_signature),
+                  str(signed_statement))
+        publisher_pin = hashlib.sha256(publisher_public.read_bytes()).hexdigest()
+
+        def current_units():
+            listing = self._run(
+                "systemctl", "list-units", "--type=service", "--state=active",
+                "--no-legend", "--plain", f"{self.prefix}-*.service")
+            return [line.split()[0] for line in listing.stdout.splitlines()
+                    if line.strip()]
+
+        def inspect_game(name):
+            state = self._snapshot(name)
+            unit_config = self._run("systemctl", "cat", name).stdout
+            state["unit_config_sha256"] = hashlib.sha256(
+                unit_config.encode()).hexdigest()
+            return state
+
         # Stage 2.2 moved the extracted tree into the incompatible fixture.
         # Reuse that verified package instead of its now-empty old path.
         real_tree = fixture / "new-payload"
@@ -384,10 +433,75 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertFalse(impact["live_no_drain_authorized"])
                 fixture_signer().seal_test_fixture(workspace)
                 self._assert_unchanged(originals)
-                outcome = main_rehearsal(workspace, mode)
-                self.assertEqual(outcome.returncode,
-                                 0 if mode == "no_drain_success" else 2,
-                                 outcome.stderr[-1700:] + outcome.stdout[-800:])
+                # One signed-origin → four-role ACK → durable transaction
+                # chain for apply and rollback, using existing systemd units.
+                fence_root = self.workspace / ("consolidated-fence-" + mode)
+                fence_root.mkdir(mode=0o700)
+                (fence_root / "fixture-owner").write_bytes(
+                    b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+                nonce = secrets.token_hex(16)
+                bounded_approval = {
+                    **approval, "transaction_id": nonce,
+                    "issued_at": int(time.time()),
+                    "expires_at": int(time.time()) + 300,
+                }
+                bounded_approval_path = fence_root / "approval.json"
+                bounded_approval_path.write_bytes(gate.canonical(bounded_approval))
+                bounded_signature = fence_root / "approval.sig"
+                self._run("openssl", "pkeyutl", "-sign", "-inkey",
+                          str(private), "-rawin", "-in",
+                          str(bounded_approval_path), "-out", str(bounded_signature))
+                bounded_acks = []
+                for role in bounded_approval["roles"]:
+                    ack = {
+                        "kind": "DSM928DisposableQuiescenceAck",
+                        "role": role, "transaction_id": nonce,
+                        "release_sha256": expected_hash,
+                        "status": "quiescent", "pending_jobs": 0,
+                    }
+                    ack["hmac_sha256"] = hmac.new(
+                        actor_keys[role], gate.canonical(ack),
+                        hashlib.sha256).hexdigest()
+                    bounded_acks.append(ack)
+                integrated_kwargs = {
+                    "archive": archive, "manifest": release_manifest,
+                    "statement": signed_statement,
+                    "release_signature": signed_signature,
+                    "reviewed_commit": commit,
+                    "publisher_public_key": publisher_public,
+                    "expected_publisher_key_sha256": publisher_pin,
+                    "security_workspace": fence_root,
+                    "security_approval": bounded_approval_path,
+                    "security_signature": bounded_signature,
+                    "security_publisher_public_key": public,
+                    "security_key_sha256":
+                        hashlib.sha256(public.read_bytes()).hexdigest(),
+                    "transaction_id": nonce,
+                    "actor_acks": bounded_acks,
+                    "actor_keys": actor_keys,
+                    "units": [unit["unit"] for unit in originals],
+                    "inspect": inspect_game,
+                    "list_units": current_units,
+                    "execute_fixture": lambda: main_rehearsal(workspace, mode),
+                    "expected_journal_status": expected_status,
+                }
+                with self.assertRaises(bridge.ConsolidatedTransactionBlocked):
+                    bridge.run_disposable_integrated(
+                        workspace, **{**integrated_kwargs,
+                                      "expected_publisher_key_sha256": "0"*64})
+                self.assertFalse((workspace / "backups").exists())
+                self.assertFalse((fence_root / "dsm928-security-fence.json").exists())
+                proof = bridge.run_disposable_integrated(
+                    workspace, **integrated_kwargs)
+                self.assertEqual(proof["journal_status"], expected_status)
+                self.assertEqual(proof["units_preserved"], 2)
+                self.assertTrue(proof["fixture_publisher_signed"])
+                self.assertTrue(proof["fixture_actor_acks_verified"])
+                self.assertFalse(proof["operational_agents_quiesced"])
+                self.assertFalse(proof["live_no_drain_authorized"])
+                with self.assertRaises(bridge.ConsolidatedTransactionBlocked):
+                    bridge.run_disposable_integrated(
+                        workspace, **integrated_kwargs)
                 self.assertEqual((installed / "version").read_text().strip(),
                                  expected_version)
                 self.assertEqual(
