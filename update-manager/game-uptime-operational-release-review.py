@@ -177,6 +177,24 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
         status["blockers"].append("maintenance_or_recovery_hold_requires_review")
     else:
         status["blockers"].append("no_durable_quiescence_hold_established")
+    # Read actual systemd MainPIDs, kernel start stamps, UID, executable
+    # locations, cgroups and Controller startup opt-in. Reuse the preexisting
+    # nine-Worker identity verifier; no booleans from untrusted Agents count.
+    try:
+        identity_probe = _load("dsm928_installed_process_identity",
+                               "game-uptime-live-daemon-identity.py")
+        status["daemon_process_identity"] = identity_probe.observe()
+        status["blockers"].extend(
+            status["daemon_process_identity"]["blockers"])
+    except Exception:
+        status["daemon_process_identity"] = {
+            "status": "diagnostic_unavailable",
+            "controller_mutations_acked": False,
+            "worker_cycles_acked": False,
+            "remote_agents_acked": False,
+            "live_no_drain_authorized": False,
+        }
+        status["blockers"].append("installed_daemon_identity_diagnostic_unavailable")
     # Observe actual kernel locks from the installed Controller and the nine
     # tracked Worker entrypoints. This is a snapshot, never a retained fence
     # or a positive ACK from any daemon.
