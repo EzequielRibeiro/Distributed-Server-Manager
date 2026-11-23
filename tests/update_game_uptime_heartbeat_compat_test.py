@@ -1,7 +1,7 @@
-"""#928 authenticated, read-only Agent/Controller compatibility exchange.
+"""#928 authenticated Controller-Agent compatibility and v2 replay checks.
 
-All fixtures mock heartbeat persistence and credentials. No live DSM services,
-updates, database or game processes are touched.
+All fixtures mock heartbeat persistence, credentials, and privileged replay
+commitment. No live DSM services, updates, databases or games are touched.
 """
 from __future__ import annotations
 import ast
