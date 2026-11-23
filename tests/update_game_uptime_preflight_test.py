@@ -337,6 +337,18 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(verified["external_jobs_acked"])
         self.assertFalse(verified["durable_cross_host_recovery_verified"])
         self.assertFalse(verified["live_no_drain_authorized"])
+        # Real local lock inodes are inspected, rather than accepting
+        # self-declared "idle" booleans or synthetic remote ACKs.
+        local_fences = verified["local_kernel_fences"]
+        self.assertEqual(local_fences["status"],
+                         "incomplete_live_admission_evidence")
+        self.assertEqual(local_fences["observed_worker_count"], 9)
+        self.assertEqual(len(local_fences["workers"]), 9)
+        self.assertFalse(local_fences["controller_http_acked"])
+        self.assertFalse(local_fences["workers_acked"])
+        self.assertFalse(local_fences["external_jobs_acked"])
+        self.assertFalse(local_fences["remote_agents_acked"])
+        self.assertFalse(local_fences["live_no_drain_authorized"])
         self.assertIn("updater_no_drain_production_entrypoint_not_authorized",
                       verified["blockers"])
         self.assertTrue(evidence["current_updater_drains_active_games"])
