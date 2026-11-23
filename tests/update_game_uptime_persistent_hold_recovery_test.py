@@ -396,6 +396,22 @@ class PersistentPendingHoldTests(unittest.TestCase):
         # Invalid marker already blocks. After marker loss, pending still blocks.
         self.marker.unlink()
         self.assertTrue(self.observation()["active"])
+        # Orphaned scope evidence must also retain a durable recovery block.
+        # Use independent temporary subtests; never delete production evidence.
+        for name in ("no-drain-release-binding.json",
+                     "no-drain-agent-inventory.json"):
+            with self.subTest(name=name):
+                self.journal.unlink()  # disposable fixture reset only
+                orphan = self.state / name
+                orphan.write_bytes(b"prior evidence")
+                orphan.chmod(0o600)
+                with self.assertRaises(HoldPreparationBlocked):
+                    self.prepare()
+                self.assertEqual(orphan.read_bytes(), b"prior evidence")
+                self.assertTrue(self.journal.exists())
+                self.assertFalse(self.marker.exists())
+                self.assertTrue(self.observation()["active"])
+                orphan.unlink()
 
 
     def test_root_journal_and_privileged_exclusive_witness_is_local_and_negative(self):

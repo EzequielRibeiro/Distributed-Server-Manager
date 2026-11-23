@@ -172,20 +172,19 @@ def prepare_root_only(
         "expires_at": expires,
     }
     try:
-        # Refuse an existing scope before creating any new evidence. O_EXCL
-        # below is still authoritative if a competing root writer races us.
-        paths = [journal_path, hold_path]
-        if release_sha256 is not None:
-            paths.extend((binding_path, inventory_path))
+        # Claim the transaction with the durable recovery sentinel FIRST.
+        # An existing journal fails O_EXCL without any modification.
+        # Orphaned markers, bindings or inventories must leave this sentinel
+        # in place as well, so losing /run cannot silently unblock recovery.
+        _write_once(journal_path, pending, trusted_uid)
+        paths = [hold_path, journal_path.parent / "no-drain-release-binding.json",
+                 inventory_path]
         for evidence in paths:
             try:
                 evidence.lstat()
             except FileNotFoundError:
                 continue
             raise HoldPreparationBlocked("existing_evidence_requires_review")
-        # Persist the recovery sentinel FIRST. A crash during either
-        # subsequent scope write must block even without the /run marker.
-        _write_once(journal_path, pending, trusted_uid)
         if release_sha256 is not None:
             # Bind operator-pinned release bytes before hold exposure.
             # This SHA is NOT a publisher signature or an update approval.
