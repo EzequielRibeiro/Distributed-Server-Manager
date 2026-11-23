@@ -177,11 +177,13 @@ class PersistentPendingHoldTests(unittest.TestCase):
         # cannot be accepted again, even under a different allowed Agent ID.
         importlib.reload(replay_module)
         with self.assertRaisesRegex(
-                DurableWireReplayBlocked, "replayed_or_existing_wire_nonce"):
+                replay_module.DurableWireReplayBlocked,
+                "replayed_or_existing_wire_nonce"):
             replay_module.record_authenticated_negative_receipt(
                 authenticated_agent_id="agent-A", receipt=first, **scope)
         with self.assertRaisesRegex(
-                DurableWireReplayBlocked, "replayed_or_existing_wire_nonce"):
+                replay_module.DurableWireReplayBlocked,
+                "replayed_or_existing_wire_nonce"):
             replay_module.record_authenticated_negative_receipt(
                 authenticated_agent_id="agent-B",
                 receipt=make_receipt("agent-B", nonce), **scope)
