@@ -148,9 +148,35 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
         "operational_quiescence_acked": False,
         "external_jobs_acked": False,
         "durable_cross_host_recovery_verified": False,
+        "maintenance_hold": {"active": True, "reason": "hold_observation_unavailable"},
         "live_no_drain_authorized": False,
         "blockers": [],
     }
+    # Reuse the exact read-only Agent/Worker maintenance hold reader,
+    # including its persistent pending journal check across reboot.
+    # Missing hold is NOT a quiescence ACK; expired/corrupt hold stays blocked.
+    try:
+        hold_path = (Path(__file__).resolve().parents[1]
+                     / "agents/linux/runtime/game_uptime_maintenance_hold.py")
+        loader = SourceFileLoader("dsm928_operational_hold_observation", str(hold_path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        hold = importlib.util.module_from_spec(spec)
+        loader.exec_module(hold)
+        observed = hold.observe()
+        if (not isinstance(observed, dict)
+                or type(observed.get("active")) is not bool):
+            raise OperationalReviewBlocked("maintenance_hold_observation_invalid")
+        status["maintenance_hold"] = {
+            "active": observed["active"],
+            "reason": str(observed.get("reason", "unknown"))[:100],
+        }
+    except (OSError, RuntimeError, ValueError, TypeError):
+        status["maintenance_hold"] = {
+            "active": True, "reason": "hold_observation_unavailable"}
+    if status["maintenance_hold"]["active"]:
+        status["blockers"].append("maintenance_or_recovery_hold_requires_review")
+    else:
+        status["blockers"].append("no_durable_quiescence_hold_established")
     try:
         # Fixtures MUST NOT masquerade as proof that production trust exists.
         if not trusted_inputs_only or Path(review_dir) != REVIEW_DIR:
