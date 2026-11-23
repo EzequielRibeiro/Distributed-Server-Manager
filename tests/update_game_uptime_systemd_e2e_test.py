@@ -542,8 +542,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                             **{**lease_args, "transaction_id": "f" * 32}):
                         pass
                 with local_scope.retain_local_scopes(**lease_args) as scope:
-                    self.assertEqual(scope["controller_agent_http_routes_fenced"], 3)
-                    self.assertEqual(scope["known_worker_cycles_fenced"], 9)
+                    self.assertTrue(scope["controller_http_lock_exclusively_held"])
+                    self.assertEqual(scope["worker_lock_inodes_exclusively_held"], 9)
+                    self.assertFalse(scope["controller_routes_opted_in_verified"])
+                    self.assertFalse(scope["worker_process_inventory_verified"])
                     self.assertFalse(scope["remote_agents_acked"])
                     self.assertFalse(scope["external_jobs_acked"])
                     self.assertFalse(scope["live_no_drain_authorized"])
