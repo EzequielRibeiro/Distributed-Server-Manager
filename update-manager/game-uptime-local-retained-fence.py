@@ -97,6 +97,22 @@ def retain_local_fences() -> Iterator[dict[str, object]]:
                     raise RetainedFenceBlocked("locked_path_replaced")
             except OSError as exc:
                 raise RetainedFenceBlocked("locked_path_unavailable") from exc
+        # Recheck every acquired lock, not only the last one, before
+        # exposing the context to a transaction coordinator. A missing
+        # pathname must never be mistaken for a retained operational fence.
+        for path, fd in zip(paths, acquired):
+            try:
+                named = path.lstat()
+                locked = os.fstat(fd)
+                if (not stat.S_ISREG(named.st_mode)
+                        or (named.st_dev, named.st_ino) !=
+                        (locked.st_dev, locked.st_ino)
+                        or named.st_nlink != 1
+                        or named.st_uid != locked.st_uid
+                        or stat.S_IMODE(named.st_mode) != 0o600):
+                    raise RetainedFenceBlocked("retained_lock_identity_changed")
+            except OSError as exc:
+                raise RetainedFenceBlocked("retained_lock_unavailable") from exc
         yield {
             "status": "local_kernel_locks_retained_only",
             "lock_count": len(acquired),
