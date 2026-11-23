@@ -14,8 +14,13 @@ import time
 from typing import Any, Mapping
 
 from game_uptime_maintenance_hold import observe
+from game_uptime_transaction_binding import (
+    ReleaseBindingBlocked, binding_for_hold,
+)
 
 CONTRACT = {"protocol": "dsm928-fence-evidence-readonly-v1", "schema": "1"}
+CONTRACT_V2 = {"protocol": "dsm928-fence-evidence-release-bound-readonly-v2", "schema": "2"}
+_SHA = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9._-]{1,191}\Z")
 _NONCE = re.compile(r"[0-9a-f]{32}\Z")
 
@@ -42,11 +47,18 @@ def build_fence_evidence(agent_id: str, *,
     if not isinstance(agent_id, str) or not _ID.fullmatch(agent_id):
         raise ValueError("invalid Agent identity")
     when = int(time.time()) if now is None else now
-    hold = _hold_identity(observe(), when)
+    observed = observe()
+    hold = _hold_identity(observed, when)
     if hold is None:
         return None
+    try:
+        release_binding = binding_for_hold(observed, now=when)
+    except ReleaseBindingBlocked:
+        # Corrupt, mismatched or expired privileged evidence cannot be
+        # downgraded to a legacy transaction-only report.
+        return None
     tx, issued, expires = hold
-    return {
+    evidence = {
         "kind": "CapivaraNoDrainFenceEvidence",
         "schema_version": 1,
         "agent_id": agent_id,
@@ -60,6 +72,10 @@ def build_fence_evidence(agent_id: str, *,
         "external_jobs_verified": False,
         "live_no_drain_authorized": False,
     }
+    if release_binding is not None:
+        evidence["contract"] = dict(CONTRACT_V2)
+        evidence["release_sha256"] = release_binding["release_sha256"]
+    return evidence
 
 
 def verify_fence_receipt(evidence: Any, receipt: Any, *,
@@ -77,6 +93,10 @@ def verify_fence_receipt(evidence: Any, receipt: Any, *,
         "contract", "agent_workers_fenced", "external_jobs_verified",
         "live_no_drain_authorized",
     }
+    version_two = p.get("contract") == CONTRACT_V2
+    if version_two:
+        keys = keys | {"release_sha256"}
+    expected_contract = CONTRACT_V2 if version_two else CONTRACT
     valid_evidence = (
         set(p) == keys
         and p.get("kind") == "CapivaraNoDrainFenceEvidence"
@@ -85,7 +105,10 @@ def verify_fence_receipt(evidence: Any, receipt: Any, *,
         and bool(_ID.fullmatch(p["agent_id"]))
         and isinstance(p.get("request_id"), str)
         and bool(_NONCE.fullmatch(p["request_id"]))
-        and p.get("contract") == CONTRACT
+        and p.get("contract") == expected_contract
+        and (not version_two or
+             type(p.get("release_sha256")) is str and
+             bool(re.fullmatch(r"[0-9a-f]{64}", p["release_sha256"])))
         and p.get("agent_workers_fenced") is False
         and p.get("external_jobs_verified") is False
         and p.get("live_no_drain_authorized") is False
@@ -104,6 +127,8 @@ def verify_fence_receipt(evidence: Any, receipt: Any, *,
         "status", "scope", "agent_workers_fenced",
         "remote_agent_quiescence_acked", "live_no_drain_authorized",
     }
+    if version_two:
+        receipt_keys = receipt_keys | {"release_sha256"}
     valid_receipt = (
         valid_evidence and set(r) == receipt_keys
         and r.get("kind") == "CapivaraNoDrainFenceEvidenceReceipt"
@@ -112,7 +137,9 @@ def verify_fence_receipt(evidence: Any, receipt: Any, *,
             "agent_id", "request_id", "transaction_id", "issued_at",
             "expires_at",
         ))
-        and r.get("contract") == CONTRACT
+        and r.get("contract") == expected_contract
+        and (not version_two or
+             r.get("release_sha256") == p.get("release_sha256"))
         and r.get("status") == "authenticated_evidence_received_unfenced"
         and r.get("scope") == "authenticated_heartbeat_wire_only"
         and r.get("agent_workers_fenced") is False
