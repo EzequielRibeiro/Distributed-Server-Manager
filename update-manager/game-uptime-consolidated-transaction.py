@@ -105,6 +105,7 @@ def run_disposable_integrated(
     list_units: Callable,
     execute_fixture: Callable,
     expected_journal_status: str,
+    local_scope_kwargs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """One-shot CI-only security→transaction→PID witness, fail-closed.
 
@@ -189,37 +190,66 @@ def run_disposable_integrated(
         raise ConsolidatedTransactionBlocked("transaction fence not bound")
     if _witness(units, inspect, list_units) != before:
         raise ConsolidatedTransactionBlocked("game changed before update")
-    # Failures after this point retain the fsynced security-fence receipt and
-    # are NEVER retried automatically. Composite journal owns file rollback.
-    operation = execute_fixture()
-    if (not isinstance(getattr(operation, "returncode", None), int)
-            or operation.returncode !=
-            (0 if expected_journal_status == "verified" else 2)):
-        raise ConsolidatedTransactionBlocked("disposable update result unexpected")
-    journal = root / "dsm928-composite-journal/game-uptime-transaction.json"
-    if journal.is_symlink() or not journal.is_file():
-        raise ConsolidatedTransactionBlocked("durable rollback journal missing")
+    # The scoped local kernel locks are mandatory for the whole disposable
+    # file swap, rollback verification, and PID witness. No test caller may
+    # bypass them by running execute_fixture() directly.
+    if (not isinstance(local_scope_kwargs, Mapping)
+            or local_scope_kwargs.get("transaction_id") != transaction_id
+            or local_scope_kwargs.get("release_sha256") != sha):
+        raise ConsolidatedTransactionBlocked("transaction-local lock lease missing or unbound")
+    scope_module = _load("dsm928_integrated_kernel_scope_lease",
+                         "game-uptime-local-scope-lease.py")
+    # The signed security-fence receipt is durable before entering the lease.
+    # A failed/busy lock leaves it for manual recovery; never auto-retry.
     try:
-        evidence = json.loads(journal.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ConsolidatedTransactionBlocked("invalid durable update journal") from exc
-    if (evidence.get("status") != expected_journal_status
-            or evidence.get("strict_inventory") is not True
-            or evidence.get("live_no_drain_authorized") is not False
-            or len(evidence.get("original_units") or []) < 2):
-        raise ConsolidatedTransactionBlocked("disposable rollback outcome not proven")
-    if _witness(units, inspect, list_units) != before:
-        raise ConsolidatedTransactionBlocked("game identity changed across transaction")
-    return {
-        "kind": "DSM928DisposableIntegratedSecurityTransaction",
-        "status": "verified_disposable_only",
-        "transaction_id": transaction_id,
-        "release_sha256": sha,
-        "journal_status": expected_journal_status,
-        "units_preserved": len(before),
-        "fixture_publisher_signed": True,
-        "fixture_actor_acks_verified": True,
-        "production_publisher_enrolled": False,
-        "operational_agents_quiesced": False,
-        "live_no_drain_authorized": False,
-    }
+        with scope_module.retain_local_scopes(**dict(local_scope_kwargs)) as scope:
+            if (scope.get("transaction_id") != transaction_id
+                    or scope.get("release_sha256") != sha
+                    or scope.get("controller_http_lock_exclusively_held") is not True
+                    or scope.get("worker_lock_inodes_exclusively_held") != 9
+                    or scope.get("all_mutators_fenced") is not False
+                    or scope.get("remote_agents_acked") is not False
+                    or scope.get("live_no_drain_authorized") is not False):
+                raise ConsolidatedTransactionBlocked("untrusted local scope receipt")
+            if _witness(units, inspect, list_units) != before:
+                raise ConsolidatedTransactionBlocked("game changed under local lease")
+            operation = execute_fixture()
+            if (not isinstance(getattr(operation, "returncode", None), int)
+                    or operation.returncode !=
+                    (0 if expected_journal_status == "verified" else 2)):
+                raise ConsolidatedTransactionBlocked("disposable update result unexpected")
+            journal = root / "dsm928-composite-journal/game-uptime-transaction.json"
+            if journal.is_symlink() or not journal.is_file():
+                raise ConsolidatedTransactionBlocked("durable rollback journal missing")
+            try:
+                evidence = json.loads(journal.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise ConsolidatedTransactionBlocked("invalid durable update journal") from exc
+            if (evidence.get("status") != expected_journal_status
+                    or evidence.get("strict_inventory") is not True
+                    or evidence.get("live_no_drain_authorized") is not False
+                    or len(evidence.get("original_units") or []) < 2):
+                raise ConsolidatedTransactionBlocked("disposable rollback outcome not proven")
+            if _witness(units, inspect, list_units) != before:
+                raise ConsolidatedTransactionBlocked("game identity changed across transaction")
+            result = {
+                "kind": "DSM928DisposableIntegratedSecurityTransaction",
+                "status": "verified_disposable_only",
+                "transaction_id": transaction_id,
+                "release_sha256": sha,
+                "journal_status": expected_journal_status,
+                "units_preserved": len(before),
+                "fixture_publisher_signed": True,
+                "fixture_actor_acks_verified": True,
+                "local_controller_lock_held_during_transaction": True,
+                "local_worker_lock_count_held_during_transaction": 9,
+                "controller_routes_opted_in_verified": False,
+                "worker_process_inventory_verified": False,
+                "production_publisher_enrolled": False,
+                "operational_agents_quiesced": False,
+                "live_no_drain_authorized": False,
+            }
+        # The scope's post-yield hold check and lock release both completed.
+        return result
+    except scope_module.LocalScopeLeaseBlocked as exc:
+        raise ConsolidatedTransactionBlocked("local scope lease unavailable") from exc
