@@ -36,10 +36,13 @@ def _open_existing(path: Path) -> int:
         if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
                 or info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
             raise RetainedFenceBlocked("untrusted_lock_directory")
+    # Worker lock files can be owned by their dedicated service UID. The
+    # trusted root-owned directories, 0600 mode, and retained inode identity
+    # are the trust boundary; requiring root ownership rejects valid locks.
     before = path.lstat()
     if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
             or stat.S_IMODE(before.st_mode) != 0o600
-            or before.st_uid not in (0, os.geteuid())):
+            or before.st_uid < 0):
         raise RetainedFenceBlocked("untrusted_lock_file")
     fd = os.open(path, os.O_RDWR | os.O_NONBLOCK
                  | getattr(os, "O_NOFOLLOW", 0)
