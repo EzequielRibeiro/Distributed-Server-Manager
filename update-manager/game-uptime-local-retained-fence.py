@@ -143,6 +143,9 @@ def retain_local_fences() -> Iterator[dict[str, object]]:
             "crash_recovery_verified": False,
             "live_no_drain_authorized": False,
         }
+        # Recheck even when the caller forgets an explicit final checkpoint.
+        # A replaced lock inode cannot silently pass a successful transaction.
+        checkpoint()
     finally:
         for fd in reversed(acquired):
             try:
