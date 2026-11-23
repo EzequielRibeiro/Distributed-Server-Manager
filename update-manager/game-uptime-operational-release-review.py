@@ -58,13 +58,18 @@ def _trusted_reviewed_commit(path: Path) -> str:
                 or before.st_nlink != 1 or before.st_size != 41
                 or before.st_mode & (stat.S_IWGRP | stat.S_IWOTH)):
             raise OperationalReviewBlocked("reviewed_commit_file_untrusted")
-        with path.open("rb", opener=lambda name, flags: os.open(
-                name, flags | getattr(os, "O_NOFOLLOW", 0))) as stream:
-            after = os.fstat(stream.fileno())
-            if (before.st_ino, before.st_dev, before.st_size) != (
-                    after.st_ino, after.st_dev, after.st_size):
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+                     | getattr(os, "O_CLOEXEC", 0))
+        try:
+            after = os.fstat(fd)
+            if (before.st_ino, before.st_dev, before.st_size,
+                    before.st_mtime_ns) != (
+                    after.st_ino, after.st_dev, after.st_size,
+                    after.st_mtime_ns):
                 raise OperationalReviewBlocked("reviewed_commit_file_changed")
-            raw = stream.read(42)
+            raw = os.read(fd, 42)
+        finally:
+            os.close(fd)
         value = raw.decode("ascii").removesuffix("\n")
         if not _MARKER.fullmatch(value):
             raise OperationalReviewBlocked("reviewed_commit_invalid")
