@@ -70,6 +70,11 @@ def retain_local_fences() -> Iterator[dict[str, object]]:
         _inventory.WORKER_LOCK_DIR / (name + ".lock")
         for name in _inventory.WORKERS
     ]
+    # A caller must be privileged to hold the preprovisioned controller
+    # and worker lock inodes. No unprivileged code may impersonate the
+    # transaction coordinator or obtain an apparent local fence.
+    if os.geteuid() != 0:
+        raise RetainedFenceBlocked("root_coordinator_required")
     acquired: list[int] = []
     try:
         for path in paths:
