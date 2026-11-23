@@ -199,6 +199,51 @@ class PersistentPendingHoldTests(unittest.TestCase):
                 receipt={**make_receipt("agent-B", "b"*32),
                          "release_sha256": "f"*64}, **scope)
         self.assertFalse((receipts / ("b"*32 + ".json")).exists())
+        # Real socket writer's request parser + privileged append function:
+        # one authenticated NEGATIVE record succeeds under a disposable root
+        # journal; a duplicate request cannot be accepted after persistence.
+        import game_uptime_wire_replay_service as wire_writer
+        valid_wire = (json.dumps({
+            "protocol": wire_writer.PROTOCOL,
+            "authenticated_agent_id": "agent-B",
+            "receipt": make_receipt("agent-B", "c"*32),
+        }, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        def fixture_record(**kwargs):
+            return replay_module.record_authenticated_negative_receipt(
+                **kwargs, journal_dir=receipts, hold_path=self.marker,
+                pending_path=self.journal, binding_path=binding,
+                trusted_uid=self.uid, now=now, fixture_only=True)
+        recorded = wire_writer.commit_request(
+            valid_wire, record_fn=fixture_record)
+        self.assertEqual(recorded["status"],
+                         "negative_v2_receipt_durably_recorded")
+        self.assertFalse(recorded["remote_agent_quiescence_acked"])
+        self.assertFalse(recorded["external_jobs_acked"])
+        self.assertFalse(recorded["live_no_drain_authorized"])
+        self.assertTrue((receipts / ("c"*32 + ".json")).exists())
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
+            wire_writer.commit_request(valid_wire, record_fn=fixture_record)
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            wire_writer.decode_request(
+                valid_wire.replace(b'"protocol":', b'"protocol":"forged", "protocol":'))
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            wire_writer.decode_request(valid_wire + b"second\n")
+        # SO_PEERCRED peer must match effective UID, installed Dashboard
+        # interpreter and exact cgroup: a Worker using the same UID fails.
+        fake_proc = self.run / "fixture-proc"
+        pid_path = fake_proc / "31415"
+        pid_path.mkdir(parents=True)
+        (pid_path / "cgroup").write_text("0::/system.slice/dsm-dashboard.service\n")
+        (pid_path / "cmdline").write_bytes(
+            b"/usr/bin/python3\x00/opt/dsm/dashboard/server_part22.py\x00")
+        (pid_path / "status").write_text("Uid:\t1001\t1001\t1001\t1001\n")
+        self.assertTrue(wire_writer.peer_is_dashboard(
+            pid=31415, uid=1001, expected_uid=1001, proc_root=fake_proc))
+        self.assertFalse(wire_writer.peer_is_dashboard(
+            pid=31415, uid=1002, expected_uid=1001, proc_root=fake_proc))
+        (pid_path / "cgroup").write_text("0::/system.slice/dsm-dashboard-worker.service\n")
+        self.assertFalse(wire_writer.peer_is_dashboard(
+            pid=31415, uid=1001, expected_uid=1001, proc_root=fake_proc))
         # Loss of the ephemeral /run hold with durable pending journal
         # must block any new witness, without deleting historical evidence.
         self.marker.unlink()
