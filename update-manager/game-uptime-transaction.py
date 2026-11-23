@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+import fcntl
+from functools import wraps
 import os
 from pathlib import Path
 import re
@@ -40,6 +42,38 @@ def _workspace(parent: Path) -> Path:
     if identity.st_uid != os.geteuid() or identity.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
         raise TransactionSafetyError("disposable journal directory must be private and owned")
     return resolved
+
+
+def _exclusive_transaction(func):
+    """Serialize apply and recovery on the same private workspace inode.
+
+    Lock the directory itself rather than a replaceable journal file.
+    Kernel releases the descriptor on process death; the durable journal
+    still determines whether a new transaction or recovery is allowed.
+    No additional lock file or production path is introduced.
+    """
+    @wraps(func)
+    def guarded(workspace: Path, *args, **kwargs):
+        root = _workspace(workspace)
+        fd = None
+        try:
+            fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY |
+                         os.O_NOFOLLOW | os.O_CLOEXEC)
+            named, held = root.lstat(), os.fstat(fd)
+            if ((named.st_dev, named.st_ino) != (held.st_dev, held.st_ino)
+                    or not stat.S_ISDIR(held.st_mode)
+                    or held.st_uid != os.geteuid()
+                    or held.st_mode & (stat.S_IRWXG | stat.S_IRWXO)):
+                raise TransactionSafetyError("transaction workspace identity changed")
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise TransactionSafetyError("transaction or recovery already in progress") from exc
+            return func(root, *args, **kwargs)
+        finally:
+            if fd is not None:
+                os.close(fd)
+    return guarded
 
 
 def _snapshot(name: str, inspect: Callable[[str], Mapping]) -> dict:
@@ -152,6 +186,7 @@ def _checkpoint(path: Path, status: str, originals: list[dict], detail: str = ""
             tmp.unlink()
 
 
+@_exclusive_transaction
 def execute(
     workspace: Path,
     units: list[str],
@@ -230,6 +265,7 @@ def execute(
         raise TransactionSafetyError("transaction rejected and rollback completed") from exc
 
 
+@_exclusive_transaction
 def recover_interrupted(
     workspace: Path,
     units: list[str],
