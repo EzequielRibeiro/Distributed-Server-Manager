@@ -124,6 +124,7 @@ def correlate_authenticated_fence_receipts(
     expected_agent_ids: list[str] | tuple[str, ...],
     receipts: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
     *, transaction_id: str, now: int | None = None,
+    expected_release_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Correlate credentialed wire receipts across an explicit Agent set.
 
@@ -135,6 +136,11 @@ def correlate_authenticated_fence_receipts(
     """
     when = int(time.time()) if now is None else now
     failures: set[str] = set()
+    release_bound = expected_release_sha256 is not None
+    if (release_bound and
+            (type(expected_release_sha256) is not str or
+             not _SHA.fullmatch(expected_release_sha256))):
+        failures.add("invalid_expected_release_pin")
     expected: set[str] = set()
     seen: set[str] = set()
     nonces: set[str] = set()
@@ -165,6 +171,9 @@ def correlate_authenticated_fence_receipts(
         "status", "scope", "agent_workers_fenced",
         "remote_agent_quiescence_acked", "live_no_drain_authorized",
     }
+    if release_bound:
+        required = required | {"release_sha256"}
+    expected_contract = CONTRACT_V2 if release_bound else CONTRACT
     for item in receipts if isinstance(receipts, (list, tuple)) else ():
         if not isinstance(item, Mapping) or set(item) != {
                 "authenticated_agent_id", "receipt"}:
@@ -194,7 +203,9 @@ def correlate_authenticated_fence_receipts(
                 or receipt["schema_version"] != 1
                 or receipt.get("agent_id") != agent_id
                 or receipt.get("transaction_id") != transaction_id
-                or receipt.get("contract") != CONTRACT
+                or receipt.get("contract") != expected_contract
+                or (release_bound and
+                    receipt.get("release_sha256") != expected_release_sha256)
                 or receipt.get("status") != "authenticated_evidence_received_unfenced"
                 or receipt.get("scope") != "authenticated_heartbeat_wire_only"
                 or receipt.get("agent_workers_fenced") is not False
@@ -226,6 +237,14 @@ def correlate_authenticated_fence_receipts(
             failures.add("controller_root_hold_not_correlated")
     except Exception:
         failures.add("controller_root_hold_unavailable")
+    if release_bound:
+        try:
+            bound = binding_for_hold(local, now=when)
+            if (bound is None or
+                    bound.get("release_sha256") != expected_release_sha256):
+                failures.add("controller_release_binding_mismatch")
+        except (ReleaseBindingBlocked, UnboundLocalError):
+            failures.add("controller_release_binding_unavailable")
 
     complete = not failures and seen == expected
     return {
