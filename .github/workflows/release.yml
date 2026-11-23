@@ -139,6 +139,9 @@ jobs:
       - name: Publish canonical GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          CAPIVARA_REQUIRE_SIGNED_PROVENANCE: ${{ vars.CAPIVARA_DSM928_SIGNED_RELEASES }}
+          CAPIVARA_SIGNING_KEY_SHA256: ${{ vars.CAPIVARA_DSM_RELEASE_SIGNING_PUBLIC_KEY_SHA256 }}
+          CAPIVARA_SIGNING_KEY_PEM: ${{ secrets.CAPIVARA_DSM_RELEASE_SIGNING_PRIVATE_KEY_PEM }}
         shell: bash
         run: |
           set -euo pipefail
@@ -150,6 +153,11 @@ jobs:
           python3 release/legacy_updater_bridge.py "dist/capivara-dsm-${VERSION}.tar.gz"
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
           python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
+          bash release/sign_if_enrolled.sh "${GITHUB_SHA}" dist
+          EXTRA_ASSETS=()
+          for ASSET in dist/*.provenance.json dist/*.provenance.sig; do
+            [[ -f "${ASSET}" ]] && EXTRA_ASSETS+=("${ASSET}")
+          done
           if gh release view "${TAG}" >/dev/null 2>&1; then
             TAG_COMMIT=$(git rev-list -n 1 "${TAG}")
             if [[ "${TAG_COMMIT}" != "${GITHUB_SHA}" ]]; then
@@ -162,10 +170,10 @@ jobs:
             if [[ "${VERSION}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
             gh release create "${TAG}" \
               dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json dist/*.minisig \
-              "${RELEASE_FLAGS[@]}" 2>/dev/null || \
+              "${EXTRA_ASSETS[@]}" "${RELEASE_FLAGS[@]}" 2>/dev/null || \
             gh release create "${TAG}" \
               dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json \
-              "${RELEASE_FLAGS[@]}"
+              "${EXTRA_ASSETS[@]}" "${RELEASE_FLAGS[@]}"
           fi
 
       - name: Validate canonical public release
@@ -233,6 +241,14 @@ jobs:
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
           python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
 
+      - name: Sign official DSM provenance when publisher is enrolled
+        shell: bash
+        env:
+          CAPIVARA_REQUIRE_SIGNED_PROVENANCE: ${{ vars.CAPIVARA_DSM928_SIGNED_RELEASES }}
+          CAPIVARA_SIGNING_KEY_SHA256: ${{ vars.CAPIVARA_DSM_RELEASE_SIGNING_PUBLIC_KEY_SHA256 }}
+          CAPIVARA_SIGNING_KEY_PEM: ${{ secrets.CAPIVARA_DSM_RELEASE_SIGNING_PRIVATE_KEY_PEM }}
+        run: bash release/sign_if_enrolled.sh "${GITHUB_SHA}" dist
+
       - name: Attest Linux Agent package provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -264,12 +280,16 @@ jobs:
               RELEASE_FLAGS+=(--generate-notes)
             fi
             if [[ "${GITHUB_REF_NAME}" == *-* ]]; then RELEASE_FLAGS+=(--prerelease); fi
+            EXTRA_ASSETS=()
+            for ASSET in dist/*.provenance.json dist/*.provenance.sig; do
+              [[ -f "${ASSET}" ]] && EXTRA_ASSETS+=("${ASSET}")
+            done
             gh release create "${GITHUB_REF_NAME}" \
               dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json dist/*.minisig \
-              "${RELEASE_FLAGS[@]}" 2>/dev/null || \
+              "${EXTRA_ASSETS[@]}" "${RELEASE_FLAGS[@]}" 2>/dev/null || \
             gh release create "${GITHUB_REF_NAME}" \
               dist/*.tar.gz dist/*.zip dist/*.sha256 dist/*.manifest.json \
-              "${RELEASE_FLAGS[@]}"
+              "${EXTRA_ASSETS[@]}" "${RELEASE_FLAGS[@]}"
           fi
 
       - name: Validate canonical public release
