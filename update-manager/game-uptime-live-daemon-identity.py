@@ -84,6 +84,32 @@ def _controller_pid(pid: int, *, proc_root: Path = Path("/proc")) -> dict:
     }
 
 
+def verify_controller_snapshot(before: dict, after: dict,
+                               first: dict, second: dict, *,
+                               expected_uid: int,
+                               script: Path = CONTROLLER_SCRIPT) -> bool:
+    """Validate stable systemd and kernel identities; return only opt-in."""
+    if (before != after
+            or before.get("ActiveState") != "active"
+            or before.get("SubState") != "running"
+            or not _PID_RE.fullmatch(before.get("MainPID", ""))
+            or before.get("ControlGroup") != "/system.slice/" + CONTROLLER_UNIT
+            or first != second):
+        raise ValueError("controller_process_identity_unstable")
+    pid = int(before["MainPID"])
+    args = first.get("argv") or ()
+    if (first.get("pid") != pid
+            or type(first.get("start_ticks")) is not int
+            or first["start_ticks"] < 1
+            or first.get("uid") != expected_uid
+            or first.get("cgroup") != before["ControlGroup"]
+            or len(args) < 2
+            or not re.fullmatch(r"python3(?:\.[0-9]+)?", Path(args[0]).name)
+            or args[1] != str(script)):
+        raise ValueError("controller_process_identity_mismatch")
+    return first.get("flock_opted_in") is True
+
+
 def _controller_identity(*, unit: str = CONTROLLER_UNIT,
                          script: Path = CONTROLLER_SCRIPT) -> dict:
     summary = {
@@ -107,22 +133,15 @@ def _controller_identity(*, unit: str = CONTROLLER_UNIT,
         one = _controller_pid(pid)
         two = _controller_pid(pid)
         after = _systemd_status(unit)
-        if before != after or one != two:
-            raise ValueError("controller_process_identity_changed")
-        args = one["argv"]
-        if (one["uid"] != expected_uid
-                or one["cgroup"] != before["ControlGroup"]
-                or len(args) < 2
-                or not re.fullmatch(r"python3(?:\.[0-9]+)?", Path(args[0]).name)
-                or args[1] != str(script)):
-            raise ValueError("controller_executable_uid_or_cgroup_mismatch")
+        opted_in = verify_controller_snapshot(
+            before, after, one, two, expected_uid=expected_uid, script=script)
         source = script.lstat()
         if not stat.S_ISREG(source.st_mode):
             raise ValueError("controller_source_not_regular")
         summary.update(
             status="controller_identity_verified_only",
             identity_verified=True,
-            flock_opted_in_verified=one["flock_opted_in"],
+            flock_opted_in_verified=opted_in,
             pid=pid, start_ticks=one["start_ticks"],
         )
     except (OSError, ValueError, KeyError, LookupError,
