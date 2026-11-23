@@ -174,6 +174,25 @@ def _workers_identity() -> dict:
                         "database_intelligence_worker", "hybrid_agent_worker",
                         "hybrid_customer_workspace_worker",
                     })
+        # Preserve immutable process identities, not lock status (which can
+        # legitimately change between observations). A verified count alone
+        # cannot detect replacement of a Worker or its supervisor.
+        if verified:
+            supervisor = witness.get("supervisor") or {}
+            identities = [supervisor, *workers.values()]
+            if any(type(item.get("pid")) is not int or item["pid"] < 1
+                   or type(item.get("start_ticks")) is not int
+                   or item["start_ticks"] < 1 for item in identities):
+                raise ValueError("incomplete_worker_process_witness")
+            if len({item["pid"] for item in identities}) != 10:
+                raise ValueError("duplicate_worker_process_identity")
+            result["supervisor_identity"] = {
+                "pid": supervisor["pid"], "start_ticks": supervisor["start_ticks"],
+            }
+            result["worker_identities"] = {
+                name: {"pid": item["pid"], "start_ticks": item["start_ticks"]}
+                for name, item in workers.items()
+            }
         result.update(
             status="worker_process_identities_verified_only"
                    if verified else "unverified",
@@ -234,6 +253,13 @@ def compare_installed_daemon_observations(before: dict, after: dict) -> dict:
                 reasons.append(name + "_observation_missing")
             elif a.get(key) is not True or b.get(key) is not True:
                 reasons.append(name + "_identity_unverified")
+            elif name == "worker_group" and any(
+                not isinstance(item.get("supervisor_identity"), dict)
+                or not isinstance(item.get("worker_identities"), dict)
+                or len(item["worker_identities"]) != 9
+                for item in (a, b)
+            ):
+                reasons.append("worker_group_process_witness_missing")
             elif a != b:
                 reasons.append(name + "_identity_changed")
         if before.get("live_no_drain_authorized") is not False or (

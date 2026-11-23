@@ -404,5 +404,61 @@ class UpdatePreflightTest(unittest.TestCase):
                 expected_uid=1001)
 
 
+    def test_worker_daemon_comparison_preserves_process_witness(self):
+        """A new PID/start tick with the same nine-worker count must block."""
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        import sys
+        from copy import deepcopy
+        probe = module._load(
+            "dsm928_worker_daemon_witness_contract",
+            "game-uptime-live-daemon-identity.py",
+        )
+        names = (
+            "scheduler_worker", "automation_worker", "content_update_worker",
+            "maintenance_worker", "observability_retention_worker",
+            "content_upload_retention_worker", "database_intelligence_worker",
+            "hybrid_agent_worker", "hybrid_customer_workspace_worker",
+        )
+        witness = {
+            "status": "local_identity_verified_only",
+            "supervisor_verified": True, "workers_verified": True,
+            "supervisor": {"pid": 100, "start_ticks": 200, "uid": 1001},
+            "workers": {
+                name: {"pid": 101 + i, "start_ticks": 201 + i,
+                       "lock_status": "unverified"}
+                for i, name in enumerate(names)
+            },
+        }
+        fake = SimpleNamespace(inspect=lambda **kwargs: deepcopy(witness))
+        with patch.dict(sys.modules, {"worker_identity_diagnostic": fake}):
+            before = probe._workers_identity()
+            controller = {"identity_verified": True, "pid": 42}
+            def sample(group):
+                return {"controller": controller, "worker_group": group,
+                        "live_no_drain_authorized": False}
+            self.assertTrue(before["all_nine_workers_verified"])
+            self.assertEqual(len(before["worker_identities"]), 9)
+            stable = probe.compare_installed_daemon_observations(
+                sample(before), sample(probe._workers_identity()))
+            self.assertTrue(stable["identity_snapshots_stable"])
+            self.assertFalse(stable["live_no_drain_authorized"])
+            witness["workers"]["scheduler_worker"]["lock_status"] = "busy"
+            self.assertEqual(before, probe._workers_identity())
+            witness["workers"]["scheduler_worker"]["start_ticks"] += 1
+            changed = probe.compare_installed_daemon_observations(
+                sample(before), sample(probe._workers_identity()))
+            self.assertFalse(changed["identity_snapshots_stable"])
+            self.assertIn("worker_group_identity_changed", changed["blockers"])
+            witness["supervisor"]["pid"] = 999
+            self.assertNotEqual(before, probe._workers_identity())
+            missing = {k: v for k, v in before.items()
+                       if k != "worker_identities"}
+            blocked = probe.compare_installed_daemon_observations(
+                sample(missing), sample(missing))
+            self.assertFalse(blocked["identity_snapshots_stable"])
+            self.assertFalse(blocked["live_no_drain_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()
