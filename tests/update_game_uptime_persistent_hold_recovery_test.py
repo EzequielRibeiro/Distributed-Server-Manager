@@ -87,6 +87,42 @@ class PersistentPendingHoldTests(unittest.TestCase):
         with self.assertRaises(HoldPreparationBlocked):
             self.prepare()  # Never overwrite/replay without manual recovery.
 
+    def test_root_release_binding_is_durable_operator_only_and_matches_hold(self):
+        from game_uptime_transaction_binding import (
+            ReleaseBindingBlocked, binding_for_hold, read_binding,
+        )
+        binding_path = self.state / "no-drain-release-binding.json"
+        sha = "d" * 64
+        proof = self.prepare(
+            release_sha256=sha, binding_path=binding_path)
+        self.assertTrue(proof["release_identity_bound_locally"])
+        self.assertFalse(proof["publisher_signature_verified"])
+        self.assertFalse(proof["remote_agents_acked"])
+        self.assertEqual(stat.S_IMODE(binding_path.stat().st_mode), 0o644)
+        held = self.observation()
+        checked = binding_for_hold(
+            held, path=binding_path, now=1700000010, trusted_uid=self.uid)
+        self.assertEqual(checked["release_sha256"], sha)
+        self.assertEqual(checked["transaction_id"], self.tx)
+        with self.assertRaises(ReleaseBindingBlocked):
+            binding_for_hold(
+                {**held, "transaction_id": "e" * 32},
+                path=binding_path, now=1700000010, trusted_uid=self.uid)
+        with self.assertRaises(ReleaseBindingBlocked):
+            read_binding(path=binding_path, now=1700000700,
+                         trusted_uid=self.uid)
+        with self.assertRaises(HoldPreparationBlocked):
+            self.prepare(release_sha256=sha, binding_path=binding_path)
+        self.assertEqual(read_binding(
+            path=binding_path, now=1700000010,
+            trusted_uid=self.uid)["release_sha256"], sha)
+        # Tampered root evidence never downgrades into trusted release proof.
+        binding_path.write_text(binding_path.read_text().replace(sha, "e"*64))
+        with self.assertRaises(ReleaseBindingBlocked):
+            read_binding(path=binding_path, now=1700000010,
+                         trusted_uid=self.uid)
+        self.assertFalse(proof["live_no_drain_authorized"])
+
     def test_partial_journal_blocks_after_crash_before_marker_write(self):
         self.journal.write_bytes(b"{incomplete")
         self.journal.chmod(0o600)
