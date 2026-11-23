@@ -87,6 +87,12 @@ def read_binding(*, path: Path = BINDING_PATH, now: int | None = None,
     for parent in (p.parent.parent, p.parent):
         try:
             entry = parent.lstat()
+        except FileNotFoundError as exc:
+            if p == BINDING_PATH:
+                # Legacy installed hosts may not have provisioned v2 state.
+                # They can report v1 NEGATIVE-only wire evidence, not an ACK.
+                return None
+            raise ReleaseBindingBlocked("release_binding_parent_unavailable") from exc
         except OSError as exc:
             raise ReleaseBindingBlocked("release_binding_parent_unavailable") from exc
         if (not stat.S_ISDIR(entry.st_mode)
@@ -132,7 +138,6 @@ def binding_for_hold(hold: dict, *, now: int | None = None,
                      path: Path = BINDING_PATH,
                      trusted_uid: int = 0) -> dict[str, Any] | None:
     """Return release binding only when it exactly matches a trusted hold."""
-    from game_uptime_maintenance_hold import observe
     import time
     current = int(time.time()) if now is None else now
     binding = read_binding(path=path, now=current, trusted_uid=trusted_uid)
