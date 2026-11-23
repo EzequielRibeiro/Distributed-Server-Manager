@@ -562,6 +562,42 @@ compose.execute(root,[unit,dayz],
                             list_active_units=names)
         self.assertFalse((self.root / "dsm928-composite-journal").exists())
 
+    def test_local_fence_checkpoint_blocks_before_file_preparation(self):
+        checkpoints = []
+        def reject():
+            checkpoints.append("checked")
+            raise compose.CompositeSafetyError("local fence lost")
+        with self.assertRaisesRegex(compose.CompositeSafetyError, "local fence lost"):
+            compose.execute(
+                self.root, [UNIT, DAYZ], inspect=self.inspect,
+                prepare_files=lambda: self.fail("unexpected preparation"),
+                apply_files=lambda: self.fail("unexpected application"),
+                rollback_files=lambda: self.fail("unexpected rollback"),
+                apply_unit=lambda: self.fail("unexpected unit change"),
+                rollback_unit=lambda: None, verify=lambda: None,
+                local_fence_checkpoint=reject)
+        self.assertEqual(checkpoints, ["checked"])
+        self.assertEqual((self.root / "installed/version").read_text(),
+                         "2.0.998-fixture")
+        self.assertFalse((self.root / "dsm928-composite-journal" /
+                          "game-uptime-transaction.json").exists())
+
+    def test_local_fence_checkpoint_covers_disposable_apply(self):
+        seen = []
+        result = compose.execute(
+            self.root, [UNIT, DAYZ], inspect=self.inspect,
+            prepare_files=lambda: (seen.append("prepare"), self.updater("prepare")),
+            apply_files=lambda: (seen.append("apply"), self.updater("apply")),
+            rollback_files=lambda: self.updater("rollback"),
+            apply_unit=lambda: seen.append("unit"),
+            rollback_unit=lambda: None, verify=self.verify,
+            local_fence_checkpoint=lambda: seen.append("checkpoint"))
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(seen[:3], ["checkpoint", "prepare", "checkpoint"])
+        self.assertIn("apply", seen)
+        self.assertGreaterEqual(seen.count("checkpoint"), 6)
+        self.assertFalse(result["live_no_drain_authorized"])
+
     def test_composed_durable_witness_during_fixture_update(self):
         for record in self.states.values():
             record["unit_config_sha256"] = "b" * 64
