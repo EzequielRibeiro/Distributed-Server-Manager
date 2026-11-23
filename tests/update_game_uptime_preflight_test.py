@@ -293,5 +293,54 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(result["no_drain_disposable_rehearsal_candidate"])
 
 
+    def test_operator_signed_release_review_is_read_only_and_never_authorizes(self):
+        """The actual no-drain-report entrypoint must expose missing live proof."""
+        import io
+        import json
+        import sys
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+
+        review = module._load(
+            "dsm928_operational_review_direct",
+            "game-uptime-operational-release-review.py",
+        )
+        # An untrusted key/review directory can never replace the fixed
+        # root-controlled production source, even if the directory exists.
+        spoofed = self.installed.parent / "operator-signature"
+        spoofed.mkdir()
+        forged = review.evaluate(self.target, review_dir=spoofed)
+        self.assertFalse(forged["artifact_origin_verified"])
+        self.assertFalse(forged["target_tree_bound_to_signed_tar"])
+        self.assertFalse(forged["live_no_drain_authorized"])
+        self.assertTrue(any("production_trust_path_is_fixed" in b
+                            for b in forged["blockers"]))
+
+        fake_preflight = {
+            "kind": "CapivaraDSMNoDrainPreflight",
+            "classification": "review_only",
+            "current_updater_drains_active_games": True,
+            "live_no_drain_authorized": False,
+        }
+        output = io.StringIO()
+        with (patch.object(module, "preflight", return_value=fake_preflight),
+              patch.object(sys, "argv", [
+                  "game-uptime-preflight.py", str(self.installed), str(self.target),
+              ]),
+              redirect_stdout(output)):
+            returncode = module.main()
+        self.assertEqual(returncode, 0, "read-only report retains legacy exit behavior")
+        evidence = json.loads(output.getvalue())
+        verified = evidence["operational_release_review"]
+        self.assertFalse(verified["artifact_origin_verified"])
+        self.assertFalse(verified["operational_quiescence_acked"])
+        self.assertFalse(verified["external_jobs_acked"])
+        self.assertFalse(verified["durable_cross_host_recovery_verified"])
+        self.assertFalse(verified["live_no_drain_authorized"])
+        self.assertIn("updater_no_drain_production_entrypoint_not_authorized",
+                      verified["blockers"])
+        self.assertTrue(evidence["current_updater_drains_active_games"])
+
+
 if __name__ == "__main__":
     unittest.main()
