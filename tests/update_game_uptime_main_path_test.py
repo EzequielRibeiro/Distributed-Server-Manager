@@ -454,5 +454,55 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.assertTrue(verify()["artifact_signature_verified"])
 
 
+
+class InstalledDaemonDriftGuardTest(unittest.TestCase):
+    """Read-only identity comparison cannot authorize a live update."""
+
+    @staticmethod
+    def _module():
+        path = ROOT / "update-manager/game-uptime-live-daemon-identity.py"
+        loader = SourceFileLoader("dsm928_daemon_drift_guard_test", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def test_stable_identity_is_diagnostic_not_ack(self):
+        module = self._module()
+        snapshot = {
+            "controller": {"identity_verified": True, "pid": 200,
+                           "start_ticks": 500, "flock_opted_in_verified": True},
+            "worker_group": {"all_nine_workers_verified": True,
+                             "observed_worker_count": 9},
+            "live_no_drain_authorized": False,
+        }
+        result = module.compare_installed_daemon_observations(
+            snapshot, dict(snapshot))
+        self.assertEqual(result["status"], "stable_read_only_identity_only")
+        self.assertTrue(result["identity_snapshots_stable"])
+        for name in ("controller_mutations_acked", "worker_cycles_acked",
+                     "remote_agents_acked", "external_jobs_acked",
+                     "live_no_drain_authorized"):
+            self.assertIs(result[name], False)
+
+    def test_pid_drift_and_missing_worker_inventory_block(self):
+        module = self._module()
+        before = {
+            "controller": {"identity_verified": True, "pid": 200},
+            "worker_group": {"all_nine_workers_verified": True},
+            "live_no_drain_authorized": False,
+        }
+        after = {
+            "controller": {"identity_verified": True, "pid": 201},
+            "worker_group": {"all_nine_workers_verified": False},
+            "live_no_drain_authorized": False,
+        }
+        result = module.compare_installed_daemon_observations(before, after)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("controller_identity_changed", result["blockers"])
+        self.assertIn("worker_group_identity_unverified", result["blockers"])
+        self.assertFalse(result["live_no_drain_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()
