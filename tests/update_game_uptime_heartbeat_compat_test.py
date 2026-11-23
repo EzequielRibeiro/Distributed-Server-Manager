@@ -278,7 +278,9 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
                 "agent_remote_http.receipt_for_authenticated_agent",
                 side_effect=controller.receipt_for_authenticated_agent), patch(
                 "agent_remote_http.commit_authenticated_negative_v2_receipt",
-                return_value=committed_proof) as journal:
+                return_value=committed_proof) as journal, patch(
+                "agent_remote_http.trusted_controller_release_pin_for_receipt",
+                return_value=sha) as trusted_pin:
             # Heartbeats cannot bypass durable v2 replay accounting.
             status, ordinary = self.post({
                 "no_drain_fence_evidence": evidence})
@@ -294,6 +296,9 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
             self.assertEqual(status, 200)
             receipt = response["no_drain_fence_receipt"]
             journal.assert_called_once()
+            trusted_pin.assert_called_once()
+            self.assertEqual(controller.trusted_controller_release_pin_for_receipt(
+                receipt), sha)
             self.assertEqual(receipt["status"],
                              "authenticated_evidence_received_unfenced")
             self.assertEqual(receipt["release_sha256"], sha)
@@ -342,7 +347,9 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
                 "agent_remote_http.receipt_for_authenticated_agent",
                 side_effect=controller.receipt_for_authenticated_agent), patch(
                 "agent_remote_http.commit_authenticated_negative_v2_receipt",
-                side_effect=PermissionError("privileged_journal_unavailable")):
+                side_effect=PermissionError("privileged_journal_unavailable")), patch(
+                "agent_remote_http.trusted_controller_release_pin_for_receipt",
+                return_value=sha):
             status, refused = dispatch_fence_observation(
                 {"no_drain_fence_evidence": evidence},
                 headers=self.headers, backend=object())
