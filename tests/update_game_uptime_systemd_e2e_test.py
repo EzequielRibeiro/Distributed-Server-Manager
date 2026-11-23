@@ -541,6 +541,28 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     with local_scope.retain_local_scopes(
                             **{**lease_args, "transaction_id": "f" * 32}):
                         pass
+                # A durable pending-recovery marker MUST block even if the
+                # current hold is valid; do not auto-retry interrupted work.
+                pending_path.write_text("interrupted")
+                with self.assertRaisesRegex(
+                        local_scope.LocalScopeLeaseBlocked,
+                        "persistent_recovery_pending"):
+                    with local_scope.retain_local_scopes(**lease_args):
+                        pass
+                pending_path.unlink()
+                # A competing Worker must block the whole transaction, not
+                # just one diagnostic snapshot.
+                busy = os.open(scoped_locks[1], os.O_RDWR)
+                try:
+                    fcntl.flock(busy, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with self.assertRaisesRegex(
+                            local_scope.LocalScopeLeaseBlocked,
+                            "operation_in_flight"):
+                        with local_scope.retain_local_scopes(**lease_args):
+                            pass
+                finally:
+                    fcntl.flock(busy, fcntl.LOCK_UN)
+                    os.close(busy)
                 with local_scope.retain_local_scopes(**lease_args) as scope:
                     self.assertTrue(scope["controller_http_lock_exclusively_held"])
                     self.assertEqual(scope["worker_lock_inodes_exclusively_held"], 9)
