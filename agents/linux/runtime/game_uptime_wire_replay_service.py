@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import socket
 import struct
 import sys
@@ -66,6 +67,10 @@ DASHBOARD_SCRIPT = "/opt/dsm/dashboard/server_part22.py"
 REQUEST_MAX = 8192
 PROTOCOL = "dsm928-root-negative-wire-writer-v1"
 REQUIRED = frozenset({"protocol", "authenticated_agent_id", "receipt"})
+INVENTORY_PATH = Path("/var/lib/capivara-dsm-928/no-drain-agent-inventory.json")
+_AGENT_ID = re.compile(r"[A-Za-z0-9._-]{1,191}\Z")
+_INVENTORY_KEYS = {"kind", "schema_version", "transaction_id",
+                   "release_sha256", "issued_at", "expires_at", "agent_ids"}
 
 
 class RootWriterBlocked(RuntimeError):
@@ -128,7 +133,77 @@ def decode_request(raw: bytes) -> dict[str, Any]:
     return req
 
 
-def commit_request(raw: bytes, *, record_fn: Callable = record_authenticated_negative_receipt) -> dict:
+def read_inventory(*, path: Path = INVENTORY_PATH, trusted_uid: int = 0) -> dict:
+    """Read operator-pinned inventory, never the submitting Agent's list."""
+    path = Path(path)
+    if path != INVENTORY_PATH:
+        import tempfile
+        if (not path.is_absolute()
+                or Path(tempfile.gettempdir()).resolve() not in path.parents
+                or trusted_uid != os.geteuid()):
+            raise RootWriterBlocked("inventory_path_override")
+    elif trusted_uid != 0:
+        raise RootWriterBlocked("inventory_not_root_owned")
+    try:
+        parents = ((Path("/var"), Path("/var/lib"), path.parent)
+                   if path == INVENTORY_PATH else (path.parent.parent, path.parent))
+        for parent in parents:
+            meta = parent.lstat()
+            if (not stat.S_ISDIR(meta.st_mode) or meta.st_uid != trusted_uid
+                    or meta.st_mode & 0o022):
+                raise RootWriterBlocked("inventory_parent_untrusted")
+        before = path.lstat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != trusted_uid
+                or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o600
+                or not 0 < before.st_size <= 16384):
+            raise RootWriterBlocked("inventory_file_untrusted")
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        try:
+            actual = os.fstat(fd)
+            def identity(meta):
+                return (meta.st_dev, meta.st_ino, meta.st_size, meta.st_uid,
+                        meta.st_mode, meta.st_nlink, meta.st_mtime_ns, meta.st_ctime_ns)
+            if identity(actual) != identity(before):
+                raise RootWriterBlocked("inventory_inode_changed")
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                raw = stream.read(16385)
+            if (len(raw) != actual.st_size
+                    or identity(os.fstat(fd)) != identity(actual)
+                    or identity(path.lstat()) != identity(actual)):
+                raise RootWriterBlocked("inventory_read_changed")
+        finally:
+            os.close(fd)
+        doc = json.loads(raw)
+        if (not isinstance(doc, dict) or set(doc) != _INVENTORY_KEYS
+                or raw != (json.dumps(doc, sort_keys=True, separators=(",", ":"))
+                           + "\n").encode("ascii")):
+            raise RootWriterBlocked("inventory_not_canonical")
+        return doc
+    except (OSError, ValueError, UnicodeError, TypeError) as exc:
+        raise RootWriterBlocked("independent_agent_inventory_unavailable") from exc
+
+
+def _inventory_scope(doc: dict, receipt: dict, agent: str) -> list[str]:
+    if (not isinstance(doc, dict) or set(doc) != _INVENTORY_KEYS
+            or doc.get("kind") != "DSM928OperatorAgentInventory"
+            or type(doc.get("schema_version")) is not int
+            or doc["schema_version"] != 1
+            or any(doc.get(key) != receipt.get(key) for key in (
+                "transaction_id", "release_sha256", "issued_at", "expires_at"))
+            or type(doc.get("issued_at")) is not int
+            or type(doc.get("expires_at")) is not int):
+        raise RootWriterBlocked("inventory_transaction_mismatch")
+    ids = doc.get("agent_ids")
+    if (not isinstance(ids, list) or not 1 <= len(ids) <= 64
+            or any(type(item) is not str or not _AGENT_ID.fullmatch(item)
+                   for item in ids)
+            or len(set(ids)) != len(ids) or agent not in ids):
+        raise RootWriterBlocked("agent_not_in_independent_inventory")
+    return ids
+
+
+def commit_request(raw: bytes, *, record_fn: Callable = record_authenticated_negative_receipt,
+                   inventory_fn: Callable = read_inventory) -> dict:
     """Consume a negative v2 request, with no positive ACK code path.
 
     The record function is injectable only inside local regression tests; the
@@ -137,9 +212,10 @@ def commit_request(raw: bytes, *, record_fn: Callable = record_authenticated_neg
     request = decode_request(raw)
     agent = request["authenticated_agent_id"]
     receipt = request["receipt"]
+    expected_agents = _inventory_scope(inventory_fn(), receipt, agent)
     result = record_fn(
         authenticated_agent_id=agent,
-        expected_agent_ids=[agent],
+        expected_agent_ids=expected_agents,
         receipt=receipt,
         expected_transaction_id=receipt.get("transaction_id"),
         expected_release_sha256=receipt.get("release_sha256"),

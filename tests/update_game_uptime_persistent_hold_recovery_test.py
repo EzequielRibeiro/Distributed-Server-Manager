@@ -213,8 +213,42 @@ class PersistentPendingHoldTests(unittest.TestCase):
                 **kwargs, journal_dir=receipts, hold_path=self.marker,
                 pending_path=self.journal, binding_path=binding,
                 trusted_uid=self.uid, now=now, fixture_only=True)
-        recorded = wire_writer.commit_request(
-            valid_wire, record_fn=fixture_record)
+        inventory_path = self.state / "no-drain-agent-inventory.json"
+        inventory = {
+            "kind": "DSM928OperatorAgentInventory", "schema_version": 1,
+            "transaction_id": self.tx, "release_sha256": sha,
+            "issued_at": 1700000000, "expires_at": 1700000600,
+            "agent_ids": ["agent-A", "agent-B"],
+        }
+        def write_inventory(doc):
+            inventory_path.write_text(json.dumps(
+                doc, sort_keys=True, separators=(",", ":")) + "\n")
+            inventory_path.chmod(0o600)
+
+        def fixture_inventory():
+            return wire_writer.read_inventory(
+                path=inventory_path, trusted_uid=self.uid)
+
+        def commit_wire():
+            return wire_writer.commit_request(
+                valid_wire, record_fn=fixture_record,
+                inventory_fn=fixture_inventory)
+
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            commit_wire()
+        for changed in ({"agent_ids": ["agent-A"]},
+                        {"release_sha256": "f"*64},
+                        {"agent_ids": ["agent-B", "agent-B"]}):
+            write_inventory({**inventory, **changed})
+            with self.assertRaises(wire_writer.RootWriterBlocked):
+                commit_wire()
+        write_inventory(inventory)
+        inventory_path.chmod(0o666)
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            commit_wire()
+        inventory_path.chmod(0o600)
+        self.assertFalse((receipts / ("c"*32 + ".json")).exists())
+        recorded = commit_wire()
         self.assertEqual(recorded["status"],
                          "negative_v2_receipt_durably_recorded")
         self.assertFalse(recorded["remote_agent_quiescence_acked"])
@@ -222,7 +256,7 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertFalse(recorded["live_no_drain_authorized"])
         self.assertTrue((receipts / ("c"*32 + ".json")).exists())
         with self.assertRaises(replay_module.DurableWireReplayBlocked):
-            wire_writer.commit_request(valid_wire, record_fn=fixture_record)
+            commit_wire()
         with self.assertRaises(wire_writer.RootWriterBlocked):
             wire_writer.decode_request(
                 valid_wire.replace(b'"protocol":', b'"protocol":"forged", "protocol":'))
