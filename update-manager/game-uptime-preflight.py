@@ -226,6 +226,27 @@ def main():
     parser.add_argument("target", type=Path)
     args = parser.parse_args()
     result = preflight(args.installed, args.target)
+    # The production updater invokes this diagnostic in --no-drain-report
+    # BEFORE acquiring privileges, backups, service stops or file mutations.
+    # Inspect independently trusted release evidence if provisioned, but
+    # never turn a positive cryptographic result into no-drain authorization.
+    try:
+        operator_review = _load(
+            "game_uptime_operational_release_review",
+            "game-uptime-operational-release-review.py")
+        result["operational_release_review"] = operator_review.evaluate(args.target)
+    except Exception:
+        result["operational_release_review"] = {
+            "kind": "DSM928OperationalReleaseReview",
+            "mode": "read_only",
+            "artifact_origin_verified": False,
+            "target_tree_bound_to_signed_tar": False,
+            "operational_quiescence_acked": False,
+            "external_jobs_acked": False,
+            "durable_cross_host_recovery_verified": False,
+            "live_no_drain_authorized": False,
+            "blockers": ["operational_release_review_unavailable"],
+        }
     print(json.dumps(result, ensure_ascii=False))
     return 2 if result["classification"] == "blocked" else 0
 
