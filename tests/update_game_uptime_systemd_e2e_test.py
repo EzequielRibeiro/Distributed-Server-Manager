@@ -248,6 +248,104 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 pins.update(changes)
                 with self.assertRaises(verifier.ReleaseIntegrityError):
                     verifier.verify_pinned_archive(archive,**pins)
+        # #928 stage 2.6: signed publisher pin and authenticated actor
+        # quorum in ONE disposable security fence, using this same TAR and
+        # the same two already-live systemd game stand-ins.
+        import hmac
+        import secrets
+        import time
+        gate_path = ROOT / "update-manager/game-uptime-security-fence.py"
+        gate_loader = SourceFileLoader("dsm928_disposable_security_fence", str(gate_path))
+        gate_spec = spec_from_loader(gate_loader.name, gate_loader)
+        gate = module_from_spec(gate_spec)
+        gate_spec.loader.exec_module(gate)
+        security = self.workspace / "stage-2-6-security"
+        security.mkdir(mode=0o700)
+        (security / "fixture-owner").write_bytes(b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+        private = security / "signer-private.pem"
+        public = security / "signer-public.pem"
+        self._run("openssl", "genpkey", "-algorithm", "ED25519",
+                  "-out", str(private))
+        self._run("openssl", "pkey", "-in", str(private),
+                  "-pubout", "-out", str(public))
+        transaction_id = secrets.token_hex(16)
+        approval = {
+            "kind": "DSM928DisposableSignedApproval",
+            "schema_version": 1,
+            "scope": "disposable_only_not_production",
+            "transaction_id": transaction_id,
+            "release_sha256": expected_hash,
+            "release_commit": commit,
+            "release_version": version,
+            "roles": ["agent", "controller", "external_jobs", "worker"],
+            "issued_at": int(time.time()),
+            "expires_at": int(time.time()) + 300,
+        }
+        approval_path = security / "approved-fixture.json"
+        approval_path.write_bytes(gate.canonical(approval))
+        signature = security / "approved-fixture.sig"
+        self._run("openssl", "pkeyutl", "-sign",
+                  "-inkey", str(private), "-rawin",
+                  "-in", str(approval_path), "-out", str(signature))
+        actor_keys = {role: os.urandom(32) for role in approval["roles"]}
+        acknowledgements = []
+        for role in approval["roles"]:
+            ack = {
+                "kind": "DSM928DisposableQuiescenceAck",
+                "role": role, "transaction_id": transaction_id,
+                "release_sha256": expected_hash,
+                "status": "quiescent", "pending_jobs": 0,
+            }
+            ack["hmac_sha256"] = hmac.new(
+                actor_keys[role], gate.canonical(ack),
+                hashlib.sha256).hexdigest()
+            acknowledgements.append(ack)
+        kwargs = {
+            "archive": archive,
+            "release_sha256": expected_hash,
+            "release_commit": commit,
+            "release_version": version,
+            "transaction_id": transaction_id,
+            "approval_file": approval_path,
+            "signature_file": signature,
+            "publisher_public_key": public,
+            "trusted_publisher_key_sha256":
+                hashlib.sha256(public.read_bytes()).hexdigest(),
+            "acknowledgements": acknowledgements,
+            "actor_keys": actor_keys,
+        }
+        with self.assertRaises(gate.SecurityFenceError):
+            gate.verify_disposable_fence(
+                security, **{**kwargs, "trusted_publisher_key_sha256": "0"*64})
+        with self.assertRaises(gate.SecurityFenceError):
+            gate.verify_disposable_fence(
+                security, **{**kwargs, "acknowledgements": acknowledgements[:-1]})
+        tampered = [dict(x) for x in acknowledgements]
+        tampered[1]["pending_jobs"] = 1
+        with self.assertRaises(gate.SecurityFenceError):
+            gate.verify_disposable_fence(
+                security, **{**kwargs, "acknowledgements": tampered})
+        stale = [dict(x) for x in acknowledgements]
+        stale[0]["transaction_id"] = "f"*32
+        with self.assertRaises(gate.SecurityFenceError):
+            gate.verify_disposable_fence(
+                security, **{**kwargs, "acknowledgements": stale})
+        self.assertFalse((security / "dsm928-security-fence.json").exists())
+        self._assert_unchanged(originals)
+        receipt = gate.verify_disposable_fence(security, **kwargs)
+        self.assertEqual(receipt["status"], "verified_fixture_only")
+        self.assertTrue(receipt["publisher_signature_verified_under_test_pin"])
+        self.assertTrue(receipt["fixture_actor_quorum_verified"])
+        self.assertFalse(receipt["trusted_production_publisher_configured"])
+        self.assertFalse(receipt["operational_remote_acks_verified"])
+        self.assertFalse(receipt["live_no_drain_authorized"])
+        self.assertEqual(
+            json.loads((security / "dsm928-security-fence.json").read_text()),
+            receipt)
+        with self.assertRaises(gate.SecurityFenceError):
+            gate.verify_disposable_fence(security, **kwargs)
+        self._assert_unchanged(originals)
+
         # Stage 2.2 moved the extracted tree into the incompatible fixture.
         # Reuse that verified package instead of its now-empty old path.
         real_tree = fixture / "new-payload"
