@@ -349,9 +349,59 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(local_fences["external_jobs_acked"])
         self.assertFalse(local_fences["remote_agents_acked"])
         self.assertFalse(local_fences["live_no_drain_authorized"])
+        identity = verified["daemon_process_identity"]
+        self.assertEqual(identity["status"], "read_only_partial_daemon_identity")
+        self.assertFalse(identity["controller_mutations_acked"])
+        self.assertFalse(identity["worker_cycles_acked"])
+        self.assertFalse(identity["remote_agents_acked"])
+        self.assertFalse(identity["external_jobs_acked"])
+        self.assertFalse(identity["live_no_drain_authorized"])
         self.assertIn("updater_no_drain_production_entrypoint_not_authorized",
                       verified["blockers"])
         self.assertTrue(evidence["current_updater_drains_active_games"])
+
+
+    def test_controller_daemon_identity_requires_stable_pid_and_flock_optin(self):
+        """Pure identity contract; no real systemd mutation or mock ACKs."""
+        from unittest.mock import patch
+        probe = module._load(
+            "dsm928_daemon_identity_strict_contract",
+            "game-uptime-live-daemon-identity.py",
+        )
+        unit = {
+            "ActiveState": "active", "SubState": "running",
+            "MainPID": "4821", "User": "capivara",
+            "ControlGroup": "/system.slice/dsm-dashboard.service",
+        }
+        process = {
+            "pid": 4821, "start_ticks": 1777, "uid": 1001,
+            "argv": ("python3", "/opt/dsm/dashboard/server_part22.py"),
+            "cgroup": unit["ControlGroup"], "flock_opted_in": True,
+        }
+        self.assertTrue(probe.verify_controller_snapshot(
+            unit, dict(unit), process, dict(process), expected_uid=1001))
+        self.assertFalse(probe.verify_controller_snapshot(
+            unit, unit, {**process, "flock_opted_in": False},
+            {**process, "flock_opted_in": False}, expected_uid=1001))
+        for altered in (
+            {**process, "pid": 4822},
+            {**process, "start_ticks": 0},
+            {**process, "uid": 0},
+            {**process, "argv": ("python3", "/tmp/server_part22.py")},
+            {**process, "cgroup": "/system.slice/other.service"},
+        ):
+            with self.subTest(mutation=altered):
+                with self.assertRaises(ValueError):
+                    probe.verify_controller_snapshot(
+                        unit, unit, altered, altered, expected_uid=1001)
+        with self.assertRaises(ValueError):
+            probe.verify_controller_snapshot(
+                unit, unit, process, {**process, "start_ticks": 1778},
+                expected_uid=1001)
+        with self.assertRaises(ValueError):
+            probe.verify_controller_snapshot(
+                unit, {**unit, "MainPID": "4822"}, process, process,
+                expected_uid=1001)
 
 
 if __name__ == "__main__":
