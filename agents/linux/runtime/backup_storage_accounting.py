@@ -22,8 +22,30 @@ def _folder(root: Path) -> None:
         raise OSError("backup directory unavailable or unsafe")
 
 
+def _is_workshop_addons_alias(entry) -> bool:
+    """Recognize only the local DayZ Workshop 'addons' -> 'Addons' alias.
+
+    The actual Addons directory is scanned as a real directory; the alias
+    itself is never followed or archived. No external symlinks are permitted.
+    """
+    path = Path(entry.path)
+    parent = path.parent
+    name = parent.name
+    return (
+        entry.name == "addons"
+        and os.readlink(entry.path) == "Addons"
+        and name.startswith("steam-workshop:")
+        and name[len("steam-workshop:"):].isdigit()
+        and parent.parent.name == "workshop"
+        and parent.parent.parent.name == "content"
+        and not (parent / "Addons").is_symlink()
+        and (parent / "Addons").is_dir()
+    )
+
+
 def _physical_files(root: Path, *, missing_ok: bool = False,
-                    allow_shared_hardlinks: bool = False):
+                    allow_shared_hardlinks: bool = False,
+                    allow_workshop_addons_alias: bool = False):
     if not root.exists():
         if missing_ok and not root.is_symlink():
             return
@@ -38,6 +60,10 @@ def _physical_files(root: Path, *, missing_ok: bool = False,
             for entry in entries:
                 info = entry.stat(follow_symlinks=False)
                 if stat.S_ISLNK(info.st_mode):
+                    if allow_workshop_addons_alias and _is_workshop_addons_alias(entry):
+                        # The real sibling Addons tree is counted once. Never
+                        # traverse the alias, even when its target is internal.
+                        continue
                     raise OSError("symlink in managed storage tree")
                 if stat.S_ISDIR(info.st_mode):
                     yield from walk(Path(entry.path))
@@ -202,7 +228,8 @@ def quota_snapshot(record: dict[str, Any], backup_root: Path, *,
         raise OSError("instance private state root unavailable")
     state_root = Path(instance_raw)
     instance_used = sum(info.st_size for _, info in _physical_files(
-        state_root, allow_shared_hardlinks=True))
+        state_root, allow_shared_hardlinks=True,
+        allow_workshop_addons_alias=True))
     # If the backup directory is already part of the counted instance tree,
     # avoid adding the same bytes twice.
     backup_path = Path(backup_root) / iid
@@ -233,7 +260,9 @@ def source_size(paths: list[Path], source_root: Path) -> int:
         if item.is_file():
             files = [(item, item.stat())]
         else:
-            files = _physical_files(item, allow_shared_hardlinks=True)
+            files = _physical_files(
+                item, allow_shared_hardlinks=True,
+                allow_workshop_addons_alias=True)
         for _, info in files:
             identity = (info.st_dev, info.st_ino)
             if identity in seen:
