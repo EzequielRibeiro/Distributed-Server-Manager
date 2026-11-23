@@ -177,6 +177,30 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
         status["blockers"].append("maintenance_or_recovery_hold_requires_review")
     else:
         status["blockers"].append("no_durable_quiescence_hold_established")
+    # Observe actual kernel locks from the installed Controller and the nine
+    # tracked Worker entrypoints. This is a snapshot, never a retained fence
+    # or a positive ACK from any daemon.
+    try:
+        local_probe = _load("dsm928_live_local_kernel_fences",
+                            "game-uptime-local-fence-diagnostics.py")
+        status["local_kernel_fences"] = local_probe.observe_local_fences()
+        if status["local_kernel_fences"].get("status") != "incomplete_live_admission_evidence":
+            status["blockers"].append("local_kernel_fence_diagnostic_unavailable")
+        else:
+            controller = status["local_kernel_fences"]["controller_agent_http"]
+            workers = status["local_kernel_fences"]["workers"]
+            if controller["status"] != "lock_free_not_ack":
+                status["blockers"].append("controller_http_lock_busy_or_unverified")
+            if any(entry["status"] != "lock_free_not_ack"
+                   for entry in workers.values()):
+                status["blockers"].append("worker_lock_busy_or_unverified")
+    except Exception:
+        status["local_kernel_fences"] = {
+            "status": "diagnostic_unavailable", "controller_http_acked": False,
+            "workers_acked": False, "remote_agents_acked": False,
+            "live_no_drain_authorized": False,
+        }
+        status["blockers"].append("local_kernel_fence_diagnostic_unavailable")
     try:
         # Fixtures MUST NOT masquerade as proof that production trust exists.
         if not trusted_inputs_only or Path(review_dir) != REVIEW_DIR:
