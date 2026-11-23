@@ -563,14 +563,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 finally:
                     fcntl.flock(busy, fcntl.LOCK_UN)
                     os.close(busy)
-                with local_scope.retain_local_scopes(**lease_args) as scope:
-                    self.assertTrue(scope["controller_http_lock_exclusively_held"])
-                    self.assertEqual(scope["worker_lock_inodes_exclusively_held"], 9)
-                    self.assertFalse(scope["controller_routes_opted_in_verified"])
-                    self.assertFalse(scope["worker_process_inventory_verified"])
-                    self.assertFalse(scope["remote_agents_acked"])
-                    self.assertFalse(scope["external_jobs_acked"])
-                    self.assertFalse(scope["live_no_drain_authorized"])
+                def execute_only_under_locks():
+                    # This callback is now invoked INSIDE the coordinator's
+                    # mandatory local scope lease, never by the test caller.
                     for lockfile in scoped_locks:
                         outsider = os.open(lockfile, os.O_RDWR)
                         try:
@@ -578,12 +573,19 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                                 fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
                         finally:
                             os.close(outsider)
-                    # Actual file swap and injected rollback occur under
-                    # retained flocks; transient game PIDs remain unchanged.
-                    proof = bridge.run_disposable_integrated(
-                        workspace, **integrated_kwargs)
                     self._assert_unchanged(originals)
-                # After exit, all file descriptors must be released.
+                    return main_rehearsal(workspace, mode)
+
+                integrated_kwargs["execute_fixture"] = execute_only_under_locks
+                integrated_kwargs["local_scope_kwargs"] = lease_args
+                proof = bridge.run_disposable_integrated(
+                    workspace, **integrated_kwargs)
+                self.assertTrue(proof["local_controller_lock_held_during_transaction"])
+                self.assertEqual(proof["local_worker_lock_count_held_during_transaction"], 9)
+                self.assertFalse(proof["controller_routes_opted_in_verified"])
+                self.assertFalse(proof["worker_process_inventory_verified"])
+                self._assert_unchanged(originals)
+                # After return, all descriptors must have been released.
                 outsider = os.open(controller_lock, os.O_RDWR)
                 try:
                     fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
