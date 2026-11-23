@@ -116,6 +116,9 @@ def _trusted_fixture_root(root: Path) -> Path:
     if real == tmp or tmp not in real.parents:
         raise LocalScopeLeaseBlocked("not_a_disposable_tmp_fixture")
     _safe_directory(real, owner=os.geteuid())
+    # /run may be 0755, but the disposable workspace must be private.
+    if real.stat().st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise LocalScopeLeaseBlocked("disposable_root_not_private")
     marker = real / "fixture-owner"
     if (marker.is_symlink() or not marker.is_file() or
             marker.stat().st_uid != os.geteuid()
