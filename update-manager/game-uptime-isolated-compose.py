@@ -122,6 +122,7 @@ def execute(
     rollback_unit: Callable[[], None],
     verify: Callable[[], None],
     list_active_units: Callable[[], list[str]] | None = None,
+    local_fence_checkpoint: Callable[[], None] | None = None,
 ) -> dict:
     """Apply fixture file functions + systemd swap; compensate in reverse order.
 
@@ -131,6 +132,12 @@ def execute(
     even if one rollback operation fails.
     """
     root = _root(workspace, units)
+    if local_fence_checkpoint is not None and not callable(local_fence_checkpoint):
+        raise CompositeSafetyError("invalid local fence checkpoint")
+    def checkpoint() -> None:
+        if local_fence_checkpoint is not None:
+            local_fence_checkpoint()
+
     actions = (inspect, prepare_files, apply_files, rollback_files,
                apply_unit, rollback_unit, verify)
     if any(not callable(action) for action in actions):
@@ -147,21 +154,32 @@ def execute(
         raise CompositeSafetyError("composite transaction journal must be private")
     # Backup fixture files before starting the process-preservation transaction.
     # If this fails, there are no changes to compensate.
+    checkpoint()
     prepare_files()
+    checkpoint()
 
     def apply() -> None:
+        checkpoint()
         apply_files()
+        checkpoint()
         apply_unit()
+        checkpoint()
         verify()
+        checkpoint()
 
     def rollback() -> None:
-        _compensate(rollback_unit=rollback_unit,
-                    rollback_files=rollback_files, verify=verify)
+        checkpoint()
+        try:
+            _compensate(rollback_unit=rollback_unit,
+                        rollback_files=rollback_files, verify=verify)
+        finally:
+            checkpoint()
 
     result = _TRANSACTION.execute(
         journal, units, inspect=inspect, apply=apply, rollback=rollback,
         handoff=handoff, list_units=list_active_units,
     )
+    checkpoint()
     if result["status"] != "verified" or result["live_no_drain_authorized"] is not False:
         raise CompositeSafetyError("unverified disposable composite transaction")
     return {
@@ -251,6 +269,7 @@ def execute_with_compatibility_gate(
         rollback_files=rollback_files, apply_unit=apply_unit,
         rollback_unit=rollback_unit, verify=verify,
         list_active_units=list_active_units,
+        local_fence_checkpoint=local_fence_checkpoint,
     )
     # A synthetic successful contract match is only permission to run a
     # disposable rehearsal. It MUST NOT be promoted to production approval.
