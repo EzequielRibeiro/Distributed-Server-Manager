@@ -1,0 +1,32 @@
+# DSM #928 - short-lived root journal writer. Activated per AF_UNIX request.
+# Never starts an update, grants ACK, clears pending state or stops games.
+[Unit]
+Description=Capivara DSM #928 root negative receipt journal writer
+RequiresMountsFor=/opt/dsm /var/lib/capivara-dsm-928
+After=local-fs.target
+
+[Service]
+Type=exec
+User=root
+Group=root
+WorkingDirectory=/opt/dsm
+ExecStart=/usr/bin/python3 /opt/dsm/agents/linux/runtime/game_uptime_wire_replay_service.py --expected-dashboard-user {{DSM_USER}}
+StandardInput=socket
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dsm928-wire-replay
+UMask=0077
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/capivara-dsm-928/no-drain-wire-receipts
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+TimeoutStartSec=10
+TimeoutStopSec=5
