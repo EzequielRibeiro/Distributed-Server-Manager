@@ -280,6 +280,29 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
             "live_no_drain_authorized": False,
         }
         status["blockers"].append("daemon_identity_second_observation_unavailable")
+    # Local lock observations must also remain unchanged across the review.
+    # These are snapshots, not retained locks or operational ACKs.
+    try:
+        if "local_probe" not in locals():
+            raise OperationalReviewBlocked("initial_local_fence_probe_unavailable")
+        second_fences = local_probe.observe_local_fences()
+        first_fences = status["local_kernel_fences"]
+        stable = (first_fences == second_fences
+                  and first_fences.get("status")
+                  == "incomplete_live_admission_evidence")
+        status["local_fence_drift_guard"] = {
+            "status": "stable_read_only_lock_snapshots" if stable else "blocked",
+            "snapshots_stable": stable,
+            "live_no_drain_authorized": False,
+        }
+        if not stable:
+            status["blockers"].append("local_kernel_fence_changed_during_review")
+    except Exception:
+        status["local_fence_drift_guard"] = {
+            "status": "blocked", "snapshots_stable": False,
+            "live_no_drain_authorized": False,
+        }
+        status["blockers"].append("local_kernel_fence_second_observation_unavailable")
     # Real Controller/Worker/Agent/external-job acknowledgements MUST be
     # implemented by their owners and persisted with replay-resistant IDs.
     # No synthetic fixture receipt from 2.6 can satisfy these requirements.
