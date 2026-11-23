@@ -425,10 +425,11 @@ def dispatch_uninstall_result(
 def dispatch_fence_observation(
     payload: dict[str, Any] | None, *, headers, backend
 ) -> tuple[int, dict[str, Any]]:
-    """Authenticated SELECT-only #928 observation; no dispatch or mutation.
+    """Credentialed #928 observation with durable NEGATIVE v2 replay record.
 
-    Deliberately separated from dispatch_heartbeat() so a protected Agent can
-    observe while its normal heartbeat and command-processing loop are held.
+    Separated from mutating heartbeat/command routing during a root hold.
+    V2 requires a privileged on-disk nonce journal before returning receipt
+    success; no database, game or updater mutations and no quiescence ACK.
     """
     body = payload if isinstance(payload, dict) else {}
     if set(body) != {"no_drain_fence_evidence"}:
