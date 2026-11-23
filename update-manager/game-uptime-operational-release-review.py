@@ -303,6 +303,43 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
             "live_no_drain_authorized": False,
         }
         status["blockers"].append("local_kernel_fence_second_observation_unavailable")
+    # Three independent operational guarantees. Read-only snapshots, wire
+    # receipts and a persistent pending journal are NOT positive proofs.
+    # Keep each unmet requirement visible and fail closed until its owning
+    # daemon implements a durable, independently authenticated protocol.
+    daemon_guard = status.get("daemon_identity_drift_guard") or {}
+    lock_guard = status.get("local_fence_drift_guard") or {}
+    hold = status.get("maintenance_hold") or {}
+    guarantees = {
+        "continuous_local_fence": {
+            "status": "blocked",
+            "identity_snapshots_stable": daemon_guard.get(
+                "identity_snapshots_stable") is True,
+            "lock_snapshots_stable": lock_guard.get("snapshots_stable") is True,
+            "retained_controller_worker_fence_verified": False,
+            "new_mutations_rejected_during_transaction": False,
+        },
+        "authenticated_remote_quiescence": {
+            "status": "blocked",
+            "all_expected_agents_acked": False,
+            "external_jobs_acked": False,
+            "release_and_transaction_bound": False,
+            "replay_resistant_durable_receipts_verified": False,
+        },
+        "distributed_crash_recovery": {
+            "status": "blocked",
+            "pending_journal_observed": hold.get("active") is True,
+            "reboot_reconciliation_verified": False,
+            "expired_lease_blocks_mutations": False,
+            "cross_host_commit_or_rollback_verified": False,
+        },
+    }
+    status["operational_guarantees"] = guarantees
+    status["operational_guarantees_complete"] = False
+    status["blockers"].extend(
+        "operational_guarantee_" + key + "_unverified"
+        for key in guarantees
+    )
     # Real Controller/Worker/Agent/external-job acknowledgements MUST be
     # implemented by their owners and persisted with replay-resistant IDs.
     # No synthetic fixture receipt from 2.6 can satisfy these requirements.
