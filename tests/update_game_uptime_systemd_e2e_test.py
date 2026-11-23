@@ -506,11 +506,16 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 scope_root.mkdir(mode=0o700)
                 (scope_root / "fixture-owner").write_bytes(
                     b"DSM928_DISPOSABLE_FIXTURE_V1\n")
-                runtime_dir = scope_root / "run"
+                runtime_parent = scope_root / "runtime"
+                runtime_dir = runtime_parent / "run"
                 state_dir = scope_root / "state"
                 worker_dir = runtime_dir / "worker-operations"
-                for folder in (runtime_dir, state_dir, worker_dir):
+                for folder in (runtime_parent, runtime_dir, state_dir, worker_dir):
                     folder.mkdir(mode=0o700)
+                # The real preparer requires traversable hold directories;
+                # the outer disposable workspace remains private.
+                runtime_parent.chmod(0o755)
+                runtime_dir.chmod(0o755)
                 controller_lock = runtime_dir / "controller-agent-http.lock"
                 scoped_locks = [controller_lock] + [
                     worker_dir / (worker + ".lock")
@@ -563,7 +568,17 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 finally:
                     fcntl.flock(busy, fcntl.LOCK_UN)
                     os.close(busy)
+                # Replace the hand-built test marker with fresh durable
+                # evidence from the real coordinator, under the same locks.
+                hold_path.unlink()
+                lease_args["prepare_fresh_fixture"] = True
+                binding_path = state_dir / "no-drain-release-binding.json"
                 def execute_only_under_locks():
+                    pending = json.loads(pending_path.read_text())
+                    binding = json.loads(binding_path.read_text())
+                    self.assertEqual(pending["transaction_id"], nonce)
+                    self.assertEqual(binding["release_sha256"], expected_hash)
+                    self.assertFalse(pending["live_no_drain_authorized"])
                     # This callback is now invoked INSIDE the coordinator's
                     # mandatory local scope lease, never by the test caller.
                     for lockfile in scoped_locks:
@@ -580,7 +595,17 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 integrated_kwargs["local_scope_kwargs"] = lease_args
                 proof = bridge.run_disposable_integrated(
                     workspace, **integrated_kwargs)
+                self.assertTrue(proof["fresh_durable_fixture_evidence"])
                 self.assertTrue(proof["local_controller_lock_held_during_transaction"])
+                # Evidence survives scope exit; a fresh transaction cannot
+                # mistake an interrupted journal for a new preparation.
+                self.assertTrue(pending_path.is_file())
+                self.assertTrue(binding_path.is_file())
+                with self.assertRaisesRegex(
+                        local_scope.LocalScopeLeaseBlocked,
+                        "persistent_recovery_pending"):
+                    with local_scope.retain_local_scopes(**lease_args):
+                        pass
                 self.assertEqual(proof["local_worker_lock_count_held_during_transaction"], 9)
                 self.assertFalse(proof["controller_routes_opted_in_verified"])
                 self.assertFalse(proof["worker_process_inventory_verified"])

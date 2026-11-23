@@ -195,7 +195,8 @@ def run_disposable_integrated(
     # bypass them by running execute_fixture() directly.
     if (not isinstance(local_scope_kwargs, Mapping)
             or local_scope_kwargs.get("transaction_id") != transaction_id
-            or local_scope_kwargs.get("release_sha256") != sha):
+            or local_scope_kwargs.get("release_sha256") != sha
+            or local_scope_kwargs.get("prepare_fresh_fixture") is not True):
         raise ConsolidatedTransactionBlocked("transaction-local lock lease missing or unbound")
     scope_module = _load("dsm928_integrated_kernel_scope_lease",
                          "game-uptime-local-scope-lease.py")
@@ -207,13 +208,17 @@ def run_disposable_integrated(
                     or scope.get("release_sha256") != sha
                     or scope.get("controller_http_lock_exclusively_held") is not True
                     or scope.get("worker_lock_inodes_exclusively_held") != 9
+                    or scope.get("fresh_durable_fixture_evidence") is not True
+                    or not callable(scope.get("checkpoint"))
                     or scope.get("all_mutators_fenced") is not False
                     or scope.get("remote_agents_acked") is not False
                     or scope.get("live_no_drain_authorized") is not False):
                 raise ConsolidatedTransactionBlocked("untrusted local scope receipt")
             if _witness(units, inspect, list_units) != before:
                 raise ConsolidatedTransactionBlocked("game changed under local lease")
+            scope["checkpoint"]()
             operation = execute_fixture()
+            scope["checkpoint"]()
             if (not isinstance(getattr(operation, "returncode", None), int)
                     or operation.returncode !=
                     (0 if expected_journal_status == "verified" else 2)):
@@ -243,6 +248,7 @@ def run_disposable_integrated(
                 "fixture_actor_acks_verified": True,
                 "local_controller_lock_held_during_transaction": True,
                 "local_worker_lock_count_held_during_transaction": 9,
+                "fresh_durable_fixture_evidence": True,
                 "controller_routes_opted_in_verified": False,
                 "worker_process_inventory_verified": False,
                 "production_publisher_enrolled": False,

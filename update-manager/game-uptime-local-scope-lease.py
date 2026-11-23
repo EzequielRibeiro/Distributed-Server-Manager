@@ -6,8 +6,9 @@ covers ONLY 3 Controller Agent HTTP routes and 9 registered Worker cycles.
 It cannot attest other APIs, Agents on other hosts, external jobs, game PIDs
 or a release's authenticity, and NEVER grants a live no-drain update.
 
-Requires an operator-owned transaction hold. Creates/deletes no files, does
-not create holds, change systemd units or call update.sh.
+The installed path requires an existing operator-owned hold. Only the marked
+disposable fixture can prepare a fresh durable hold under the retained locks.
+Never removes evidence, changes systemd units or calls update.sh.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 import tempfile
 from typing import Iterator
 
@@ -141,6 +143,66 @@ def _check_hold(module, path: Path, pending: Path, *, tx: str,
         raise LocalScopeLeaseBlocked("missing_or_mismatched_maintenance_hold")
 
 
+def _require_absent(*paths: Path) -> None:
+    for path in paths:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise LocalScopeLeaseBlocked("persistent_recovery_pending")
+
+
+def _evidence_identity(path: Path) -> tuple:
+    info = path.lstat()
+    return (info.st_dev, info.st_ino, info.st_uid, info.st_mode,
+            info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
+                               *, tx: str, sha: str, owner: int):
+    """Create once, under retained locks; never accept a prior journal."""
+    binding_path = pending_path.parent / "no-drain-release-binding.json"
+    _require_absent(hold_path, pending_path, binding_path)
+    # These imports are reached ONLY in an explicitly marked private /tmp
+    # fixture; no installed root service or updater calls this branch.
+    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    sys.path.insert(0, runtime)
+    try:
+        from game_uptime_hold_coordinator import prepare_root_only
+        from game_uptime_transaction_binding import binding_for_hold
+        from game_uptime_durable_wire_replay import _root_pending
+    finally:
+        sys.path.remove(runtime)
+    try:
+        prepared = prepare_root_only(
+            transaction_id=tx, release_sha256=sha, trusted_uid=owner,
+            journal_path=pending_path, hold_path=hold_path,
+            binding_path=binding_path)
+        if (prepared.get("release_identity_bound_locally") is not True
+                or prepared.get("live_no_drain_authorized") is not False):
+            raise LocalScopeLeaseBlocked("fresh_preparation_invalid")
+        paths = (hold_path, pending_path, binding_path)
+        identities = tuple(_evidence_identity(path) for path in paths)
+
+        def checkpoint():
+            observed = hold.observe(path=hold_path, trusted_uid=owner,
+                                    pending_path=pending_path)
+            if (observed.get("active") is not True
+                    or observed.get("reason") != "root_owned_maintenance_hold"
+                    or observed.get("transaction_id") != tx):
+                raise LocalScopeLeaseBlocked("fresh_hold_invalid")
+            _root_pending(pending_path, owner, tx,
+                          observed["issued_at"], observed["expires_at"])
+            pin = binding_for_hold(observed, path=binding_path, trusted_uid=owner)
+            if (pin is None or pin.get("release_sha256") != sha
+                    or tuple(_evidence_identity(path) for path in paths) != identities):
+                raise LocalScopeLeaseBlocked("fresh_transaction_evidence_changed")
+        checkpoint()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise LocalScopeLeaseBlocked("fresh_transaction_preparation_blocked") from exc
+    return checkpoint
+
+
 @contextmanager
 def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         expected_controller_uid: int,
@@ -149,7 +211,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         worker_lock_dir: Path = WORKER_LOCK_DIR,
                         hold_path: Path = HOLD_PATH,
                         pending_path: Path = PENDING_PATH,
-                        fixture_root: Path | None = None) -> Iterator[dict]:
+                        fixture_root: Path | None = None,
+                        prepare_fresh_fixture: bool = False) -> Iterator[dict]:
     """Acquire and RETAIN all known local locks until exiting this context.
 
     Real paths require root and existing operator-owned hold. Fixture paths
@@ -166,6 +229,9 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             or type(expected_worker_uid) is not int
             or min(expected_controller_uid, expected_worker_uid) < 0):
         raise LocalScopeLeaseBlocked("invalid_transaction_or_lock_owner_pin")
+    if type(prepare_fresh_fixture) is not bool or (
+            prepare_fresh_fixture and fixture_root is None):
+        raise LocalScopeLeaseBlocked("fresh_preparation_fixture_only")
     controller_lock = Path(controller_lock)
     worker_lock_dir = Path(worker_lock_dir)
     hold_path = Path(hold_path)
@@ -190,12 +256,17 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     _directory_chain(hold_path.parent, fixture_root=root, owner=owner)
     _directory_chain(pending_path.parent, fixture_root=root, owner=owner)
     hold = _hold_module()
-    _check_hold(hold, hold_path, pending_path, tx=transaction_id, owner=owner)
+    if prepare_fresh_fixture:
+        _require_absent(hold_path, pending_path,
+                        pending_path.parent / "no-drain-release-binding.json")
+    else:
+        _check_hold(hold, hold_path, pending_path, tx=transaction_id, owner=owner)
     expected_files = {name + ".lock" for name in WORKERS}
     if ({p.name for p in worker_lock_dir.iterdir()} != expected_files):
         raise LocalScopeLeaseBlocked("worker_lock_inventory_incomplete_or_unexpected")
 
     acquired: list[int] = []
+    lock_paths: list[tuple[Path, int]] = []
     try:
         for path, uid in (
             (controller_lock, expected_controller_uid),
@@ -209,7 +280,28 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                 os.close(fd)
                 raise LocalScopeLeaseBlocked("controller_or_worker_operation_in_flight") from exc
             acquired.append(fd)
-        _check_hold(hold, hold_path, pending_path, tx=transaction_id, owner=owner)
+            lock_paths.append((path, uid))
+        if prepare_fresh_fixture:
+            evidence_checkpoint = _fresh_fixture_preparation(
+                hold, hold_path, pending_path, tx=transaction_id,
+                sha=release_sha256, owner=owner)
+        else:
+            def evidence_checkpoint():
+                _check_hold(hold, hold_path, pending_path,
+                            tx=transaction_id, owner=owner)
+
+        def checkpoint():
+            for (path, uid), fd in zip(lock_paths, acquired):
+                named, held = path.lstat(), os.fstat(fd)
+                if ((named.st_dev, named.st_ino) != (held.st_dev, held.st_ino)
+                        or not stat.S_ISREG(named.st_mode)
+                        or named.st_uid != uid or named.st_nlink != 1
+                        or named.st_size != 0
+                        or stat.S_IMODE(named.st_mode) != 0o600):
+                    raise LocalScopeLeaseBlocked("retained_lock_identity_changed")
+            evidence_checkpoint()
+
+        checkpoint()
         yield {
             "kind": "DSM928LocalScopeLease",
             "transaction_id": transaction_id,
@@ -217,6 +309,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "status": "local_kernel_fences_retained",
             "controller_http_lock_exclusively_held": True,
             "worker_lock_inodes_exclusively_held": len(WORKERS),
+            "fresh_durable_fixture_evidence": prepare_fresh_fixture,
+            "checkpoint": checkpoint,
             "controller_routes_opted_in_verified": False,
             "worker_process_inventory_verified": False,
             "all_mutators_fenced": False,
@@ -225,7 +319,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "durable_cross_host_recovery_verified": False,
             "live_no_drain_authorized": False,
         }
-        _check_hold(hold, hold_path, pending_path, tx=transaction_id, owner=owner)
+        checkpoint()
     except LocalScopeLeaseBlocked:
         raise
     except (OSError, ValueError) as exc:
