@@ -280,7 +280,9 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
                 "agent_remote_http.commit_authenticated_negative_v2_receipt",
                 return_value=committed_proof) as journal, patch(
                 "agent_remote_http.trusted_controller_release_pin_for_receipt",
-                return_value=sha) as trusted_pin:
+                return_value=sha) as trusted_pin, patch(
+                "agent_remote_http.correlate_authenticated_fence_receipts",
+                side_effect=controller.correlate_authenticated_fence_receipts):
             # Heartbeats cannot bypass durable v2 replay accounting.
             status, ordinary = self.post({
                 "no_drain_fence_evidence": evidence})
@@ -349,7 +351,9 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
                 "agent_remote_http.commit_authenticated_negative_v2_receipt",
                 side_effect=PermissionError("privileged_journal_unavailable")), patch(
                 "agent_remote_http.trusted_controller_release_pin_for_receipt",
-                return_value=sha):
+                return_value=sha), patch(
+                "agent_remote_http.correlate_authenticated_fence_receipts",
+                side_effect=controller.correlate_authenticated_fence_receipts):
             status, refused = dispatch_fence_observation(
                 {"no_drain_fence_evidence": evidence},
                 headers=self.headers, backend=object())
