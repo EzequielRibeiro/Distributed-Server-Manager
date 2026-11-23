@@ -215,3 +215,37 @@ def observe() -> dict:
         "external_jobs_acked": False,
         "live_no_drain_authorized": False,
     }
+
+
+def compare_installed_daemon_observations(before: dict, after: dict) -> dict:
+    """Reject identity drift between read-only samples; never issue an ACK.
+
+    Callers must collect both observations independently. This is a
+    diagnostic guard, not a persistent lease or proof of quiescence.
+    """
+    reasons = []
+    if not isinstance(before, dict) or not isinstance(after, dict):
+        reasons.append("invalid_daemon_observation")
+    else:
+        for name, key in (("controller", "identity_verified"),
+                          ("worker_group", "all_nine_workers_verified")):
+            a, b = before.get(name), after.get(name)
+            if not isinstance(a, dict) or not isinstance(b, dict):
+                reasons.append(name + "_observation_missing")
+            elif a.get(key) is not True or b.get(key) is not True:
+                reasons.append(name + "_identity_unverified")
+            elif a != b:
+                reasons.append(name + "_identity_changed")
+        if before.get("live_no_drain_authorized") is not False or (
+                after.get("live_no_drain_authorized") is not False):
+            reasons.append("unexpected_live_authorization")
+    return {
+        "status": "stable_read_only_identity_only" if not reasons else "blocked",
+        "identity_snapshots_stable": not reasons,
+        "blockers": reasons,
+        "controller_mutations_acked": False,
+        "worker_cycles_acked": False,
+        "remote_agents_acked": False,
+        "external_jobs_acked": False,
+        "live_no_drain_authorized": False,
+    }
