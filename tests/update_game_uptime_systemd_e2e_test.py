@@ -573,6 +573,29 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 hold_path.unlink()
                 lease_args["prepare_fresh_fixture"] = True
                 binding_path = state_dir / "no-drain-release-binding.json"
+                helper_lock = runtime_dir / "agent-privileged-operations.lock"
+                child_lock = runtime_dir / "agent-finalization-operations.lock"
+                helper_lock.touch(mode=0o600)
+                helper_lock.chmod(0o600)
+                child_lock.touch(mode=0o660)
+                child_lock.chmod(0o660)
+                os.chown(child_lock, os.geteuid(), os.getegid())
+                # Both existing helper lock families are mandatory before
+                # the fresh transaction journal can be created.
+                for operation_lock in (helper_lock, child_lock):
+                    busy = os.open(operation_lock, os.O_RDWR)
+                    try:
+                        fcntl.flock(busy, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        with self.assertRaisesRegex(
+                                local_scope.LocalScopeLeaseBlocked,
+                                "agent_operation_lock_unavailable"):
+                            with local_scope.retain_local_scopes(**lease_args):
+                                pass
+                        self.assertFalse(pending_path.exists())
+                        self.assertFalse(binding_path.exists())
+                    finally:
+                        os.close(busy)
+                scoped_locks.extend((helper_lock, child_lock))
                 def execute_only_under_locks():
                     pending = json.loads(pending_path.read_text())
                     binding = json.loads(binding_path.read_text())
@@ -596,6 +619,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 proof = bridge.run_disposable_integrated(
                     workspace, **integrated_kwargs)
                 self.assertTrue(proof["fresh_durable_fixture_evidence"])
+                self.assertTrue(proof["fixture_privileged_helper_lock_retained"])
+                self.assertTrue(proof["fixture_finalization_child_lock_retained"])
+                self.assertFalse(proof["external_jobs_acked"])
                 self.assertTrue(proof["local_controller_lock_held_during_transaction"])
                 # Evidence survives scope exit; a fresh transaction cannot
                 # mistake an interrupted journal for a new preparation.
@@ -611,12 +637,13 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertFalse(proof["worker_process_inventory_verified"])
                 self._assert_unchanged(originals)
                 # After return, all descriptors must have been released.
-                outsider = os.open(controller_lock, os.O_RDWR)
-                try:
-                    fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    fcntl.flock(outsider, fcntl.LOCK_UN)
-                finally:
-                    os.close(outsider)
+                for lockfile in scoped_locks:
+                    outsider = os.open(lockfile, os.O_RDWR)
+                    try:
+                        fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(outsider, fcntl.LOCK_UN)
+                    finally:
+                        os.close(outsider)
                 self.assertEqual(proof["journal_status"], expected_status)
                 self.assertEqual(proof["units_preserved"], 2)
                 self.assertTrue(proof["fixture_publisher_signed"])

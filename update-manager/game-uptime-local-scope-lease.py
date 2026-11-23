@@ -12,7 +12,7 @@ Never removes evidence, changes systemd units or calls update.sh.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import fcntl
 from importlib.machinery import SourceFileLoader
 import importlib.util
@@ -203,6 +203,35 @@ def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
     return checkpoint
 
 
+def _retain_fixture_agent_operations(stack: ExitStack, runtime_dir: Path,
+                                     *, owner: int):
+    """Reuse the real helper/child EX primitives on disposable inodes only."""
+    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    sys.path.insert(0, runtime)
+    try:
+        from game_uptime_privileged_flock import exclusive_privileged_helper_lock
+        from game_uptime_finalization_flock import exclusive_finalization_lock
+    finally:
+        sys.path.remove(runtime)
+    helper = runtime_dir / "agent-privileged-operations.lock"
+    child = runtime_dir / "agent-finalization-operations.lock"
+    try:
+        paths = (helper, child)
+        identities = tuple(_evidence_identity(path) for path in paths)
+        stack.enter_context(exclusive_privileged_helper_lock(
+            path=helper, trusted_uid=owner))
+        stack.enter_context(exclusive_finalization_lock(
+            path=child, trusted_uid=owner, group_gid=os.getegid()))
+
+        def checkpoint():
+            if tuple(_evidence_identity(path) for path in paths) != identities:
+                raise LocalScopeLeaseBlocked("agent_operation_lock_identity_changed")
+        checkpoint()
+        return checkpoint
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise LocalScopeLeaseBlocked("agent_operation_lock_unavailable") from exc
+
+
 @contextmanager
 def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         expected_controller_uid: int,
@@ -266,6 +295,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
         raise LocalScopeLeaseBlocked("worker_lock_inventory_incomplete_or_unexpected")
 
     acquired: list[int] = []
+    agent_locks = ExitStack()
     lock_paths: list[tuple[Path, int]] = []
     try:
         for path, uid in (
@@ -282,6 +312,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             acquired.append(fd)
             lock_paths.append((path, uid))
         if prepare_fresh_fixture:
+            agent_checkpoint = _retain_fixture_agent_operations(
+                agent_locks, controller_lock.parent, owner=owner)
             evidence_checkpoint = _fresh_fixture_preparation(
                 hold, hold_path, pending_path, tx=transaction_id,
                 sha=release_sha256, owner=owner)
@@ -299,6 +331,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         or named.st_size != 0
                         or stat.S_IMODE(named.st_mode) != 0o600):
                     raise LocalScopeLeaseBlocked("retained_lock_identity_changed")
+            if prepare_fresh_fixture:
+                agent_checkpoint()
             evidence_checkpoint()
 
         checkpoint()
@@ -310,6 +344,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "controller_http_lock_exclusively_held": True,
             "worker_lock_inodes_exclusively_held": len(WORKERS),
             "fresh_durable_fixture_evidence": prepare_fresh_fixture,
+            "fixture_privileged_helper_lock_retained": prepare_fresh_fixture,
+            "fixture_finalization_child_lock_retained": prepare_fresh_fixture,
             "checkpoint": checkpoint,
             "controller_routes_opted_in_verified": False,
             "worker_process_inventory_verified": False,
@@ -325,8 +361,11 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     except (OSError, ValueError) as exc:
         raise LocalScopeLeaseBlocked("local_fence_unavailable") from exc
     finally:
-        for fd in reversed(acquired):
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            finally:
-                os.close(fd)
+        try:
+            agent_locks.close()
+        finally:
+            for fd in reversed(acquired):
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+                finally:
+                    os.close(fd)

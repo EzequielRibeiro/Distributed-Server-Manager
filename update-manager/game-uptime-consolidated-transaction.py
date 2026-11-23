@@ -209,6 +209,8 @@ def run_disposable_integrated(
                     or scope.get("controller_http_lock_exclusively_held") is not True
                     or scope.get("worker_lock_inodes_exclusively_held") != 9
                     or scope.get("fresh_durable_fixture_evidence") is not True
+                    or scope.get("fixture_privileged_helper_lock_retained") is not True
+                    or scope.get("fixture_finalization_child_lock_retained") is not True
                     or not callable(scope.get("checkpoint"))
                     or scope.get("all_mutators_fenced") is not False
                     or scope.get("remote_agents_acked") is not False
@@ -249,6 +251,9 @@ def run_disposable_integrated(
                 "local_controller_lock_held_during_transaction": True,
                 "local_worker_lock_count_held_during_transaction": 9,
                 "fresh_durable_fixture_evidence": True,
+                "fixture_privileged_helper_lock_retained": True,
+                "fixture_finalization_child_lock_retained": True,
+                "external_jobs_acked": False,
                 "controller_routes_opted_in_verified": False,
                 "worker_process_inventory_verified": False,
                 "production_publisher_enrolled": False,
