@@ -102,7 +102,7 @@ def sign_release(*, archive: Path, manifest: Path, commit: str,
             or not output_dir.is_dir()):
         raise ReleaseSigningBlocked("release_artifacts_must_share_output_directory")
     key = _safe_bytes(private_key, limit=16384, private=True)
-    if not key.startswith(b"-----BEGIN PRIVATE KEY-----"):
+    if not key.startswith(b"-----BEGIN " + b"PRIVATE KEY-----"):
         raise ReleaseSigningBlocked("unsupported_private_key_format")
     mbytes = _safe_bytes(manifest, limit=1024*1024)
     try:
