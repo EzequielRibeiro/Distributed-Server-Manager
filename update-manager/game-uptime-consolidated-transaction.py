@@ -129,9 +129,8 @@ def run_disposable_integrated(
     if (not callable(execute_fixture) or not callable(inspect)
             or not callable(list_units)):
         raise ConsolidatedTransactionBlocked("missing fixed transaction callbacks")
-    if (root / "dsm928-composite-journal").exists()
-            or (root / "backups").exists() and
-            list((root / "backups").glob("*.tar.gz"))):
+    if ((root / "dsm928-composite-journal").exists()
+            or any((root / "backups").glob("*.tar.gz"))):
         raise ConsolidatedTransactionBlocked("existing transaction requires recovery")
     before = _witness(units, inspect, list_units)
     provenance = _load("dsm928_integrated_release_provenance",
