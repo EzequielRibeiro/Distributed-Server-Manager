@@ -67,12 +67,15 @@ def retain_local_fences() -> Iterator[dict[str, object]]:
     acquired: list[int] = []
     try:
         for path in paths:
-            fd = _open_existing(path)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (OSError, BlockingIOError) as exc:
-                os.close(fd)
-                raise RetainedFenceBlocked("lock_busy_or_unavailable") from exc
+                fd = _open_existing(path)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except (OSError, BlockingIOError) as exc:
+                    os.close(fd)
+                    raise RetainedFenceBlocked("lock_busy_or_unavailable") from exc
+            except (OSError, ValueError) as exc:
+                raise RetainedFenceBlocked("lock_missing_or_untrusted") from exc
             acquired.append(fd)
         yield {
             "status": "local_kernel_locks_retained_only",
