@@ -445,6 +445,21 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
     clock = time.time if now is None else now
     deadline = time.monotonic() + 10
     request = _session_read(read_fd, deadline)
+    # A dedicated authenticated connectivity probe must not take locks or
+    # write durable maintenance state. It is not a PREPARE or readiness ACK.
+    if request.get("action") == "probe":
+        challenge = request.get("challenge")
+        if (set(request) != {"protocol", "action", "agent_id", "challenge"}
+                or request.get("protocol") != _SESSION_PROTOCOL
+                or request.get("agent_id") != local_agent_id
+                or type(challenge) is not str or not _ID.fullmatch(challenge)):
+            raise HoldPreparationBlocked("agent_session_probe_invalid")
+        _session_write(write_fd, {
+            **request, "action": "probe_received",
+            "maintenance_state_changed": False,
+            "remote_agents_acked": False, "live_no_drain_authorized": False,
+        }, deadline)
+        return
     fields = {"transaction_id", "release_sha256", "issued_at", "expires_at", "expected_agent_ids"}
     if (set(request) != fields | {"protocol", "action", "agent_id", "challenge"}
             or request.get("protocol") != _SESSION_PROTOCOL
@@ -502,6 +517,25 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
             answer("closed" if req["action"] == "close" else "retained", challenge)
             if req["action"] == "close":
                 return
+
+
+def probe_agent_session(read_fd: int, write_fd: int, *, agent_id: str):
+    """Challenge an already authenticated dedicated channel without PREPARE."""
+    if type(agent_id) is not str or not _AGENT_ID.fullmatch(agent_id):
+        raise HoldPreparationBlocked("invalid_probe_agent_identity")
+    request = {"protocol": _SESSION_PROTOCOL, "action": "probe",
+               "agent_id": agent_id, "challenge": secrets.token_hex(16)}
+    deadline = time.monotonic() + 10
+    _session_write(write_fd, request, deadline)
+    reply = _session_read(read_fd, deadline)
+    expected = {**request, "action": "probe_received",
+                "maintenance_state_changed": False,
+                "remote_agents_acked": False, "live_no_drain_authorized": False}
+    if _session_bytes(reply) != _session_bytes(expected):
+        raise HoldPreparationBlocked("agent_session_probe_receipt_invalid")
+    return {"agent_id": agent_id, "protocol_probe_verified": True,
+            "maintenance_state_changed": False,
+            "remote_agents_acked": False, "live_no_drain_authorized": False}
 
 
 @contextmanager

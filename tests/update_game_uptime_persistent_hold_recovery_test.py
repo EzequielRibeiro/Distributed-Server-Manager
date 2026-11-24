@@ -856,6 +856,18 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(argv[-1], REMOTE_COMMAND)
         self.assertIn("/usr/local/libexec/capivara-dsm-928-agent/", REMOTE_COMMAND)
         channels = {option["local_agent_id"]: opener(option) for option in options}
+        # Probe the same protocol before preparing any Agent, with no
+        # mutation of the lock inodes or maintenance journal.
+        from game_uptime_hold_coordinator import probe_agent_session
+        for agent, opened in channels.items():
+            with opened() as (read_fd, write_fd):
+                report = probe_agent_session(read_fd, write_fd, agent_id=agent)
+                self.assertTrue(report["protocol_probe_verified"])
+                self.assertFalse(report["live_no_drain_authorized"])
+                self.assertFalse(report["maintenance_state_changed"])
+        self.assertEqual(failures, [])
+        self.assertTrue(all(not option["journal_path"].exists() and
+                            not option["hold_path"].exists() for option in options))
         central = dict(transaction_id=self.tx, release_sha256="d"*64,
                        issued_at=1700000000, expires_at=1700000600,
                        expected_agent_ids=ids, session_openers=channels,

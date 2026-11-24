@@ -187,10 +187,8 @@ def _open_ssh_session(agent, endpoint, known_hosts, identity):
 
 
 @contextlib.contextmanager
-def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
-                              expires_at, expected_agent_ids,
-                              recover_existing=False, operator_reviewed=False):
-    """Root-only transport adapter; not called by production update.sh."""
+def _pinned_ssh_openers(expected_agent_ids):
+    """Shared trust validation for probe and retained transaction sessions."""
     if os.geteuid() != 0:
         raise SSHTransportBlocked("root_ssh_coordinator_required")
     for folder in (Path("/etc"), TRUST_DIR):
@@ -199,7 +197,6 @@ def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
         _root_file(ENDPOINTS, 65536), expected_agent_ids)
     # Never log or export the dedicated private key.
     _root_file(IDENTITY_KEY, 16384)
-    from game_uptime_hold_coordinator import retain_distributed_agent_sessions
     with tempfile.TemporaryDirectory(prefix="dsm928-ssh-host-pins-") as tmp:
         known = Path(tmp) / "known_hosts"
         known.write_text("".join("dsm928-" + agent + " " + entry["host_key"] + "\n"
@@ -209,6 +206,16 @@ def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
         openers = {agent: (lambda a=agent, e=entry:
                            _open_ssh_session(a, e, known, IDENTITY_KEY))
                    for agent, entry in endpoints.items()}
+        yield openers
+
+
+@contextlib.contextmanager
+def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
+                              expires_at, expected_agent_ids,
+                              recover_existing=False, operator_reviewed=False):
+    """Root-only transport adapter; not called by production update.sh."""
+    from game_uptime_hold_coordinator import retain_distributed_agent_sessions
+    with _pinned_ssh_openers(expected_agent_ids) as openers:
         with retain_distributed_agent_sessions(
                 transaction_id=transaction_id, release_sha256=release_sha256,
                 issued_at=issued_at, expires_at=expires_at,
@@ -219,6 +226,30 @@ def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
                    "ssh_remote_agent_id_matched": True,
                    "remote_agents_acked": False,
                    "live_no_drain_authorized": False}
+
+
+def probe_ssh_agent_sessions(expected_agent_ids):
+    """Read-only operational preflight, one authenticated probe per pinned host.
+
+    A failure is reported against its pinned identity, never treated as an
+    offline exemption. No remote maintenance journal or lock is created.
+    """
+    from game_uptime_hold_coordinator import probe_agent_session
+    results = {}
+    with _pinned_ssh_openers(expected_agent_ids) as openers:
+        for agent, opener in sorted(openers.items()):
+            try:
+                with opener() as (read_fd, write_fd):
+                    probe_agent_session(read_fd, write_fd, agent_id=agent)
+                results[agent] = "authenticated_protocol_verified"
+            except (OSError, RuntimeError, ValueError):
+                results[agent] = "blocked_or_unreachable"
+    complete = all(value == "authenticated_protocol_verified"
+                   for value in results.values())
+    return {"kind": "DSM928SSHOperationalProbe", "schema_version": 1,
+            "status": "all_endpoints_authenticated" if complete else "blocked",
+            "agent_results": results, "maintenance_state_changed": False,
+            "remote_agents_acked": False, "live_no_drain_authorized": False}
 
 
 def _serve():
@@ -239,10 +270,17 @@ def _serve():
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] != ["--serve"]:
-        raise SystemExit(2)
     try:
-        _serve()
+        if sys.argv[1:] == ["--serve"]:
+            _serve()
+        elif len(sys.argv) >= 3 and sys.argv[1] == "--probe":
+            _snapshot_trusted()
+            sys.path.insert(0, str(LIBEXEC))
+            report = probe_ssh_agent_sessions(sys.argv[2:])
+            print(json.dumps(report, sort_keys=True))
+            raise SystemExit(0 if report["status"] == "all_endpoints_authenticated" else 2)
+        else:
+            raise SystemExit(2)
     except (OSError, RuntimeError, ValueError):
         # No credentials, endpoints, key material or remote data in logs.
         raise SystemExit(2)
