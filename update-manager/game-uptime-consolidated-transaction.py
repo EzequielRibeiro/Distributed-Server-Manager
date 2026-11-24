@@ -196,7 +196,8 @@ def run_disposable_integrated(
     if (not isinstance(local_scope_kwargs, Mapping)
             or local_scope_kwargs.get("transaction_id") != transaction_id
             or local_scope_kwargs.get("release_sha256") != sha
-            or local_scope_kwargs.get("prepare_fresh_fixture") is not True):
+            or local_scope_kwargs.get("prepare_fresh_fixture") is not True
+            or not local_scope_kwargs.get("expected_fixture_agent_ids")):
         raise ConsolidatedTransactionBlocked("transaction-local lock lease missing or unbound")
     scope_module = _load("dsm928_integrated_kernel_scope_lease",
                          "game-uptime-local-scope-lease.py")
@@ -209,6 +210,7 @@ def run_disposable_integrated(
                     or scope.get("controller_http_lock_exclusively_held") is not True
                     or scope.get("worker_lock_inodes_exclusively_held") != 9
                     or scope.get("fresh_durable_fixture_evidence") is not True
+                    or scope.get("fixture_agent_inventory_retained") is not True
                     or scope.get("fixture_privileged_helper_lock_retained") is not True
                     or scope.get("fixture_finalization_child_lock_retained") is not True
                     or not callable(scope.get("checkpoint"))
@@ -251,6 +253,7 @@ def run_disposable_integrated(
                 "local_controller_lock_held_during_transaction": True,
                 "local_worker_lock_count_held_during_transaction": 9,
                 "fresh_durable_fixture_evidence": True,
+                "fixture_agent_inventory_retained": True,
                 "fixture_privileged_helper_lock_retained": True,
                 "fixture_finalization_child_lock_retained": True,
                 "external_jobs_acked": False,

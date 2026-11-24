@@ -572,7 +572,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 # evidence from the real coordinator, under the same locks.
                 hold_path.unlink()
                 lease_args["prepare_fresh_fixture"] = True
+                fixture_ids = ["fixture-agent-online", "fixture-agent-offline"]
+                lease_args["expected_fixture_agent_ids"] = fixture_ids
                 binding_path = state_dir / "no-drain-release-binding.json"
+                inventory_path = state_dir / "no-drain-agent-inventory.json"
                 helper_lock = runtime_dir / "agent-privileged-operations.lock"
                 child_lock = runtime_dir / "agent-finalization-operations.lock"
                 helper_lock.touch(mode=0o600)
@@ -593,6 +596,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                                 pass
                         self.assertFalse(pending_path.exists())
                         self.assertFalse(binding_path.exists())
+                        self.assertFalse(inventory_path.exists())
                     finally:
                         os.close(busy)
                 scoped_locks.extend((helper_lock, child_lock))
@@ -601,6 +605,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     binding = json.loads(binding_path.read_text())
                     self.assertEqual(pending["transaction_id"], nonce)
                     self.assertEqual(binding["release_sha256"], expected_hash)
+                    inventory = json.loads(inventory_path.read_text())
+                    self.assertEqual(inventory["agent_ids"], sorted(fixture_ids))
+                    self.assertEqual(inventory["transaction_id"], nonce)
+                    self.assertEqual(inventory["release_sha256"], expected_hash)
                     self.assertFalse(pending["live_no_drain_authorized"])
                     # This callback is now invoked INSIDE the coordinator's
                     # mandatory local scope lease, never by the test caller.
@@ -619,6 +627,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 proof = bridge.run_disposable_integrated(
                     workspace, **integrated_kwargs)
                 self.assertTrue(proof["fresh_durable_fixture_evidence"])
+                self.assertTrue(proof["fixture_agent_inventory_retained"])
                 self.assertTrue(proof["fixture_privileged_helper_lock_retained"])
                 self.assertTrue(proof["fixture_finalization_child_lock_retained"])
                 self.assertFalse(proof["external_jobs_acked"])
@@ -627,6 +636,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 # mistake an interrupted journal for a new preparation.
                 self.assertTrue(pending_path.is_file())
                 self.assertTrue(binding_path.is_file())
+                self.assertTrue(inventory_path.is_file())
+                self.assertEqual(json.loads(inventory_path.read_text())["agent_ids"],
+                                 sorted(fixture_ids))
                 with self.assertRaisesRegex(
                         local_scope.LocalScopeLeaseBlocked,
                         "persistent_recovery_pending"):
