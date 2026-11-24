@@ -1606,7 +1606,61 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         journal = self.workspace/"interrupted-real-systemd-journal"
         journal.mkdir(mode=0o700)
 
+        # Reuse the existing local lease and real kernel inodes throughout
+        # both the interrupted apply and the reviewed recovery rollback.
+        import hashlib
+        import fcntl
+        scope_loader = SourceFileLoader("dsm928_recovery_bound_scope",
+            str(ROOT / "update-manager/game-uptime-local-scope-lease.py"))
+        scope_spec = importlib.util.spec_from_loader(scope_loader.name, scope_loader)
+        scope = importlib.util.module_from_spec(scope_spec)
+        scope_loader.exec_module(scope)
+        scope_root = self.workspace / "recovery-local-scope"
+        scope_root.mkdir(mode=0o700)
+        (scope_root / "fixture-owner").write_bytes(b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+        parent = scope_root / "runtime"
+        runtime = parent / "run"
+        workers = runtime / "worker-operations"
+        state = scope_root / "state"
+        for folder in (parent, runtime, workers, state):
+            folder.mkdir(mode=0o755)
+        controller = runtime / "controller-agent-http.lock"
+        helper = runtime / "agent-privileged-operations.lock"
+        child = runtime / "agent-finalization-operations.lock"
+        locks = [controller, helper, child] + [workers / (name + ".lock")
+                                                for name in scope.WORKERS]
+        for lock in locks:
+            lock.touch(mode=0o600)
+            lock.chmod(0o660 if lock == child else 0o600)
+        agent_ids = ["fixture-agent-alpha", "fixture-agent-beta"]
+        opts = dict(transaction_id=uuid4().hex, release_sha256="a"*64,
+                    expected_controller_uid=os.geteuid(),
+                    expected_worker_uid=os.geteuid(), controller_lock=controller,
+                    worker_lock_dir=workers, hold_path=runtime/"hold.json",
+                    pending_path=state/"no-drain-pending.json", fixture_root=scope_root,
+                    prepare_fresh_fixture=True, expected_fixture_agent_ids=agent_ids)
+        def inspect_game(name):
+            result = self._snapshot(name)
+            result["unit_config_sha256"] = hashlib.sha256(
+                self._run("systemctl", "cat", name).stdout.encode()).hexdigest()
+            return result
+        def list_games():
+            return [line.split()[0] for line in self._run(
+                "systemctl", "list-units", "--type=service", "--state=active",
+                "--no-legend", "--plain", f"{self.prefix}-*.service").stdout.splitlines()
+                if line.strip()]
+        names = [row["unit"] for row in originals]
+        handoff = transaction.attest_handoff(names, inspect=inspect_game, list_units=list_games)
+        def assert_locks():
+            for lock in locks:
+                fd = os.open(lock, os.O_RDONLY)
+                try:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                finally:
+                    os.close(fd)
         def interrupted_apply():
+            assert_locks()
             run("apply")
             self._assert_unchanged(originals)
             raise SystemExit(47)
@@ -1615,7 +1669,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             transaction.execute(
                 journal,
                 [row["unit"] for row in originals],
-                inspect=self._snapshot,
+                inspect=inspect_game, list_units=list_games, handoff=handoff,
+                local_scope_kwargs=opts,
                 apply=interrupted_apply,
                 rollback=lambda: run("rollback"),
             )
@@ -1624,10 +1679,21 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                          "prepared")
         self._assert_unchanged(originals)
 
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "scope binding mismatch"):
+            transaction.recover_interrupted(
+                journal, names, inspect=inspect_game, list_units=list_games,
+                rollback=lambda: self.fail("unbound rollback"), operator_reviewed=True)
+        recovery_opts = {**opts, "prepare_fresh_fixture": False,
+                         "expected_fixture_agent_ids": None,
+                         "inspect_existing_prepared": True,
+                         "expected_recovery_agent_ids": agent_ids}
+        def guarded_rollback():
+            assert_locks()
+            run("rollback")
         outcome = transaction.recover_interrupted(
-            journal, [row["unit"] for row in originals],
-            inspect=self._snapshot, rollback=lambda: run("rollback"),
-            operator_reviewed=True,
+            journal, names, inspect=inspect_game, list_units=list_games,
+            rollback=guarded_rollback, operator_reviewed=True,
+            local_scope_kwargs=recovery_opts,
         )
         self.assertEqual(outcome["status"], "recovered_rollback")
         self.assertFalse(outcome["live_no_drain_authorized"])

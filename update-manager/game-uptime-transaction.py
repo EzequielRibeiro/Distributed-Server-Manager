@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import hashlib
+from importlib.machinery import SourceFileLoader
+import importlib.util
 import fcntl
 from functools import wraps
 import os
@@ -69,11 +71,88 @@ def _exclusive_transaction(func):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except OSError as exc:
                 raise TransactionSafetyError("transaction or recovery already in progress") from exc
-            return func(root, *args, **kwargs)
+            # All bound operations acquire the same workspace lock before
+            # acquiring the existing local scope. No unbound caller can
+            # resume a journal that was created under a bound scope.
+            if "_scope" in kwargs:
+                raise TransactionSafetyError("caller-supplied scope witness forbidden")
+            options = kwargs.pop("local_scope_kwargs", None)
+            if options is None:
+                return func(root, *args, **kwargs)
+            recovery = func.__name__ == "recover_interrupted"
+            if not recovery and os.path.lexists(root / "game-uptime-transaction.json"):
+                raise TransactionSafetyError("existing transaction evidence requires manual review")
+            if recovery and kwargs.get("operator_reviewed") is not True:
+                raise TransactionSafetyError("explicit operator review is required")
+            try:
+                with _bound_local_scope(options, recovery=recovery) as lease:
+                    receipt = _scope_receipt(lease, options, recovery=recovery)
+                    return func(root, *args, **kwargs, _scope=receipt)
+            except TransactionSafetyError:
+                raise
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise TransactionSafetyError("transaction local scope blocked") from exc
         finally:
             if fd is not None:
                 os.close(fd)
     return guarded
+
+
+def _bound_local_scope(options: Mapping, *, recovery: bool):
+    """Acquire a fixture-only scope from the existing local lease module."""
+    if (not isinstance(options, Mapping)
+            or options.get("fixture_root") is None
+            or options.get("prepare_fresh_fixture") is not (not recovery)
+            or options.get("inspect_existing_prepared", False) is not recovery):
+        raise TransactionSafetyError("invalid disposable transaction scope")
+    ids = options.get("expected_recovery_agent_ids" if recovery
+                      else "expected_fixture_agent_ids")
+    if not isinstance(ids, list) or not ids:
+        raise TransactionSafetyError("transaction scope requires Agent inventory")
+    loader = SourceFileLoader("dsm928_tx_bound_local_scope",
+                              str(Path(__file__).with_name("game-uptime-local-scope-lease.py")))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module.retain_local_scopes(**dict(options))
+
+
+def _scope_binding(scope: Mapping | None) -> dict | None:
+    if scope is None:
+        return None
+    return {"transaction_id": scope["transaction_id"],
+            "release_sha256": scope["release_sha256"],
+            "agent_ids": scope["agent_ids"],
+            "evidence_sha256": scope["evidence_sha256"]}
+
+
+def _scope_receipt(scope: Mapping, options: Mapping, *, recovery: bool) -> dict:
+    """Bind journal to the exact on-disk lease evidence, not just a nonce."""
+    if (scope.get("live_no_drain_authorized") is not False
+            or scope.get("worker_lock_inodes_exclusively_held") != 9
+            or scope.get("controller_http_lock_exclusively_held") is not True
+            or not callable(scope.get("checkpoint"))
+            or scope.get("existing_prepared_recovery_inspection_only") is not recovery
+            or (recovery and scope.get("recovery_scope_inodes_retained") is not True)
+            or (not recovery and scope.get("fresh_durable_fixture_evidence") is not True)):
+        raise TransactionSafetyError("untrusted local scope witness")
+    checkpoint = scope["checkpoint"]
+    pending = Path(options["pending_path"])
+    evidence = [Path(options["hold_path"]), pending,
+                pending.parent / "no-drain-release-binding.json",
+                pending.parent / "no-drain-agent-inventory.json"]
+    checkpoint()
+    digest = hashlib.sha256()
+    for path in evidence:
+        raw = path.read_bytes()
+        digest.update(len(raw).to_bytes(8, "big"))
+        digest.update(raw)
+    checkpoint()
+    return {"transaction_id": scope["transaction_id"],
+            "release_sha256": scope["release_sha256"],
+            "agent_ids": sorted(options["expected_recovery_agent_ids" if recovery
+                                        else "expected_fixture_agent_ids"]),
+            "evidence_sha256": digest.hexdigest(), "checkpoint": checkpoint}
 
 
 def _snapshot(name: str, inspect: Callable[[str], Mapping]) -> dict:
@@ -151,7 +230,7 @@ def _digest(original: list[dict]) -> str:
                                      separators=(",", ":")).encode()).hexdigest()
 
 def _checkpoint(path: Path, status: str, originals: list[dict], detail: str = "",
-                strict_inventory: bool = False) -> None:
+                strict_inventory: bool = False, scope_binding: dict | None = None) -> None:
     report = {
         "kind": "DSM928DisposableUptimeTransaction",
         "scope": "disposable_only_not_production",
@@ -162,6 +241,8 @@ def _checkpoint(path: Path, status: str, originals: list[dict], detail: str = ""
         "strict_inventory": strict_inventory,
         "detail": detail[:300],
     }
+    if scope_binding is not None:
+        report["local_scope_binding"] = scope_binding
     tmp = path.with_name("." + path.name + ".part")
     # No following a stale staging symlink; never overwrite a previous journal.
     if tmp.exists() or tmp.is_symlink():
@@ -196,6 +277,8 @@ def execute(
     rollback: Callable[[], None],
     handoff: Mapping | None = None,
     list_units: Callable[[], list[str]] | None = None,
+    local_scope_kwargs: Mapping | None = None,
+    _scope: Mapping | None = None,
 ) -> dict:
     """Run one isolated transaction. Fail closed after any interrupted run.
 
@@ -211,6 +294,13 @@ def execute(
     if (handoff is None) != (list_units is None):
         raise TransactionSafetyError("handoff and complete inventory callback must be paired")
     strict = handoff is not None
+    if _scope is not None and not strict:
+        raise TransactionSafetyError("bound transaction requires strict game inventory")
+    bound = _scope_binding(_scope)
+    def scope_checkpoint():
+        if _scope is not None:
+            _scope["checkpoint"]()
+    scope_checkpoint()
     path = root / "game-uptime-transaction.json"
     if path.exists() or path.is_symlink():
         raise TransactionSafetyError("existing transaction evidence requires manual review")
@@ -220,7 +310,7 @@ def execute(
     if strict:
         _check_handoff(before, handoff)
         _active_set(units, list_units)
-    _checkpoint(path, "prepared", before, strict_inventory=strict)
+    _checkpoint(path, "prepared", before, strict_inventory=strict, scope_binding=bound)
     if strict:
         try:
             _active_set(units, list_units)
@@ -228,17 +318,19 @@ def execute(
                 raise TransactionSafetyError("process identity changed before apply")
         except TransactionSafetyError as exc:
             _checkpoint(path, "manual_recovery_required", before, str(exc),
-                        strict_inventory=True)
+                        strict_inventory=True, scope_binding=bound)
             raise TransactionSafetyError("game handoff changed before apply; manual review required") from exc
     try:
+        scope_checkpoint()
         apply()
-        _checkpoint(path, "applied", before, strict_inventory=strict)
+        scope_checkpoint()
+        _checkpoint(path, "applied", before, strict_inventory=strict, scope_binding=bound)
         if strict:
             _active_set(units, list_units)
         after = [_snapshot(x["unit"], inspect) for x in before]
         if after != before:
             raise TransactionSafetyError("process or unit configuration changed during apply")
-        _checkpoint(path, "verified", before, strict_inventory=strict)
+        _checkpoint(path, "verified", before, strict_inventory=strict, scope_binding=bound)
         return {"status": "verified", "live_no_drain_authorized": False, "units": after}
     except Exception as exc:
         # Unknown/missing active units after apply must not cause a blind rollback.
@@ -247,20 +339,22 @@ def execute(
                 _active_set(units, list_units)
             except TransactionSafetyError as inventory_exc:
                 _checkpoint(path, "manual_recovery_required", before,
-                            str(inventory_exc), strict_inventory=True)
+                            str(inventory_exc), strict_inventory=True, scope_binding=bound)
                 raise TransactionSafetyError(
                     "game inventory changed after apply; manual recovery required") from exc
         try:
+            scope_checkpoint()
             rollback()
+            scope_checkpoint()
             if strict:
                 _active_set(units, list_units)
             after_rollback = [_snapshot(x["unit"], inspect) for x in before]
             if after_rollback != before:
                 raise TransactionSafetyError("process or unit configuration changed during rollback")
-            _checkpoint(path, "rolled_back", before, str(exc), strict_inventory=strict)
+            _checkpoint(path, "rolled_back", before, str(exc), strict_inventory=strict, scope_binding=bound)
         except Exception as rollback_exc:
             _checkpoint(path, "manual_recovery_required", before, str(rollback_exc),
-                        strict_inventory=strict)
+                        strict_inventory=strict, scope_binding=bound)
             raise TransactionSafetyError("rollback failed; manual recovery required") from rollback_exc
         raise TransactionSafetyError("transaction rejected and rollback completed") from exc
 
@@ -274,6 +368,8 @@ def recover_interrupted(
     rollback: Callable[[], None],
     operator_reviewed: bool = False,
     list_units: Callable[[], list[str]] | None = None,
+    local_scope_kwargs: Mapping | None = None,
+    _scope: Mapping | None = None,
 ) -> dict:
     """Explicit, disposable-only rollback of one interrupted transaction.
 
@@ -309,6 +405,13 @@ def recover_interrupted(
             or report.get("status") not in {"prepared", "applied"}
             or not isinstance(report.get("original_units"), list)):
         raise TransactionSafetyError("journal does not prove recoverable interruption")
+    bound = _scope_binding(_scope)
+    if report.get("local_scope_binding") != bound:
+        raise TransactionSafetyError("durable local scope binding mismatch")
+    def scope_checkpoint():
+        if _scope is not None:
+            _scope["checkpoint"]()
+    scope_checkpoint()
     recorded = report["original_units"]
     if len(recorded) != len(units) or any(not isinstance(x, dict) for x in recorded):
         raise TransactionSafetyError("journal inventory mismatch")
@@ -330,20 +433,22 @@ def recover_interrupted(
     if strict:
         _active_set(units, list_units)
     _checkpoint(path, "recovery_started", actual,
-                "explicit disposable-only recovery", strict_inventory=strict)
+                "explicit disposable-only recovery", strict_inventory=strict, scope_binding=bound)
     try:
         if strict:
             _active_set(units, list_units)
+        scope_checkpoint()
         rollback()
+        scope_checkpoint()
         if strict:
             _active_set(units, list_units)
         after = [_snapshot(name, inspect) for name in sorted(units)]
         if after != actual:
             raise TransactionSafetyError("process or unit configuration changed during recovery rollback")
-        _checkpoint(path, "recovered_rollback", actual, strict_inventory=strict)
+        _checkpoint(path, "recovered_rollback", actual, strict_inventory=strict, scope_binding=bound)
         return {"status": "recovered_rollback",
                 "live_no_drain_authorized": False, "units": after}
     except Exception as exc:
         _checkpoint(path, "manual_recovery_required", actual, str(exc),
-                    strict_inventory=strict)
+                    strict_inventory=strict, scope_binding=bound)
         raise TransactionSafetyError("recovery rollback failed; manual review required") from exc
