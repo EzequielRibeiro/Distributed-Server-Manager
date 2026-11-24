@@ -420,6 +420,29 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                 agent_checkpoint()
             evidence_checkpoint()
 
+        released = False
+
+        def release_fixture(outcome, journal_sha256, confirmation_sha256):
+            nonlocal released
+            if root is None or released or not inspect_existing_prepared:
+                raise LocalScopeLeaseBlocked("fixture_terminal_release_only")
+            runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+            sys.path.insert(0, runtime)
+            try:
+                from game_uptime_hold_coordinator import _archive_fixture_hold, _terminal_decision
+            finally:
+                sys.path.remove(runtime)
+            decision = _terminal_decision(outcome, journal_sha256)
+            if (type(confirmation_sha256) is not str
+                    or not _SHA.fullmatch(confirmation_sha256)):
+                raise LocalScopeLeaseBlocked("invalid_global_confirmation_digest")
+            result = _archive_fixture_hold(
+                marker=hold_path, pending=pending_path, transaction_id=transaction_id,
+                decision={**decision, "confirmation_sha256": confirmation_sha256},
+                uid=owner, checkpoint=checkpoint)
+            released = True
+            return result
+
         checkpoint()
         yield {
             "kind": "DSM928LocalScopeLease",
@@ -434,7 +457,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "fixture_agent_inventory_retained": expected_fixture_agent_ids is not None,
             "fixture_privileged_helper_lock_retained": prepare_fresh_fixture,
             "fixture_finalization_child_lock_retained": prepare_fresh_fixture,
-            "checkpoint": checkpoint,
+            "checkpoint": checkpoint, "release_fixture": release_fixture,
             "controller_routes_opted_in_verified": False,
             "worker_process_inventory_verified": False,
             "all_mutators_fenced": False,
@@ -443,7 +466,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "durable_cross_host_recovery_verified": False,
             "live_no_drain_authorized": False,
         }
-        checkpoint()
+        if not released:
+            checkpoint()
     except LocalScopeLeaseBlocked:
         raise
     except (OSError, RuntimeError, ValueError) as exc:

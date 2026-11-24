@@ -81,6 +81,9 @@ def _exclusive_transaction(func):
             options = kwargs.pop("local_scope_kwargs", None)
             distributed = kwargs.pop("distributed_fixture_openers", None)
             hybrid_id = kwargs.pop("local_fixture_agent_id", None)
+            finalize = kwargs.pop("finalize_fixture", False)
+            if type(finalize) is not bool or (finalize and func.__name__ != "confirm_terminal"):
+                raise TransactionSafetyError("fixture finalization requires reviewed terminal confirmation")
             if hybrid_id is not None and (options is None or distributed is None):
                 raise TransactionSafetyError("Hybrid partition requires both local and remote scopes")
             if func.__name__ == "confirm_terminal" and (options is None or distributed is None):
@@ -164,6 +167,26 @@ def _exclusive_transaction(func):
                              "pending_evidence_retained": True,
                              "live_no_drain_authorized": False}, os.geteuid())
                         combined_checkpoint()
+                        if finalize:
+                            confirmation = root / "game-uptime-terminal-confirmation.json"
+                            confirmation_sha = hashlib.sha256(confirmation.read_bytes()).hexdigest()
+                            released = remote["release_fixture"](
+                                outcome, decision["journal_sha256"], confirmation_sha)
+                            if released.get("released_agent_ids") != remote_ids:
+                                raise TransactionSafetyError("distributed fixture release incomplete")
+                            # The remote sessions have finished; only the local
+                            # retained checkpoint is meaningful from here.
+                            local_checkpoint()
+                            result = lease["release_fixture"](
+                                outcome, decision["journal_sha256"], confirmation_sha)
+                            if result.get("fixture_hold_released") is not True:
+                                raise TransactionSafetyError("local fixture release incomplete")
+                            _persist_terminal_receipt(
+                                root / "game-uptime-fixture-release.json",
+                                {"kind": "DSM928FixtureRelease", "schema_version": 1,
+                                 "confirmation_sha256": confirmation_sha,
+                                 "released_agent_ids": receipt["agent_ids"],
+                                 "live_no_drain_authorized": False}, os.geteuid())
 
                     try:
                         result = func(root, *args, **kwargs, _scope=receipt)
@@ -178,6 +201,8 @@ def _exclusive_transaction(func):
                             record_terminal_if_present()
                         raise
                     record_terminal_if_present()
+                    if finalize:
+                        result = {**result, "fixture_hold_released": True}
                     return result
             except TransactionSafetyError:
                 raise
@@ -628,6 +653,7 @@ def confirm_terminal(
     local_scope_kwargs: Mapping | None = None,
     distributed_fixture_openers: Mapping | None = None,
     local_fixture_agent_id: str | None = None,
+    finalize_fixture: bool = False,
     _scope: Mapping | None = None,
 ) -> dict:
     """Retry terminal confirmation without re-executing apply or rollback.

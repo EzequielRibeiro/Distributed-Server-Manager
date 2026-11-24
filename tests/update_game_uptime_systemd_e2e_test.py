@@ -1811,6 +1811,24 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertTrue(retried["terminal_confirmation_retried"])
         self.assertEqual(saved_confirmation, (confirmation.stat().st_ino, confirmation.read_bytes()))
         self.assertEqual(remote_errors, [])
+        finalized = transaction.confirm_terminal(
+            journal, names, inspect=inspect_game, list_units=list_games,
+            operator_reviewed=True, local_scope_kwargs=recovery_opts,
+            distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
+            finalize_fixture=True)
+        self.assertTrue(finalized["fixture_hold_released"])
+        self.assertEqual(remote_errors, [])
+        self.assertFalse(opts["pending_path"].exists())
+        self.assertFalse(opts["hold_path"].exists())
+        states = [opts["pending_path"].parent]
+        states.extend(self.workspace / ("recovery-agent-" + str(i)) / "state"
+                      for i in range(len(remote_ids)))
+        for folder in states:
+            self.assertFalse((folder/"no-drain-pending.json").exists())
+            archive = json.loads((folder / ("released-" + opts["transaction_id"] + ".json")).read_bytes())
+            self.assertEqual(archive["journal_sha256"], terminal_hash)
+            self.assertIn("no-drain-pending.json", archive["evidence"])
+        self.assertTrue((journal/"game-uptime-fixture-release.json").exists())
         self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
         self.assertEqual((fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
                          b"saved-world-private-test")

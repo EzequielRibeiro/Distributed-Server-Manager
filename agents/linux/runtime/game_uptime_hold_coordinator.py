@@ -268,6 +268,54 @@ def _persist_terminal_receipt(path, payload, uid):
         os.close(folder)
 
 
+def _archive_fixture_hold(*, marker, pending, transaction_id, decision, uid, checkpoint):
+    """Archive exact evidence before clearing a disposable, confirmed hold.
+
+    The persistent sentinel is removed LAST. An interruption before that
+    point remains fail-closed. Never call on installed paths; a partially
+    released distributed fixture still requires operator reconciliation.
+    """
+    import tempfile
+    import hashlib
+    marker, pending = Path(marker), Path(pending)
+    tmp = Path(tempfile.gettempdir()).resolve(strict=True)
+    if (os.geteuid() != uid or tmp not in marker.parents or tmp not in pending.parents
+            or marker == HOLD_PATH or pending == PENDING_PATH
+            or not _ID.fullmatch(transaction_id)):
+        raise HoldPreparationBlocked("fixture_terminal_release_only")
+    paths = [marker, pending.parent / "no-drain-release-binding.json",
+             pending.parent / "no-drain-agent-inventory.json", pending]
+    checkpoint()
+    records = {}
+    for path in paths:
+        _trusted_directory(path.parent, uid)
+        found = path.lstat()
+        if (not stat.S_ISREG(found.st_mode) or found.st_uid != uid
+                or found.st_nlink != 1 or found.st_mode & 0o022
+                or not 0 < found.st_size <= 16384):
+            raise HoldPreparationBlocked("terminal_archive_evidence_untrusted")
+        raw = path.read_bytes()
+        if len(raw) != found.st_size:
+            raise HoldPreparationBlocked("terminal_archive_evidence_changed")
+        records[path.name] = {"sha256": hashlib.sha256(raw).hexdigest(),
+                              "content": raw.decode("utf-8")}
+    checkpoint()
+    archive = pending.parent / ("released-" + transaction_id + ".json")
+    _persist_terminal_receipt(archive, {
+        "kind": "DSM928ArchivedFixtureHold", "schema_version": 1,
+        "transaction_id": transaction_id, **decision,
+        "evidence": records, "live_no_drain_authorized": False}, uid)
+    checkpoint()
+    for path in paths:
+        path.unlink()
+        folder = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(folder)
+        finally:
+            os.close(folder)
+    return {"fixture_hold_released": True, "live_no_drain_authorized": False}
+
+
 @contextmanager
 def prepare_standalone_agent_scope(
     *, transaction_id: str, release_sha256: str, issued_at: int,
@@ -410,6 +458,23 @@ def prepare_standalone_agent_scope(
             checkpoint()
             return decision
 
+        released = False
+
+        def release_fixture(outcome, journal_sha256, confirmation_sha256):
+            nonlocal released
+            if fixture_root is None or released:
+                raise HoldPreparationBlocked("fixture_terminal_release_only")
+            if (type(confirmation_sha256) is not str
+                    or not re.fullmatch(r"[0-9a-f]{64}", confirmation_sha256)):
+                raise HoldPreparationBlocked("invalid_global_confirmation_digest")
+            decision = record_terminal(outcome, journal_sha256)
+            result = _archive_fixture_hold(
+                marker=marker, pending=pending, transaction_id=transaction_id,
+                decision={**decision, "confirmation_sha256": confirmation_sha256},
+                uid=trusted_uid, checkpoint=checkpoint)
+            released = True
+            return result
+
         try:
             yield {
                 "status": "standalone_agent_prepared_local_scope_retained",
@@ -420,10 +485,12 @@ def prepare_standalone_agent_scope(
                 "recovery_scope_only": recover_existing,
                 "cooperating_local_lock_families_retained": 2,
                 "checkpoint": checkpoint, "record_terminal": record_terminal,
+                "release_fixture": release_fixture,
                 "remote_agents_acked": False, "external_jobs_acked": False,
                 "live_no_drain_authorized": False,
             }
-            checkpoint()
+            if not released:
+                checkpoint()
         finally:
             retained = False
 
@@ -572,7 +639,8 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
             raise HoldPreparationBlocked("agent_session_local_witness_invalid")
         def answer(action, challenge, decision=None):
             frame_deadline()
-            lease["checkpoint"]()
+            if action != "fixture_released":
+                lease["checkpoint"]()
             _session_write(write_fd, {
                 **scope, "protocol": _SESSION_PROTOCOL, "action": action,
                 "agent_id": local_agent_id, "challenge": challenge,
@@ -589,15 +657,28 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
             frame_deadline()
             challenge = req.get("challenge")
             terminal = req.get("action") == "record_terminal"
-            extra = {"outcome", "journal_sha256"} if terminal else set()
+            release = req.get("action") == "release_fixture"
+            extra = {"outcome", "journal_sha256"} if terminal or release else set()
+            if release:
+                extra.add("confirmation_sha256")
             if (set(req) != {"protocol", "action", "session_id", "challenge"} | extra
                     or req.get("protocol") != _SESSION_PROTOCOL
                     or req.get("session_id") != session
-                    or req.get("action") not in ("checkpoint", "close", "record_terminal")
+                    or req.get("action") not in ("checkpoint", "close", "record_terminal", "release_fixture")
                     or type(challenge) is not str or not _ID.fullmatch(challenge)
                     or challenge in seen or len(seen) >= 4096):
                 raise HoldPreparationBlocked("agent_session_challenge_invalid")
             seen.add(challenge)
+            if release:
+                if not callable(lease.get("release_fixture")):
+                    raise HoldPreparationBlocked("fixture_terminal_release_unavailable")
+                decision = _terminal_decision(req["outcome"], req["journal_sha256"])
+                decision["confirmation_sha256"] = req["confirmation_sha256"]
+                result = lease["release_fixture"](**decision)
+                if result != {"fixture_hold_released": True, "live_no_drain_authorized": False}:
+                    raise HoldPreparationBlocked("fixture_release_receipt_invalid")
+                answer("fixture_released", challenge, decision)
+                return
             if terminal:
                 if not callable(lease.get("record_terminal")):
                     raise HoldPreparationBlocked("terminal_decision_storage_unavailable")
@@ -693,7 +774,8 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
             **scope, "protocol": _SESSION_PROTOCOL,
             "action": {"prepare": "prepared", "recover": "recovered",
                        "checkpoint": "retained", "close": "closed",
-                       "record_terminal": "terminal_recorded"}[action],
+                       "record_terminal": "terminal_recorded",
+                       "release_fixture": "fixture_released"}[action],
             "agent_id": agent, "challenge": challenge, "session_id": session_id,
             "persistent_journal_prepared": True, "recovery_scope_only": recover_existing,
             "cooperating_local_lock_families_retained": 2,
@@ -719,7 +801,7 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
             raise HoldPreparationBlocked("distributed_agent_checkpoint_blocked") from exc
 
     def record_terminal(outcome, journal_sha256):
-        nonlocal active
+        nonlocal active, terminal_recorded
         decision = _terminal_decision(outcome, journal_sha256)
         checkpoint()
         try:
@@ -729,8 +811,32 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         except (OSError, RuntimeError, ValueError) as exc:
             active = False
             raise HoldPreparationBlocked("distributed_terminal_decision_incomplete") from exc
+        terminal_recorded = decision
         return {"recorded_agent_ids": ids.copy(), **decision,
                 "pending_evidence_retained": True, "live_no_drain_authorized": False}
+
+    released = False
+    terminal_recorded = None
+
+    def release_fixture(outcome, journal_sha256, confirmation_sha256):
+        nonlocal active, released
+        decision = _terminal_decision(outcome, journal_sha256)
+        if terminal_recorded != decision:
+            raise HoldPreparationBlocked("global_terminal_record_required")
+        if (type(confirmation_sha256) is not str
+                or not re.fullmatch(r"[0-9a-f]{64}", confirmation_sha256)):
+            raise HoldPreparationBlocked("invalid_global_confirmation_digest")
+        checkpoint()
+        try:
+            for agent in ids:
+                exchange(agent, "release_fixture",
+                         {**decision, "confirmation_sha256": confirmation_sha256})
+        except (OSError, RuntimeError, ValueError) as exc:
+            active = False
+            raise HoldPreparationBlocked("partial_fixture_release_requires_review") from exc
+        released = True
+        active = False
+        return {"released_agent_ids": ids.copy(), "live_no_drain_authorized": False}
 
     with ExitStack() as stack:
         try:
@@ -755,13 +861,15 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
                 "recovery_scope_only": recover_existing,
                 "cooperating_local_scopes_retained": len(ids),
                 "checkpoint": checkpoint, "record_terminal": record_terminal,
+                "release_fixture": release_fixture,
                 "transport_authentication_independently_verified": False,
                 "remote_agents_acked": False, "external_jobs_acked": False,
                 "live_no_drain_authorized": False,
             }
-            checkpoint()
-            for agent in ids:
-                exchange(agent, "close")
+            if not released:
+                checkpoint()
+                for agent in ids:
+                    exchange(agent, "close")
         except (OSError, ValueError, RuntimeError) as exc:
             raise HoldPreparationBlocked("distributed_agent_coordination_blocked") from exc
         finally:
