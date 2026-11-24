@@ -212,14 +212,38 @@ def _pinned_ssh_openers(expected_agent_ids):
 @contextlib.contextmanager
 def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
                               expires_at, expected_agent_ids,
+                              local_hybrid_agent_id=None,
                               recover_existing=False, operator_reviewed=False):
-    """Root-only transport adapter; not called by production update.sh."""
+    """Root-only transport adapter; preserve full scope on every remote host.
+
+    A Hybrid partition is admitted only against the independently pinned
+    local identity, not inferred from missing SSH endpoints. The caller
+    must still establish the actual retained local scope.
+    """
+    _snapshot_trusted()
+    if str(LIBEXEC) not in sys.path:
+        raise SSHTransportBlocked("audited_snapshot_import_path_required")
     from game_uptime_hold_coordinator import retain_distributed_agent_sessions
-    with _pinned_ssh_openers(expected_agent_ids) as openers:
+    if local_hybrid_agent_id is not None:
+        for directory in (Path("/etc"), TRUST_DIR):
+            _root_directory(directory)
+        raw = _root_file(LOCAL_ID, 192)
+        if (type(local_hybrid_agent_id) is not str
+                or not _ID.fullmatch(local_hybrid_agent_id)
+                or raw != (local_hybrid_agent_id + "\n").encode("ascii")
+                or type(expected_agent_ids) is not list
+                or local_hybrid_agent_id not in expected_agent_ids):
+            raise SSHTransportBlocked("pinned_local_hybrid_identity_mismatch")
+    if (type(expected_agent_ids) is not list
+            or len(set(expected_agent_ids)) != len(expected_agent_ids)):
+        raise SSHTransportBlocked("invalid_ssh_expected_inventory")
+    standalone_ids = [agent for agent in expected_agent_ids if agent != local_hybrid_agent_id]
+    with _pinned_ssh_openers(standalone_ids) as openers:
         with retain_distributed_agent_sessions(
                 transaction_id=transaction_id, release_sha256=release_sha256,
                 issued_at=issued_at, expires_at=expires_at,
                 expected_agent_ids=expected_agent_ids,
+                local_hybrid_agent_id=local_hybrid_agent_id,
                 session_openers=openers, recover_existing=recover_existing,
                 operator_reviewed=operator_reviewed) as receipt:
             yield {**receipt, "ssh_host_keys_authenticated": True,

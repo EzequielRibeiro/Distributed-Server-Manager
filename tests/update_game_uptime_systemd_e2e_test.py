@@ -1758,6 +1758,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(binding["distributed_scope_binding"]["agent_ids"],
                          sorted(remote_ids))
         self.assertEqual(binding["distributed_scope_binding"]["local_hybrid_agent_id"], hybrid_id)
+        for index in range(len(remote_ids)):
+            inventory = json.loads((self.workspace / ("recovery-agent-" + str(index))
+                / "state/no-drain-agent-inventory.json").read_text())
+            self.assertEqual(inventory["agent_ids"], sorted(agent_ids))
         self.assertEqual(remote_errors, ["agent_session_disconnected"] * len(remote_ids))
         remote_errors.clear()
         self._assert_unchanged(originals)

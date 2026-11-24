@@ -569,13 +569,16 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
                                       issued_at: int, expires_at: int,
                                       expected_agent_ids: list[str],
                                       session_openers: dict,
+                                      local_hybrid_agent_id: str | None = None,
                                       recover_existing: bool = False,
                                       operator_reviewed: bool = False,
                                       now=None) -> Iterator[dict]:
     """Central coordinator for independently authenticated, dedicated sessions.
 
     A trusted operator must supply one authenticated channel opener for EACH
-    pinned Agent; no discovery from receipts and no offline-agent exemption.
+    pinned standalone Agent. The explicitly pinned Hybrid identity remains
+    in the full inventory transmitted to every host, but is covered locally.
+    No discovery from receipts and no offline-agent exemption.
     Each opener is a context manager yielding (read_fd, write_fd). This
     protocol does not establish SSH/TLS trust itself, and cannot attest
     uninstrumented jobs, Hybrid coverage or live update authorization.
@@ -584,7 +587,13 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
     """
     scope = _session_scope(transaction_id, release_sha256, issued_at,
                            expires_at, expected_agent_ids)
-    ids = scope["expected_agent_ids"]
+    full_ids = scope["expected_agent_ids"]
+    if local_hybrid_agent_id is not None and (
+            type(local_hybrid_agent_id) is not str or local_hybrid_agent_id not in full_ids):
+        raise HoldPreparationBlocked("distributed_hybrid_identity_not_in_inventory")
+    ids = [agent for agent in full_ids if agent != local_hybrid_agent_id]
+    if not ids:
+        raise HoldPreparationBlocked("distributed_standalone_inventory_empty")
     if (type(recover_existing) is not bool or type(operator_reviewed) is not bool
             or (recover_existing and not operator_reviewed)):
         raise HoldPreparationBlocked("explicit_distributed_recovery_review_required")

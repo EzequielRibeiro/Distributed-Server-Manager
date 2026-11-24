@@ -110,7 +110,7 @@ def _exclusive_transaction(func):
                     if distributed is not None:
                         remote = stack.enter_context(_bound_distributed_fixture(
                             receipt, options, distributed, remote_ids=remote_ids,
-                            recovery=recovery))
+                            hybrid_id=hybrid_id, recovery=recovery))
                         local_checkpoint = receipt["checkpoint"]
                         def combined_checkpoint():
                             local_checkpoint()
@@ -193,7 +193,7 @@ def _distributed_partition(ids, hybrid_id, openers):
 
 def _bound_distributed_fixture(receipt: Mapping, options: Mapping,
                                openers: Mapping, *, remote_ids: list[str],
-                               recovery: bool):
+                               hybrid_id: str | None, recovery: bool):
     """Compose the actual session protocol with the existing disposable lease.
 
     Only injected fixture channels are permitted here. The operational SSH
@@ -219,7 +219,8 @@ def _bound_distributed_fixture(receipt: Mapping, options: Mapping,
         transaction_id=receipt["transaction_id"],
         release_sha256=receipt["release_sha256"],
         issued_at=marker["issued_at"], expires_at=marker["expires_at"],
-        expected_agent_ids=remote_ids, session_openers=openers,
+        expected_agent_ids=receipt["agent_ids"],
+        local_hybrid_agent_id=hybrid_id, session_openers=openers,
         recover_existing=recovery, operator_reviewed=recovery)
 
 
