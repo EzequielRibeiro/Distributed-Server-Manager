@@ -932,6 +932,20 @@ class PersistentPendingHoldTests(unittest.TestCase):
             self.assertTrue(recovered["recovery_scope_only"])
             self.assertFalse(recovered["live_no_drain_authorized"])
             recovered["checkpoint"]()
+            decision = recovered["record_terminal"]("recovered_rollback", "e"*64)
+            self.assertEqual(decision["recorded_agent_ids"], complete)
+            self.assertTrue(decision["pending_evidence_retained"])
+            terminal_paths = [option["journal_path"].parent /
+                ("terminal-" + self.tx + ".json") for option in options]
+            terminal_saved = {p: (p.stat().st_ino, p.read_bytes()) for p in terminal_paths}
+            self.assertEqual(recovered["record_terminal"]("recovered_rollback", "e"*64), decision)
+            self.assertEqual(terminal_saved, {p: (p.stat().st_ino, p.read_bytes())
+                                            for p in terminal_paths})
+            for p in terminal_paths:
+                record = json.loads(p.read_bytes())
+                self.assertEqual(record["journal_sha256"], "e"*64)
+                self.assertEqual(record["expected_agent_ids"], complete)
+                self.assertTrue(record["pending_evidence_retained"])
             for option in options:
                 with self.assertRaises(PrivilegedHelperFenceUnavailable):
                     with shared_privileged_helper_lock(

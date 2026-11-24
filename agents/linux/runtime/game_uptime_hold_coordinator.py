@@ -6,8 +6,9 @@ This is a *preparatory* transaction owner, never an approval to update live
 games. An existing or partially written persistent journal MUST remain a
 blocker after a crash, including if the /run marker is lost on reboot.
 
-No automatic completion, lease renewal, removal or recovery is exposed.
-Those operations require a later independently verified distributed fence.
+Terminal decisions can be recorded durably under retained locks. Recording
+is not finalization or permission to clear pending evidence; no automatic
+release, renewal or removal is exposed.
 """
 from __future__ import annotations
 
@@ -228,6 +229,45 @@ def prepare_root_only(
     }
 
 
+def _terminal_decision(outcome, journal_sha256):
+    if (outcome not in ("verified", "rolled_back", "recovered_rollback")
+            or type(journal_sha256) is not str
+            or not re.fullmatch(r"[0-9a-f]{64}", journal_sha256)):
+        raise HoldPreparationBlocked("invalid_terminal_decision")
+    return {"outcome": outcome, "journal_sha256": journal_sha256}
+
+
+def _persist_terminal_receipt(path, payload, uid):
+    """Write once, or acknowledge exactly the same durable decision.
+
+    A conflicting or incomplete receipt stays blocking. Never truncate,
+    remove or rewrite it, and never clear the maintenance sentinel here.
+    """
+    _trusted_directory(path.parent, uid)
+    expected = (json.dumps(payload, sort_keys=True, separators=(",", ":"))
+                + "\n").encode("utf-8")
+    if not os.path.lexists(path):
+        _write_once(path, payload, uid, max_bytes=32768)
+    before = path.lstat()
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        found = os.fstat(fd)
+        if (not stat.S_ISREG(found.st_mode) or found.st_uid != uid
+                or stat.S_IMODE(found.st_mode) != 0o600
+                or found.st_nlink != 1 or found.st_size != len(expected)
+                or (found.st_dev, found.st_ino) != (before.st_dev, before.st_ino)
+                or os.read(fd, len(expected) + 1) != expected):
+            raise HoldPreparationBlocked("terminal_decision_conflict_or_incomplete")
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    folder = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(folder)
+    finally:
+        os.close(folder)
+
+
 @contextmanager
 def prepare_standalone_agent_scope(
     *, transaction_id: str, release_sha256: str, issued_at: int,
@@ -355,6 +395,21 @@ def prepare_standalone_agent_scope(
             checkpoint()
         except (OSError, RuntimeError, ValueError) as exc:
             raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc
+
+        def record_terminal(outcome, journal_sha256):
+            decision = _terminal_decision(outcome, journal_sha256)
+            checkpoint()
+            _persist_terminal_receipt(
+                pending.parent / ("terminal-" + transaction_id + ".json"),
+                {"kind": "DSM928AgentTerminalDecision", "schema_version": 1,
+                 "transaction_id": transaction_id, "release_sha256": release_sha256,
+                 "issued_at": issued_at, "expires_at": expires_at,
+                 "expected_agent_ids": ids, "agent_id": local_agent_id,
+                 **decision, "live_no_drain_authorized": False,
+                 "pending_evidence_retained": True}, trusted_uid)
+            checkpoint()
+            return decision
+
         try:
             yield {
                 "status": "standalone_agent_prepared_local_scope_retained",
@@ -364,7 +419,7 @@ def prepare_standalone_agent_scope(
                 "persistent_journal_prepared": True,
                 "recovery_scope_only": recover_existing,
                 "cooperating_local_lock_families_retained": 2,
-                "checkpoint": checkpoint,
+                "checkpoint": checkpoint, "record_terminal": record_terminal,
                 "remote_agents_acked": False, "external_jobs_acked": False,
                 "live_no_drain_authorized": False,
             }
@@ -515,7 +570,7 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
                 or lease.get("live_no_drain_authorized") is not False
                 or not callable(lease.get("checkpoint"))):
             raise HoldPreparationBlocked("agent_session_local_witness_invalid")
-        def answer(action, challenge):
+        def answer(action, challenge, decision=None):
             frame_deadline()
             lease["checkpoint"]()
             _session_write(write_fd, {
@@ -526,21 +581,33 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
                 "cooperating_local_lock_families_retained": 2,
                 "external_jobs_acked": False, "remote_agents_acked": False,
                 "live_no_drain_authorized": False,
+                **(decision or {}),
             }, frame_deadline(10))
         answer("recovered" if recovering else "prepared", request["challenge"])
         while True:
             req = _session_read(read_fd, frame_deadline())
             frame_deadline()
             challenge = req.get("challenge")
-            if (set(req) != {"protocol", "action", "session_id", "challenge"}
+            terminal = req.get("action") == "record_terminal"
+            extra = {"outcome", "journal_sha256"} if terminal else set()
+            if (set(req) != {"protocol", "action", "session_id", "challenge"} | extra
                     or req.get("protocol") != _SESSION_PROTOCOL
                     or req.get("session_id") != session
-                    or req.get("action") not in ("checkpoint", "close")
+                    or req.get("action") not in ("checkpoint", "close", "record_terminal")
                     or type(challenge) is not str or not _ID.fullmatch(challenge)
                     or challenge in seen or len(seen) >= 4096):
                 raise HoldPreparationBlocked("agent_session_challenge_invalid")
             seen.add(challenge)
-            answer("closed" if req["action"] == "close" else "retained", challenge)
+            if terminal:
+                if not callable(lease.get("record_terminal")):
+                    raise HoldPreparationBlocked("terminal_decision_storage_unavailable")
+                decision = _terminal_decision(req["outcome"], req["journal_sha256"])
+                frame_deadline()
+                if lease["record_terminal"](**decision) != decision:
+                    raise HoldPreparationBlocked("terminal_decision_receipt_invalid")
+                answer("terminal_recorded", challenge, decision)
+            else:
+                answer("closed" if req["action"] == "close" else "retained", challenge)
             if req["action"] == "close":
                 return
 
@@ -607,7 +674,7 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
     session_deadline = _retained_session_deadline(scope, clock)
     def deadline():
         return session_deadline(10)
-    def exchange(agent, action):
+    def exchange(agent, action, decision=None):
         read_fd, write_fd, session = sessions[agent]
         challenge = secrets.token_hex(16)
         request = {"protocol": _SESSION_PROTOCOL, "action": action, "challenge": challenge}
@@ -615,6 +682,8 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
             request.update(scope, agent_id=agent)
         else:
             request["session_id"] = session
+        if decision is not None:
+            request.update(decision)
         limit = deadline()
         _session_write(write_fd, request, limit)
         reply = _session_read(read_fd, limit)
@@ -623,12 +692,13 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         expected = {
             **scope, "protocol": _SESSION_PROTOCOL,
             "action": {"prepare": "prepared", "recover": "recovered",
-                       "checkpoint": "retained", "close": "closed"}[action],
+                       "checkpoint": "retained", "close": "closed",
+                       "record_terminal": "terminal_recorded"}[action],
             "agent_id": agent, "challenge": challenge, "session_id": session_id,
             "persistent_journal_prepared": True, "recovery_scope_only": recover_existing,
             "cooperating_local_lock_families_retained": 2,
             "external_jobs_acked": False, "remote_agents_acked": False,
-            "live_no_drain_authorized": False,
+            "live_no_drain_authorized": False, **(decision or {}),
         }
         if (_session_bytes(reply) != _session_bytes(expected)
                 or type(session_id) is not str or not _ID.fullmatch(session_id)
@@ -647,6 +717,20 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         except (OSError, ValueError, RuntimeError) as exc:
             active = False
             raise HoldPreparationBlocked("distributed_agent_checkpoint_blocked") from exc
+
+    def record_terminal(outcome, journal_sha256):
+        nonlocal active
+        decision = _terminal_decision(outcome, journal_sha256)
+        checkpoint()
+        try:
+            for agent in ids:
+                exchange(agent, "record_terminal", decision)
+            checkpoint()
+        except (OSError, RuntimeError, ValueError) as exc:
+            active = False
+            raise HoldPreparationBlocked("distributed_terminal_decision_incomplete") from exc
+        return {"recorded_agent_ids": ids.copy(), **decision,
+                "pending_evidence_retained": True, "live_no_drain_authorized": False}
 
     with ExitStack() as stack:
         try:
@@ -670,7 +754,7 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
                 "prepared_agent_ids": ids.copy(),
                 "recovery_scope_only": recover_existing,
                 "cooperating_local_scopes_retained": len(ids),
-                "checkpoint": checkpoint,
+                "checkpoint": checkpoint, "record_terminal": record_terminal,
                 "transport_authentication_independently_verified": False,
                 "remote_agents_acked": False, "external_jobs_acked": False,
                 "live_no_drain_authorized": False,

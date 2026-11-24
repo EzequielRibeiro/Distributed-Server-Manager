@@ -126,14 +126,39 @@ def _exclusive_transaction(func):
                         if hybrid_id is not None:
                             receipt["distributed_scope_binding"]["local_hybrid_agent_id"] = hybrid_id
                         combined_checkpoint()
+                    def record_terminal_if_present():
+                        if distributed is None:
+                            return
+                        journal = root / "game-uptime-transaction.json"
+                        if not journal.is_file() or journal.is_symlink():
+                            return
+                        raw = journal.read_bytes()
+                        result = json.loads(raw)
+                        outcome = result.get("status")
+                        if outcome not in ("verified", "rolled_back", "recovered_rollback"):
+                            return
+                        combined_checkpoint()
+                        decision = remote["record_terminal"](
+                            outcome, hashlib.sha256(raw).hexdigest())
+                        if (decision.get("recorded_agent_ids") != remote_ids
+                                or decision.get("pending_evidence_retained") is not True):
+                            raise TransactionSafetyError("distributed terminal decision incomplete")
+                        combined_checkpoint()
+
                     try:
-                        return func(root, *args, **kwargs, _scope=receipt)
+                        result = func(root, *args, **kwargs, _scope=receipt)
                     except TransactionSafetyError as exc:
                         # Context managers may translate an exception raised
                         # at yield into a scope error. Keep the exact rejected
                         # transaction diagnosis, not a generic lease error.
                         transaction_error = exc
+                        # A completed rollback is terminal; do not perform
+                        # another rollback when remote confirmation fails.
+                        if distributed is not None and str(exc) == "transaction rejected and rollback completed":
+                            record_terminal_if_present()
                         raise
+                    record_terminal_if_present()
+                    return result
             except TransactionSafetyError:
                 raise
             except (OSError, RuntimeError, ValueError) as exc:

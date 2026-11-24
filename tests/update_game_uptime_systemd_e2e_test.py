@@ -1791,6 +1791,13 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(remote_errors, [])
         self.assertEqual(outcome["status"], "recovered_rollback")
         self.assertFalse(outcome["live_no_drain_authorized"])
+        terminal_hash = hashlib.sha256((journal/"game-uptime-transaction.json").read_bytes()).hexdigest()
+        for index in range(len(remote_ids)):
+            state = self.workspace / ("recovery-agent-" + str(index)) / "state"
+            terminal = json.loads((state / ("terminal-" + opts["transaction_id"] + ".json")).read_bytes())
+            self.assertEqual(terminal["outcome"], "recovered_rollback")
+            self.assertEqual(terminal["journal_sha256"], terminal_hash)
+            self.assertTrue((state/"no-drain-pending.json").exists())
         self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
         self.assertEqual((fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
                          b"saved-world-private-test")
