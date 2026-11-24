@@ -6,6 +6,10 @@ After=local-fs.target
 Type=oneshot
 User=root
 Group=root
+# Runtime identity prepares the common lock at Agent startup. A helper
+# invoked independently must also prepare it after a reboot, before SH.
+ExecStartPre=+/usr/bin/python3 -I /opt/capivara-agent/runtime/game_uptime_privileged_flock.py --provision
+Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1
 Environment=CAPIVARA_AGENT_ROOT=/opt/capivara-agent
 Environment=CAPIVARA_AGENT_STATE_DIR=/var/lib/capivara-agent
 Environment=CAPIVARA_AGENT_CONFIG=/etc/capivara-agent/agent.json

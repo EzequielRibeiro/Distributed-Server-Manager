@@ -6,6 +6,11 @@ After=local-fs.target
 Type=oneshot
 User=root
 Group=root
+# Prepare fixed root-owned lock inodes before entering the restricted runtime
+# identity reconciliation. The preparers accept no caller-controlled paths.
+ExecStartPre=+/usr/bin/python3 -I /opt/capivara-agent/runtime/game_uptime_privileged_flock.py --provision
+ExecStartPre=+/usr/bin/python3 -I /opt/capivara-agent/runtime/game_uptime_finalization_flock.py --provision
+Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1
 ExecStart=/usr/bin/python3 /opt/capivara-agent/privileged/reconcile_runtime_identity.py
 NoNewPrivileges=true
 PrivateTmp=true

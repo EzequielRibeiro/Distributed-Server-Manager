@@ -54,7 +54,7 @@ def _check_parents(path: Path, owner_uid: int) -> None:
 
 def _open_inode(path: Path, owner_uid: int, agent_gid: int) -> int:
     _check_parents(path, owner_uid)
-    flags = (os.O_RDWR | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    flags = (os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
              | getattr(os, "O_CLOEXEC", 0))
     try:
         before = path.lstat()
@@ -179,3 +179,9 @@ def provision_finalization_lock(*, path: Path = LOCK_PATH,
     fd = _open_inode(path, owner_uid, agent_gid)
     os.close(fd)
     return path
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] != ["--provision"] or os.geteuid() != 0:
+        raise SystemExit(2)
+    provision_finalization_lock()

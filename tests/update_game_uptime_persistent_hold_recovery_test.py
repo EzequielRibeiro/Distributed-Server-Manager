@@ -576,6 +576,21 @@ class PersistentPendingHoldTests(unittest.TestCase):
             local_privileged_and_finalization_journal_witness,
         )
 
+        # The standalone systemd package must enable both existing fences,
+        # without weakening ProtectSystem or adding writable /run paths.
+        services = ROOT / "agents/linux/services"
+        identity = (services / "capivara-agent-runtime-identity.service").read_text()
+        self.assertIn("game_uptime_privileged_flock.py --provision", identity)
+        self.assertIn("game_uptime_finalization_flock.py --provision", identity)
+        for name in ("runtime-identity", "materialize@", "firewall@",
+                     "backup-create@", "backup-restore@"):
+            unit = (services / ("capivara-agent-" + name + ".service")).read_text()
+            self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1\n", unit)
+            self.assertIn("game_uptime_privileged_flock.py --provision", unit)
+            self.assertNotIn("ReadWritePaths=/run", unit)
+        standalone = (services / "capivara-agent.service").read_text()
+        self.assertIn("Environment=DSM928_AGENT_FINALIZATION_FLOCK=1\n", standalone)
+        self.assertIn("Requires=capivara-agent-runtime-identity.service", standalone)
         final_dir = self.run / "finalization-locks"
         final_dir.mkdir(mode=0o755)
         child_inode = final_dir / "agent-finalization-operations.lock"

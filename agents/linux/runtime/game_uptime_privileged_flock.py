@@ -40,7 +40,7 @@ def _open_inode(path: Path, trusted_uid: int) -> int:
     _trusted_parent(path, trusted_uid)
     try:
         before = path.lstat()
-        flags = (os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                  | getattr(os, "O_CLOEXEC", 0)
                  | getattr(os, "O_NONBLOCK", 0))
         fd = os.open(path, flags)
@@ -167,3 +167,9 @@ def provision_privileged_helper_lock(*, path: Path = LOCK_PATH,
     fd = _open_inode(path, uid)
     os.close(fd)
     return path
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] != ["--provision"] or os.geteuid() != 0:
+        raise SystemExit(2)
+    provision_privileged_helper_lock()
