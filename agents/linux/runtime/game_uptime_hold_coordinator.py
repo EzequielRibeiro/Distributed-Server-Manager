@@ -429,6 +429,30 @@ def _session_scope(transaction_id, release_sha256, issued_at, expires_at, ids):
             "expected_agent_ids": sorted(ids)}
 
 
+def _retained_session_deadline(scope, clock, *, monotonic=None):
+    """Bind a retained session to both wall and monotonic expiry.
+
+    An idle apply/rollback must not discard a cooperating fence after an
+    arbitrary frame timeout. A backward wall-clock adjustment must not
+    extend the original lease either. Only individual exchanges are
+    bounded by a short transport timeout; idle reads end at lease expiry.
+    """
+    tick = time.monotonic if monotonic is None else monotonic
+    current = clock()
+    if not scope["issued_at"] <= current < scope["expires_at"]:
+        raise HoldPreparationBlocked("retained_session_window_expired")
+    hard_end = tick() + scope["expires_at"] - current
+
+    def deadline(max_wait=None):
+        current = clock()
+        now_tick = tick()
+        remaining = min(scope["expires_at"] - current, hard_end - now_tick)
+        if current < scope["issued_at"] or remaining <= 0:
+            raise HoldPreparationBlocked("retained_session_window_expired")
+        return now_tick + (remaining if max_wait is None else min(max_wait, remaining))
+    return deadline
+
+
 def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
                                  local_agent_id: str,
                                  scope_factory=prepare_standalone_agent_scope,
@@ -476,8 +500,7 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
         raise HoldPreparationBlocked("agent_session_identity_not_expected")
     session = secrets.token_hex(16)
     seen = {request["challenge"]}
-    def frame_deadline():
-        return time.monotonic() + min(30, max(0, scope["expires_at"] - clock()))
+    frame_deadline = _retained_session_deadline(scope, clock)
     recovering = request["action"] == "recover"
     with scope_factory(local_agent_id=local_agent_id, recover_existing=recovering,
                        **scope) as lease:
@@ -490,8 +513,7 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
                 or not callable(lease.get("checkpoint"))):
             raise HoldPreparationBlocked("agent_session_local_witness_invalid")
         def answer(action, challenge):
-            if not scope["issued_at"] <= clock() < scope["expires_at"]:
-                raise HoldPreparationBlocked("agent_session_window_expired")
+            frame_deadline()
             lease["checkpoint"]()
             _session_write(write_fd, {
                 **scope, "protocol": _SESSION_PROTOCOL, "action": action,
@@ -501,10 +523,11 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
                 "cooperating_local_lock_families_retained": 2,
                 "external_jobs_acked": False, "remote_agents_acked": False,
                 "live_no_drain_authorized": False,
-            }, frame_deadline())
+            }, frame_deadline(10))
         answer("recovered" if recovering else "prepared", request["challenge"])
         while True:
             req = _session_read(read_fd, frame_deadline())
+            frame_deadline()
             challenge = req.get("challenge")
             if (set(req) != {"protocol", "action", "session_id", "challenge"}
                     or req.get("protocol") != _SESSION_PROTOCOL
@@ -569,11 +592,9 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
     clock = time.time if now is None else now
     sessions = {}
     active = True
+    session_deadline = _retained_session_deadline(scope, clock)
     def deadline():
-        seconds = scope["expires_at"] - clock()
-        if not scope["issued_at"] <= clock() or seconds <= 0:
-            raise HoldPreparationBlocked("distributed_agent_session_window_expired")
-        return time.monotonic() + min(10, seconds)
+        return session_deadline(10)
     def exchange(agent, action):
         read_fd, write_fd, session = sessions[agent]
         challenge = secrets.token_hex(16)
@@ -585,6 +606,7 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         limit = deadline()
         _session_write(write_fd, request, limit)
         reply = _session_read(read_fd, limit)
+        session_deadline()
         session_id = reply.get("session_id")
         expected = {
             **scope, "protocol": _SESSION_PROTOCOL,

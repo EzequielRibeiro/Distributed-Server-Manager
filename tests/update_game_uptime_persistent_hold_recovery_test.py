@@ -785,7 +785,25 @@ class PersistentPendingHoldTests(unittest.TestCase):
         # The offline member must prevent PREPARE, not reduce the quorum.
         from game_uptime_hold_coordinator import (
             retain_distributed_agent_sessions, serve_prepared_agent_session,
+            _retained_session_deadline,
         )
+        # The real retained-session deadline must survive an idle operation
+        # longer than 30 seconds without renewing the original lease.
+        # Independent monotonic time prevents a backward wall-clock jump
+        # from extending a session. No sleeps or additional workflow.
+        clocks = {"wall": 1700000010, "mono": 100}
+        limit = _retained_session_deadline(
+            {"issued_at": 1700000000, "expires_at": 1700000600},
+            lambda: clocks["wall"], monotonic=lambda: clocks["mono"])
+        self.assertEqual(limit(), 690)
+        self.assertEqual(limit(10), 110)
+        clocks.update(wall=1700000050, mono=140)
+        self.assertEqual(limit(), 690)
+        clocks.update(wall=1700000020, mono=689)
+        self.assertEqual(limit(10), 690)
+        clocks["mono"] = 690
+        with self.assertRaises(HoldPreparationBlocked):
+            limit()
         from contextlib import contextmanager
         import socket
         import threading
