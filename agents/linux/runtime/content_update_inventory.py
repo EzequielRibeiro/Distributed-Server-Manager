@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any,Callable
 import content_client
 from content_update_provider import detect_content_update
+from game_uptime_finalization_flock import tracked_agent_operation
 STATE_ROOT=Path(os.environ.get('CAPIVARA_AGENT_STATE_DIR','/var/lib/capivara-agent'))
 INVENTORY_PATH=STATE_ROOT/'content-update-inventory.json'
 DEFAULT_INTERVAL_SECONDS=300
@@ -26,6 +27,10 @@ def _interval(config:dict[str,Any])->int:
  except (TypeError,ValueError):value=DEFAULT_INTERVAL_SECONDS
  return max(60,min(value,86400))
 def refresh(config:dict[str,Any],*,force:bool=False)->dict[str,Any]:
+ with tracked_agent_operation() as admitted:
+  if not admitted:return _read()
+  return _refresh(config,force=force)
+def _refresh(config:dict[str,Any],*,force:bool=False)->dict[str,Any]:
  global _LAST_REFRESH_MONOTONIC
  now=time.monotonic()
  if not force and _LAST_REFRESH_MONOTONIC and now-_LAST_REFRESH_MONOTONIC<_interval(config):return _read()

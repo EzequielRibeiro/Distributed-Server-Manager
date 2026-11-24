@@ -66,6 +66,7 @@ from minecraft_current_neoforge_collector import collect_current_neoforge_attest
 from game_uptime_agent_wire import build_probe as build_no_drain_probe, verify_offer as verify_no_drain_offer
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
 from game_uptime_agent_fence_evidence import build_fence_evidence, verify_fence_receipt
+from game_uptime_finalization_flock import tracked_agent_operation
 from minecraft_serverpack_remote_observer import observe_remote_requests
 from runtime_reconciler import reconcile_all, reconciliation_inventory
 from storage_pool_migration_client import clear_storage_pool_migration_result, read_storage_pool_migration_result, stage_storage_pool_migration
@@ -450,14 +451,17 @@ def run_forever():
     # A root-owned local transaction hold is checked before any startup hook.
     # Invalid/expired evidence also pauses the loop for explicit operator
     # recovery; nothing in this Agent authorizes a no-drain update.
-    while observe_no_drain_hold()["active"]:
+    while True:
+        with tracked_agent_operation() as admitted:
+            if admitted:
+            config=_load_config()
+            if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
+            interrupted=recover_interrupted_operations(config)
+            if interrupted:increment("operations_interrupted",len(interrupted))
+            start_console_stream(config)
+            start_content_update_inventory(config,logger=lambda message:_log(message,True))
+                break
         time.sleep(1)
-    config=_load_config()
-    if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
-    interrupted=recover_interrupted_operations(config)
-    if interrupted:increment("operations_interrupted",len(interrupted))
-    start_console_stream(config)
-    start_content_update_inventory(config,logger=lambda message:_log(message,True))
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
     finalization_supervisor=FinalizationWorkerSupervisor()
     next_fence_observation=0.0
@@ -480,52 +484,56 @@ def run_forever():
                               type(exc).__name__, file=sys.stderr, flush=True)
             time.sleep(1)
             continue
-        now=time.monotonic()
-        if now>=next_reconcile:
-            try:reconcile_all(config)
-            except Exception as exc:_log(f"reconcile loop failed: {exc}",True)
-            # Explicitly opt-in to *read-only* discovery. Mutating recovery
-            # requires a separate supervised gate; never dispatch from heartbeat.
-            audit=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1"
-            permitted_instance=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE","")
-            reconcile=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE")=="1"
-                       and bool(permitted_instance))
-            recover=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER")=="1"
-                     and os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK")=="AUTHORIZED"
-                     and bool(permitted_instance))
-            if audit or reconcile or recover:
-                try:
-                    def queue_finalization(outer, result):
-                        if not (reconcile or recover) or outer.get("instance_id")!=permitted_instance:
-                            return False
-                        if result.get("status")=="running" and not recover:
-                            return False
-                        launched=finalization_supervisor.launch(
-                            instance_id=permitted_instance,
-                            config_path=CONFIG_PATH, state_dir=STATE_DIR)
-                        return launched=="started"
-                    observations=scan_pending_finalizations(
-                        state_root=STATE_DIR,
-                        agent_id=str(config["agent_id"]),
-                        lock_instance=lambda iid:instance_lock(
-                            iid,"minecraft_serverpack_finalization_discovery",timeout_seconds=0.25),
-                        read_operation=read_operation,
-                        dispatch=queue_finalization if (reconcile or recover) else None,
-                        enabled=reconcile or recover,
-                        max_candidates=4,
-                        target_instance_id=permitted_instance if (reconcile or recover) else None,
-                    )
-                    for observation in observations:
-                        if observation.get("status") in {"pending","pending_journal_reconciliation","rejected","dispatched"}:
-                            _log("serverpack finalization observation: "+json.dumps(observation,sort_keys=True))
-                except Exception as exc:
-                    _log(f"serverpack finalization discovery failed: {type(exc).__name__}",True)
-            next_reconcile=now+reconcile_interval
-        if now>=next_heartbeat:
-            try:
-                result=heartbeat(config);_log(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}")
-            except Exception as exc:_log(f"heartbeat failed: {exc}",True)
-            next_heartbeat=now+heartbeat_interval
+        with tracked_agent_operation() as admitted:
+            if admitted:
+                now=time.monotonic()
+                if now>=next_reconcile:
+                    try:reconcile_all(config)
+                    except Exception as exc:_log(f"reconcile loop failed: {exc}",True)
+                    # Explicitly opt-in to *read-only* discovery. Mutating recovery
+                    # requires a separate supervised gate; never dispatch from heartbeat.
+                    audit=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_AUDIT")=="1"
+                    permitted_instance=os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE_INSTANCE","")
+                    reconcile=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECONCILE")=="1"
+                               and bool(permitted_instance))
+                    recover=(os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER")=="1"
+                             and os.environ.get("CAPIVARA_SERVERPACK_FINALIZATION_RECOVER_ACK")=="AUTHORIZED"
+                             and bool(permitted_instance))
+                    if audit or reconcile or recover:
+                        try:
+                            def queue_finalization(outer, result):
+                                if not (reconcile or recover) or outer.get("instance_id")!=permitted_instance:
+                                    return False
+                                if result.get("status")=="running" and not recover:
+                                    return False
+                                launched=finalization_supervisor.launch(
+                                    instance_id=permitted_instance,
+                                    config_path=CONFIG_PATH, state_dir=STATE_DIR)
+                                return launched=="started"
+                            observations=scan_pending_finalizations(
+                                state_root=STATE_DIR,
+                                agent_id=str(config["agent_id"]),
+                                lock_instance=lambda iid:instance_lock(
+                                    iid,"minecraft_serverpack_finalization_discovery",timeout_seconds=0.25),
+                                read_operation=read_operation,
+                                dispatch=queue_finalization if (reconcile or recover) else None,
+                                enabled=reconcile or recover,
+                                max_candidates=4,
+                                target_instance_id=permitted_instance if (reconcile or recover) else None,
+                            )
+                            for observation in observations:
+                                if observation.get("status") in {"pending","pending_journal_reconciliation","rejected","dispatched"}:
+                                    _log("serverpack finalization observation: "+json.dumps(observation,sort_keys=True))
+                        except Exception as exc:
+                            _log(f"serverpack finalization discovery failed: {type(exc).__name__}",True)
+                    next_reconcile=now+reconcile_interval
+                if now>=next_heartbeat:
+                    try:
+                        result=heartbeat(config);_log(f"heartbeat ok agent={result.get('agent_id')} health={result.get('health_status')} status={result.get('status')}")
+                    except Exception as exc:_log(f"heartbeat failed: {exc}",True)
+                    next_heartbeat=now+heartbeat_interval
+            else:
+                next_heartbeat=next_reconcile=0.0
         time.sleep(min(max(0.25,min(next_reconcile,next_heartbeat)-time.monotonic()),1.0))
 
 

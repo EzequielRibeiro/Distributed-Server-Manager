@@ -639,6 +639,29 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), before_journal)
         self.assertEqual(self.marker.read_bytes(), before_marker)
 
+        # The same inode also fences bounded Agent cycles/background work.
+        # Reuse this fixture and assert that a held EX blocks admission;
+        # an active hold remains blocking even after EX is released.
+        from unittest.mock import patch
+        from functools import partial
+        import game_uptime_finalization_flock as runtime_fence
+        import game_uptime_maintenance_hold as runtime_hold
+        shared_fixture = partial(shared_finalization_lock, path=child_inode,
+                                 enabled=True, trusted_uid=self.uid, group_gid=agent_gid)
+        with patch.object(runtime_fence, "shared_finalization_lock", shared_fixture):
+            with patch.object(runtime_hold, "observe", return_value={"active": False}):
+                with runtime_fence.tracked_agent_operation() as admitted:
+                    self.assertTrue(admitted)
+                    with self.assertRaises(PrivilegedJournalWitnessBlocked):
+                        with both():
+                            self.fail("Agent operation bypassed EX")
+                with both():
+                    with runtime_fence.tracked_agent_operation() as admitted:
+                        self.assertFalse(admitted)
+            with patch.object(runtime_hold, "observe", return_value={"active": True}):
+                with runtime_fence.tracked_agent_operation() as admitted:
+                    self.assertFalse(admitted)
+
         # A child already inside SH prevents a false local completion.
         with shared_finalization_lock(
             path=child_inode, enabled=True,
