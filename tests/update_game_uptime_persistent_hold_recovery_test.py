@@ -885,8 +885,36 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(failures, [])
         with self.assertRaises(HoldPreparationBlocked):
             receipt["checkpoint"]()
+        # Reacquire the original distributed scope over new sessions without
+        # writing any maintenance evidence. An explicit review is mandatory.
+        recovery = {**central, "expected_agent_ids": complete,
+                    "recover_existing": True}
+        evidence_paths = [
+            path for option in options for path in (
+                option["hold_path"], option["journal_path"],
+                option["journal_path"].parent / "no-drain-release-binding.json",
+                option["journal_path"].parent / "no-drain-agent-inventory.json")]
+        saved = {path: (path.stat().st_ino, path.read_bytes()) for path in evidence_paths}
+        with self.assertRaisesRegex(HoldPreparationBlocked, "recovery_review_required"):
+            with retain_distributed_agent_sessions(**recovery):
+                self.fail("unreviewed recovery admitted")
+        with retain_distributed_agent_sessions(**recovery, operator_reviewed=True) as recovered:
+            self.assertTrue(recovered["recovery_scope_only"])
+            self.assertFalse(recovered["live_no_drain_authorized"])
+            recovered["checkpoint"]()
+            for option in options:
+                with self.assertRaises(PrivilegedHelperFenceUnavailable):
+                    with shared_privileged_helper_lock(
+                            path=option["privileged_lock_path"], trusted_uid=self.uid, enabled=True):
+                        self.fail("recovery scope did not retain remote lock")
+        self.assertEqual(failures, [])
+        self.assertEqual(saved, {path: (path.stat().st_ino, path.read_bytes())
+                                 for path in evidence_paths})
         for option in options:
             option["hold_path"].unlink()
+            with self.assertRaises(HoldPreparationBlocked):
+                with prepare_standalone_agent_scope(**option, recover_existing=True):
+                    self.fail("missing hold automatically recreated during recovery")
             self.assertTrue(observe(path=option["hold_path"], pending_path=option["journal_path"],
                                     trusted_uid=self.uid, now=1700000020)["active"])
             with self.assertRaises(HoldPreparationBlocked):

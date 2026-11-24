@@ -237,6 +237,7 @@ def prepare_standalone_agent_scope(
     finalization_lock_path: Path | None = None,
     trusted_uid: int = 0, fixture_root: Path | None = None,
     fixture_group_gid: int | None = None, now: int | None = None,
+    recover_existing: bool = False,
 ) -> Iterator[dict[str, object]]:
     """Root operator's host-local PREPARE for a shared distributed transaction.
 
@@ -264,6 +265,7 @@ def prepare_standalone_agent_scope(
     child = CHILD_LOCK if finalization_lock_path is None else Path(finalization_lock_path)
     when = int(time.time()) if now is None else now
     if (os.geteuid() != trusted_uid
+            or type(recover_existing) is not bool
             or type(transaction_id) is not str or not _ID.fullmatch(transaction_id)
             or type(release_sha256) is not str
             or not re.fullmatch(r"[0-9a-f]{64}", release_sha256)
@@ -312,15 +314,22 @@ def prepare_standalone_agent_scope(
             current = int(time.time()) if now is None else now
             if not issued_at <= current < expires_at:
                 raise HoldPreparationBlocked("shared_agent_prepare_window_expired")
-            prepare_root_only(
-                transaction_id=transaction_id, ttl_seconds=expires_at-issued_at,
-                journal_path=pending, hold_path=marker, trusted_uid=trusted_uid,
-                now=issued_at, release_sha256=release_sha256,
-                binding_path=binding, expected_agent_ids=ids)
+            # Recovery is an explicit read-only reacquisition of an intact,
+            # unexpired scope. Never recreate a lost marker, renew a lease,
+            # repair a partial journal or call PREPARE on a recovery request.
+            if not recover_existing:
+                prepare_root_only(
+                    transaction_id=transaction_id, ttl_seconds=expires_at-issued_at,
+                    journal_path=pending, hold_path=marker, trusted_uid=trusted_uid,
+                    now=issued_at, release_sha256=release_sha256,
+                    binding_path=binding, expected_agent_ids=ids)
             paths = (marker, pending, binding, inventory, helper, child)
             pins = tuple(identity(path) for path in paths)
 
+            retained = True
             def checkpoint():
+                if not retained:
+                    raise HoldPreparationBlocked("agent_scope_no_longer_retained")
                 current = int(time.time()) if now is None else now
                 expected = (transaction_id, issued_at, expires_at)
                 if _verify_snapshot(
@@ -343,18 +352,22 @@ def prepare_standalone_agent_scope(
             checkpoint()
         except (OSError, RuntimeError, ValueError) as exc:
             raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc
-        yield {
-            "status": "standalone_agent_prepared_local_scope_retained",
-            "agent_id": local_agent_id, "transaction_id": transaction_id,
-            "release_sha256": release_sha256, "issued_at": issued_at,
-            "expires_at": expires_at, "expected_agent_ids": ids,
-            "persistent_journal_prepared": True,
-            "cooperating_local_lock_families_retained": 2,
-            "checkpoint": checkpoint,
-            "remote_agents_acked": False, "external_jobs_acked": False,
-            "live_no_drain_authorized": False,
-        }
-        checkpoint()
+        try:
+            yield {
+                "status": "standalone_agent_prepared_local_scope_retained",
+                "agent_id": local_agent_id, "transaction_id": transaction_id,
+                "release_sha256": release_sha256, "issued_at": issued_at,
+                "expires_at": expires_at, "expected_agent_ids": ids,
+                "persistent_journal_prepared": True,
+                "recovery_scope_only": recover_existing,
+                "cooperating_local_lock_families_retained": 2,
+                "checkpoint": checkpoint,
+                "remote_agents_acked": False, "external_jobs_acked": False,
+                "live_no_drain_authorized": False,
+            }
+            checkpoint()
+        finally:
+            retained = False
 
 
 _SESSION_PROTOCOL = "dsm928-retained-agent-scope-v1"
@@ -435,7 +448,7 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
     fields = {"transaction_id", "release_sha256", "issued_at", "expires_at", "expected_agent_ids"}
     if (set(request) != fields | {"protocol", "action", "agent_id", "challenge"}
             or request.get("protocol") != _SESSION_PROTOCOL
-            or request.get("action") != "prepare"
+            or request.get("action") not in ("prepare", "recover")
             or request.get("agent_id") != local_agent_id
             or type(request.get("challenge")) is not str
             or not _ID.fullmatch(request["challenge"])):
@@ -450,10 +463,13 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
     seen = {request["challenge"]}
     def frame_deadline():
         return time.monotonic() + min(30, max(0, scope["expires_at"] - clock()))
-    with scope_factory(local_agent_id=local_agent_id, **scope) as lease:
+    recovering = request["action"] == "recover"
+    with scope_factory(local_agent_id=local_agent_id, recover_existing=recovering,
+                       **scope) as lease:
         if (lease.get("agent_id") != local_agent_id
                 or any(lease.get(k) != v for k, v in scope.items())
                 or lease.get("persistent_journal_prepared") is not True
+                or lease.get("recovery_scope_only") is not recovering
                 or lease.get("cooperating_local_lock_families_retained") != 2
                 or lease.get("live_no_drain_authorized") is not False
                 or not callable(lease.get("checkpoint"))):
@@ -466,11 +482,12 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
                 **scope, "protocol": _SESSION_PROTOCOL, "action": action,
                 "agent_id": local_agent_id, "challenge": challenge,
                 "session_id": session, "persistent_journal_prepared": True,
+                "recovery_scope_only": recovering,
                 "cooperating_local_lock_families_retained": 2,
                 "external_jobs_acked": False, "remote_agents_acked": False,
                 "live_no_drain_authorized": False,
             }, frame_deadline())
-        answer("prepared", request["challenge"])
+        answer("recovered" if recovering else "prepared", request["challenge"])
         while True:
             req = _session_read(read_fd, frame_deadline())
             challenge = req.get("challenge")
@@ -492,6 +509,8 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
                                       issued_at: int, expires_at: int,
                                       expected_agent_ids: list[str],
                                       session_openers: dict,
+                                      recover_existing: bool = False,
+                                      operator_reviewed: bool = False,
                                       now=None) -> Iterator[dict]:
     """Central coordinator for independently authenticated, dedicated sessions.
 
@@ -506,6 +525,10 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
     scope = _session_scope(transaction_id, release_sha256, issued_at,
                            expires_at, expected_agent_ids)
     ids = scope["expected_agent_ids"]
+    if (type(recover_existing) is not bool or type(operator_reviewed) is not bool
+            or (recover_existing and not operator_reviewed)):
+        raise HoldPreparationBlocked("explicit_distributed_recovery_review_required")
+    initial_action = "recover" if recover_existing else "prepare"
     if (type(session_openers) is not dict or set(session_openers) != set(ids)
             or any(not callable(opener) for opener in session_openers.values())):
         raise HoldPreparationBlocked("distributed_agent_session_inventory_incomplete")
@@ -521,7 +544,7 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         read_fd, write_fd, session = sessions[agent]
         challenge = secrets.token_hex(16)
         request = {"protocol": _SESSION_PROTOCOL, "action": action, "challenge": challenge}
-        if action == "prepare":
+        if action == initial_action:
             request.update(scope, agent_id=agent)
         else:
             request["session_id"] = session
@@ -531,16 +554,18 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         session_id = reply.get("session_id")
         expected = {
             **scope, "protocol": _SESSION_PROTOCOL,
-            "action": {"prepare": "prepared", "checkpoint": "retained", "close": "closed"}[action],
+            "action": {"prepare": "prepared", "recover": "recovered",
+                       "checkpoint": "retained", "close": "closed"}[action],
             "agent_id": agent, "challenge": challenge, "session_id": session_id,
-            "persistent_journal_prepared": True, "cooperating_local_lock_families_retained": 2,
+            "persistent_journal_prepared": True, "recovery_scope_only": recover_existing,
+            "cooperating_local_lock_families_retained": 2,
             "external_jobs_acked": False, "remote_agents_acked": False,
             "live_no_drain_authorized": False,
         }
         if (_session_bytes(reply) != _session_bytes(expected)
                 or type(session_id) is not str or not _ID.fullmatch(session_id)
                 or (session is not None and session_id != session)
-                or (action == "prepare" and any(
+                or (action == initial_action and any(
                     old_session == session_id for _, _, old_session in sessions.values()))):
             raise HoldPreparationBlocked("distributed_agent_session_receipt_invalid")
         sessions[agent] = (read_fd, write_fd, session_id)
@@ -570,11 +595,12 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
                 used_fds.update(pair)
                 sessions[agent] = (*pair, None)
             for agent in ids:
-                exchange(agent, "prepare")
+                exchange(agent, initial_action)
             checkpoint()
             yield {
                 **scope, "status": "all_expected_cooperating_agent_sessions_retained",
                 "prepared_agent_ids": ids.copy(),
+                "recovery_scope_only": recover_existing,
                 "cooperating_local_scopes_retained": len(ids),
                 "checkpoint": checkpoint,
                 "transport_authentication_independently_verified": False,

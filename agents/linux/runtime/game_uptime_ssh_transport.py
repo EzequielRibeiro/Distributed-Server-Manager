@@ -188,7 +188,8 @@ def _open_ssh_session(agent, endpoint, known_hosts, identity):
 
 @contextlib.contextmanager
 def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
-                              expires_at, expected_agent_ids):
+                              expires_at, expected_agent_ids,
+                              recover_existing=False, operator_reviewed=False):
     """Root-only transport adapter; not called by production update.sh."""
     if os.geteuid() != 0:
         raise SSHTransportBlocked("root_ssh_coordinator_required")
@@ -212,7 +213,8 @@ def retain_ssh_agent_sessions(*, transaction_id, release_sha256, issued_at,
                 transaction_id=transaction_id, release_sha256=release_sha256,
                 issued_at=issued_at, expires_at=expires_at,
                 expected_agent_ids=expected_agent_ids,
-                session_openers=openers) as receipt:
+                session_openers=openers, recover_existing=recover_existing,
+                operator_reviewed=operator_reviewed) as receipt:
             yield {**receipt, "ssh_host_keys_authenticated": True,
                    "ssh_remote_agent_id_matched": True,
                    "remote_agents_acked": False,
