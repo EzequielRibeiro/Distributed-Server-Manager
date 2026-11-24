@@ -374,6 +374,35 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertFalse(self.journal.exists())
         self.assertFalse((self.state / "no-drain-release-binding.json").exists())
         self.assertEqual(list(receipts.iterdir()), [])
+        # The standalone Agent must have the same durable recovery root
+        # before its runtime identity service runs. Restrictive umask may
+        # not hide a root-owned pending sentinel from the Agent reader.
+        from game_uptime_privileged_flock import (
+            provision_recovery_state, PrivilegedHelperFenceUnavailable,
+        )
+        agent_state = self.state.parent / "standalone-agent-state"
+        previous = os.umask(0o077)
+        try:
+            provision_recovery_state(path=agent_state, trusted_uid=self.uid)
+        finally:
+            os.umask(previous)
+        self.assertEqual(stat.S_IMODE(agent_state.stat().st_mode), 0o755)
+        self.assertEqual(list(agent_state.iterdir()), [])
+        agent_pending = agent_state / self.journal.name
+        agent_pending.write_bytes(b"interrupted")
+        agent_pending.chmod(0o600)
+        state_inode = agent_state.stat().st_ino
+        provision_recovery_state(path=agent_state, trusted_uid=self.uid)
+        self.assertEqual(agent_state.stat().st_ino, state_inode)
+        self.assertEqual(agent_pending.read_bytes(), b"interrupted")
+        self.assertTrue(observe(path=self.marker, pending_path=agent_pending,
+                                trusted_uid=self.uid)["active"])
+        agent_state.chmod(0o700)
+        with self.assertRaises(PrivilegedHelperFenceUnavailable):
+            provision_recovery_state(path=agent_state, trusted_uid=self.uid)
+        self.assertEqual(stat.S_IMODE(agent_state.stat().st_mode), 0o700)
+        self.assertIn("game_uptime_privileged_flock.py --provision-with-state",
+                      (ROOT / "agents/linux/services/capivara-agent-runtime-identity.service").read_text())
         original = lock.stat().st_ino
         self.journal.write_bytes(b"interrupted")
         self.journal.chmod(0o600)
