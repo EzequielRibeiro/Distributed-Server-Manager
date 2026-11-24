@@ -364,6 +364,14 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     agent_locks = ExitStack()
     lock_paths: list[tuple[Path, int]] = []
     try:
+        if root is None:
+            runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+            sys.path.insert(0, runtime)
+            try:
+                from game_uptime_privileged_flock import exclusive_update_admission
+            finally:
+                sys.path.remove(runtime)
+            agent_locks.enter_context(exclusive_update_admission())
         for path, uid in (
             (controller_lock, expected_controller_uid),
             *((worker_lock_dir / (name + ".lock"), expected_worker_uid)

@@ -251,6 +251,7 @@ def prepare_standalone_agent_scope(
     """
     from game_uptime_privileged_flock import (
         LOCK_PATH as HELPER_LOCK, exclusive_privileged_helper_lock,
+        exclusive_update_admission,
     )
     from game_uptime_finalization_flock import (
         LOCK_PATH as CHILD_LOCK, exclusive_finalization_lock,
@@ -305,6 +306,8 @@ def prepare_standalone_agent_scope(
                 meta.st_nlink, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
     with ExitStack() as stack:
         try:
+            if fixture_root is None:
+                stack.enter_context(exclusive_update_admission())
             locks = (identity(helper), identity(child))
             # Same acquisition order as the existing two-family witness.
             stack.enter_context(exclusive_finalization_lock(path=child, **child_identity))

@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 [[ $# -eq 3 ]] || exit 2
 ROOT="$1"; UPDATER="$2"; MODE="$3"
-[[ "$MODE" =~ ^(success|fail_after_apply|pending_recovery|pending_recovery_after_capture|no_drain_success|no_drain_fail_after_apply|no_drain_drift|no_drain_unknown_file|no_drain_no_env)$ ]] || exit 2
+[[ "$MODE" =~ ^(success|fail_after_apply|busy_update_admission|pending_recovery|pending_recovery_after_capture|no_drain_success|no_drain_fail_after_apply|no_drain_drift|no_drain_unknown_file|no_drain_no_env)$ ]] || exit 2
 [[ -d "$ROOT" && ! -L "$ROOT" && -f "$ROOT/fixture-owner" ]] || exit 2
 [[ "$(cat "$ROOT/fixture-owner")" == DSM928_DISPOSABLE_FIXTURE_V1 ]] || exit 2
 ROOT="$(realpath -e -- "$ROOT")"
@@ -65,6 +65,17 @@ fi
 # Anything that would interact with production services or credentials is stubbed.
 # File functions, version enforcement, actual main() ordering, and rollback are REAL.
 require_root() { :; }
+acquire_dsm928_update_admission() {
+    local fixture_lock="$ROOT/updater-admission.lock"
+    if [[ ! -e "$fixture_lock" ]]; then
+        (umask 077; : > "$fixture_lock")
+    fi
+    if [[ "$MODE" == busy_update_admission ]]; then
+        exec {BUSY_FD}<"$fixture_lock"
+        /usr/bin/flock -n -x "$BUSY_FD" || return 2
+    fi
+    retain_dsm928_update_inode "$fixture_lock" "$(id -u)" "$(id -g)"
+}
 # Reuse the real main entrypoint and its interlock. Only the fixed-path
 # probe is stubbed, so fixtures never read/write production recovery state.
 RECOVERY_PROBES=0

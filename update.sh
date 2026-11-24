@@ -1943,6 +1943,28 @@ run_dsm928_disposable_main() {
     PYTHONDONTWRITEBYTECODE=1 python3 "${DRIVER}" "${FIXTURE_ROOT}" "${DSM928_DISPOSABLE_MODE:-success}"
 }
 
+# #928: hold the same root-owned inode as the retained Agent/local scopes.
+# The descriptor stays open through normal main(), ERR/TERM recovery and
+# process exit; never unlink or truncate this lock.
+retain_dsm928_update_inode() {
+    local LOCK_PATH="$1" EXPECTED_UID="$2" EXPECTED_GID="$3" EXPECTED ACTUAL
+    [[ -f "${LOCK_PATH}" && ! -L "${LOCK_PATH}" ]] || return 2
+    EXPECTED="$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "${LOCK_PATH}")" || return 2
+    [[ "${EXPECTED}" == *":${EXPECTED_UID}:${EXPECTED_GID}:600:1:0" ]] || return 2
+    exec {DSM928_UPDATE_FD}<"${LOCK_PATH}" || return 2
+    ACTUAL="$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' "/proc/$/fd/${DSM928_UPDATE_FD}")" || return 2
+    [[ "${ACTUAL}" == "${EXPECTED}" ]] || return 2
+    /usr/bin/flock -n -x "${DSM928_UPDATE_FD}" || return 2
+    [[ ! -L "${LOCK_PATH}" && "$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "${LOCK_PATH}")" == "${EXPECTED}" ]] || return 2
+}
+
+acquire_dsm928_update_admission() {
+    local PROVISION="${SCRIPT_DIR}/agents/linux/runtime/game_uptime_privileged_flock.py"
+    [[ -f "${PROVISION}" && ! -L "${PROVISION}" ]] || return 2
+    /usr/bin/python3 -I -S -B "${PROVISION}" --provision-updater-admission || return 2
+    retain_dsm928_update_inode /var/lib/capivara-dsm-928/updater-admission.lock 0 0
+}
+
 # A pending #928 recovery has precedence over the ordinary draining updater.
 # Use the same installed-path fail-closed observer as Agent/Worker loops.
 # This is a read-only interlock, not a distributed transaction lock or an
@@ -2005,6 +2027,10 @@ main() {
     fi
     # Ambiente | Environment
     require_root
+    if ! acquire_dsm928_update_admission; then
+        echo "DSM #928: update admission busy or untrusted; update blocked." >&2
+        exit 2
+    fi
     require_dsm928_recovery_clear
     # O pacote instalado pode ser substituído durante esta execução. Nunca
     # mantenha o shell ou jobs de progresso dentro de /opt/dsm.

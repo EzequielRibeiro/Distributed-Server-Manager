@@ -168,16 +168,18 @@ class MainPathRehearsalTest(unittest.TestCase):
     def test_actual_main_path_success_preserves_world_and_checks_guard_order(self):
         # The draining path must never bypass an unresolved #928 journal,
         # including one appearing after the initial read-only preflight.
-        for mode in ("pending_recovery", "pending_recovery_after_capture"):
+        for mode in ("busy_update_admission", "pending_recovery", "pending_recovery_after_capture"):
             with self.subTest(mode=mode):
                 blocked = main_rehearsal(self.root, mode)
                 self.assertEqual(blocked.returncode, 2, blocked.stderr)
-                self.assertIn("maintenance or recovery pending/unverifiable", blocked.stderr)
+                expected = ("update admission busy or untrusted" if mode == "busy_update_admission"
+                            else "maintenance or recovery pending/unverifiable")
+                self.assertIn(expected, blocked.stderr)
                 self.assertEqual((self.installed/"version").read_text().strip(), "2.0.998")
                 self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
                 self.assertEqual(list((self.root/"backups").glob("*.tar.gz")), [])
                 steps = self.root/"steps"
-                if mode == "pending_recovery":
+                if mode != "pending_recovery_after_capture":
                     self.assertFalse(steps.exists())
                 else:
                     self.assertEqual(steps.read_text().splitlines(), [

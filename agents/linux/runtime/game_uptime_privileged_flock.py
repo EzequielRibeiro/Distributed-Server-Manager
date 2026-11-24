@@ -17,6 +17,7 @@ from typing import Iterator
 LOCK_PATH = Path("/run/capivara-dsm/agent-privileged-operations.lock")
 ENABLE_ENV = "DSM928_AGENT_PRIVILEGED_FLOCK"
 RECOVERY_STATE = Path("/var/lib/capivara-dsm-928")
+UPDATE_ADMISSION_LOCK = RECOVERY_STATE / "updater-admission.lock"
 
 
 class PrivilegedHelperFenceUnavailable(RuntimeError):
@@ -223,11 +224,38 @@ def provision_recovery_state(*, path: Path = RECOVERY_STATE,
     return path
 
 
+def provision_update_admission_lock() -> Path:
+    """One persistent inode shared by conventional and retained update paths."""
+    provision_recovery_state()
+    return provision_privileged_helper_lock(path=UPDATE_ADMISSION_LOCK, trusted_uid=0)
+
+
+@contextmanager
+def exclusive_update_admission():
+    """Hold the host update mutex until apply/recovery and cleanup exit.
+
+    No authorization to mutate is implied by acquiring this lock.
+    """
+    if os.geteuid() != 0:
+        raise PrivilegedHelperFenceUnavailable("root_only_update_admission")
+    provision_update_admission_lock()
+    fd = _open_inode(UPDATE_ADMISSION_LOCK, 0)
+    try:
+        _acquire(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 if __name__ == "__main__":
     import sys
-    if (sys.argv[1:] not in (["--provision"], ["--provision-with-state"])
+    if (sys.argv[1:] not in (["--provision"], ["--provision-with-state"],
+                             ["--provision-updater-admission"])
             or os.geteuid() != 0):
         raise SystemExit(2)
-    if sys.argv[1:] == ["--provision-with-state"]:
-        provision_recovery_state()
-    provision_privileged_helper_lock()
+    if sys.argv[1:] == ["--provision-updater-admission"]:
+        provision_update_admission_lock()
+    else:
+        if sys.argv[1:] == ["--provision-with-state"]:
+            provision_recovery_state()
+        provision_privileged_helper_lock()
