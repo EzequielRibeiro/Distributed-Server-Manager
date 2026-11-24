@@ -815,6 +815,42 @@ class PersistentPendingHoldTests(unittest.TestCase):
                     thread.join(timeout=5)
                     self.assertFalse(thread.is_alive())
             return opened
+        # The SSH adapter must use a complete, independently pinned
+        # endpoint inventory and never allow host-key/password fallback.
+        import base64
+        from game_uptime_ssh_transport import (
+            _endpoint_inventory, _ssh_argv, SSHTransportBlocked, REMOTE_COMMAND,
+        )
+        def host_key(seed):
+            return "ssh-ed25519 " + base64.b64encode(
+                b"\\x00\\x00\\x00\\x0bssh-ed25519\\x00\\x00\\x00\\x20"
+                + bytes([seed]) * 32).decode("ascii")
+        endpoints = {
+            agent: {"host": "host-" + str(index) + ".example.invalid",
+                    "port": 22, "host_key": host_key(index)}
+            for index, agent in enumerate(ids)
+        }
+        def parse(value):
+            return _endpoint_inventory(json.dumps(value).encode(), ids)
+        self.assertEqual(parse(endpoints), endpoints)
+        for changed in (
+            {k: v for k, v in endpoints.items() if k != ids[-1]},
+            {**endpoints, ids[0]: {**endpoints[ids[0]], "host": "-oProxyCommand=evil"}},
+            {**endpoints, ids[0]: {**endpoints[ids[0]], "host_key": endpoints[ids[1]]["host_key"]}},
+        ):
+            with self.assertRaises(SSHTransportBlocked):
+                parse(changed)
+        argv = _ssh_argv(ids[0], endpoints[ids[0]], Path("/tmp/pinned-hosts"),
+                         Path("/etc/capivara-dsm/agent-session-ssh-key"))
+        self.assertEqual(argv[:5], ["/usr/bin/ssh", "-F", "/dev/null", "-T", "-i"])
+        for flag in ("StrictHostKeyChecking=yes", "PasswordAuthentication=no",
+                     "IdentitiesOnly=yes", "IdentityAgent=none",
+                     "GlobalKnownHostsFile=/dev/null", "ForwardAgent=no",
+                     "ProxyCommand=none", "ControlMaster=no",
+                     "HostKeyAlias=dsm928-" + ids[0]):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-1], REMOTE_COMMAND)
+        self.assertIn("/usr/local/libexec/capivara-dsm-928-agent/", REMOTE_COMMAND)
         channels = {option["local_agent_id"]: opener(option) for option in options}
         central = dict(transaction_id=self.tx, release_sha256="d"*64,
                        issued_at=1700000000, expires_at=1700000600,
