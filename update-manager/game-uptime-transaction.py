@@ -89,6 +89,7 @@ def _exclusive_transaction(func):
                 raise TransactionSafetyError("existing transaction evidence requires manual review")
             if recovery and kwargs.get("operator_reviewed") is not True:
                 raise TransactionSafetyError("explicit operator review is required")
+            transaction_error = None
             try:
                 with ExitStack() as stack:
                     lease = stack.enter_context(_bound_local_scope(options, recovery=recovery))
@@ -109,10 +110,22 @@ def _exclusive_transaction(func):
                             "scope": "disposable_cooperating_agent_sessions_only",
                         }
                         combined_checkpoint()
-                    return func(root, *args, **kwargs, _scope=receipt)
+                    try:
+                        return func(root, *args, **kwargs, _scope=receipt)
+                    except TransactionSafetyError as exc:
+                        # Context managers may translate an exception raised
+                        # at yield into a scope error. Keep the exact rejected
+                        # transaction diagnosis, not a generic lease error.
+                        transaction_error = exc
+                        raise
             except TransactionSafetyError:
                 raise
             except (OSError, RuntimeError, ValueError) as exc:
+                cause = exc
+                while cause is not None:
+                    if transaction_error is not None and cause is transaction_error:
+                        raise transaction_error
+                    cause = cause.__cause__
                 raise TransactionSafetyError("transaction local scope blocked") from exc
         finally:
             if fd is not None:
