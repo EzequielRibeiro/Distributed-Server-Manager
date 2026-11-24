@@ -781,21 +781,70 @@ class PersistentPendingHoldTests(unittest.TestCase):
                 with prepare_standalone_agent_scope(**second):
                     self.fail("busy Agent prepared")
         self.assertFalse(second["journal_path"].exists())
-        with ExitStack() as held_hosts:
-            prepared = [held_hosts.enter_context(prepare_standalone_agent_scope(**option))
-                        for option in options]
-            for receipt in prepared:
-                receipt["checkpoint"]()
-                self.assertEqual(receipt["expected_agent_ids"], sorted(ids))
-                self.assertEqual(receipt["issued_at"], 1700000000)
-                self.assertEqual(receipt["expires_at"], 1700000600)
-                self.assertFalse(receipt["remote_agents_acked"])
-                self.assertFalse(receipt["live_no_drain_authorized"])
+        # Exercise the central protocol over real dedicated sockets.
+        # The offline member must prevent PREPARE, not reduce the quorum.
+        from game_uptime_hold_coordinator import (
+            retain_distributed_agent_sessions, serve_prepared_agent_session,
+        )
+        from contextlib import contextmanager
+        import socket
+        import threading
+        failures = []
+        def opener(option):
+            @contextmanager
+            def opened():
+                client, server = socket.socketpair()
+                def serve():
+                    try:
+                        def factory(**shared):
+                            return prepare_standalone_agent_scope(**{**option, **shared})
+                        serve_prepared_agent_session(
+                            server.fileno(), server.fileno(),
+                            local_agent_id=option["local_agent_id"],
+                            scope_factory=factory, now=lambda: 1700000010)
+                    except Exception as exc:
+                        failures.append(exc)
+                    finally:
+                        server.close()
+                thread = threading.Thread(target=serve, daemon=True)
+                thread.start()
+                try:
+                    yield (client.fileno(), client.fileno())
+                finally:
+                    client.close()
+                    thread.join(timeout=5)
+                    self.assertFalse(thread.is_alive())
+            return opened
+        channels = {option["local_agent_id"]: opener(option) for option in options}
+        central = dict(transaction_id=self.tx, release_sha256="d"*64,
+                       issued_at=1700000000, expires_at=1700000600,
+                       expected_agent_ids=ids, session_openers=channels,
+                       now=lambda: 1700000010)
+        with self.assertRaisesRegex(HoldPreparationBlocked, "inventory_incomplete"):
+            with retain_distributed_agent_sessions(**central):
+                self.fail("offline Agent omitted from quorum")
+        self.assertTrue(all(not option["journal_path"].exists() for option in options))
+        # A separate two-host fixture with a deliberately pinned two-host
+        # inventory. Never edit a real inventory to exclude an offline host.
+        complete = ids[:2]
+        for option in options:
+            option["expected_agent_ids"] = complete
+        with retain_distributed_agent_sessions(
+                **{**central, "expected_agent_ids": complete}) as receipt:
+            receipt["checkpoint"]()
+            self.assertEqual(receipt["prepared_agent_ids"], complete)
+            self.assertEqual(receipt["issued_at"], 1700000000)
+            self.assertEqual(receipt["expires_at"], 1700000600)
+            self.assertFalse(receipt["remote_agents_acked"])
+            self.assertFalse(receipt["live_no_drain_authorized"])
             for option in options:
                 with self.assertRaises(PrivilegedHelperFenceUnavailable):
                     with shared_privileged_helper_lock(
                             path=option["privileged_lock_path"], trusted_uid=self.uid, enabled=True):
                         self.fail("Agent host lease not retained")
+        self.assertEqual(failures, [])
+        with self.assertRaises(HoldPreparationBlocked):
+            receipt["checkpoint"]()
         for option in options:
             option["hold_path"].unlink()
             self.assertTrue(observe(path=option["hold_path"], pending_path=option["journal_path"],

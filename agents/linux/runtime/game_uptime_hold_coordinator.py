@@ -17,6 +17,8 @@ from pathlib import Path
 import re
 import stat
 import time
+import secrets
+import select
 from contextlib import contextmanager, ExitStack
 from typing import Iterator
 
@@ -353,3 +355,236 @@ def prepare_standalone_agent_scope(
             "live_no_drain_authorized": False,
         }
         checkpoint()
+
+
+_SESSION_PROTOCOL = "dsm928-retained-agent-scope-v1"
+_SESSION_MAX = 16384
+
+
+def _session_bytes(message: dict) -> bytes:
+    raw = (json.dumps(message, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+    if len(raw) > _SESSION_MAX:
+        raise HoldPreparationBlocked("agent_session_frame_too_large")
+    return raw
+
+
+def _session_read(fd: int, deadline: float) -> dict:
+    """Bounded one-frame read on a dedicated pipe/socket, no buffered read."""
+    buf = bytearray()
+    while len(buf) < _SESSION_MAX:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            raise HoldPreparationBlocked("agent_session_timeout")
+        block = os.read(fd, min(4096, _SESSION_MAX - len(buf)))
+        if not block:
+            raise HoldPreparationBlocked("agent_session_disconnected")
+        buf.extend(block)
+        if b"\n" in buf:
+            if buf.count(b"\n") != 1 or not buf.endswith(b"\n"):
+                raise HoldPreparationBlocked("agent_session_unexpected_frame")
+            doc = json.loads(buf)
+            if not isinstance(doc, dict) or _session_bytes(doc) != bytes(buf):
+                raise HoldPreparationBlocked("agent_session_noncanonical_frame")
+            return doc
+    raise HoldPreparationBlocked("agent_session_frame_too_large")
+
+
+def _session_write(fd: int, message: dict, deadline: float):
+    raw = memoryview(_session_bytes(message))
+    while raw:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([], [fd], [], remaining)[1]:
+            raise HoldPreparationBlocked("agent_session_timeout")
+        sent = os.write(fd, raw[:4096])
+        if sent <= 0:
+            raise HoldPreparationBlocked("agent_session_disconnected")
+        raw = raw[sent:]
+
+
+def _session_scope(transaction_id, release_sha256, issued_at, expires_at, ids):
+    if (type(transaction_id) is not str or not _ID.fullmatch(transaction_id)
+            or type(release_sha256) is not str
+            or not re.fullmatch(r"[0-9a-f]{64}", release_sha256)
+            or type(issued_at) is not int or type(expires_at) is not int
+            or not 0 < issued_at < expires_at <= issued_at + 900
+            or type(ids) is not list or not 1 <= len(ids) <= 64
+            or any(type(x) is not str or not _AGENT_ID.fullmatch(x) for x in ids)
+            or len(set(ids)) != len(ids)):
+        raise HoldPreparationBlocked("invalid_distributed_session_scope")
+    return {"transaction_id": transaction_id, "release_sha256": release_sha256,
+            "issued_at": issued_at, "expires_at": expires_at,
+            "expected_agent_ids": sorted(ids)}
+
+
+def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
+                                 local_agent_id: str,
+                                 scope_factory=prepare_standalone_agent_scope,
+                                 now=None):
+    """Serve a dedicated operator-authenticated channel, not public HTTP.
+
+    The caller must independently authenticate the peer and pin local Agent
+    identity. The scope factory is injectable for disposable testing only.
+    PREPARE retains both actual lock families until CLOSE, EOF or expiry;
+    no messages clear durable evidence, update files or authorize no-drain.
+    """
+    if scope_factory is not prepare_standalone_agent_scope and now is None:
+        raise HoldPreparationBlocked("fixture_session_clock_required")
+    clock = time.time if now is None else now
+    deadline = time.monotonic() + 10
+    request = _session_read(read_fd, deadline)
+    fields = {"transaction_id", "release_sha256", "issued_at", "expires_at", "expected_agent_ids"}
+    if (set(request) != fields | {"protocol", "action", "agent_id", "challenge"}
+            or request.get("protocol") != _SESSION_PROTOCOL
+            or request.get("action") != "prepare"
+            or request.get("agent_id") != local_agent_id
+            or type(request.get("challenge")) is not str
+            or not _ID.fullmatch(request["challenge"])):
+        raise HoldPreparationBlocked("agent_session_prepare_invalid")
+    scope = _session_scope(**{**{k: request[k] for k in fields if k != "expected_agent_ids"},
+                              "ids": request["expected_agent_ids"]})
+    if not scope["issued_at"] <= clock() < scope["expires_at"]:
+        raise HoldPreparationBlocked("agent_session_window_expired")
+    if local_agent_id not in scope["expected_agent_ids"]:
+        raise HoldPreparationBlocked("agent_session_identity_not_expected")
+    session = secrets.token_hex(16)
+    seen = {request["challenge"]}
+    def frame_deadline():
+        return time.monotonic() + min(30, max(0, scope["expires_at"] - clock()))
+    with scope_factory(local_agent_id=local_agent_id, **scope) as lease:
+        if (lease.get("agent_id") != local_agent_id
+                or any(lease.get(k) != v for k, v in scope.items())
+                or lease.get("persistent_journal_prepared") is not True
+                or lease.get("cooperating_local_lock_families_retained") != 2
+                or lease.get("live_no_drain_authorized") is not False
+                or not callable(lease.get("checkpoint"))):
+            raise HoldPreparationBlocked("agent_session_local_witness_invalid")
+        def answer(action, challenge):
+            if not scope["issued_at"] <= clock() < scope["expires_at"]:
+                raise HoldPreparationBlocked("agent_session_window_expired")
+            lease["checkpoint"]()
+            _session_write(write_fd, {
+                **scope, "protocol": _SESSION_PROTOCOL, "action": action,
+                "agent_id": local_agent_id, "challenge": challenge,
+                "session_id": session, "persistent_journal_prepared": True,
+                "cooperating_local_lock_families_retained": 2,
+                "external_jobs_acked": False, "remote_agents_acked": False,
+                "live_no_drain_authorized": False,
+            }, frame_deadline())
+        answer("prepared", request["challenge"])
+        while True:
+            req = _session_read(read_fd, frame_deadline())
+            challenge = req.get("challenge")
+            if (set(req) != {"protocol", "action", "session_id", "challenge"}
+                    or req.get("protocol") != _SESSION_PROTOCOL
+                    or req.get("session_id") != session
+                    or req.get("action") not in ("checkpoint", "close")
+                    or type(challenge) is not str or not _ID.fullmatch(challenge)
+                    or challenge in seen or len(seen) >= 4096):
+                raise HoldPreparationBlocked("agent_session_challenge_invalid")
+            seen.add(challenge)
+            answer("closed" if req["action"] == "close" else "retained", challenge)
+            if req["action"] == "close":
+                return
+
+
+@contextmanager
+def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: str,
+                                      issued_at: int, expires_at: int,
+                                      expected_agent_ids: list[str],
+                                      session_openers: dict,
+                                      now=None) -> Iterator[dict]:
+    """Central coordinator for independently authenticated, dedicated sessions.
+
+    A trusted operator must supply one authenticated channel opener for EACH
+    pinned Agent; no discovery from receipts and no offline-agent exemption.
+    Each opener is a context manager yielding (read_fd, write_fd). This
+    protocol does not establish SSH/TLS trust itself, and cannot attest
+    uninstrumented jobs, Hybrid coverage or live update authorization.
+    No production updater invokes it. Partial prepare leaves journals for
+    recovery rather than silently undoing a hold.
+    """
+    scope = _session_scope(transaction_id, release_sha256, issued_at,
+                           expires_at, expected_agent_ids)
+    ids = scope["expected_agent_ids"]
+    if (type(session_openers) is not dict or set(session_openers) != set(ids)
+            or any(not callable(opener) for opener in session_openers.values())):
+        raise HoldPreparationBlocked("distributed_agent_session_inventory_incomplete")
+    clock = time.time if now is None else now
+    sessions = {}
+    active = True
+    def deadline():
+        seconds = scope["expires_at"] - clock()
+        if not scope["issued_at"] <= clock() or seconds <= 0:
+            raise HoldPreparationBlocked("distributed_agent_session_window_expired")
+        return time.monotonic() + min(10, seconds)
+    def exchange(agent, action):
+        read_fd, write_fd, session = sessions[agent]
+        challenge = secrets.token_hex(16)
+        request = {"protocol": _SESSION_PROTOCOL, "action": action, "challenge": challenge}
+        if action == "prepare":
+            request.update(scope, agent_id=agent)
+        else:
+            request["session_id"] = session
+        limit = deadline()
+        _session_write(write_fd, request, limit)
+        reply = _session_read(read_fd, limit)
+        session_id = reply.get("session_id")
+        expected = {
+            **scope, "protocol": _SESSION_PROTOCOL,
+            "action": {"prepare": "prepared", "checkpoint": "retained", "close": "closed"}[action],
+            "agent_id": agent, "challenge": challenge, "session_id": session_id,
+            "persistent_journal_prepared": True, "cooperating_local_lock_families_retained": 2,
+            "external_jobs_acked": False, "remote_agents_acked": False,
+            "live_no_drain_authorized": False,
+        }
+        if (_session_bytes(reply) != _session_bytes(expected)
+                or type(session_id) is not str or not _ID.fullmatch(session_id)
+                or (session is not None and session_id != session)
+                or (action == "prepare" and any(
+                    old_session == session_id for _, _, old_session in sessions.values()))):
+            raise HoldPreparationBlocked("distributed_agent_session_receipt_invalid")
+        sessions[agent] = (read_fd, write_fd, session_id)
+    def checkpoint():
+        nonlocal active
+        if not active or set(sessions) != set(ids):
+            raise HoldPreparationBlocked("distributed_agent_session_not_retained")
+        try:
+            for agent in ids:
+                exchange(agent, "checkpoint")
+        except (OSError, ValueError, RuntimeError) as exc:
+            active = False
+            raise HoldPreparationBlocked("distributed_agent_checkpoint_blocked") from exc
+
+    with ExitStack() as stack:
+        try:
+            # Open every required channel first. A missing endpoint must
+            # not cause an avoidable partial preparation on other hosts.
+            used_fds = set()
+            for agent in ids:
+                deadline()
+                pair = stack.enter_context(session_openers[agent]())
+                if (not isinstance(pair, tuple) or len(pair) != 2
+                        or any(type(fd) is not int or fd < 0 for fd in pair)
+                        or used_fds.intersection(pair)):
+                    raise HoldPreparationBlocked("distributed_agent_channel_invalid")
+                used_fds.update(pair)
+                sessions[agent] = (*pair, None)
+            for agent in ids:
+                exchange(agent, "prepare")
+            checkpoint()
+            yield {
+                **scope, "status": "all_expected_cooperating_agent_sessions_retained",
+                "prepared_agent_ids": ids.copy(),
+                "cooperating_local_scopes_retained": len(ids),
+                "checkpoint": checkpoint,
+                "transport_authentication_independently_verified": False,
+                "remote_agents_acked": False, "external_jobs_acked": False,
+                "live_no_drain_authorized": False,
+            }
+            checkpoint()
+            for agent in ids:
+                exchange(agent, "close")
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise HoldPreparationBlocked("distributed_agent_coordination_blocked") from exc
+        finally:
+            active = False
