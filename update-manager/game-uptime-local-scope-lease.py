@@ -186,44 +186,64 @@ def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
                    is not (agent_ids is not None)
                 or prepared.get("live_no_drain_authorized") is not False):
             raise LocalScopeLeaseBlocked("fresh_preparation_invalid")
-        paths = (hold_path, pending_path, binding_path)
-        if agent_ids is not None:
-            paths += (inventory_path,)
-        identities = tuple(_evidence_identity(path) for path in paths)
-
-        def checkpoint():
-            observed = hold.observe(path=hold_path, trusted_uid=owner,
-                                    pending_path=pending_path)
-            if (observed.get("active") is not True
-                    or observed.get("reason") != "root_owned_maintenance_hold"
-                    or observed.get("transaction_id") != tx):
-                raise LocalScopeLeaseBlocked("fresh_hold_invalid")
-            _root_pending(pending_path, owner, tx,
-                          observed["issued_at"], observed["expires_at"])
-            pin = binding_for_hold(observed, path=binding_path, trusted_uid=owner)
-            if agent_ids is not None:
-                inventory = read_inventory(path=inventory_path, trusted_uid=owner)
-                expected = {
-                    "kind": "DSM928OperatorAgentInventory",
-                    "schema_version": 1, "transaction_id": tx,
-                    "release_sha256": sha, "issued_at": observed["issued_at"],
-                    "expires_at": observed["expires_at"],
-                    "agent_ids": sorted(agent_ids),
-                }
-                if inventory != expected:
-                    raise LocalScopeLeaseBlocked("fixture_agent_inventory_changed")
-            if (pin is None or pin.get("release_sha256") != sha
-                    or tuple(_evidence_identity(path) for path in paths) != identities):
-                raise LocalScopeLeaseBlocked("fresh_transaction_evidence_changed")
-        checkpoint()
+        checkpoint = _prepared_evidence_checkpoint(
+            hold, hold_path, pending_path, tx=tx, sha=sha,
+            owner=owner, agent_ids=agent_ids)
     except (OSError, RuntimeError, ValueError) as exc:
         raise LocalScopeLeaseBlocked("fresh_transaction_preparation_blocked") from exc
     return checkpoint
 
 
-def _retain_fixture_agent_operations(stack: ExitStack, runtime_dir: Path,
-                                     *, owner: int):
-    """Reuse the real helper/child EX primitives on disposable inodes only."""
+def _prepared_evidence_checkpoint(hold, hold_path: Path, pending_path: Path,
+                                  *, tx: str, sha: str, owner: int,
+                                  agent_ids: list[str] | None):
+    """Validate exact durable evidence, without creating or clearing a hold."""
+    binding_path = pending_path.parent / "no-drain-release-binding.json"
+    inventory_path = pending_path.parent / "no-drain-agent-inventory.json"
+    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    sys.path.insert(0, runtime)
+    try:
+        from game_uptime_transaction_binding import binding_for_hold
+        from game_uptime_durable_wire_replay import _root_pending
+        from game_uptime_wire_replay_service import read_inventory
+    finally:
+        sys.path.remove(runtime)
+    paths = (hold_path, pending_path, binding_path)
+    if agent_ids is not None:
+        paths += (inventory_path,)
+    identities = tuple(_evidence_identity(path) for path in paths)
+
+    def checkpoint():
+        observed = hold.observe(path=hold_path, trusted_uid=owner,
+                                pending_path=pending_path)
+        if (observed.get("active") is not True
+                or observed.get("reason") != "root_owned_maintenance_hold"
+                or observed.get("transaction_id") != tx):
+            raise LocalScopeLeaseBlocked("fresh_hold_invalid")
+        _root_pending(pending_path, owner, tx,
+                      observed["issued_at"], observed["expires_at"])
+        pin = binding_for_hold(observed, path=binding_path, trusted_uid=owner)
+        if agent_ids is not None:
+            inventory = read_inventory(path=inventory_path, trusted_uid=owner)
+            expected = {
+                "kind": "DSM928OperatorAgentInventory",
+                "schema_version": 1, "transaction_id": tx,
+                "release_sha256": sha, "issued_at": observed["issued_at"],
+                "expires_at": observed["expires_at"],
+                "agent_ids": sorted(agent_ids),
+            }
+            if inventory != expected:
+                raise LocalScopeLeaseBlocked("fixture_agent_inventory_changed")
+        if (pin is None or pin.get("release_sha256") != sha
+                or tuple(_evidence_identity(path) for path in paths) != identities):
+            raise LocalScopeLeaseBlocked("fresh_transaction_evidence_changed")
+    checkpoint()
+    return checkpoint
+
+
+def _retain_agent_operations(stack: ExitStack, runtime_dir: Path,
+                             *, owner: int, installed: bool = False):
+    """Retain both preprovisioned Agent lock families; never provision them."""
     runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
     sys.path.insert(0, runtime)
     try:
@@ -238,8 +258,11 @@ def _retain_fixture_agent_operations(stack: ExitStack, runtime_dir: Path,
         identities = tuple(_evidence_identity(path) for path in paths)
         stack.enter_context(exclusive_privileged_helper_lock(
             path=helper, trusted_uid=owner))
-        stack.enter_context(exclusive_finalization_lock(
-            path=child, trusted_uid=owner, group_gid=os.getegid()))
+        if installed:
+            stack.enter_context(exclusive_finalization_lock(path=child))
+        else:
+            stack.enter_context(exclusive_finalization_lock(
+                path=child, trusted_uid=owner, group_gid=os.getegid()))
 
         def checkpoint():
             if tuple(_evidence_identity(path) for path in paths) != identities:
@@ -260,7 +283,9 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         pending_path: Path = PENDING_PATH,
                         fixture_root: Path | None = None,
                         prepare_fresh_fixture: bool = False,
-                        expected_fixture_agent_ids: list[str] | None = None) -> Iterator[dict]:
+                        expected_fixture_agent_ids: list[str] | None = None,
+                        inspect_existing_prepared: bool = False,
+                        expected_recovery_agent_ids: list[str] | None = None) -> Iterator[dict]:
     """Acquire and RETAIN all known local locks until exiting this context.
 
     Real paths require root and existing operator-owned hold. Fixture paths
@@ -289,6 +314,18 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                 or len(set(expected_fixture_agent_ids)) != len(expected_fixture_agent_ids)):
             raise LocalScopeLeaseBlocked("invalid_fixture_agent_inventory")
         expected_fixture_agent_ids = sorted(expected_fixture_agent_ids)
+    if (type(inspect_existing_prepared) is not bool
+            or (inspect_existing_prepared and prepare_fresh_fixture)
+            or (expected_recovery_agent_ids is None) != (not inspect_existing_prepared)):
+        raise LocalScopeLeaseBlocked("invalid_recovery_inspection_scope")
+    if inspect_existing_prepared:
+        ids = expected_recovery_agent_ids
+        if (type(ids) is not list or not 1 <= len(ids) <= 64
+                or any(type(item) is not str
+                       or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", item)
+                       for item in ids) or len(set(ids)) != len(ids)):
+            raise LocalScopeLeaseBlocked("invalid_recovery_agent_inventory")
+        expected_recovery_agent_ids = sorted(ids)
     controller_lock = Path(controller_lock)
     worker_lock_dir = Path(worker_lock_dir)
     hold_path = Path(hold_path)
@@ -317,7 +354,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
         _require_absent(hold_path, pending_path,
                         pending_path.parent / "no-drain-release-binding.json",
                         pending_path.parent / "no-drain-agent-inventory.json")
-    else:
+    elif not inspect_existing_prepared:
         _check_hold(hold, hold_path, pending_path, tx=transaction_id, owner=owner)
     expected_files = {name + ".lock" for name in WORKERS}
     if ({p.name for p in worker_lock_dir.iterdir()} != expected_files):
@@ -341,12 +378,22 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             acquired.append(fd)
             lock_paths.append((path, uid))
         if prepare_fresh_fixture:
-            agent_checkpoint = _retain_fixture_agent_operations(
+            agent_checkpoint = _retain_agent_operations(
                 agent_locks, controller_lock.parent, owner=owner)
             evidence_checkpoint = _fresh_fixture_preparation(
                 hold, hold_path, pending_path, tx=transaction_id,
                 sha=release_sha256, owner=owner,
                 agent_ids=expected_fixture_agent_ids)
+        elif inspect_existing_prepared:
+            # Separate inspection path: an existing journal is still a
+            # hard blocker for fresh apply, including in the composite bridge.
+            agent_checkpoint = _retain_agent_operations(
+                agent_locks, controller_lock.parent, owner=owner,
+                installed=root is None)
+            evidence_checkpoint = _prepared_evidence_checkpoint(
+                hold, hold_path, pending_path, tx=transaction_id,
+                sha=release_sha256, owner=owner,
+                agent_ids=expected_recovery_agent_ids)
         else:
             def evidence_checkpoint():
                 _check_hold(hold, hold_path, pending_path,
@@ -361,7 +408,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         or named.st_size != 0
                         or stat.S_IMODE(named.st_mode) != 0o600):
                     raise LocalScopeLeaseBlocked("retained_lock_identity_changed")
-            if prepare_fresh_fixture:
+            if prepare_fresh_fixture or inspect_existing_prepared:
                 agent_checkpoint()
             evidence_checkpoint()
 
@@ -374,6 +421,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "controller_http_lock_exclusively_held": True,
             "worker_lock_inodes_exclusively_held": len(WORKERS),
             "fresh_durable_fixture_evidence": prepare_fresh_fixture,
+            "existing_prepared_recovery_inspection_only": inspect_existing_prepared,
+            "recovery_scope_inodes_retained": inspect_existing_prepared,
             "fixture_agent_inventory_retained": expected_fixture_agent_ids is not None,
             "fixture_privileged_helper_lock_retained": prepare_fresh_fixture,
             "fixture_finalization_child_lock_retained": prepare_fresh_fixture,
@@ -389,7 +438,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
         checkpoint()
     except LocalScopeLeaseBlocked:
         raise
-    except (OSError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         raise LocalScopeLeaseBlocked("local_fence_unavailable") from exc
     finally:
         try:

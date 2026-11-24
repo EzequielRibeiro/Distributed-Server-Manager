@@ -644,6 +644,31 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                         "persistent_recovery_pending"):
                     with local_scope.retain_local_scopes(**lease_args):
                         pass
+                # Existing evidence remains blocked for apply, but a separate
+                # inspection may retain the same locks without replay/cleanup.
+                recovery_args = {**lease_args, "prepare_fresh_fixture": False,
+                                 "expected_fixture_agent_ids": None,
+                                 "inspect_existing_prepared": True,
+                                 "expected_recovery_agent_ids": fixture_ids}
+                saved = {p: p.read_bytes() for p in
+                         (hold_path, pending_path, binding_path, inventory_path)}
+                with local_scope.retain_local_scopes(**recovery_args) as recovery:
+                    self.assertTrue(recovery["existing_prepared_recovery_inspection_only"])
+                    self.assertFalse(recovery["fresh_durable_fixture_evidence"])
+                    self.assertFalse(recovery["live_no_drain_authorized"])
+                    recovery["checkpoint"]()
+                    for lockfile in scoped_locks:
+                        outsider = os.open(lockfile, os.O_RDONLY)
+                        try:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        finally:
+                            os.close(outsider)
+                self.assertEqual({p: p.read_bytes() for p in saved}, saved)
+                with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
+                    with local_scope.retain_local_scopes(
+                            **{**recovery_args, "expected_recovery_agent_ids": fixture_ids[:1]}):
+                        pass
                 self.assertEqual(proof["local_worker_lock_count_held_during_transaction"], 9)
                 self.assertFalse(proof["controller_routes_opted_in_verified"])
                 self.assertFalse(proof["worker_process_inventory_verified"])
