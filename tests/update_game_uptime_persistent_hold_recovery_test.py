@@ -821,10 +821,14 @@ class PersistentPendingHoldTests(unittest.TestCase):
         from game_uptime_ssh_transport import (
             _endpoint_inventory, _ssh_argv, SSHTransportBlocked, REMOTE_COMMAND,
         )
+        import struct
         def host_key(seed):
-            return "ssh-ed25519 " + base64.b64encode(
-                b"\\x00\\x00\\x00\\x0bssh-ed25519\\x00\\x00\\x00\\x20"
-                + bytes([seed]) * 32).decode("ascii")
+            # SSH public-key wire format: two length-prefixed strings.
+            algorithm = b"ssh-ed25519"
+            public_key = bytes([seed]) * 32
+            blob = (struct.pack(">I", len(algorithm)) + algorithm
+                    + struct.pack(">I", len(public_key)) + public_key)
+            return "ssh-ed25519 " + base64.b64encode(blob).decode("ascii")
         endpoints = {
             agent: {"host": "host-" + str(index) + ".example.invalid",
                     "port": 22, "host_key": host_key(index)}
