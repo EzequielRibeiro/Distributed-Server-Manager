@@ -752,10 +752,16 @@ class PersistentPendingHoldTests(unittest.TestCase):
         options = []
         for index, agent_id in enumerate(ids[:2]):
             root = self.state.parent / ("remote-host-" + str(index))
-            root.mkdir(mode=0o700)
+            # Model root-owned /run and /var/lib ancestors: the hold
+            # must be traversable by unprivileged cooperating processes.
+            # The pending journal and inventory remain private (0600).
+            root.mkdir(mode=0o755)
+            root.chmod(0o755)
             runtime, state = root / "run", root / "state"
             runtime.mkdir(mode=0o755)
+            runtime.chmod(0o755)
             state.mkdir(mode=0o755)
+            state.chmod(0o755)
             priv = runtime / "agent-privileged-operations.lock"
             final = runtime / "agent-finalization-operations.lock"
             provision_privileged_helper_lock(path=priv, trusted_uid=self.uid)
