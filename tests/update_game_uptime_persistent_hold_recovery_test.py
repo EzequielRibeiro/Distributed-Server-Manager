@@ -588,6 +588,16 @@ class PersistentPendingHoldTests(unittest.TestCase):
             self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1\n", unit)
             self.assertIn("game_uptime_privileged_flock.py --provision", unit)
             self.assertNotIn("ReadWritePaths=/run", unit)
+        # Hybrid helpers run in independent systemd units, not in the
+        # Worker process's environment. Each must opt in at its own boundary.
+        for name in ("materialize@", "native-command@", "backup-restore@", "firewall@"):
+            unit = (ROOT / "systemd" /
+                    ("dsm-hybrid-agent-" + name + ".service.in")).read_text()
+            self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1\n", unit)
+            self.assertIn("@DSM_ROOT@/agents/linux/runtime/"
+                          "game_uptime_privileged_flock.py --provision", unit)
+            self.assertNotIn("ReadWritePaths=/run", unit)
+            self.assertIn("NoNewPrivileges=true", unit)
         standalone = (services / "capivara-agent.service").read_text()
         self.assertIn("Environment=DSM928_AGENT_FINALIZATION_FLOCK=1\n", standalone)
         self.assertIn("Requires=capivara-agent-runtime-identity.service", standalone)
