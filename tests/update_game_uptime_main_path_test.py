@@ -390,6 +390,34 @@ class MainPathRehearsalTest(unittest.TestCase):
             member.size = len(manifest_bytes)
             package.addfile(member, io.BytesIO(manifest_bytes))
 
+        # Reuse the operational signed-tree verifier on the exact payload.
+        # An unsigned extra entry or mode change must never be accepted.
+        review_loader = SourceFileLoader(
+            "dsm928_exact_signed_payload_review",
+            str(ROOT / "update-manager/game-uptime-operational-release-review.py"))
+        review_spec = importlib.util.spec_from_loader(review_loader.name, review_loader)
+        review = importlib.util.module_from_spec(review_spec)
+        review_loader.exec_module(review)
+        target = self.root / "reviewed-tree"
+        target.mkdir()
+        payload = target / "release-manifest.json"
+        payload.write_bytes(manifest_bytes)
+        payload.chmod(0o644)
+        self.assertEqual(review._target_byte_match(target, archive, name), 1)
+        extra = target / "unsigned-extra.py"
+        extra.write_text("unexpected")
+        with self.assertRaisesRegex(review.OperationalReviewBlocked, "inventory_differs"):
+            review._target_byte_match(target, archive, name)
+        extra.unlink()
+        extra.mkdir()
+        with self.assertRaisesRegex(review.OperationalReviewBlocked, "inventory_differs"):
+            review._target_byte_match(target, archive, name)
+        extra.rmdir()
+        payload.chmod(0o755)
+        with self.assertRaises(review.OperationalReviewBlocked):
+            review._target_byte_match(target, archive, name)
+        payload.chmod(0o644)
+
         # Exercise the SAME signing entrypoint used by the official
         # release workflow, with a disposable CI key outside source.
         subprocess.run(

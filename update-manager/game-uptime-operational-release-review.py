@@ -83,11 +83,16 @@ def _target_byte_match(target: Path, archive: Path, root_name: str) -> int:
     """Match every signed TAR file against the proposed installation tree.
 
     A symlink in the target, modified script or missing file fails closed.
-    Existing extra runtime state cannot authenticate a missing archive file.
+    The target is a release payload, not an installed tree: every entry
+    must belong to the signed archive. Reject extra files, special entries,
+    hard links and mode drift before any updater consumes this directory.
     """
     if target.is_symlink() or not target.is_dir():
         raise OperationalReviewBlocked("target_tree_untrusted")
     verified = 0
+    signed_files = set()
+    signed_dirs = {""}
+    seen = set()
     try:
         with tarfile.open(archive, "r:gz") as package:
             for member in package:
@@ -96,20 +101,34 @@ def _target_byte_match(target: Path, archive: Path, root_name: str) -> int:
                         or len(parts) < 1
                         or any(part in ("", ".", "..") for part in parts)):
                     raise OperationalReviewBlocked("unsafe_signed_archive_path")
-                if not member.isfile():
-                    if not member.isdir():
-                        raise OperationalReviewBlocked("archive_not_file_or_directory")
-                    continue
                 suffix = parts[1:]
+                relative = "/".join(suffix)
+                if relative in seen:
+                    raise OperationalReviewBlocked("duplicate_signed_archive_path")
+                seen.add(relative)
+                signed_dirs.update("/".join(suffix[:n]) for n in range(len(suffix)))
+                if member.isdir():
+                    signed_dirs.add(relative)
+                    candidate = target.joinpath(*suffix)
+                    if (any(target.joinpath(*suffix[:n]).is_symlink()
+                            for n in range(1, len(suffix) + 1))
+                            or not stat.S_ISDIR(candidate.lstat().st_mode)):
+                        raise OperationalReviewBlocked("signed_target_directory_missing_or_unsafe")
+                    continue
+                if not member.isfile():
+                    raise OperationalReviewBlocked("archive_not_file_or_directory")
                 if not suffix:
                     raise OperationalReviewBlocked("archive_root_is_not_a_file")
+                signed_files.add(relative)
                 candidate = target.joinpath(*suffix)
                 if any(item.is_symlink() for item in (
                         target.joinpath(*suffix[:n])
                         for n in range(1, len(suffix) + 1))):
                     raise OperationalReviewBlocked("target_symlink_in_signed_path")
                 before = candidate.lstat()
-                if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                        or stat.S_IMODE(before.st_mode) != (member.mode & 0o7777)
+                        or before.st_mode & 0o6022):
                     raise OperationalReviewBlocked("target_file_missing_or_unsafe")
                 signed_file = package.extractfile(member)
                 if signed_file is None:
@@ -128,9 +147,33 @@ def _target_byte_match(target: Path, archive: Path, root_name: str) -> int:
                         or before.st_dev != after.st_dev
                         or before.st_ino != after.st_ino
                         or before.st_size != after.st_size
-                        or before.st_mtime_ns != after.st_mtime_ns):
+                        or before.st_mtime_ns != after.st_mtime_ns
+                        or before.st_ctime_ns != after.st_ctime_ns
+                        or before.st_mode != after.st_mode
+                        or candidate.lstat() != after):
                     raise OperationalReviewBlocked("target_differs_from_signed_tar")
                 verified += 1
+        # The old one-way member comparison accepted unsigned extras,
+        # including scripts copied by the real updater's staging routine.
+        # Traverse the target without following directory symlinks.
+        actual_files, actual_dirs = set(), {""}
+        def walk_error(exc):
+            raise exc
+        for current, dirs, names in os.walk(target, followlinks=False, onerror=walk_error):
+            for name in dirs:
+                item = Path(current) / name
+                info = item.lstat()
+                if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022:
+                    raise OperationalReviewBlocked("unsafe_target_directory")
+                actual_dirs.add(item.relative_to(target).as_posix())
+            for name in names:
+                item = Path(current) / name
+                info = item.lstat()
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise OperationalReviewBlocked("unsafe_target_file")
+                actual_files.add(item.relative_to(target).as_posix())
+        if actual_files != signed_files or actual_dirs != signed_dirs:
+            raise OperationalReviewBlocked("target_inventory_differs_from_signed_tar")
     except (OSError, tarfile.TarError, UnicodeError) as exc:
         raise OperationalReviewBlocked("signed_tree_unreadable") from exc
     if verified == 0:
