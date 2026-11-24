@@ -64,6 +64,14 @@ set +e
     for FN in require_root initialize_logging load_configuration validate_runtime_account validate_argument validate_package check_internet check_disk read_versions enforce_version_policy confirm_update; do
         eval "$FN() { :; }"
     done
+    # Exercise the real admission lock with a private fixture inode, never
+    # provision or observe installed recovery state in this shell regression.
+    acquire_dsm928_update_admission() {
+        local fixture_lock="${CASE_ROOT}/updater-admission.lock"
+        (umask 077; : > "$fixture_lock")
+        retain_dsm928_update_inode "$fixture_lock" "$(id -u)" "$(id -g)"
+    }
+    observe_dsm928_recovery_clear() { return 0; }
     create_backup() { touch "${CASE_ROOT}/unexpected-backup"; }
     stop_services() { touch "${CASE_ROOT}/unexpected-stop"; }
     run_process_guard() { return 1; }

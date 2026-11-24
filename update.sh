@@ -1948,11 +1948,12 @@ run_dsm928_disposable_main() {
 # process exit; never unlink or truncate this lock.
 retain_dsm928_update_inode() {
     local LOCK_PATH="$1" EXPECTED_UID="$2" EXPECTED_GID="$3" EXPECTED ACTUAL
+    local OWNER_PID="${BASHPID}"
     [[ -f "${LOCK_PATH}" && ! -L "${LOCK_PATH}" ]] || return 2
     EXPECTED="$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "${LOCK_PATH}")" || return 2
     [[ "${EXPECTED}" == *":${EXPECTED_UID}:${EXPECTED_GID}:600:1:0" ]] || return 2
     exec {DSM928_UPDATE_FD}<"${LOCK_PATH}" || return 2
-    ACTUAL="$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' "/proc/$/fd/${DSM928_UPDATE_FD}")" || return 2
+    ACTUAL="$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' "/proc/${OWNER_PID}/fd/${DSM928_UPDATE_FD}")" || return 2
     [[ "${ACTUAL}" == "${EXPECTED}" ]] || return 2
     /usr/bin/flock -n -x "${DSM928_UPDATE_FD}" || return 2
     [[ ! -L "${LOCK_PATH}" && "$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "${LOCK_PATH}")" == "${EXPECTED}" ]] || return 2
