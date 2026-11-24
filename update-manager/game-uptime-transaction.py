@@ -19,6 +19,8 @@ from pathlib import Path
 import re
 import stat
 import tempfile
+import sys
+from contextlib import ExitStack
 from typing import Callable, Mapping
 
 _UNIT = re.compile(r"dsm928-e2e-[a-z0-9-]+\.service\Z")
@@ -77,7 +79,10 @@ def _exclusive_transaction(func):
             if "_scope" in kwargs:
                 raise TransactionSafetyError("caller-supplied scope witness forbidden")
             options = kwargs.pop("local_scope_kwargs", None)
+            distributed = kwargs.pop("distributed_fixture_openers", None)
             if options is None:
+                if distributed is not None:
+                    raise TransactionSafetyError("distributed scope requires local scope")
                 return func(root, *args, **kwargs)
             recovery = func.__name__ == "recover_interrupted"
             if not recovery and os.path.lexists(root / "game-uptime-transaction.json"):
@@ -85,8 +90,25 @@ def _exclusive_transaction(func):
             if recovery and kwargs.get("operator_reviewed") is not True:
                 raise TransactionSafetyError("explicit operator review is required")
             try:
-                with _bound_local_scope(options, recovery=recovery) as lease:
+                with ExitStack() as stack:
+                    lease = stack.enter_context(_bound_local_scope(options, recovery=recovery))
                     receipt = _scope_receipt(lease, options, recovery=recovery)
+                    if distributed is not None:
+                        remote = stack.enter_context(_bound_distributed_fixture(
+                            receipt, options, distributed, recovery=recovery))
+                        local_checkpoint = receipt["checkpoint"]
+                        def combined_checkpoint():
+                            local_checkpoint()
+                            remote["checkpoint"]()
+                            local_checkpoint()
+                        receipt["checkpoint"] = combined_checkpoint
+                        receipt["distributed_scope_binding"] = {
+                            "agent_ids": list(remote["prepared_agent_ids"]),
+                            "issued_at": remote["issued_at"],
+                            "expires_at": remote["expires_at"],
+                            "scope": "disposable_cooperating_agent_sessions_only",
+                        }
+                        combined_checkpoint()
                     return func(root, *args, **kwargs, _scope=receipt)
             except TransactionSafetyError:
                 raise
@@ -117,13 +139,47 @@ def _bound_local_scope(options: Mapping, *, recovery: bool):
     return module.retain_local_scopes(**dict(options))
 
 
+def _bound_distributed_fixture(receipt: Mapping, options: Mapping,
+                               openers: Mapping, *, recovery: bool):
+    """Compose the actual session protocol with the existing disposable lease.
+
+    Only injected fixture channels are permitted here. The operational SSH
+    adapter is intentionally not invoked against real hosts from this test
+    transaction. A production updater still requires independent coverage.
+    """
+    if (os.environ.get("CAPIVARA_DSM928_SYSTEMD_E2E") != "1"
+            or os.path.lexists("/opt/dsm")):
+        raise TransactionSafetyError("distributed transaction fixture requires isolated systemd host")
+    if (type(openers) is not dict or set(openers) != set(receipt["agent_ids"])
+            or any(not callable(opener) for opener in openers.values())):
+        raise TransactionSafetyError("distributed fixture inventory incomplete")
+    receipt["checkpoint"]()
+    marker = json.loads(Path(options["hold_path"]).read_bytes())
+    receipt["checkpoint"]()
+    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    sys.path.insert(0, runtime)
+    try:
+        from game_uptime_hold_coordinator import retain_distributed_agent_sessions
+    finally:
+        sys.path.remove(runtime)
+    return retain_distributed_agent_sessions(
+        transaction_id=receipt["transaction_id"],
+        release_sha256=receipt["release_sha256"],
+        issued_at=marker["issued_at"], expires_at=marker["expires_at"],
+        expected_agent_ids=receipt["agent_ids"], session_openers=openers,
+        recover_existing=recovery, operator_reviewed=recovery)
+
+
 def _scope_binding(scope: Mapping | None) -> dict | None:
     if scope is None:
         return None
-    return {"transaction_id": scope["transaction_id"],
-            "release_sha256": scope["release_sha256"],
-            "agent_ids": scope["agent_ids"],
-            "evidence_sha256": scope["evidence_sha256"]}
+    result = {"transaction_id": scope["transaction_id"],
+              "release_sha256": scope["release_sha256"],
+              "agent_ids": scope["agent_ids"],
+              "evidence_sha256": scope["evidence_sha256"]}
+    if "distributed_scope_binding" in scope:
+        result["distributed_scope_binding"] = scope["distributed_scope_binding"]
+    return result
 
 
 def _scope_receipt(scope: Mapping, options: Mapping, *, recovery: bool) -> dict:
@@ -278,6 +334,7 @@ def execute(
     handoff: Mapping | None = None,
     list_units: Callable[[], list[str]] | None = None,
     local_scope_kwargs: Mapping | None = None,
+    distributed_fixture_openers: Mapping | None = None,
     _scope: Mapping | None = None,
 ) -> dict:
     """Run one isolated transaction. Fail closed after any interrupted run.
@@ -330,6 +387,7 @@ def execute(
         after = [_snapshot(x["unit"], inspect) for x in before]
         if after != before:
             raise TransactionSafetyError("process or unit configuration changed during apply")
+        scope_checkpoint()
         _checkpoint(path, "verified", before, strict_inventory=strict, scope_binding=bound)
         return {"status": "verified", "live_no_drain_authorized": False, "units": after}
     except Exception as exc:
@@ -351,6 +409,7 @@ def execute(
             after_rollback = [_snapshot(x["unit"], inspect) for x in before]
             if after_rollback != before:
                 raise TransactionSafetyError("process or unit configuration changed during rollback")
+            scope_checkpoint()
             _checkpoint(path, "rolled_back", before, str(exc), strict_inventory=strict, scope_binding=bound)
         except Exception as rollback_exc:
             _checkpoint(path, "manual_recovery_required", before, str(rollback_exc),
@@ -369,6 +428,7 @@ def recover_interrupted(
     operator_reviewed: bool = False,
     list_units: Callable[[], list[str]] | None = None,
     local_scope_kwargs: Mapping | None = None,
+    distributed_fixture_openers: Mapping | None = None,
     _scope: Mapping | None = None,
 ) -> dict:
     """Explicit, disposable-only rollback of one interrupted transaction.
@@ -445,6 +505,7 @@ def recover_interrupted(
         after = [_snapshot(name, inspect) for name in sorted(units)]
         if after != actual:
             raise TransactionSafetyError("process or unit configuration changed during recovery rollback")
+        scope_checkpoint()
         _checkpoint(path, "recovered_rollback", actual, strict_inventory=strict, scope_binding=bound)
         return {"status": "recovered_rollback",
                 "live_no_drain_authorized": False, "units": after}

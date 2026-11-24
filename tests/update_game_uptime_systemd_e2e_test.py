@@ -1639,6 +1639,69 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     worker_lock_dir=workers, hold_path=runtime/"hold.json",
                     pending_path=state/"no-drain-pending.json", fixture_root=scope_root,
                     prepare_fresh_fixture=True, expected_fixture_agent_ids=agent_ids)
+        # The original interrupted systemd apply now also retains two
+        # Agent scopes over the real session protocol (local sockets only).
+        import sys
+        import socket
+        import threading
+        from contextlib import contextmanager
+        agent_runtime = str(ROOT / "agents/linux/runtime")
+        sys.path.insert(0, agent_runtime)
+        try:
+            from game_uptime_hold_coordinator import (
+                prepare_standalone_agent_scope, serve_prepared_agent_session,
+            )
+        finally:
+            sys.path.remove(agent_runtime)
+        channels = {}
+        remote_locks = []
+        remote_errors = []
+        for index, agent in enumerate(agent_ids):
+            host = self.workspace / ("recovery-agent-" + str(index))
+            host.mkdir(mode=0o755)
+            host.chmod(0o755)
+            host_run, host_state = host / "run", host / "state"
+            for directory in (host_run, host_state):
+                directory.mkdir(mode=0o755)
+                directory.chmod(0o755)
+            priv = host_run / "agent-privileged-operations.lock"
+            final = host_run / "agent-finalization-operations.lock"
+            for inode in (priv, final):
+                inode.touch(mode=0o600)
+                inode.chmod(0o660 if inode == final else 0o600)
+            remote_locks.extend((priv, final))
+            remote_options = dict(hold_path=host_run/"hold.json",
+                                  journal_path=host_state/"no-drain-pending.json",
+                                  privileged_lock_path=priv, finalization_lock_path=final,
+                                  trusted_uid=os.geteuid(), fixture_root=host,
+                                  fixture_group_gid=os.getegid())
+            def make_opener(agent, remote_options):
+                @contextmanager
+                def opened():
+                    client, server = socket.socketpair()
+                    def serve():
+                        try:
+                            def factory(**shared):
+                                return prepare_standalone_agent_scope(**remote_options, **shared)
+                            serve_prepared_agent_session(
+                                server.fileno(), server.fileno(), local_agent_id=agent,
+                                scope_factory=factory, now=time.time)
+                        except Exception as exc:
+                            # EOF is expected after a simulated interruption.
+                            remote_errors.append(str(exc))
+                        finally:
+                            server.close()
+                    thread = threading.Thread(target=serve, daemon=True)
+                    thread.start()
+                    try:
+                        yield (client.fileno(), client.fileno())
+                    finally:
+                        client.close()
+                        thread.join(timeout=5)
+                        self.assertFalse(thread.is_alive())
+                return opened
+            channels[agent] = make_opener(agent, remote_options)
+        locks.extend(remote_locks)
         def inspect_game(name):
             result = self._snapshot(name)
             result["unit_config_sha256"] = hashlib.sha256(
@@ -1671,12 +1734,17 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 [row["unit"] for row in originals],
                 inspect=inspect_game, list_units=list_games, handoff=handoff,
                 local_scope_kwargs=opts,
+                distributed_fixture_openers=channels,
                 apply=interrupted_apply,
                 rollback=lambda: run("rollback"),
             )
         self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
-        self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
-                         "prepared")
+        recorded = json.loads((journal/"game-uptime-transaction.json").read_text())
+        self.assertEqual(recorded["status"], "prepared")
+        self.assertEqual(recorded["local_scope_binding"]["distributed_scope_binding"]["agent_ids"],
+                         sorted(agent_ids))
+        self.assertEqual(remote_errors, ["agent_session_disconnected"] * len(agent_ids))
+        remote_errors.clear()
         self._assert_unchanged(originals)
 
         with self.assertRaisesRegex(transaction.TransactionSafetyError, "scope binding mismatch"):
@@ -1687,14 +1755,20 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                          "expected_fixture_agent_ids": None,
                          "inspect_existing_prepared": True,
                          "expected_recovery_agent_ids": agent_ids}
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "scope binding mismatch"):
+            transaction.recover_interrupted(
+                journal, names, inspect=inspect_game, list_units=list_games,
+                rollback=lambda: self.fail("remote scope omitted"), operator_reviewed=True,
+                local_scope_kwargs=recovery_opts)
         def guarded_rollback():
             assert_locks()
             run("rollback")
         outcome = transaction.recover_interrupted(
             journal, names, inspect=inspect_game, list_units=list_games,
             rollback=guarded_rollback, operator_reviewed=True,
-            local_scope_kwargs=recovery_opts,
+            local_scope_kwargs=recovery_opts, distributed_fixture_openers=channels,
         )
+        self.assertEqual(remote_errors, [])
         self.assertEqual(outcome["status"], "recovered_rollback")
         self.assertFalse(outcome["live_no_drain_authorized"])
         self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
