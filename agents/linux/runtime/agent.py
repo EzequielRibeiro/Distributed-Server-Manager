@@ -453,7 +453,9 @@ def run_forever():
     # recovery; nothing in this Agent authorizes a no-drain update.
     while True:
         with tracked_agent_operation() as admitted:
-            if admitted:
+            # Preserve the Agent's explicit startup admission check while
+            # retaining the shared inode across enrollment and recovery.
+            if admitted and observe_no_drain_hold()["active"] is False:
                 config=_load_config()
                 if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
                 interrupted=recover_interrupted_operations(config)
