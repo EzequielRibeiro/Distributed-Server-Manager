@@ -454,12 +454,12 @@ def run_forever():
     while True:
         with tracked_agent_operation() as admitted:
             if admitted:
-            config=_load_config()
-            if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
-            interrupted=recover_interrupted_operations(config)
-            if interrupted:increment("operations_interrupted",len(interrupted))
-            start_console_stream(config)
-            start_content_update_inventory(config,logger=lambda message:_log(message,True))
+                config=_load_config()
+                if not config.get("credential_id") or not config.get("credential_secret"):config=enroll(config)
+                interrupted=recover_interrupted_operations(config)
+                if interrupted:increment("operations_interrupted",len(interrupted))
+                start_console_stream(config)
+                start_content_update_inventory(config,logger=lambda message:_log(message,True))
                 break
         time.sleep(1)
     heartbeat_interval=max(10,int(config.get("heartbeat_interval_seconds",DEFAULT_HEARTBEAT_SECONDS)));reconcile_interval=max(5,int(config.get("reconcile_interval_seconds",DEFAULT_RECONCILE_SECONDS)));next_heartbeat=next_reconcile=0.0
