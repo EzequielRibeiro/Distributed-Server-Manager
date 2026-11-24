@@ -1579,6 +1579,19 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                                 apply=update_then_inject_failure,
                                 rollback=compensate)
         check_game()
+        confirmation = journal / "game-uptime-terminal-confirmation.json"
+        confirmed = json.loads(confirmation.read_bytes())
+        self.assertEqual(confirmed["journal_sha256"], terminal_hash)
+        self.assertEqual(confirmed["recorded_agent_ids"], sorted(remote_ids))
+        self.assertTrue(confirmed["pending_evidence_retained"])
+        saved_confirmation = (confirmation.stat().st_ino, confirmation.read_bytes())
+        retried = transaction.confirm_terminal(
+            journal, names, inspect=inspect_game, list_units=list_games,
+            operator_reviewed=True, local_scope_kwargs=recovery_opts,
+            distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id)
+        self.assertTrue(retried["terminal_confirmation_retried"])
+        self.assertEqual(saved_confirmation, (confirmation.stat().st_ino, confirmation.read_bytes()))
+        self.assertEqual(remote_errors, [])
         self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
         self.assertEqual((fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
                          b"saved-world-private-test")

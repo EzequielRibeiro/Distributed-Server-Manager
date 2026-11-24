@@ -83,11 +83,13 @@ def _exclusive_transaction(func):
             hybrid_id = kwargs.pop("local_fixture_agent_id", None)
             if hybrid_id is not None and (options is None or distributed is None):
                 raise TransactionSafetyError("Hybrid partition requires both local and remote scopes")
+            if func.__name__ == "confirm_terminal" and (options is None or distributed is None):
+                raise TransactionSafetyError("terminal confirmation requires complete retained scopes")
             if options is None:
                 if distributed is not None:
                     raise TransactionSafetyError("distributed scope requires local scope")
                 return func(root, *args, **kwargs)
-            recovery = func.__name__ == "recover_interrupted"
+            recovery = func.__name__ in ("recover_interrupted", "confirm_terminal")
             if not recovery and os.path.lexists(root / "game-uptime-transaction.json"):
                 raise TransactionSafetyError("existing transaction evidence requires manual review")
             if recovery and kwargs.get("operator_reviewed") is not True:
@@ -143,6 +145,24 @@ def _exclusive_transaction(func):
                         if (decision.get("recorded_agent_ids") != remote_ids
                                 or decision.get("pending_evidence_retained") is not True):
                             raise TransactionSafetyError("distributed terminal decision incomplete")
+                        combined_checkpoint()
+                        # Persist the complete confirmation AFTER every Agent
+                        # recorded the same terminal digest. A failed write or
+                        # interrupted exchange leaves all pending holds intact.
+                        runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+                        sys.path.insert(0, runtime)
+                        try:
+                            from game_uptime_hold_coordinator import _persist_terminal_receipt
+                        finally:
+                            sys.path.remove(runtime)
+                        _persist_terminal_receipt(
+                            root / "game-uptime-terminal-confirmation.json",
+                            {"kind": "DSM928DistributedTerminalConfirmation",
+                             "schema_version": 1, "local_scope_binding": _scope_binding(receipt),
+                             "outcome": outcome, "journal_sha256": hashlib.sha256(raw).hexdigest(),
+                             "recorded_agent_ids": remote_ids,
+                             "pending_evidence_retained": True,
+                             "live_no_drain_authorized": False}, os.geteuid())
                         combined_checkpoint()
 
                     try:
@@ -594,3 +614,63 @@ def recover_interrupted(
         _checkpoint(path, "manual_recovery_required", actual, str(exc),
                     strict_inventory=strict, scope_binding=bound)
         raise TransactionSafetyError("recovery rollback failed; manual review required") from exc
+
+
+
+@_exclusive_transaction
+def confirm_terminal(
+    workspace: Path,
+    units: list[str],
+    *,
+    inspect: Callable[[str], Mapping],
+    list_units: Callable[[], list[str]],
+    operator_reviewed: bool = False,
+    local_scope_kwargs: Mapping | None = None,
+    distributed_fixture_openers: Mapping | None = None,
+    local_fixture_agent_id: str | None = None,
+    _scope: Mapping | None = None,
+) -> dict:
+    """Retry terminal confirmation without re-executing apply or rollback.
+
+    Requires the exact original durable binding and preserved game identity.
+    The enclosing retained-scope owner performs the authenticated exchanges
+    and persists the complete confirmation. Never clears pending evidence.
+    """
+    if operator_reviewed is not True or _scope is None:
+        raise TransactionSafetyError("explicit retained terminal review required")
+    if (not isinstance(units, list) or not units
+            or any(not isinstance(unit, str) or not _UNIT.fullmatch(unit) for unit in units)
+            or len(units) != len(set(units))):
+        raise TransactionSafetyError("only named disposable E2E systemd units are allowed")
+    path = _workspace(workspace) / "game-uptime-transaction.json"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                    or stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1):
+                raise ValueError("untrusted terminal journal")
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            raise ValueError("oversized terminal journal")
+        report = json.loads(raw)
+    except (OSError, ValueError, TypeError) as exc:
+        raise TransactionSafetyError("terminal journal unreadable") from exc
+    if (not isinstance(report, dict)
+            or report.get("kind") != "DSM928DisposableUptimeTransaction"
+            or report.get("scope") != "disposable_only_not_production"
+            or report.get("live_no_drain_authorized") is not False
+            or report.get("status") not in ("verified", "rolled_back", "recovered_rollback")
+            or report.get("strict_inventory") is not True
+            or report.get("local_scope_binding") != _scope_binding(_scope)):
+        raise TransactionSafetyError("terminal journal scope binding mismatch")
+    _scope["checkpoint"]()
+    _active_set(units, list_units)
+    observed = [_snapshot(unit, inspect) for unit in sorted(units)]
+    if (report.get("original_units") != observed
+            or report.get("original_units_sha256") != _digest(observed)):
+        raise TransactionSafetyError("terminal journal game identity changed")
+    _active_set(units, list_units)
+    _scope["checkpoint"]()
+    return {"status": report["status"], "live_no_drain_authorized": False,
+            "terminal_confirmation_retried": True, "units": observed}
