@@ -80,6 +80,9 @@ def _exclusive_transaction(func):
                 raise TransactionSafetyError("caller-supplied scope witness forbidden")
             options = kwargs.pop("local_scope_kwargs", None)
             distributed = kwargs.pop("distributed_fixture_openers", None)
+            hybrid_id = kwargs.pop("local_fixture_agent_id", None)
+            if hybrid_id is not None and (options is None or distributed is None):
+                raise TransactionSafetyError("Hybrid partition requires both local and remote scopes")
             if options is None:
                 if distributed is not None:
                     raise TransactionSafetyError("distributed scope requires local scope")
@@ -89,6 +92,16 @@ def _exclusive_transaction(func):
                 raise TransactionSafetyError("existing transaction evidence requires manual review")
             if recovery and kwargs.get("operator_reviewed") is not True:
                 raise TransactionSafetyError("explicit operator review is required")
+            # Validate the complete local/remote partition BEFORE any fresh
+            # hold can be written. Do not infer remote membership from the
+            # channels which happen to be available at execution time.
+            remote_ids = None
+            if distributed is not None:
+                if not isinstance(options, Mapping):
+                    raise TransactionSafetyError("invalid disposable transaction scope")
+                ids = options.get("expected_recovery_agent_ids" if recovery
+                                  else "expected_fixture_agent_ids")
+                remote_ids = _distributed_partition(ids, hybrid_id, distributed)
             transaction_error = None
             try:
                 with ExitStack() as stack:
@@ -96,7 +109,8 @@ def _exclusive_transaction(func):
                     receipt = _scope_receipt(lease, options, recovery=recovery)
                     if distributed is not None:
                         remote = stack.enter_context(_bound_distributed_fixture(
-                            receipt, options, distributed, recovery=recovery))
+                            receipt, options, distributed, remote_ids=remote_ids,
+                            recovery=recovery))
                         local_checkpoint = receipt["checkpoint"]
                         def combined_checkpoint():
                             local_checkpoint()
@@ -109,6 +123,8 @@ def _exclusive_transaction(func):
                             "expires_at": remote["expires_at"],
                             "scope": "disposable_cooperating_agent_sessions_only",
                         }
+                        if hybrid_id is not None:
+                            receipt["distributed_scope_binding"]["local_hybrid_agent_id"] = hybrid_id
                         combined_checkpoint()
                     try:
                         return func(root, *args, **kwargs, _scope=receipt)
@@ -152,8 +168,32 @@ def _bound_local_scope(options: Mapping, *, recovery: bool):
     return module.retain_local_scopes(**dict(options))
 
 
+def _distributed_partition(ids, hybrid_id, openers):
+    """Partition an independently pinned full inventory without omissions.
+
+    The Hybrid Agent is covered by the retained local worker/helper locks;
+    standalone endpoints are covered by the authenticated session protocol.
+    This validates fixture scope only, not installed daemon coverage.
+    """
+    if (type(ids) is not list or not ids
+            or any(type(agent) is not str or
+                   not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", agent)
+                   for agent in ids)
+            or len(set(ids)) != len(ids)):
+        raise TransactionSafetyError("invalid full Agent inventory")
+    if hybrid_id is not None and (type(hybrid_id) is not str or hybrid_id not in ids):
+        raise TransactionSafetyError("Hybrid Agent outside full inventory")
+    remote_ids = sorted(agent for agent in ids if agent != hybrid_id)
+    if (not remote_ids or type(openers) is not dict
+            or set(openers) != set(remote_ids)
+            or any(not callable(opener) for opener in openers.values())):
+        raise TransactionSafetyError("distributed fixture inventory incomplete")
+    return remote_ids
+
+
 def _bound_distributed_fixture(receipt: Mapping, options: Mapping,
-                               openers: Mapping, *, recovery: bool):
+                               openers: Mapping, *, remote_ids: list[str],
+                               recovery: bool):
     """Compose the actual session protocol with the existing disposable lease.
 
     Only injected fixture channels are permitted here. The operational SSH
@@ -163,8 +203,8 @@ def _bound_distributed_fixture(receipt: Mapping, options: Mapping,
     if (os.environ.get("CAPIVARA_DSM928_SYSTEMD_E2E") != "1"
             or os.path.lexists("/opt/dsm")):
         raise TransactionSafetyError("distributed transaction fixture requires isolated systemd host")
-    if (type(openers) is not dict or set(openers) != set(receipt["agent_ids"])
-            or any(not callable(opener) for opener in openers.values())):
+    if (not set(remote_ids).issubset(receipt["agent_ids"])
+            or set(openers) != set(remote_ids)):
         raise TransactionSafetyError("distributed fixture inventory incomplete")
     receipt["checkpoint"]()
     marker = json.loads(Path(options["hold_path"]).read_bytes())
@@ -179,7 +219,7 @@ def _bound_distributed_fixture(receipt: Mapping, options: Mapping,
         transaction_id=receipt["transaction_id"],
         release_sha256=receipt["release_sha256"],
         issued_at=marker["issued_at"], expires_at=marker["expires_at"],
-        expected_agent_ids=receipt["agent_ids"], session_openers=openers,
+        expected_agent_ids=remote_ids, session_openers=openers,
         recover_existing=recovery, operator_reviewed=recovery)
 
 
@@ -348,6 +388,7 @@ def execute(
     list_units: Callable[[], list[str]] | None = None,
     local_scope_kwargs: Mapping | None = None,
     distributed_fixture_openers: Mapping | None = None,
+    local_fixture_agent_id: str | None = None,
     _scope: Mapping | None = None,
 ) -> dict:
     """Run one isolated transaction. Fail closed after any interrupted run.
@@ -442,6 +483,7 @@ def recover_interrupted(
     list_units: Callable[[], list[str]] | None = None,
     local_scope_kwargs: Mapping | None = None,
     distributed_fixture_openers: Mapping | None = None,
+    local_fixture_agent_id: str | None = None,
     _scope: Mapping | None = None,
 ) -> dict:
     """Explicit, disposable-only rollback of one interrupted transaction.

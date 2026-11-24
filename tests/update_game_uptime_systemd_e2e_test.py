@@ -1632,7 +1632,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         for lock in locks:
             lock.touch(mode=0o600)
             lock.chmod(0o660 if lock == child else 0o600)
-        agent_ids = ["fixture-agent-alpha", "fixture-agent-beta"]
+        hybrid_id = "fixture-agent-hybrid"
+        remote_ids = ["fixture-agent-alpha", "fixture-agent-beta"]
+        agent_ids = [hybrid_id, *remote_ids]
         opts = dict(transaction_id=uuid4().hex, release_sha256="a"*64,
                     expected_controller_uid=os.geteuid(),
                     expected_worker_uid=os.geteuid(), controller_lock=controller,
@@ -1656,7 +1658,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         channels = {}
         remote_locks = []
         remote_errors = []
-        for index, agent in enumerate(agent_ids):
+        for index, agent in enumerate(remote_ids):
             host = self.workspace / ("recovery-agent-" + str(index))
             host.mkdir(mode=0o755)
             host.chmod(0o755)
@@ -1728,12 +1730,22 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             self._assert_unchanged(originals)
             raise SystemExit(47)
 
+        # Reject omitted/misclassified members before any durable evidence.
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "inventory incomplete"):
+            transaction.execute(
+                journal, names, inspect=inspect_game, list_units=list_games,
+                handoff=handoff, local_scope_kwargs=opts,
+                distributed_fixture_openers=channels,
+                apply=lambda: self.fail("incomplete partition applied"),
+                rollback=lambda: self.fail("unexpected rollback"))
+        self.assertFalse(opts["pending_path"].exists())
         with self.assertRaises(SystemExit):
             transaction.execute(
                 journal,
                 [row["unit"] for row in originals],
                 inspect=inspect_game, list_units=list_games, handoff=handoff,
                 local_scope_kwargs=opts,
+                local_fixture_agent_id=hybrid_id,
                 distributed_fixture_openers=channels,
                 apply=interrupted_apply,
                 rollback=lambda: run("rollback"),
@@ -1741,9 +1753,12 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
         recorded = json.loads((journal/"game-uptime-transaction.json").read_text())
         self.assertEqual(recorded["status"], "prepared")
-        self.assertEqual(recorded["local_scope_binding"]["distributed_scope_binding"]["agent_ids"],
-                         sorted(agent_ids))
-        self.assertEqual(remote_errors, ["agent_session_disconnected"] * len(agent_ids))
+        binding = recorded["local_scope_binding"]
+        self.assertEqual(binding["agent_ids"], sorted(agent_ids))
+        self.assertEqual(binding["distributed_scope_binding"]["agent_ids"],
+                         sorted(remote_ids))
+        self.assertEqual(binding["distributed_scope_binding"]["local_hybrid_agent_id"], hybrid_id)
+        self.assertEqual(remote_errors, ["agent_session_disconnected"] * len(remote_ids))
         remote_errors.clear()
         self._assert_unchanged(originals)
 
@@ -1767,6 +1782,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             journal, names, inspect=inspect_game, list_units=list_games,
             rollback=guarded_rollback, operator_reviewed=True,
             local_scope_kwargs=recovery_opts, distributed_fixture_openers=channels,
+            local_fixture_agent_id=hybrid_id,
         )
         self.assertEqual(remote_errors, [])
         self.assertEqual(outcome["status"], "recovered_rollback")
