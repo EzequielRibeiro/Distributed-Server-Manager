@@ -1943,6 +1943,26 @@ run_dsm928_disposable_main() {
     PYTHONDONTWRITEBYTECODE=1 python3 "${DRIVER}" "${FIXTURE_ROOT}" "${DSM928_DISPOSABLE_MODE:-success}"
 }
 
+# A pending #928 recovery has precedence over the ordinary draining updater.
+# Use the same installed-path fail-closed observer as Agent/Worker loops.
+# This is a read-only interlock, not a distributed transaction lock or an
+# authorization to create/clear a maintenance marker.
+observe_dsm928_recovery_clear() {
+    local PROBE="${SCRIPT_DIR}/agents/linux/runtime/game_uptime_maintenance_hold.py"
+    [[ -f "${PROBE}" && ! -L "${PROBE}" ]] || return 2
+    /usr/bin/python3 -I -S -B "${PROBE}"
+}
+
+require_dsm928_recovery_clear() {
+    if ! observe_dsm928_recovery_clear; then
+        echo "DSM #928: manutenção ou recuperação pendente/não verificável; atualização bloqueada." >&2
+        echo "DSM #928: maintenance or recovery pending/unverifiable; update blocked." >&2
+        # Explicit exit before UPDATE_TRANSACTION_STARTED: never invoke
+        # the normal error trap's service/game recovery machinery.
+        exit 2
+    fi
+}
+
 main() {
     echo
     echo "Iniciando atualização DSM..."
@@ -1985,6 +2005,7 @@ main() {
     fi
     # Ambiente | Environment
     require_root
+    require_dsm928_recovery_clear
     # O pacote instalado pode ser substituído durante esta execução. Nunca
     # mantenha o shell ou jobs de progresso dentro de /opt/dsm.
     cd "$(dirname "${INSTALL_DIR}")" || {
@@ -2010,6 +2031,9 @@ main() {
     capture_game_instance_state
     # Stop writers before creating a consistent filesystem/database snapshot pair.
     capture_service_state
+    # Recheck immediately before stopping any writer/game. This does not
+    # replace the future common exclusive transaction admission lock.
+    require_dsm928_recovery_clear
     UPDATE_TRANSACTION_STARTED=1
     # Quiesce the Controller/Workers first. Otherwise a live reconciler can
     # restart a managed game in the gap after its graceful stop (observed on

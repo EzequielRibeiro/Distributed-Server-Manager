@@ -166,6 +166,23 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
 
     def test_actual_main_path_success_preserves_world_and_checks_guard_order(self):
+        # The draining path must never bypass an unresolved #928 journal,
+        # including one appearing after the initial read-only preflight.
+        for mode in ("pending_recovery", "pending_recovery_after_capture"):
+            with self.subTest(mode=mode):
+                blocked = main_rehearsal(self.root, mode)
+                self.assertEqual(blocked.returncode, 2, blocked.stderr)
+                self.assertIn("maintenance or recovery pending/unverifiable", blocked.stderr)
+                self.assertEqual((self.installed/"version").read_text().strip(), "2.0.998")
+                self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+                self.assertEqual(list((self.root/"backups").glob("*.tar.gz")), [])
+                steps = self.root/"steps"
+                if mode == "pending_recovery":
+                    self.assertFalse(steps.exists())
+                else:
+                    self.assertEqual(steps.read_text().splitlines(), [
+                        "guard:allow-managed", "capture-games", "capture-services"])
+                    steps.unlink()
         outcome = main_rehearsal(self.root)
         self.assertEqual(outcome.returncode, 0, outcome.stderr[-2500:] + outcome.stdout[-1500:])
         self.assertEqual((self.installed/"version").read_text().strip(), "2.0.999")
