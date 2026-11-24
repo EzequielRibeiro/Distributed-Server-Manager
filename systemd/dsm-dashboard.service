@@ -10,6 +10,9 @@ Type=simple
 User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
+# Enable the shared request lock for installed Controller HTTP mutations.
+# A maintenance transaction still requires independent distributed fencing.
+Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1
 EnvironmentFile=-/opt/dsm/config/dsm.conf
 WorkingDirectory=/opt/dsm/dashboard
 # Provision stable Controller lock and empty persistent evidence storage only.

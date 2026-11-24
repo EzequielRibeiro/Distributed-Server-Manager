@@ -318,8 +318,37 @@ class PersistentPendingHoldTests(unittest.TestCase):
                 self.uid, os.getegid(), runtime=self.run,
                 state=self.state, parent_owner=self.uid)
 
+        # Couple the installed service's opt-in with its root preparer.
+        # Do not claim a local request lock proves distributed quiescence.
+        unit = (ROOT / "systemd/dsm-dashboard.service").read_text()
+        self.assertIn("Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1\n", unit)
+        self.assertIn("prepare_maintenance_worker_locks.py --user {{DSM_USER}} "
+                      "--group {{DSM_GROUP}} --controller-only", unit)
+        self.assertIn("ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part22.py", unit)
         lock = prepare()
         self.assertEqual(lock.name, "controller-agent-http.lock")
+        dashboard = str(ROOT / "dashboard")
+        sys.path.insert(0, dashboard)
+        try:
+            from game_uptime_controller_agent_http_flock import (
+                shared_controller_agent_http_lock,
+                exclusive_controller_agent_http_lock,
+                ControllerHttpLockUnavailable,
+            )
+        finally:
+            sys.path.remove(dashboard)
+        scope = dict(lock_path=lock, expected_uid=self.uid,
+                     expected_gid=os.getegid(), parent_uid=self.uid)
+        with shared_controller_agent_http_lock(**scope, enabled=True) as held:
+            self.assertTrue(held)
+            with self.assertRaises(ControllerHttpLockUnavailable):
+                with exclusive_controller_agent_http_lock(**scope):
+                    self.fail("exclusive lock acquired during HTTP mutation")
+        with exclusive_controller_agent_http_lock(**scope) as observation:
+            self.assertFalse(observation["live_no_drain_authorized"])
+            with self.assertRaises(ControllerHttpLockUnavailable):
+                with shared_controller_agent_http_lock(**scope, enabled=True):
+                    self.fail("HTTP mutation admitted during exclusive lock")
         self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
         receipts = self.state / "no-drain-wire-receipts"
         self.assertEqual(stat.S_IMODE(receipts.stat().st_mode), 0o700)
