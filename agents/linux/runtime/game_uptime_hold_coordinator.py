@@ -17,6 +17,8 @@ from pathlib import Path
 import re
 import stat
 import time
+from contextlib import contextmanager, ExitStack
+from typing import Iterator
 
 from game_uptime_maintenance_hold import HOLD_PATH, PENDING_PATH
 from game_uptime_transaction_binding import BINDING_PATH
@@ -222,3 +224,132 @@ def prepare_root_only(
         "external_jobs_acked": False,
         "live_no_drain_authorized": False,
     }
+
+
+@contextmanager
+def prepare_standalone_agent_scope(
+    *, transaction_id: str, release_sha256: str, issued_at: int,
+    expires_at: int, expected_agent_ids: list[str], local_agent_id: str,
+    hold_path: Path = HOLD_PATH, journal_path: Path = PENDING_PATH,
+    privileged_lock_path: Path | None = None,
+    finalization_lock_path: Path | None = None,
+    trusted_uid: int = 0, fixture_root: Path | None = None,
+    fixture_group_gid: int | None = None, now: int | None = None,
+) -> Iterator[dict[str, object]]:
+    """Root operator's host-local PREPARE for a shared distributed transaction.
+
+    All hosts receive the SAME operator-reviewed transaction, package digest,
+    full inventory and absolute time window. Acquire both existing exclusive
+    lock families BEFORE writing persistent evidence. The context owns the
+    locks until exit; the pending journal stays blocking even after exit,
+    interruption or reboot. This is neither a Controller ACK nor a commit,
+    and does not claim that uninstrumented jobs or other hosts are fenced.
+    No installed caller or network endpoint invokes this automatically.
+    """
+    from game_uptime_privileged_flock import (
+        LOCK_PATH as HELPER_LOCK, exclusive_privileged_helper_lock,
+    )
+    from game_uptime_finalization_flock import (
+        LOCK_PATH as CHILD_LOCK, exclusive_finalization_lock,
+    )
+    from game_uptime_maintenance_hold import observe
+    from game_uptime_transaction_binding import binding_for_hold
+    from game_uptime_privileged_journal_witness import _verify_snapshot
+    from game_uptime_wire_replay_service import read_inventory
+
+    marker, pending = Path(hold_path), Path(journal_path)
+    helper = HELPER_LOCK if privileged_lock_path is None else Path(privileged_lock_path)
+    child = CHILD_LOCK if finalization_lock_path is None else Path(finalization_lock_path)
+    when = int(time.time()) if now is None else now
+    if (os.geteuid() != trusted_uid
+            or type(transaction_id) is not str or not _ID.fullmatch(transaction_id)
+            or type(release_sha256) is not str
+            or not re.fullmatch(r"[0-9a-f]{64}", release_sha256)
+            or type(issued_at) is not int or type(expires_at) is not int
+            or not 0 < issued_at <= when < expires_at <= issued_at + 900
+            or type(expected_agent_ids) is not list or not 1 <= len(expected_agent_ids) <= 64
+            or any(type(agent) is not str or not _AGENT_ID.fullmatch(agent)
+                   for agent in expected_agent_ids)
+            or len(set(expected_agent_ids)) != len(expected_agent_ids)
+            or type(local_agent_id) is not str or local_agent_id not in expected_agent_ids):
+        raise HoldPreparationBlocked("invalid_shared_agent_prepare_scope")
+    ids = sorted(expected_agent_ids)
+    if fixture_root is None:
+        if (trusted_uid != 0 or now is not None or fixture_group_gid is not None
+                or (marker, pending, helper, child) !=
+                   (HOLD_PATH, PENDING_PATH, HELPER_LOCK, CHILD_LOCK)):
+            raise HoldPreparationBlocked("installed_agent_prepare_requires_root_fixed_paths")
+        child_identity = {}
+    else:
+        import tempfile
+        root = Path(fixture_root)
+        temp = Path(tempfile.gettempdir()).resolve(strict=True)
+        if (root.is_symlink() or not root.is_dir() or not root.is_absolute()
+                or root.resolve(strict=True) != root or temp not in root.parents
+                or root.stat().st_uid != trusted_uid or root.stat().st_mode & 0o022
+                or type(fixture_group_gid) is not int
+                or any(root not in p.parents for p in (marker, pending, helper, child))):
+            raise HoldPreparationBlocked("disposable_agent_prepare_scope_required")
+        child_identity = {"trusted_uid": trusted_uid, "group_gid": fixture_group_gid}
+    binding = pending.parent / "no-drain-release-binding.json"
+    inventory = pending.parent / "no-drain-agent-inventory.json"
+    if len({marker, pending, binding, inventory, helper, child}) != 6:
+        raise HoldPreparationBlocked("agent_prepare_path_collision")
+    def identity(path):
+        meta = path.lstat()
+        return (meta.st_dev, meta.st_ino, meta.st_uid, meta.st_gid, meta.st_mode,
+                meta.st_nlink, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
+    with ExitStack() as stack:
+        try:
+            locks = (identity(helper), identity(child))
+            # Same acquisition order as the existing two-family witness.
+            stack.enter_context(exclusive_finalization_lock(path=child, **child_identity))
+            stack.enter_context(exclusive_privileged_helper_lock(path=helper, trusted_uid=trusted_uid))
+            if (identity(helper), identity(child)) != locks:
+                raise HoldPreparationBlocked("agent_prepare_lock_changed")
+            current = int(time.time()) if now is None else now
+            if not issued_at <= current < expires_at:
+                raise HoldPreparationBlocked("shared_agent_prepare_window_expired")
+            prepare_root_only(
+                transaction_id=transaction_id, ttl_seconds=expires_at-issued_at,
+                journal_path=pending, hold_path=marker, trusted_uid=trusted_uid,
+                now=issued_at, release_sha256=release_sha256,
+                binding_path=binding, expected_agent_ids=ids)
+            paths = (marker, pending, binding, inventory, helper, child)
+            pins = tuple(identity(path) for path in paths)
+
+            def checkpoint():
+                current = int(time.time()) if now is None else now
+                expected = (transaction_id, issued_at, expires_at)
+                if _verify_snapshot(
+                        expected_transaction_id=transaction_id, hold_path=marker,
+                        journal_path=pending, trusted_uid=trusted_uid, now=current) != expected:
+                    raise HoldPreparationBlocked("shared_agent_prepare_lease_changed")
+                observed = observe(path=marker, pending_path=pending,
+                                   trusted_uid=trusted_uid, now=current)
+                pin = binding_for_hold(observed, path=binding,
+                                       trusted_uid=trusted_uid, now=current)
+                expected_inventory = {
+                    "kind": "DSM928OperatorAgentInventory", "schema_version": 1,
+                    "transaction_id": transaction_id, "release_sha256": release_sha256,
+                    "issued_at": issued_at, "expires_at": expires_at, "agent_ids": ids,
+                }
+                if (not pin or pin.get("release_sha256") != release_sha256
+                        or read_inventory(path=inventory, trusted_uid=trusted_uid) != expected_inventory
+                        or tuple(identity(path) for path in paths) != pins):
+                    raise HoldPreparationBlocked("shared_agent_prepare_evidence_changed")
+            checkpoint()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc
+        yield {
+            "status": "standalone_agent_prepared_local_scope_retained",
+            "agent_id": local_agent_id, "transaction_id": transaction_id,
+            "release_sha256": release_sha256, "issued_at": issued_at,
+            "expires_at": expires_at, "expected_agent_ids": ids,
+            "persistent_journal_prepared": True,
+            "cooperating_local_lock_families_retained": 2,
+            "checkpoint": checkpoint,
+            "remote_agents_acked": False, "external_jobs_acked": False,
+            "live_no_drain_authorized": False,
+        }
+        checkpoint()

@@ -744,6 +744,60 @@ class PersistentPendingHoldTests(unittest.TestCase):
         finally:
             child_inode.chmod(0o660)
 
+        # Prepare two separate Agent hosts with ONE shared transaction
+        # window, package digest and complete inventory. No additional suite.
+        from game_uptime_hold_coordinator import prepare_standalone_agent_scope
+        from contextlib import ExitStack
+        ids = ["agent-A", "agent-B", "agent-offline"]
+        options = []
+        for index, agent_id in enumerate(ids[:2]):
+            root = self.state.parent / ("remote-host-" + str(index))
+            root.mkdir(mode=0o700)
+            runtime, state = root / "run", root / "state"
+            runtime.mkdir(mode=0o755)
+            state.mkdir(mode=0o755)
+            priv = runtime / "agent-privileged-operations.lock"
+            final = runtime / "agent-finalization-operations.lock"
+            provision_privileged_helper_lock(path=priv, trusted_uid=self.uid)
+            provision_finalization_lock(path=final, trusted_uid=self.uid, group_gid=agent_gid)
+            options.append(dict(
+                transaction_id=self.tx, release_sha256="d"*64,
+                issued_at=1700000000, expires_at=1700000600,
+                expected_agent_ids=ids, local_agent_id=agent_id,
+                hold_path=runtime/"hold.json", journal_path=state/"no-drain-pending.json",
+                privileged_lock_path=priv, finalization_lock_path=final,
+                trusted_uid=self.uid, fixture_root=root, fixture_group_gid=agent_gid,
+                now=1700000010+index))
+        second = options[1]
+        with shared_privileged_helper_lock(path=second["privileged_lock_path"],
+                                           trusted_uid=self.uid, enabled=True):
+            with self.assertRaises(HoldPreparationBlocked):
+                with prepare_standalone_agent_scope(**second):
+                    self.fail("busy Agent prepared")
+        self.assertFalse(second["journal_path"].exists())
+        with ExitStack() as held_hosts:
+            prepared = [held_hosts.enter_context(prepare_standalone_agent_scope(**option))
+                        for option in options]
+            for receipt in prepared:
+                receipt["checkpoint"]()
+                self.assertEqual(receipt["expected_agent_ids"], sorted(ids))
+                self.assertEqual(receipt["issued_at"], 1700000000)
+                self.assertEqual(receipt["expires_at"], 1700000600)
+                self.assertFalse(receipt["remote_agents_acked"])
+                self.assertFalse(receipt["live_no_drain_authorized"])
+            for option in options:
+                with self.assertRaises(PrivilegedHelperFenceUnavailable):
+                    with shared_privileged_helper_lock(
+                            path=option["privileged_lock_path"], trusted_uid=self.uid, enabled=True):
+                        self.fail("Agent host lease not retained")
+        for option in options:
+            option["hold_path"].unlink()
+            self.assertTrue(observe(path=option["hold_path"], pending_path=option["journal_path"],
+                                    trusted_uid=self.uid, now=1700000020)["active"])
+            with self.assertRaises(HoldPreparationBlocked):
+                with prepare_standalone_agent_scope(**option):
+                    self.fail("durable interrupted Agent transaction replayed")
+
         # The observer must still reject a changed journal inside both EXs.
         with self.assertRaisesRegex(
             PrivilegedJournalWitnessBlocked, "root_hold_pending_lease_mismatch",
