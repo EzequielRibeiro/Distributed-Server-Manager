@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import stat
 import tarfile
+import sys
 
 REVIEW_DIR = Path("/var/lib/capivara-dsm-928/reviewed-release")
 _MARKER = re.compile(r"[0-9a-f]{40}\Z")
@@ -303,6 +304,27 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
             "live_no_drain_authorized": False,
         }
         status["blockers"].append("local_kernel_fence_second_observation_unavailable")
+    # Recover the persisted negative receipt inventory only when the signed
+    # candidate is independently verified. Never convert coverage to an ACK.
+    try:
+        if status.get("target_tree_bound_to_signed_tar") is not True:
+            raise OperationalReviewBlocked("signed_candidate_unverified")
+        runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+        sys.path.insert(0, runtime)
+        try:
+            from game_uptime_wire_replay_service import inspect_persisted_receipts
+            status["durable_remote_wire_inventory"] = inspect_persisted_receipts(
+                expected_release_sha256=status["verified_archive_sha256"])
+        finally:
+            sys.path.remove(runtime)
+        if status["durable_remote_wire_inventory"]["wire_receipt_inventory_complete"] is not True:
+            status["blockers"].append("expected_agent_wire_receipts_missing")
+    except Exception:
+        status["durable_remote_wire_inventory"] = {
+            "status": "blocked", "wire_receipt_inventory_complete": False,
+            "remote_agents_acked": False, "live_no_drain_authorized": False,
+        }
+        status["blockers"].append("durable_remote_wire_inventory_unverified")
     # Three independent operational guarantees. Read-only snapshots, wire
     # receipts and a persistent pending journal are NOT positive proofs.
     # Keep each unmet requirement visible and fail closed until its owning

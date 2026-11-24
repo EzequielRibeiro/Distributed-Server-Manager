@@ -261,6 +261,15 @@ class PersistentPendingHoldTests(unittest.TestCase):
             with self.assertRaises(wire_writer.RootWriterBlocked):
                 commit_wire()
         write_inventory(inventory)
+        def inspect_receipts():
+            return wire_writer.inspect_persisted_receipts(
+                journal_dir=receipts, hold_path=self.marker,
+                pending_path=self.journal, binding_path=binding,
+                trusted_uid=self.uid, now=now, fixture_only=True,
+                expected_release_sha256=sha)
+        before_coverage = inspect_receipts()
+        self.assertEqual(before_coverage["missing_agent_ids"], ["agent-B"])
+        self.assertFalse(before_coverage["wire_receipt_inventory_complete"])
         inventory_path.chmod(0o666)
         with self.assertRaises(wire_writer.RootWriterBlocked):
             commit_wire()
@@ -273,6 +282,15 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertFalse(recorded["external_jobs_acked"])
         self.assertFalse(recorded["live_no_drain_authorized"])
         self.assertTrue((receipts / ("c"*32 + ".json")).exists())
+        coverage = inspect_receipts()
+        self.assertTrue(coverage["wire_receipt_inventory_complete"])
+        self.assertEqual(coverage["observed_agent_count"], 2)
+        self.assertFalse(coverage["remote_agents_acked"])
+        self.assertFalse(coverage["live_no_drain_authorized"])
+        # A registered offline Agent remains in the denominator.
+        write_inventory({**inventory, "agent_ids": ["agent-A", "agent-B", "offline"]})
+        self.assertEqual(inspect_receipts()["missing_agent_ids"], ["offline"])
+        write_inventory(inventory)
         with self.assertRaises(replay_module.DurableWireReplayBlocked):
             commit_wire()
         with self.assertRaises(wire_writer.RootWriterBlocked):

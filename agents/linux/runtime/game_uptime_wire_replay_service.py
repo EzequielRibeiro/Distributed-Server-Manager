@@ -60,7 +60,11 @@ if __name__ == "__main__":
 
 from game_uptime_durable_wire_replay import (
     DurableWireReplayBlocked, record_authenticated_negative_receipt,
+    JOURNAL_DIR, _validate_paths, _root_pending, NONCE, SHA,
 )
+from game_uptime_maintenance_hold import HOLD_PATH, PENDING_PATH, observe
+from game_uptime_transaction_binding import BINDING_PATH, binding_for_hold
+import time
 
 DASHBOARD_UNIT = "/system.slice/dsm-dashboard.service"
 DASHBOARD_SCRIPT = "/opt/dsm/dashboard/server_part22.py"
@@ -200,6 +204,103 @@ def _inventory_scope(doc: dict, receipt: dict, agent: str) -> list[str]:
             or len(set(ids)) != len(ids) or agent not in ids):
         raise RootWriterBlocked("agent_not_in_independent_inventory")
     return ids
+
+
+def inspect_persisted_receipts(*, journal_dir: Path = JOURNAL_DIR,
+                               hold_path: Path = HOLD_PATH,
+                               pending_path: Path = PENDING_PATH,
+                               binding_path: Path = BINDING_PATH,
+                               trusted_uid: int = 0, now: int | None = None,
+                               fixture_only: bool = False,
+                               expected_release_sha256: str | None = None) -> dict:
+    """Reconstruct wire coverage after a restart; NEVER reconstruct an ACK.
+
+    Only the independently pinned inventory determines the denominator.
+    Historical records stay immutable; multiple nonces from the same Agent
+    count once. A partial/unsafe record or changed snapshot blocks review.
+    """
+    directory, marker, pending, binding = map(
+        Path, (journal_dir, hold_path, pending_path, binding_path))
+    _validate_paths(directory, marker, pending, binding, trusted_uid, fixture_only)
+    inventory_path = pending.parent / "no-drain-agent-inventory.json"
+    when = int(time.time()) if now is None else now
+    def scope():
+        held = observe(path=marker, pending_path=pending, trusted_uid=trusted_uid, now=when)
+        if held.get("reason") != "root_owned_maintenance_hold" or held.get("active") is not True:
+            raise RootWriterBlocked("receipt_review_hold_unavailable")
+        tx = held["transaction_id"]
+        _root_pending(pending, trusted_uid, tx, held["issued_at"], held["expires_at"])
+        pin = binding_for_hold(held, path=binding, trusted_uid=trusted_uid, now=when)
+        if not pin or (expected_release_sha256 is not None
+                       and pin.get("release_sha256") != expected_release_sha256):
+            raise RootWriterBlocked("receipt_review_release_mismatch")
+        inv = read_inventory(path=inventory_path, trusted_uid=trusted_uid)
+        ids = inv.get("agent_ids")
+        if not isinstance(ids, list) or not ids:
+            raise RootWriterBlocked("receipt_review_inventory_missing")
+        expected = _inventory_scope(inv, {**held, "release_sha256": pin["release_sha256"]}, ids[0])
+        return tx, pin["release_sha256"], held["expires_at"], tuple(sorted(expected))
+    def identity(meta):
+        return (meta.st_dev, meta.st_ino, meta.st_uid, meta.st_mode,
+                meta.st_nlink, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns)
+    original = scope()
+    tx, sha, expires, expected = original
+    directory_before = identity(directory.lstat())
+    seen, sampled = set(), {}
+    for index, entry in enumerate(directory.iterdir()):
+        if index >= 4096 or not NONCE.fullmatch(entry.stem) or entry.suffix != ".json":
+            raise RootWriterBlocked("receipt_review_unexpected_journal_entry")
+        before = entry.lstat()
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != trusted_uid
+                or before.st_nlink != 1 or stat.S_IMODE(before.st_mode) != 0o600
+                or not 0 < before.st_size <= 2048):
+            raise RootWriterBlocked("receipt_review_untrusted_record")
+        fd = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+        try:
+            raw = os.read(fd, 2049)
+            if (len(raw) != before.st_size or identity(os.fstat(fd)) != identity(before)
+                    or identity(entry.lstat()) != identity(before)):
+                raise RootWriterBlocked("receipt_review_record_changed")
+        finally:
+            os.close(fd)
+        doc = json.loads(raw)
+        agent = doc.get("authenticated_agent_id_claim_from_caller") if isinstance(doc, dict) else None
+        if (not isinstance(doc, dict) or type(agent) is not str
+                or not _AGENT_ID.fullmatch(agent)
+                or type(doc.get("transaction_id")) is not str
+                or not NONCE.fullmatch(doc["transaction_id"])
+                or type(doc.get("release_sha256")) is not str
+                or not SHA.fullmatch(doc["release_sha256"])):
+            raise RootWriterBlocked("receipt_review_record_identity_invalid")
+        canonical = {
+            "kind": "DSM928CredentialedNegativeWireReceiptJournal", "schema_version": 1,
+            "authenticated_agent_id_claim_from_caller": agent,
+            "transaction_id": doc["transaction_id"], "release_sha256": doc["release_sha256"],
+            "request_id": entry.stem, "scope": "negative_wire_receipt_only_not_quiescence",
+            "wire_receipt_received": True, "transport_authentication_independently_verified": False,
+            "remote_agent_quiescence_acked": False, "external_jobs_acked": False,
+            "live_no_drain_authorized": False,
+        }
+        if raw != (json.dumps(canonical, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii"):
+            raise RootWriterBlocked("receipt_review_record_contract_invalid")
+        sampled[entry] = identity(before)
+        if doc["transaction_id"] != tx:
+            continue
+        if doc["release_sha256"] != sha or agent not in expected:
+            raise RootWriterBlocked("receipt_review_record_scope_mismatch")
+        seen.add(agent)
+    if (scope() != original or identity(directory.lstat()) != directory_before
+            or any(identity(path.lstat()) != meta for path, meta in sampled.items())
+            or (now is None and int(time.time()) >= expires)):
+        raise RootWriterBlocked("receipt_review_snapshot_changed")
+    return {
+        "status": "persisted_negative_receipts_observed",
+        "expected_agent_count": len(expected), "observed_agent_count": len(seen),
+        "missing_agent_ids": sorted(set(expected) - seen),
+        "wire_receipt_inventory_complete": set(expected) == seen,
+        "remote_agents_acked": False, "external_jobs_acked": False,
+        "live_no_drain_authorized": False,
+    }
 
 
 def commit_request(raw: bytes, *, record_fn: Callable = record_authenticated_negative_receipt,
