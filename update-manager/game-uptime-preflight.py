@@ -236,6 +236,10 @@ def _execution_boundary(result):
     if (review.get("artifact_origin_verified") is not True
             or review.get("target_tree_bound_to_signed_tar") is not True):
         blockers.append("signed_exact_target_not_verified")
+    # Static eligibility is independent of live quiescence. A verified
+    # artifact and exact plan alone never permit acquiring a durable hold.
+    static_blockers = sorted(set(blockers))
+    blockers = []
     if result.get("no_drain_handoff_witness_verified") is not True:
         blockers.append("game_handoff_unverified")
     if result.get("no_drain_operational_coverage_verified") is not True:
@@ -252,7 +256,9 @@ def _execution_boundary(result):
                          if bootstrap else "compatible_update_review_only"),
         "ordinary_draining_update_automatically_selected": False,
         "live_no_drain_authorized": False,
-        "blockers": sorted(set(blockers)),
+        "static_blockers": static_blockers,
+        "operational_blockers": sorted(set(blockers)),
+        "blockers": sorted(set(static_blockers + blockers)),
     }
 
 

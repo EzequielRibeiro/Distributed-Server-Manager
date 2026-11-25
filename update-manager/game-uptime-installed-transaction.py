@@ -49,28 +49,68 @@ def _load(name):
     return module
 
 
-def _validate_plan(report):
+def _version_key(root):
+    # Build metadata does not change precedence. Reject malformed or
+    # excessively large input rather than delegating to candidate scripts.
+    path = root / "version"
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 256:
+        raise InstalledTransactionBlocked("invalid_release_version_file")
+    raw = path.read_text(encoding="ascii").strip()
+    match = re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+        r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", raw)
+    if match is None:
+        raise InstalledTransactionBlocked("invalid_release_semver")
+    prerelease = match.group(4)
+    ids = prerelease.split(".") if prerelease is not None else []
+    if any(x.isdigit() and len(x) > 1 and x.startswith("0") for x in ids):
+        raise InstalledTransactionBlocked("invalid_numeric_prerelease")
+    return (tuple(int(x) for x in match.groups()[:3]), prerelease is None,
+            tuple((0, int(x)) if x.isdigit() else (1, x) for x in ids))
+
+
+def _require_forward_version(installed, target):
+    if _version_key(target) <= _version_key(installed):
+        raise InstalledTransactionBlocked("same_version_or_downgrade_not_allowed")
+
+
+def _validate_static_plan(report):
     review = report.get("operational_release_review") or {}
     plan = (report.get("release_impact") or {}).get("fixed_file_transaction_plan") or {}
-    blockers = list((report.get("operational_execution_boundary") or {}).get("blockers", []))
-    if not all(review.get(key) is True for key in (
-            "artifact_origin_verified", "target_tree_bound_to_signed_tar",
-            "operational_guarantees_complete", "operational_quiescence_acked",
-            "external_jobs_acked", "durable_cross_host_recovery_verified")):
-        blockers.append("positive_operational_admission_missing")
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True):
+        raise InstalledTransactionBlocked("signed_exact_target_not_verified")
     paths = plan.get("changed_paths")
     if (plan.get("status") != "compatible_file_plan_only"
-            or type(paths) is not list or not paths or
-            any(type(p) is not str or not (p in ("version", "release-manifest.json")
+            or plan.get("bootstrap_installation_required") is not False
+            or plan.get("blockers") != []
+            or type(paths) is not list or not paths
+            or any(type(p) is not str or not (p in ("version", "release-manifest.json")
                 or (p.startswith("dashboard/web/") and Path(p).suffix.lower() in
                     (".css", ".js", ".html", ".htm", ".svg", ".png", ".ico", ".woff", ".woff2", ".map")))
-                for p in paths)):
-        blockers.append("restart_free_exact_file_plan_required")
-    if blockers:
-        raise InstalledTransactionBlocked(";".join(sorted(set(blockers))))
+                or Path(p).as_posix() != p or ".." in Path(p).parts
+                for p in paths)
+            or len(set(paths)) != len(paths)
+            or plan.get("file_count") != len(paths)):
+        raise InstalledTransactionBlocked("restart_free_exact_file_plan_required")
     digest = review.get("verified_archive_sha256")
     if type(digest) is not str or not re.fullmatch(r"[0-9a-f]{64}", digest):
         raise InstalledTransactionBlocked("verified_archive_digest_required")
+    return digest, paths
+
+
+def _validate_plan(report):
+    digest, paths = _validate_static_plan(report)
+    review = report.get("operational_release_review") or {}
+    blockers = list((report.get("operational_execution_boundary") or {}).get("blockers", []))
+    if not all(review.get(key) is True for key in (
+            "operational_guarantees_complete", "operational_quiescence_acked",
+            "external_jobs_acked", "durable_cross_host_recovery_verified")):
+        blockers.append("positive_operational_admission_missing")
+    if blockers:
+        raise InstalledTransactionBlocked(";".join(sorted(set(blockers))))
     return digest, paths
 
 
@@ -124,7 +164,11 @@ def run(target):
     preflight = _load("game-uptime-preflight.py")
     review = preflight.collect_operational_review(INSTALLED, TARGET)
     # No holds, backups or mutations before positive independent admission.
-    digest, paths = _validate_plan(review)
+    digest, paths = _validate_static_plan(review)
+    _require_forward_version(INSTALLED, TARGET)
+    # Operational coverage is still required BEFORE creating any persistent
+    # hold. Never convert static eligibility into an execution permit.
+    _validate_plan(review)
     lease = _load("game-uptime-local-scope-lease.py")
     module = _load("game-uptime-file-transaction.py")
     identity_probe = _load("game-uptime-live-daemon-identity.py")
@@ -156,6 +200,13 @@ def run(target):
         if (scope.get("all_mutators_fenced") is not True
                 or scope.get("external_jobs_acked") is not True):
             raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+        scope["checkpoint"]()
+        proof = _load("game-uptime-operational-release-review.py").verify_reviewed_artifact(TARGET)
+        if (proof.get("artifact_origin_verified") is not True
+                or proof.get("target_tree_bound_to_signed_tar") is not True
+                or proof.get("verified_archive_sha256") != digest):
+            raise InstalledTransactionBlocked("signed_target_changed_under_retained_scope")
+        _require_forward_version(INSTALLED, TARGET)
         scope["checkpoint"]()
         workspace.mkdir(mode=0o700)
         parent = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)

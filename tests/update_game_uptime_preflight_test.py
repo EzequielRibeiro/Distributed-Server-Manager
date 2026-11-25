@@ -74,6 +74,28 @@ class UpdatePreflightTest(unittest.TestCase):
         with self.assertRaises(installed_owner.InstalledTransactionBlocked):
             installed_owner.run(self.target)
         self.assertIn("installed_updater_transaction_owner_not_connected", boundary["blockers"])
+        self.assertIn("initial_fence_aware_installation_or_bootstrap_update_required",
+                      boundary["static_blockers"])
+        self.assertIn("operational_guarantees_unverified", boundary["operational_blockers"])
+        # A signed compatible plan is not an operational admission.
+        static = {"operational_release_review": {
+                    "artifact_origin_verified": True, "target_tree_bound_to_signed_tar": True,
+                    "verified_archive_sha256": "b"*64},
+                  "release_impact": {"fixed_file_transaction_plan": {
+                    "status": "compatible_file_plan_only",
+                    "bootstrap_installation_required": False, "blockers": [],
+                    "changed_paths": ["dashboard/web/style.css", "version"], "file_count": 2}}}
+        self.assertEqual(installed_owner._validate_static_plan(static)[0], "b"*64)
+        with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+            installed_owner._validate_plan(static)
+        self.write("version", "2.0.133-rc.6", "2.0.133-rc.2")
+        with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+            installed_owner._require_forward_version(self.installed, self.target)
+        self.write("version", "2.0.133-rc.6", "2.0.133-rc.7")
+        installed_owner._require_forward_version(self.installed, self.target)
+        self.write("version", "2.0.133-rc.6", "2.0.133-rc.6+rebuild")
+        with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+            installed_owner._require_forward_version(self.installed, self.target)
         # Recovery must preserve the original lease, package and complete
         # inventory; it must not retry a fresh transaction after a crash.
         tx = "a"*32

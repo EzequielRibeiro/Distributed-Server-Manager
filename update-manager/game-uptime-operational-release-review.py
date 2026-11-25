@@ -181,6 +181,48 @@ def _target_byte_match(target: Path, archive: Path, root_name: str) -> int:
     return verified
 
 
+def verify_reviewed_artifact(target: Path, *, review_dir: Path = REVIEW_DIR,
+                             trusted_inputs_only: bool = True) -> dict:
+    """Check the exact root-anchored artifact without claiming operational ACKs."""
+    status = {}
+    # Fixtures MUST NOT masquerade as proof that production trust exists.
+    if not trusted_inputs_only or Path(review_dir) != REVIEW_DIR:
+        raise OperationalReviewBlocked("production_trust_path_is_fixed")
+    folder = Path(review_dir)
+    _trusted_root_dir(folder)
+    reviewed_commit = _trusted_reviewed_commit(folder / "reviewed-commit")
+    manifests = [p for p in folder.iterdir()
+                 if _ALLOWED_MANIFEST.fullmatch(p.name)]
+    if len(manifests) != 1:
+        raise OperationalReviewBlocked("exactly_one_reviewed_manifest_required")
+    manifest = manifests[0]
+    archive = folder / manifest.name.replace(".manifest.json", ".tar.gz")
+    statement = folder / manifest.name.replace(".manifest.json", ".provenance.json")
+    signature = folder / manifest.name.replace(".manifest.json", ".provenance.sig")
+    provenance = _load("dsm928_production_readonly_provenance",
+                       "game-uptime-release-provenance.py")
+    proof = provenance.verify_signed_release(
+        archive, manifest, statement, signature,
+        expected_commit=reviewed_commit, disposable_fixture=False)
+    if (proof.get("artifact_signature_verified") is not True
+            or proof.get("scope") != "root_anchored_release_artifact_only"
+            or proof.get("live_no_drain_authorized") is not False):
+        raise OperationalReviewBlocked("publisher_verification_failed")
+    integrity = _load("dsm928_production_readonly_integrity",
+                      "game-uptime-release-integrity.py")
+    version = manifest.name.removeprefix("capivara-dsm-").removesuffix(".manifest.json")
+    integrity.verify_pinned_archive(
+        archive, expected_sha256=proof["artifact_sha256"],
+        expected_git_commit=reviewed_commit, expected_version=version)
+    status["artifact_origin_verified"] = True
+    status["verified_release_commit"] = reviewed_commit
+    status["verified_archive_sha256"] = proof["artifact_sha256"]
+    status["verified_file_count"] = _target_byte_match(
+        Path(target), archive, "capivara-dsm-" + version)
+    status["target_tree_bound_to_signed_tar"] = True
+    return status
+
+
 def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
              trusted_inputs_only: bool = True) -> dict:
     """Advisory state: never authorization, even with all signed bytes verified."""
@@ -264,41 +306,8 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
         }
         status["blockers"].append("local_kernel_fence_diagnostic_unavailable")
     try:
-        # Fixtures MUST NOT masquerade as proof that production trust exists.
-        if not trusted_inputs_only or Path(review_dir) != REVIEW_DIR:
-            raise OperationalReviewBlocked("production_trust_path_is_fixed")
-        folder = Path(review_dir)
-        _trusted_root_dir(folder)
-        reviewed_commit = _trusted_reviewed_commit(folder / "reviewed-commit")
-        manifests = [p for p in folder.iterdir()
-                     if _ALLOWED_MANIFEST.fullmatch(p.name)]
-        if len(manifests) != 1:
-            raise OperationalReviewBlocked("exactly_one_reviewed_manifest_required")
-        manifest = manifests[0]
-        archive = folder / manifest.name.replace(".manifest.json", ".tar.gz")
-        statement = folder / manifest.name.replace(".manifest.json", ".provenance.json")
-        signature = folder / manifest.name.replace(".manifest.json", ".provenance.sig")
-        provenance = _load("dsm928_production_readonly_provenance",
-                           "game-uptime-release-provenance.py")
-        proof = provenance.verify_signed_release(
-            archive, manifest, statement, signature,
-            expected_commit=reviewed_commit, disposable_fixture=False)
-        if (proof.get("artifact_signature_verified") is not True
-                or proof.get("scope") != "root_anchored_release_artifact_only"
-                or proof.get("live_no_drain_authorized") is not False):
-            raise OperationalReviewBlocked("publisher_verification_failed")
-        integrity = _load("dsm928_production_readonly_integrity",
-                          "game-uptime-release-integrity.py")
-        version = manifest.name.removeprefix("capivara-dsm-").removesuffix(".manifest.json")
-        integrity.verify_pinned_archive(
-            archive, expected_sha256=proof["artifact_sha256"],
-            expected_git_commit=reviewed_commit, expected_version=version)
-        status["artifact_origin_verified"] = True
-        status["verified_release_commit"] = reviewed_commit
-        status["verified_archive_sha256"] = proof["artifact_sha256"]
-        status["verified_file_count"] = _target_byte_match(
-            Path(target), archive, "capivara-dsm-" + version)
-        status["target_tree_bound_to_signed_tar"] = True
+        status.update(verify_reviewed_artifact(target, review_dir=review_dir,
+                                               trusted_inputs_only=trusted_inputs_only))
     except (OperationalReviewBlocked, ValueError, KeyError, TypeError,
             OSError, RuntimeError) as exc:
         # No operational evidence is ever trusted on a failed verification.
