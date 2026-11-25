@@ -150,6 +150,33 @@ def _controller_identity(*, unit: str = CONTROLLER_UNIT,
     return summary
 
 
+def _alert_engine_identity(*, expected_uid: int) -> dict:
+    """Verify the actual auxiliary database writer and its startup opt-in."""
+    unit = "dsm-alert-engine.service"
+    script = Path("/opt/dsm/monitor/alert_engine.py")
+    try:
+        before = _systemd_status(unit)
+        if (before["ActiveState"] != "active" or before["SubState"] != "running"
+                or before["ControlGroup"] != "/system.slice/" + unit
+                or not _PID_RE.fullmatch(before["MainPID"])
+                or pwd.getpwnam(before["User"]).pw_uid != expected_uid):
+            raise ValueError("alert_engine_unit_identity_unverified")
+        pid = int(before["MainPID"])
+        first, second = _controller_pid(pid), _controller_pid(pid)
+        args = first.get("argv") or ()
+        if (before != _systemd_status(unit) or first != second
+                or first.get("pid") != pid or first.get("uid") != expected_uid
+                or first.get("cgroup") != before["ControlGroup"]
+                or type(first.get("start_ticks")) is not int or first["start_ticks"] < 1
+                or first.get("flock_opted_in") is not True or len(args) < 2
+                or not re.fullmatch(r"python3(?:\.[0-9]+)?", Path(args[0]).name)
+                or args[1] != str(script) or not stat.S_ISREG(script.lstat().st_mode)):
+            raise ValueError("alert_engine_process_identity_unverified")
+        return {"pid": pid, "start_ticks": first["start_ticks"], "uid": expected_uid}
+    except (OSError, ValueError, KeyError, LookupError, subprocess.SubprocessError) as exc:
+        raise ValueError("alert_engine_identity_or_flock_unverified") from exc
+
+
 def _workers_identity() -> dict:
     result = {
         "status": "unverified", "supervisor_verified": False,

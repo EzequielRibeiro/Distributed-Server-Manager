@@ -1,6 +1,6 @@
 [Unit]
 Description=Capivara DSM Database Alert Engine
-After=network.target dsm-dashboard-worker.service
+After=network.target dsm-dashboard-worker.service dsm-dashboard.service
 Wants=dsm-dashboard-worker.service
 RequiresMountsFor=/opt/dsm
 
@@ -9,6 +9,9 @@ Type=simple
 User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
+Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1
+# Reuse the existing Controller inode; no additional lock family.
+ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_maintenance_worker_locks.py --user {{DSM_USER}} --group {{DSM_GROUP}} --controller-only
 WorkingDirectory=/opt/dsm
 ExecStart=/usr/bin/python3 /opt/dsm/monitor/alert_engine.py
 Restart=always

@@ -433,6 +433,29 @@ class DatabaseAlertEngine:
         )
 
     def cycle(self, *, limit: int = DEFAULT_BATCH) -> int:
+        # Installed alerts are a database mutator outside the Worker group.
+        # Fence the whole cycle, including schema initialization and cursor
+        # advancement. A busy lock is a skipped tick, not a failed alert.
+        installed = ROOT == Path("/opt/dsm")
+        opted_in = os.environ.get("DSM928_CONTROLLER_AGENT_HTTP_FLOCK") == "1"
+        if not (installed or opted_in):
+            return self._cycle(limit=limit)
+        for folder in (ROOT / "dashboard", ROOT / "agents/linux/runtime"):
+            if str(folder) not in sys.path:
+                sys.path.insert(0, str(folder))
+        from game_uptime_controller_agent_http_flock import (
+            ControllerHttpLockUnavailable, shared_controller_agent_http_lock,
+        )
+        from game_uptime_maintenance_hold import observe
+        try:
+            with shared_controller_agent_http_lock(enabled=True):
+                if observe().get("active") is not False:
+                    return 0
+                return self._cycle(limit=limit)
+        except ControllerHttpLockUnavailable:
+            return 0
+
+    def _cycle(self, *, limit: int = DEFAULT_BATCH) -> int:
         self.initialize()
         self._initialize_cursor()
         processed = 0

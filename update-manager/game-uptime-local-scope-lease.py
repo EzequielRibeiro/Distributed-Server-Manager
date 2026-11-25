@@ -693,6 +693,7 @@ def _read_installed_controller_agents(expected_ids, hybrid_id):
         uid, gid = int(uids[0]), int(gids[0])
         if uid <= 0 or gid <= 0:
             raise ValueError("privileged controller identity")
+        alert_before = identity._alert_engine_identity(expected_uid=uid)
         groups = [int(x) for x in status["Groups"].split()]
         if 0 in groups:
             raise ValueError("privileged controller group")
@@ -749,7 +750,8 @@ with backend.connect() as connection:
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             check=False, timeout=12)
         if (result.returncode != 0 or len(result.stdout) > 1048576
-                or identity._controller_identity() != before):
+                or identity._controller_identity() != before
+                or identity._alert_engine_identity(expected_uid=uid) != alert_before):
             raise ValueError("controller inventory observation failed")
         observed = json.loads(result.stdout)
         if type(observed) is not dict or set(observed) != {"agents", "jobs"}:
@@ -757,7 +759,7 @@ with backend.connect() as connection:
         agents = _validate_controller_agent_inventory(observed["agents"],
                                                        expected_ids, hybrid_id)
         jobs = _validate_job_inventory(observed["jobs"])
-        return (agents, jobs)
+        return (agents, jobs, alert_before)
     except LocalScopeLeaseBlocked:
         raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:

@@ -603,6 +603,47 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
         self.assertIn("FROM public.ha_failover_operations WHERE state IS NULL",
                       scope._job_inventory_sql())
 
+        # Auxiliary alert cycles must share the existing Controller barrier,
+        # including the initialize/cursor mutations at the start of a cycle.
+        import os
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        import sys
+        for folder in (ROOT/"dashboard", ROOT/"agents/linux/runtime"):
+            if str(folder) not in sys.path:
+                sys.path.insert(0, str(folder))
+        import game_uptime_controller_agent_http_flock as gate
+        import game_uptime_maintenance_hold as hold
+        spec = importlib.util.spec_from_file_location(
+            "dsm928_alert_cycle_test", ROOT/"monitor/alert_engine.py")
+        alerts = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(alerts)
+        engine = alerts.DatabaseAlertEngine.__new__(alerts.DatabaseAlertEngine)
+
+        @contextmanager
+        def busy(*, enabled):
+            self.assertTrue(enabled)
+            raise gate.ControllerHttpLockUnavailable("busy")
+            yield
+
+        @contextmanager
+        def retained(*, enabled):
+            self.assertTrue(enabled)
+            yield True
+
+        with patch.dict(os.environ, {"DSM928_CONTROLLER_AGENT_HTTP_FLOCK": "1"}), \
+             patch.object(engine, "_cycle", return_value=7) as run:
+            with patch.object(gate, "shared_controller_agent_http_lock", busy):
+                self.assertEqual(engine.cycle(), 0)
+            with patch.object(gate, "shared_controller_agent_http_lock", retained), \
+                 patch.object(hold, "observe", return_value={"active": True}):
+                self.assertEqual(engine.cycle(), 0)
+            run.assert_not_called()
+            with patch.object(gate, "shared_controller_agent_http_lock", retained), \
+                 patch.object(hold, "observe", return_value={"active": False}):
+                self.assertEqual(engine.cycle(limit=3), 7)
+            run.assert_called_once_with(limit=3)
+
 
 if __name__ == "__main__":
     unittest.main()
