@@ -564,6 +564,33 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
         self.assertIn("worker_group_identity_unverified", result["blockers"])
         self.assertFalse(result["live_no_drain_authorized"])
 
+        # The installed scope independently checks the real Controller
+        # registry partition. An omitted/offline Agent or a retirement with
+        # live operational state must not become an implicit exemption.
+        path = ROOT / "update-manager/game-uptime-local-scope-lease.py"
+        loader = SourceFileLoader("dsm928_inventory_partition_test", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        scope = importlib.util.module_from_spec(spec)
+        loader.exec_module(scope)
+        rows = [
+            {"id": "hybrid", "status": "active", "role": "hybrid",
+             "instances": 1, "credentials": 1, "commands": 0},
+            {"id": "vps", "status": "active", "role": "agent",
+             "instances": 1, "credentials": 1, "commands": 0},
+            {"id": "retired", "status": "decommissioned", "role": "agent",
+             "instances": 0, "credentials": 0, "commands": 0},
+        ]
+        self.assertEqual(scope._validate_controller_agent_inventory(
+            rows, ["hybrid", "vps"], "hybrid"),
+            (("hybrid", "hybrid"), ("vps", "agent")))
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._validate_controller_agent_inventory(rows, ["hybrid"], "hybrid")
+        for change in ({"status": "offline"}, {"credentials": 1}, {"instances": 1},
+                       {"commands": 1}):
+            with self.assertRaises(scope.LocalScopeLeaseBlocked):
+                scope._validate_controller_agent_inventory(
+                    [*rows[:2], {**rows[2], **change}], ["hybrid", "vps"], "hybrid")
+
 
 if __name__ == "__main__":
     unittest.main()

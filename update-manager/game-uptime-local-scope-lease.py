@@ -24,6 +24,8 @@ import stat
 import sys
 import tempfile
 import time
+import json
+import subprocess
 from typing import Iterator
 
 CONTROLLER_LOCK = Path("/run/capivara-dsm/controller-agent-http.lock")
@@ -560,6 +562,133 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
 
 
 
+def _validate_controller_agent_inventory(rows, expected_ids, hybrid_id):
+    """Only a formally retired and empty Agent may be omitted."""
+    if type(rows) is not list or not 1 <= len(rows) <= 4096:
+        raise LocalScopeLeaseBlocked("controller_agent_inventory_unavailable")
+    seen, retained = set(), {}
+    for row in rows:
+        if (type(row) is not dict
+                or set(row) != {"id", "status", "role", "instances",
+                                "credentials", "commands"}
+                or type(row["id"]) is not str
+                or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", row["id"])
+                or row["id"] in seen
+                or row["role"] not in ("agent", "hybrid")
+                or any(type(row[k]) is not int or row[k] < 0
+                       for k in ("instances", "credentials", "commands"))):
+            raise LocalScopeLeaseBlocked("invalid_controller_agent_inventory_row")
+        agent = row["id"]
+        seen.add(agent)
+        if row["status"] == "decommissioned":
+            if any(row[k] for k in ("instances", "credentials", "commands")):
+                raise LocalScopeLeaseBlocked("retired_agent_still_has_operational_state")
+            continue
+        # Offline, disabled, pairing and other non-retired Agents cannot
+        # silently disappear. Require the operator to resolve those states.
+        if row["status"] != "active":
+            raise LocalScopeLeaseBlocked("nonactive_agent_requires_review")
+        if row["role"] != ("hybrid" if agent == hybrid_id else "agent"):
+            raise LocalScopeLeaseBlocked("controller_agent_role_mismatch")
+        retained[agent] = row["role"]
+    if (set(retained) != set(expected_ids) or hybrid_id not in retained):
+        raise LocalScopeLeaseBlocked("controller_agent_inventory_mismatch")
+    return tuple(sorted(retained.items()))
+
+
+def _read_installed_controller_agents(expected_ids, hybrid_id):
+    """Query the actual installed PostgreSQL Controller under its service UID.
+
+    Never import the mutable installed database package into the root
+    coordinator or disclose the daemon environment/credentials. No database
+    migration, enrollment, or write is performed. Other backends remain
+    blocked until an equivalent read-only operational path is provided.
+    """
+    if os.geteuid() != 0:
+        raise LocalScopeLeaseBlocked("root_inventory_observation_required")
+    path = Path(__file__).with_name("game-uptime-live-daemon-identity.py")
+    loader = SourceFileLoader("dsm928_scope_controller_identity", str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    identity = importlib.util.module_from_spec(spec)
+    loader.exec_module(identity)
+    before = identity._controller_identity()
+    if before.get("identity_verified") is not True or before.get("flock_opted_in_verified") is not True:
+        raise LocalScopeLeaseBlocked("installed_controller_identity_unverified")
+    pid = before["pid"]
+    proc = Path("/proc") / str(pid)
+    try:
+        status = dict(line.split(":", 1) for line in (proc / "status").read_text().splitlines()
+                      if ":" in line)
+        uids, gids = status["Uid"].split(), status["Gid"].split()
+        if len(uids) != 4 or len(gids) != 4 or len(set(uids)) != 1 or len(set(gids)) != 1:
+            raise ValueError("unexpected service credentials")
+        uid, gid = int(uids[0]), int(gids[0])
+        if uid <= 0 or gid <= 0:
+            raise ValueError("privileged controller identity")
+        groups = [int(x) for x in status["Groups"].split()]
+        if 0 in groups:
+            raise ValueError("privileged controller group")
+        raw = (proc / "environ").read_bytes()
+        if len(raw) > 262144 or not raw.endswith(b"\x00"):
+            raise ValueError("controller environment unavailable")
+        allowed = {"DSM_DATABASE_DRIVER", "DSM_DATABASE_NAME", "DSM_DATABASE_HOST",
+                   "DSM_DATABASE_PORT", "DSM_DATABASE_USER",
+                   "DSM_DATABASE_PASSWORD_FILE", "DSM_DATABASE_TLS"}
+        env = {"PATH": "/usr/bin:/bin", "HOME": "/nonexistent", "LANG": "C.UTF-8"}
+        for entry in raw[:-1].split(b"\x00"):
+            key, _, value = entry.partition(b"=")
+            name = key.decode("ascii")
+            if name in allowed:
+                if name in env:
+                    raise ValueError("duplicate database configuration")
+                env[name] = value.decode("utf-8")
+        if env.get("DSM_DATABASE_DRIVER") not in ("postgresql", "postgres", "pgsql"):
+            raise ValueError("operational inventory requires PostgreSQL")
+        if identity._controller_identity() != before:
+            raise ValueError("controller identity changed before inventory")
+        # The fixed SQL is independent of caller-supplied IDs. Correlated
+        # counts include every Agent, including retired registrations.
+        sql = """
+SELECT a.id, a.status, n.role,
+       (SELECT COUNT(*) FROM instances i WHERE i.node_id=a.node_id) AS instances,
+       (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.id
+          AND c.status='active') AS credentials,
+       (SELECT COUNT(*) FROM agent_instance_commands j WHERE j.agent_id=a.id
+          AND j.status IN ('queued','delivered')) AS commands
+FROM agents a LEFT JOIN nodes n ON n.id=a.node_id
+ORDER BY a.id LIMIT 4097
+"""
+        reader = """
+import json, sys
+sys.path.insert(0, "/opt/dsm/database")
+from runtime_backend import backend_from_environment
+backend = backend_from_environment()
+if backend.name != "postgresql":
+    raise SystemExit(2)
+with backend.connect() as connection:
+    with connection.transaction():
+        connection.execute("SET TRANSACTION READ ONLY")
+        connection.execute("SET LOCAL statement_timeout = '5s'")
+        rows = connection.execute(sys.argv[1]).fetchall()
+        print(json.dumps([dict(row) for row in rows], separators=(",", ":")))
+"""
+        result = subprocess.run(
+            ("/usr/bin/python3", "-I", "-B", "-c", reader, sql),
+            user=uid, group=gid, extra_groups=groups,
+            env=env, cwd="/", stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            check=False, timeout=12)
+        if (result.returncode != 0 or len(result.stdout) > 1048576
+                or identity._controller_identity() != before):
+            raise ValueError("controller inventory observation failed")
+        return _validate_controller_agent_inventory(json.loads(result.stdout),
+                                                    expected_ids, hybrid_id)
+    except LocalScopeLeaseBlocked:
+        raise
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        raise LocalScopeLeaseBlocked("controller_agent_inventory_unverified") from exc
+
+
 @contextmanager
 def retain_installed_distributed_scopes(
     *, transaction_id: str, release_sha256: str,
@@ -599,6 +728,8 @@ def retain_installed_distributed_scopes(
             _root_directory(folder)
         if _root_file(LOCAL_ID, 192) != (local_hybrid_agent_id + "\n").encode("ascii"):
             raise LocalScopeLeaseBlocked("pinned_local_hybrid_identity_mismatch")
+        initial_inventory = _read_installed_controller_agents(
+            expected_agent_ids, local_hybrid_agent_id)
         remote_ids = sorted(item for item in expected_agent_ids
                             if item != local_hybrid_agent_id)
         _endpoint_inventory(_root_file(ENDPOINTS, 65536), remote_ids)
@@ -630,7 +761,11 @@ def retain_installed_distributed_scopes(
                 def checkpoint():
                     local["checkpoint"]()
                     remote["checkpoint"]()
+                    if _read_installed_controller_agents(
+                            expected_agent_ids, local_hybrid_agent_id) != initial_inventory:
+                        raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
                     local["checkpoint"]()
+                    remote["checkpoint"]()
                 checkpoint()
                 yield {"kind": "DSM928InstalledDistributedScope",
                        "transaction_id": transaction_id,
@@ -638,6 +773,7 @@ def retain_installed_distributed_scopes(
                        "agent_ids": sorted(expected_agent_ids),
                        "local_hybrid_agent_id": local_hybrid_agent_id,
                        "retained_remote_agent_ids": remote["prepared_agent_ids"],
+                       "controller_registry_inventory_matched": True,
                        "checkpoint": checkpoint,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
