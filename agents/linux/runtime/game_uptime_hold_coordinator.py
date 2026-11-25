@@ -294,7 +294,7 @@ def _require_idle_managed_systemd_work(jobs, units):
         if len(fields) != 4 or not fields[0].isdecimal():
             raise HoldPreparationBlocked("systemd_job_inventory_invalid")
         unit = fields[1]
-        if unit.startswith(("capivara-", "dsm-")) or unit == "dayz-server.service":
+        if unit.startswith(("capivara-", "dsm-")):
             raise HoldPreparationBlocked("managed_systemd_job_pending:" + unit[:191])
     for line in units.splitlines():
         fields = line.split()
@@ -303,10 +303,6 @@ def _require_idle_managed_systemd_work(jobs, units):
         if len(fields) < 4 or fields[1] != "loaded":
             raise HoldPreparationBlocked("agent_helper_unit_inventory_invalid")
         unit, active, sub = fields[0], fields[2], fields[3]
-        if unit == "dayz-server.service":
-            # Legacy LinuxGSM may fork into cron.service; active/exited is
-            # not evidence of a retained game or mutation fence.
-            raise HoldPreparationBlocked("unfenced_legacy_game_service:" + unit)
         if not (unit.startswith(("capivara-agent-", "dsm-hybrid-agent-"))
                 and unit.endswith((".service", ".timer"))):
             raise HoldPreparationBlocked("unexpected_agent_helper_unit")
@@ -334,7 +330,7 @@ def _check_installed_systemd_work():
             "list-units", "--all", "--no-legend", "--plain", "--no-pager",
             "--state=active,activating,reloading,deactivating",
             "capivara-agent-*.service", "dsm-hybrid-agent-*.service",
-            "capivara-agent-uninstall-finalize.timer", "dayz-server.service")
+            "capivara-agent-uninstall-finalize.timer")
 
     # Both observations must be clean; a queued action can move from the
     # job inventory into an active helper between the two systemd queries.
