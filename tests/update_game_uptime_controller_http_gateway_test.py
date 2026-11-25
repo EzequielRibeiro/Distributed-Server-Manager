@@ -66,6 +66,9 @@ class ControllerHttpGatewayTests(unittest.TestCase):
             def do_GET(self):
                 return self._execute("GET")
 
+            def do_HEAD(self):
+                return self._execute("HEAD")
+
         with tempfile.TemporaryDirectory(prefix="dsm928-all-http-") as directory:
             parent = Path(directory) / "fence"
             parent.mkdir(mode=0o755)
@@ -95,7 +98,7 @@ class ControllerHttpGatewayTests(unittest.TestCase):
                 for evidence in ({"active": True}, {"active": "unknown"}, None):
                     with patch.object(gate, "observe_no_drain_hold",
                                       return_value=evidence):
-                        for verb in ("POST", "PUT", "PATCH", "DELETE"):
+                        for verb in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
                             obj = FakeHandler("/api/admin/mutating")
                             getattr(obj, "do_" + verb)()
                             self.assertEqual(obj.calls, [])
@@ -118,21 +121,23 @@ class ControllerHttpGatewayTests(unittest.TestCase):
 
                     get = FakeHandler("/api/health")
                     get.do_GET()
-                    self.assertEqual(get.calls, ["GET"])
+                    self.assertEqual(get.calls, [])
+                    self.assertEqual(get.responses[-1][0], 423)
 
                 with patch.object(gate, "observe_no_drain_hold",
                                   return_value={"active": False}):
                     with exclusive() as evidence:
                         self.assertFalse(evidence["controller_http_acked"])
-                        obj = FakeHandler("/api/admin/mutating")
-                        obj.do_POST()
-                        self.assertEqual(obj.responses[-1][0], 423)
-                        self.assertEqual(
-                            obj.responses[-1][1]["reason"],
-                            "controller_http_interprocess_fence_unavailable")
-                        self.assertEqual(obj.calls, [])
+                        for verb in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
+                            obj = FakeHandler("/api/admin/mutating")
+                            getattr(obj, "do_" + verb)()
+                            self.assertEqual(obj.responses[-1][0], 423)
+                            self.assertEqual(
+                                obj.responses[-1][1]["reason"],
+                                "controller_http_interprocess_fence_unavailable")
+                            self.assertEqual(obj.calls, [])
 
-                    for verb in ("POST", "PUT", "PATCH", "DELETE"):
+                    for verb in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
                         obj = FakeHandler("/api/admin/mutating")
                         getattr(obj, "do_" + verb)()
                         self.assertEqual(obj.calls, [verb])
