@@ -231,14 +231,16 @@ def provision_update_admission_lock() -> Path:
 
 
 @contextmanager
-def exclusive_update_admission():
+def exclusive_update_admission(*, provision=True):
     """Hold the host update mutex until apply/recovery and cleanup exit.
 
-    No authorization to mutate is implied by acquiring this lock.
+    Sandboxed systemd jobs use the already provisioned inode without writing
+    to its parent. No authorization to mutate is implied by the lock.
     """
     if os.geteuid() != 0:
         raise PrivilegedHelperFenceUnavailable("root_only_update_admission")
-    provision_update_admission_lock()
+    if provision:
+        provision_update_admission_lock()
     fd = _open_inode(UPDATE_ADMISSION_LOCK, 0)
     try:
         _acquire(fd, fcntl.LOCK_EX)

@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Group=root
+# Prepare once outside the sandbox; the updater itself never replaces the inode.
+ExecStartPre=+/usr/bin/python3 -I /opt/capivara-agent/runtime/game_uptime_privileged_flock.py --provision-updater-admission
 ExecStart=/usr/bin/python3 /opt/capivara-agent/updater/updater.py
 NoNewPrivileges=true
 PrivateTmp=true

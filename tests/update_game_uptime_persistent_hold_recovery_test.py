@@ -84,6 +84,40 @@ class PersistentPendingHoldTests(unittest.TestCase):
                     "unexpected.service loaded active running Game"):
             with self.assertRaises(HoldPreparationBlocked):
                 _game_inventory(raw)
+        # The autonomous Agent updater must not consume its update request
+        # when either the host admission inode or maintenance hold blocks it.
+        import importlib.util
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        import game_uptime_privileged_flock as admission
+        import game_uptime_maintenance_hold as maintenance
+        spec = importlib.util.spec_from_file_location(
+            "dsm928_autonomous_updater_test", ROOT / "agents/linux/updater/updater.py")
+        updater = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(updater)
+        @contextmanager
+        def busy(*, provision):
+            self.assertFalse(provision)
+            raise admission.PrivilegedHelperFenceUnavailable("busy")
+            yield
+        @contextmanager
+        def retained(*, provision):
+            self.assertFalse(provision)
+            yield
+        with patch.object(updater, "INSTALL_ROOT", Path("/opt/capivara-agent")), \
+             patch.object(updater, "_execute_request", return_value=0) as execute:
+            with patch.object(admission, "exclusive_update_admission", busy):
+                self.assertEqual(updater.main(), 2)
+            with patch.object(admission, "exclusive_update_admission", retained), \
+                 patch.object(maintenance, "observe", return_value={"active": True}):
+                self.assertEqual(updater.main(), 2)
+            execute.assert_not_called()
+            with patch.object(admission, "exclusive_update_admission", retained), \
+                 patch.object(maintenance, "observe", return_value={"active": False}):
+                self.assertEqual(updater.main(), 0)
+            execute.assert_called_once_with()
+        unit = (ROOT / "agents/linux/services/capivara-agent-uninstall.service").read_text()
+        self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1", unit)
         # A restrictive installer/systemd umask must not make the hold 0600.
         # Its JSON contains no credentials; Agent/Worker users need read only.
         previous_umask = os.umask(0o077)
