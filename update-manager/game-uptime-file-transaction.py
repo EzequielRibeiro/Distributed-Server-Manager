@@ -209,7 +209,8 @@ class FileTransaction:
     """Fixed file-operation owner for the existing retained transaction driver."""
 
     def __init__(self, workspace, installed, target, *, transaction_id,
-                 release_sha256, checkpoint, product_identity=None):
+                 release_sha256, checkpoint, product_identity=None,
+                 _installed_scope=None):
         self.workspace = Path(workspace)
         self.installed = Path(installed)
         self.target = Path(target)
@@ -219,17 +220,39 @@ class FileTransaction:
                 or not re.fullmatch(r"[0-9a-f]{64}", release_sha256)
                 or not callable(checkpoint)):
             raise FileTransactionBlocked("unbound_file_transaction")
-        # Keep live activation unavailable until the installed owner has all
-        # positive operational guarantees. Do not accept caller flags as proof.
         root = self.workspace
-        tmp = Path(tempfile.gettempdir()).resolve(strict=True)
-        if (tmp not in root.parents or root.resolve(strict=True) != root
-                or _directory(root).st_mode & 0o077
-                or self.installed != root / "installed"
-                or self.target != root / "new-payload"
-                or (root / "fixture-owner").is_symlink()
-                or (root / "fixture-owner").read_bytes() != b"DSM928_DISPOSABLE_FIXTURE_V1\n"):
-            raise FileTransactionBlocked("installed_file_transaction_not_authorized")
+        self.installed_execution = _installed_scope is not None
+        if not self.installed_execution:
+            tmp = Path(tempfile.gettempdir()).resolve(strict=True)
+            if (tmp not in root.parents or root.resolve(strict=True) != root
+                    or _directory(root).st_mode & 0o077
+                    or self.installed != root / "installed"
+                    or self.target != root / "new-payload"
+                    or (root / "fixture-owner").is_symlink()
+                    or (root / "fixture-owner").read_bytes() != b"DSM928_DISPOSABLE_FIXTURE_V1\n"):
+                raise FileTransactionBlocked("installed_file_transaction_not_authorized")
+        else:
+            # Internal installed owner only. These are necessary retained
+            # guarantees, not an operator override or a standalone CLI.
+            state = Path("/var/lib/capivara-dsm-928")
+            if (os.geteuid() != 0 or type(_installed_scope) is not dict
+                    or _installed_scope.get("kind") != "DSM928InstalledDistributedScope"
+                    or _installed_scope.get("transaction_id") != transaction_id
+                    or _installed_scope.get("release_sha256") != release_sha256
+                    or _installed_scope.get("checkpoint") is not checkpoint
+                    or _installed_scope.get("all_mutators_fenced") is not True
+                    or _installed_scope.get("external_jobs_acked") is not True
+                    or root != state / ("transaction-" + transaction_id)
+                    or self.installed != Path("/opt/dsm")
+                    or self.target != state / "reviewed-release/payload"
+                    or product_identity is None):
+                raise FileTransactionBlocked("installed_file_transaction_not_authorized")
+            for folder in (Path("/var"), Path("/var/lib"), state, root,
+                           self.target.parent, self.target):
+                _directory(folder)
+            if stat.S_IMODE(root.lstat().st_mode) != 0o700:
+                raise FileTransactionBlocked("installed_transaction_workspace_not_private")
+            checkpoint()
         if product_identity is not None and (
                 os.geteuid() != 0 or type(product_identity) is not tuple
                 or len(product_identity) != 2
@@ -344,6 +367,7 @@ class FileTransaction:
                 "transaction_id": self.transaction_id,
                 "release_sha256": self.release_sha256, "entries": entries,
                 "product_identity": list(self.product_identity) if self.product_identity else None,
+                "installed_execution": self.installed_execution,
                 "live_no_drain_authorized": False})
 
     def _entries(self):
@@ -352,6 +376,7 @@ class FileTransaction:
                 or report.get("schema_version") != 1
                 or report.get("transaction_id") != self.transaction_id
                 or report.get("release_sha256") != self.release_sha256
+                or report.get("installed_execution", False) is not self.installed_execution
                 or report.get("product_identity") != (
                     list(self.product_identity) if self.product_identity else None)
                 or report.get("live_no_drain_authorized") is not False

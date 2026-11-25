@@ -67,6 +67,12 @@ class UpdatePreflightTest(unittest.TestCase):
                          "bootstrap_requires_separately_approved_maintenance")
         self.assertFalse(boundary["ordinary_draining_update_automatically_selected"])
         self.assertFalse(boundary["live_no_drain_authorized"])
+        installed_owner = module._load("dsm928_installed_owner_test",
+                                       "game-uptime-installed-transaction.py")
+        with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+            installed_owner._validate_plan(state)
+        with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+            installed_owner.run(self.target)
         self.assertIn("installed_updater_transaction_owner_not_connected", boundary["blockers"])
 
     def test_bad_inventory_fails_closed(self):

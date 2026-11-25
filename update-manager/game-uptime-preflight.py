@@ -256,12 +256,8 @@ def _execution_boundary(result):
     }
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("installed", type=Path)
-    parser.add_argument("target", type=Path)
-    args = parser.parse_args()
-    result = preflight(args.installed, args.target)
+def collect_operational_review(installed, target):
+    result = preflight(installed, target)
     # The production updater invokes this diagnostic in --no-drain-report
     # BEFORE acquiring privileges, backups, service stops or file mutations.
     # Inspect independently trusted release evidence if provisioned, but
@@ -270,7 +266,7 @@ def main():
         operator_review = _load(
             "game_uptime_operational_release_review",
             "game-uptime-operational-release-review.py")
-        result["operational_release_review"] = operator_review.evaluate(args.target)
+        result["operational_release_review"] = operator_review.evaluate(target)
     except Exception:
         result["operational_release_review"] = {
             "kind": "DSM928OperationalReleaseReview",
@@ -284,6 +280,15 @@ def main():
             "blockers": ["operational_release_review_unavailable"],
         }
     result["operational_execution_boundary"] = _execution_boundary(result)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("installed", type=Path)
+    parser.add_argument("target", type=Path)
+    args = parser.parse_args()
+    result = collect_operational_review(args.installed, args.target)
     print(json.dumps(result, ensure_ascii=False))
     return 2 if result["classification"] == "blocked" else 0
 

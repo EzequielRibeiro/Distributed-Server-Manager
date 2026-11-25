@@ -91,6 +91,7 @@ ALLOW_SAME_VERSION=0
 ALLOW_DOWNGRADE=0
 NO_BACKUP=0
 NO_DRAIN_REPORT=0
+NO_DRAIN_EXECUTE=0
 # Test-only entrypoint; NOT a production flag or authorization.
 NO_DRAIN_DISPOSABLE_MAIN=0
 NEW_SRC=""
@@ -134,7 +135,7 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
-  --no-drain            Run read-only safety preflight; update remains blocked (exit 2).
+  --no-drain            Use the audited no-drain transaction owner; blocked unless operational guarantees are proven.
   --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
@@ -154,10 +155,8 @@ parse_arguments() {
                 ALLOW_DOWNGRADE=1
                 ;;
             --no-drain)
-                echo "No-drain update is not yet homologated; refusing to update." >&2
-                # Use the same read-only diagnostic as --no-drain-report.
-                # Never advance into main(), stop services, or mutate files.
-                NO_DRAIN_REPORT=1
+                # Execution never aliases the ordinary draining path.
+                NO_DRAIN_EXECUTE=1
                 ;;
             --no-backup)
                 NO_BACKUP=1
@@ -1910,7 +1909,7 @@ update_summary() {
 # =============================================================
 # #928: Exercise main() -> authenticated/impact/witness transaction only
 # on GitHub-hosted disposable fixtures. This branch is never a live update.
-# The real --no-drain and --no-drain-report flags always remain read-only.
+# --no-drain-report stays read-only; --no-drain uses a separate audited owner.
 run_dsm928_disposable_main() {
     local FIXTURE_ROOT DRIVER
     [[ "${CAPIVARA_DSM928_DISPOSABLE_MAIN:-0}" == 1 ]] || return 2
@@ -1919,7 +1918,7 @@ run_dsm928_disposable_main() {
     # Never test on a machine with a DSM deployment, even if the environment
     # variables were forged. Real clients/games must not be discoverable here.
     [[ ! -e /opt/dsm && ! -L /opt/dsm ]] || return 2
-    [[ "${NO_DRAIN_REPORT}" -eq 0 && "${NO_BACKUP}" -eq 0 ]] || return 2
+    [[ "${NO_DRAIN_REPORT}" -eq 0 && "${NO_DRAIN_EXECUTE}" -eq 0 && "${NO_BACKUP}" -eq 0 ]] || return 2
     [[ "${INSTALL_DIR}" == /tmp/*/installed ]] || return 2
     FIXTURE_ROOT="${INSTALL_DIR%/installed}"
     [[ "${FIXTURE_ROOT}" != /tmp && "${INSTALL_DIR}" == "${FIXTURE_ROOT}/installed"
@@ -2000,6 +1999,32 @@ main() {
         # Do not enter the production update_failed/rollback machinery when
         # a deliberately isolated fixture is rejected.
         exit 2
+    fi
+    # The installed owner is provisioned independently from the replaceable
+    # /opt/dsm tree. It cannot inherit the draining updater's traps.
+    if [[ "${NO_DRAIN_EXECUTE}" -eq 1 ]]; then
+        trap - ERR EXIT INT TERM
+        if [[ "${NO_DRAIN_REPORT}" -ne 0 || "${NO_BACKUP}" -ne 0
+              || "${ALLOW_SAME_VERSION}" -ne 0 || "${ALLOW_DOWNGRADE}" -ne 0
+              || "${EUID}" -ne 0 || -z "${NEW_SRC}" ]]; then
+            echo "No-drain execution requires root, a reviewed payload and no conflicting options." >&2
+            exit 2
+        fi
+        local OWNER="/usr/local/libexec/capivara-dsm-928-updater/update-manager/game-uptime-installed-transaction.py"
+        local DIR
+        for DIR in / /usr /usr/local /usr/local/libexec /usr/local/libexec/capivara-dsm-928-updater /usr/local/libexec/capivara-dsm-928-updater/update-manager; do
+            if [[ ! -d "${DIR}" || -L "${DIR}" || "$(stat -c %u -- "${DIR}")" != 0 ]] ||
+               (( (8#$(stat -c %a -- "${DIR}") & 022) != 0 )); then
+                echo "No-drain update blocked: audited transaction owner unavailable." >&2
+                exit 2
+            fi
+        done
+        if [[ ! -f "${OWNER}" || -L "${OWNER}" || "$(stat -c %u:%h -- "${OWNER}")" != 0:1 ]] ||
+           (( (8#$(stat -c %a -- "${OWNER}") & 022) != 0 )); then
+            echo "No-drain update blocked: audited transaction owner unavailable." >&2
+            exit 2
+        fi
+        exec /usr/bin/python3 -I -S -B "${OWNER}" "${NEW_SRC}"
     fi
     # This diagnostic must execute BEFORE root, logging, backup, daemon or
     # filesystem changes. Always exit 2: a report is never update approval.
