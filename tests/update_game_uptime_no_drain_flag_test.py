@@ -29,6 +29,23 @@ class NoDrainFlagFailClosedTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertIn("not yet homologated", result.stderr)
 
+        # Explicit execution cannot change the legacy diagnostic contract or
+        # accept an arbitrary target, conflicting flags or bypass options.
+        for args in (
+            ["--no-drain-execute"],
+            ["--no-drain-execute", "--no-drain-report"],
+            ["--no-drain", "--no-drain-execute"],
+            ["--no-drain-execute", "--no-backup"],
+            ["--no-drain-execute", "--yes"],
+        ):
+            with self.subTest(execution_args=args):
+                result = subprocess.run(
+                    ["bash", str(ROOT / "update.sh"), *args, "/tmp/dsm928-nonexistent"],
+                    cwd=str(ROOT), capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("No-drain execution requires root", result.stderr)
+
     def test_normal_help_still_available(self):
         result = subprocess.run(
             ["bash", str(ROOT / "update.sh"), "--help"],

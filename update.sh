@@ -135,7 +135,8 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
-  --no-drain            Use the audited no-drain transaction owner; blocked unless operational guarantees are proven.
+  --no-drain            Read-only safety preflight; update remains blocked (exit 2).
+  --no-drain-execute    Explicit audited transaction path; blocked until operational admission is proven.
   --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
@@ -155,7 +156,12 @@ parse_arguments() {
                 ALLOW_DOWNGRADE=1
                 ;;
             --no-drain)
-                # Execution never aliases the ordinary draining path.
+                echo "No-drain update is not yet homologated; refusing to update." >&2
+                NO_DRAIN_REPORT=1
+                ;;
+            --no-drain-execute)
+                # An explicit execution request is separate from the legacy
+                # diagnostic contract; it never falls through to draining.
                 NO_DRAIN_EXECUTE=1
                 ;;
             --no-backup)
@@ -2006,7 +2012,8 @@ main() {
         trap - ERR EXIT INT TERM
         if [[ "${NO_DRAIN_REPORT}" -ne 0 || "${NO_BACKUP}" -ne 0
               || "${ALLOW_SAME_VERSION}" -ne 0 || "${ALLOW_DOWNGRADE}" -ne 0
-              || "${EUID}" -ne 0 || -z "${NEW_SRC}" ]]; then
+              || "${AUTO_YES}" -ne 0 || "${EUID}" -ne 0
+              || "${NEW_SRC}" != /var/lib/capivara-dsm-928/reviewed-release/payload ]]; then
             echo "No-drain execution requires root, a reviewed payload and no conflicting options." >&2
             exit 2
         fi
@@ -2047,7 +2054,7 @@ main() {
     # destructive/draining updater. A live transaction must implement durable
     # rollback and PID/start-time verification before this boundary changes.
     # Keep normal updates on the existing draining path.
-    if [[ "${NO_DRAIN_REPORT}" -ne 0 ]]; then
+    if [[ "${NO_DRAIN_REPORT}" -ne 0 || "${NO_DRAIN_EXECUTE}" -ne 0 ]]; then
         echo "Invalid no-drain transaction state; refusing update." >&2
         exit 2
     fi
