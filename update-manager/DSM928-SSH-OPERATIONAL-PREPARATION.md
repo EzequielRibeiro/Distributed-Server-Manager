@@ -77,3 +77,11 @@ The original Controller/Worker/alert identity and registry/queue inventory
 are now bound to the same transaction across reconnects. A missing or changed
 witness blocks recovery. This is additional evidence, not proof of live
 coverage, expiry/reboot recovery, or Python control-plane restart compatibility.
+
+The installed transaction owner also has an internal `--recover TRANSACTION_ID`
+entrypoint. It validates the original canonical journal and signed payload,
+reacquires the original unexpired scope, verifies terminal bytes or rolls
+back a prepared mixed file state, and never renews a lease. It remains
+blocked by missing positive retained operational guarantees. Do not run it
+against production during this implementation phase; expired, rebooted,
+missing or partially released scopes still require explicit manual review.

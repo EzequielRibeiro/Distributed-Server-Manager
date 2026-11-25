@@ -74,6 +74,28 @@ class UpdatePreflightTest(unittest.TestCase):
         with self.assertRaises(installed_owner.InstalledTransactionBlocked):
             installed_owner.run(self.target)
         self.assertIn("installed_updater_transaction_owner_not_connected", boundary["blockers"])
+        # Recovery must preserve the original lease, package and complete
+        # inventory; it must not retry a fresh transaction after a crash.
+        tx = "a"*32
+        now = 1700000100
+        recovery = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 1,
+                    "scope": {"transaction_id": tx, "release_sha256": "b"*64,
+                              "issued_at": 1700000000, "expires_at": 1700000900,
+                              "expected_agent_ids": ["hybrid", "vps"]},
+                    "local_hybrid_agent_id": "hybrid", "product_file_journal_sha256": "c"*64,
+                    "product_identity": [1000, 1000], "live_no_drain_authorized": False,
+                    "status": "prepared"}
+        options = installed_owner._validate_recovery_report(recovery, tx, now)
+        self.assertTrue(options["recover_existing"])
+        self.assertEqual(options["expires_at"], 1700000900)
+        for bad in ({**recovery, "status": "manual_recovery_required"},
+                    {**recovery, "scope": {**recovery["scope"], "expires_at": now}},
+                    {**recovery, "scope": {**recovery["scope"], "expected_agent_ids": ["hybrid"]}},
+                    {**recovery, "live_no_drain_authorized": True}):
+            with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+                installed_owner._validate_recovery_report(bad, tx, now)
+        with self.assertRaises(installed_owner.InstalledTransactionBlocked):
+            installed_owner.recover(tx)
 
     def test_bad_inventory_fails_closed(self):
         self.write("dashboard/web/style.css","old","new")

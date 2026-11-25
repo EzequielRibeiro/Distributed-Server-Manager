@@ -100,7 +100,7 @@ def _engine(module, workspace, identity, scope, digest, tx):
         product_identity=identity, _installed_scope=scope)
 
 
-def run(target):
+def _require_trusted_snapshot(target):
     if os.geteuid() != 0 or Path(__file__) != SNAPSHOT / "update-manager/game-uptime-installed-transaction.py":
         raise InstalledTransactionBlocked("audited_root_updater_snapshot_required")
     # The entire independent snapshot, not the candidate or installed DSM,
@@ -117,6 +117,10 @@ def run(target):
         raise InstalledTransactionBlocked("fixed_reviewed_payload_required")
     for folder in (Path("/var"), Path("/var/lib"), STATE, TARGET.parent, TARGET):
         _trusted(folder, directory=True)
+
+
+def run(target):
+    _require_trusted_snapshot(target)
     preflight = _load("game-uptime-preflight.py")
     review = preflight.collect_operational_review(INSTALLED, TARGET)
     # No holds, backups or mutations before positive independent admission.
@@ -200,11 +204,132 @@ def run(target):
             "terminal_holds_released": True}
 
 
+def _validate_recovery_report(report, tx, now):
+    """Recovery never adopts a new release, inventory or lease window."""
+    if (type(tx) is not str or not re.fullmatch(r"[0-9a-f]{32}", tx)
+            or type(report) is not dict or set(report) != {
+                "kind", "schema_version", "scope", "local_hybrid_agent_id",
+                "product_file_journal_sha256", "product_identity",
+                "live_no_drain_authorized", "status"}
+            or report["kind"] != "DSM928InstalledUptimeTransaction"
+            or report["schema_version"] != 1
+            or report["live_no_drain_authorized"] is not False
+            or report["status"] not in ("prepared", "verified", "rolled_back", "recovered_rollback")):
+        raise InstalledTransactionBlocked("installed_recovery_journal_invalid_or_manual_review_required")
+    scope = report["scope"]
+    identity = report["product_identity"]
+    if (type(scope) is not dict or set(scope) != {
+            "transaction_id", "release_sha256", "issued_at", "expires_at",
+            "expected_agent_ids"}
+            or scope["transaction_id"] != tx
+            or any(type(x) is not str or not re.fullmatch(r"[0-9a-f]{64}", x)
+                   for x in (scope["release_sha256"], report["product_file_journal_sha256"]))
+            or type(scope["issued_at"]) is not int or type(scope["expires_at"]) is not int
+            or not 0 < scope["issued_at"] <= now < scope["expires_at"] <= scope["issued_at"] + 900
+            or type(identity) is not list or len(identity) != 2
+            or any(type(x) is not int or x <= 0 for x in identity)):
+        raise InstalledTransactionBlocked("installed_recovery_binding_or_lease_invalid")
+    ids = scope["expected_agent_ids"]
+    if (type(ids) is not list or not 2 <= len(ids) <= 64
+            or any(type(x) is not str or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", x) for x in ids)
+            or ids != sorted(set(ids))
+            or report["local_hybrid_agent_id"] not in ids):
+        raise InstalledTransactionBlocked("installed_recovery_inventory_invalid")
+    return {**scope, "local_hybrid_agent_id": report["local_hybrid_agent_id"],
+            "expected_controller_uid": identity[0], "expected_worker_uid": identity[0],
+            "recover_existing": True, "operator_reviewed": True}
+
+
+def _read_recovery_report(workspace):
+    _trusted(workspace, directory=True)
+    if stat.S_IMODE(workspace.lstat().st_mode) != 0o700:
+        raise InstalledTransactionBlocked("installed_recovery_workspace_not_private")
+    path = workspace / "game-uptime-transaction.json"
+    _trusted(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        def fingerprint(item):
+            return (item.st_dev, item.st_ino, item.st_uid, item.st_mode, item.st_nlink,
+                    item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0
+                or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                or not 0 < before.st_size <= 65536
+                or fingerprint(before) != fingerprint(path.lstat())):
+            raise InstalledTransactionBlocked("installed_recovery_journal_untrusted")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(65537)
+        if (len(raw) != before.st_size or fingerprint(before) != fingerprint(os.fstat(fd))
+                or fingerprint(before) != fingerprint(path.lstat())):
+            raise InstalledTransactionBlocked("installed_recovery_journal_changed")
+    finally:
+        os.close(fd)
+    report = json.loads(raw)
+    if raw != (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode():
+        raise InstalledTransactionBlocked("installed_recovery_journal_not_canonical")
+    return report, hashlib.sha256(raw).hexdigest()
+
+
+def recover(tx):
+    """Reacquire only the original, still valid installed recovery scope.
+
+    No fresh hold, lease extension, ordinary updater, or decision reversal.
+    Missing/expired/partially released evidence stays for manual review.
+    """
+    _require_trusted_snapshot(TARGET)
+    if type(tx) is not str or not re.fullmatch(r"[0-9a-f]{32}", tx):
+        raise InstalledTransactionBlocked("invalid_installed_recovery_transaction")
+    workspace = STATE / ("transaction-" + tx)
+    report, terminal = _read_recovery_report(workspace)
+    options = _validate_recovery_report(report, tx, int(time.time()))
+    digest = options["release_sha256"]
+    review = _load("game-uptime-operational-release-review.py").evaluate(TARGET)
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True
+            or review.get("verified_archive_sha256") != digest):
+        raise InstalledTransactionBlocked("original_signed_recovery_payload_unverified")
+    lease = _load("game-uptime-local-scope-lease.py")
+    module = _load("game-uptime-file-transaction.py")
+    with lease.retain_installed_distributed_scopes(**options) as scope:
+        if (scope.get("all_mutators_fenced") is not True
+                or scope.get("external_jobs_acked") is not True):
+            raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+        if _read_recovery_report(workspace) != (report, terminal):
+            raise InstalledTransactionBlocked("installed_recovery_journal_changed")
+        engine = _engine(module, workspace, tuple(report["product_identity"]), scope, digest, tx)
+        if engine.journal_digest() != report["product_file_journal_sha256"]:
+            raise InstalledTransactionBlocked("product_file_journal_changed")
+        outcome = report["status"]
+        if outcome == "prepared":
+            for prefix in ("terminal-", "terminal-confirmation-", "released-"):
+                if os.path.lexists(STATE / (prefix + tx + ".json")):
+                    raise InstalledTransactionBlocked("existing_terminal_decision_requires_review")
+            # The before/after file journal handles an interrupted mixed
+            # state. A failed rollback keeps the prepared journal and holds.
+            engine.rollback()
+            outcome = "recovered_rollback"
+            engine.verify_terminal(outcome)
+            scope["checkpoint"]()
+            terminal = _write_status(workspace, report, outcome)
+        else:
+            # An already durable decision is immutable; only finish it.
+            engine.verify_terminal(outcome)
+        scope["checkpoint"]()
+        result = scope["finalize_terminal"](terminal)
+        if result.get("status") != "installed_terminal_holds_released":
+            raise InstalledTransactionBlocked("terminal_release_incomplete")
+    return {"status": outcome, "transaction_id": tx, "game_drain_performed": False,
+            "terminal_holds_released": True}
+
+
 def main():
     try:
-        if len(sys.argv) != 2:
-            raise InstalledTransactionBlocked("exactly_one_reviewed_payload_required")
-        result = run(sys.argv[1])
+        if len(sys.argv) == 3 and sys.argv[1] == "--recover":
+            result = recover(sys.argv[2])
+        elif len(sys.argv) == 2:
+            result = run(sys.argv[1])
+        else:
+            raise InstalledTransactionBlocked("exactly_one_reviewed_payload_or_recovery_id_required")
         print(json.dumps(result, sort_keys=True))
         return 0 if result["status"] == "verified" else 2
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
