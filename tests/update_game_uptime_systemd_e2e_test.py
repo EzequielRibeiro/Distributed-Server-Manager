@@ -574,6 +574,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 lease_args["prepare_fresh_fixture"] = True
                 fixture_ids = ["fixture-agent-online", "fixture-agent-offline"]
                 lease_args["expected_fixture_agent_ids"] = fixture_ids
+                issued_at = int(time.time())
+                lease_args["shared_lease_window"] = (issued_at, issued_at + 600)
                 binding_path = state_dir / "no-drain-release-binding.json"
                 inventory_path = state_dir / "no-drain-agent-inventory.json"
                 helper_lock = runtime_dir / "agent-privileged-operations.lock"
@@ -604,6 +606,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     pending = json.loads(pending_path.read_text())
                     binding = json.loads(binding_path.read_text())
                     self.assertEqual(pending["transaction_id"], nonce)
+                    self.assertEqual((pending["issued_at"], pending["expires_at"]),
+                                     lease_args["shared_lease_window"])
                     self.assertEqual(binding["release_sha256"], expected_hash)
                     inventory = json.loads(inventory_path.read_text())
                     self.assertEqual(inventory["agent_ids"], sorted(fixture_ids))
@@ -665,6 +669,14 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                         finally:
                             os.close(outsider)
                 self.assertEqual({p: p.read_bytes() for p in saved}, saved)
+                with self.assertRaisesRegex(local_scope.LocalScopeLeaseBlocked,
+                                            "local_scope_no_longer_retained"):
+                    recovery["checkpoint"]()
+                with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
+                    with local_scope.retain_local_scopes(
+                            **{**recovery_args, "shared_lease_window":
+                               (issued_at, issued_at + 601)}):
+                        pass
                 with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
                     with local_scope.retain_local_scopes(
                             **{**recovery_args, "expected_recovery_agent_ids": fixture_ids[:1]}):

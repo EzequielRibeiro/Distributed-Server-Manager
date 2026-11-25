@@ -53,6 +53,11 @@ a maintenance hold or pending journal, stops games, or authorizes an update.
 
 The Hybrid Agent on the Controller must be accounted for by the local scope,
 not probed as a standalone Agent unless independently deployed as such.
-This standalone-only transport does not yet establish the complete global
-inventory partition, actual daemon coverage, external-job fencing, official
-artifact trust, or production updater integration. Keep no-drain blocked.
+The installed-scope coordinator now also requires the Controller's
+root-owned 0600 agent-session-id with its independently verified Hybrid ID.
+Its root-only retained-scope primitive accepts the full independently
+reviewed inventory and exact shared time window, validates the SSH endpoint
+partition and retains the local and remote fences together. It is not an
+operator entrypoint: do not invoke it to apply a release. Actual daemon
+coverage, external-job fencing, production apply and installed terminal
+release remain unverified. Keep no-drain blocked.

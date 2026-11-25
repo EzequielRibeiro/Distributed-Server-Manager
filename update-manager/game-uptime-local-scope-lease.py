@@ -6,9 +6,10 @@ covers ONLY 3 Controller Agent HTTP routes and 9 registered Worker cycles.
 It cannot attest other APIs, Agents on other hosts, external jobs, game PIDs
 or a release's authenticity, and NEVER grants a live no-drain update.
 
-The installed path requires an existing operator-owned hold. Only the marked
-disposable fixture can prepare a fresh durable hold under the retained locks.
-Never removes evidence, changes systemd units or calls update.sh.
+Fresh installed preparation is an explicit root-only retained-scope
+primitive, bound to the complete inventory and absolute lease window.
+Installed code imports Agent primitives from the audited root snapshot.
+It does not authorize apply, restart services or clear installed evidence.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import re
 import stat
 import sys
 import tempfile
+import time
 from typing import Iterator
 
 CONTROLLER_LOCK = Path("/run/capivara-dsm/controller-agent-http.lock")
@@ -44,9 +46,34 @@ class LocalScopeLeaseBlocked(RuntimeError):
     pass
 
 
-def _hold_module():
-    path = (Path(__file__).resolve().parents[1]
-            / "agents/linux/runtime/game_uptime_maintenance_hold.py")
+def _runtime_dir(installed: bool) -> Path:
+    if not installed:
+        return Path(__file__).resolve().parents[1] / "agents/linux/runtime"
+    root = Path("/usr/local/libexec/capivara-dsm-928-agent")
+    for folder in (Path("/usr"), Path("/usr/local"), Path("/usr/local/libexec"), root):
+        _safe_directory(folder, owner=0)
+    modules = ("game_uptime_ssh_transport", "game_uptime_hold_coordinator",
+               "game_uptime_maintenance_hold", "game_uptime_transaction_binding",
+               "game_uptime_privileged_flock", "game_uptime_finalization_flock",
+               "game_uptime_privileged_journal_witness",
+               "game_uptime_wire_replay_service", "game_uptime_durable_wire_replay")
+    for name in modules:
+        path = root / (name + ".py")
+        info = path.lstat()
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0
+                or info.st_mode & 0o022 or info.st_nlink != 1
+                or not 0 < info.st_size <= 1024 * 1024):
+            raise LocalScopeLeaseBlocked("untrusted_installed_agent_snapshot")
+        # Never reuse a module previously imported from a checkout or
+        # mutable installation tree in an installed privileged transaction.
+        loaded = sys.modules.get(name)
+        if loaded is not None and getattr(loaded, "__file__", None) != str(path):
+            raise LocalScopeLeaseBlocked("conflicting_installed_agent_module")
+    return root
+
+
+def _hold_module(runtime_dir):
+    path = Path(runtime_dir) / "game_uptime_maintenance_hold.py"
     loader = SourceFileLoader("dsm928_scope_lease_hold", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
@@ -158,16 +185,15 @@ def _evidence_identity(path: Path) -> tuple:
             info.st_nlink, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
-                               *, tx: str, sha: str, owner: int,
-                               agent_ids: list[str] | None):
+def _fresh_preparation(hold, hold_path: Path, pending_path: Path,
+                       *, tx: str, sha: str, owner: int,
+                       agent_ids: list[str] | None, runtime_dir: Path,
+                       shared_lease_window: tuple[int, int] | None = None):
     """Create once, under retained locks; never accept a prior journal."""
     binding_path = pending_path.parent / "no-drain-release-binding.json"
     inventory_path = pending_path.parent / "no-drain-agent-inventory.json"
     _require_absent(hold_path, pending_path, binding_path, inventory_path)
-    # These imports are reached ONLY in an explicitly marked private /tmp
-    # fixture; no installed root service or updater calls this branch.
-    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    runtime = str(runtime_dir)
     sys.path.insert(0, runtime)
     try:
         from game_uptime_hold_coordinator import prepare_root_only
@@ -177,10 +203,16 @@ def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
     finally:
         sys.path.remove(runtime)
     try:
+        timing = {}
+        if shared_lease_window is not None:
+            issued, expires = shared_lease_window
+            if not issued <= time.time() < expires:
+                raise LocalScopeLeaseBlocked("shared_local_lease_expired")
+            timing = {"now": issued, "ttl_seconds": expires - issued}
         prepared = prepare_root_only(
             transaction_id=tx, release_sha256=sha, trusted_uid=owner,
             journal_path=pending_path, hold_path=hold_path,
-            binding_path=binding_path, expected_agent_ids=agent_ids)
+            binding_path=binding_path, expected_agent_ids=agent_ids, **timing)
         if (prepared.get("release_identity_bound_locally") is not True
                 or prepared.get("operator_agent_inventory_persisted")
                    is not (agent_ids is not None)
@@ -188,7 +220,8 @@ def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
             raise LocalScopeLeaseBlocked("fresh_preparation_invalid")
         checkpoint = _prepared_evidence_checkpoint(
             hold, hold_path, pending_path, tx=tx, sha=sha,
-            owner=owner, agent_ids=agent_ids)
+            owner=owner, agent_ids=agent_ids, runtime_dir=runtime_dir,
+            shared_lease_window=shared_lease_window)
     except (OSError, RuntimeError, ValueError) as exc:
         raise LocalScopeLeaseBlocked("fresh_transaction_preparation_blocked") from exc
     return checkpoint
@@ -196,11 +229,13 @@ def _fresh_fixture_preparation(hold, hold_path: Path, pending_path: Path,
 
 def _prepared_evidence_checkpoint(hold, hold_path: Path, pending_path: Path,
                                   *, tx: str, sha: str, owner: int,
-                                  agent_ids: list[str] | None):
+                                  agent_ids: list[str] | None,
+                                  runtime_dir: Path,
+                                  shared_lease_window: tuple[int, int] | None = None):
     """Validate exact durable evidence, without creating or clearing a hold."""
     binding_path = pending_path.parent / "no-drain-release-binding.json"
     inventory_path = pending_path.parent / "no-drain-agent-inventory.json"
-    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    runtime = str(runtime_dir)
     sys.path.insert(0, runtime)
     try:
         from game_uptime_transaction_binding import binding_for_hold
@@ -220,6 +255,10 @@ def _prepared_evidence_checkpoint(hold, hold_path: Path, pending_path: Path,
                 or observed.get("reason") != "root_owned_maintenance_hold"
                 or observed.get("transaction_id") != tx):
             raise LocalScopeLeaseBlocked("fresh_hold_invalid")
+        if shared_lease_window is not None and (
+                (observed["issued_at"], observed["expires_at"]) != shared_lease_window
+                or not observed["issued_at"] <= time.time() < observed["expires_at"]):
+            raise LocalScopeLeaseBlocked("shared_local_lease_changed")
         _root_pending(pending_path, owner, tx,
                       observed["issued_at"], observed["expires_at"])
         pin = binding_for_hold(observed, path=binding_path, trusted_uid=owner)
@@ -244,7 +283,7 @@ def _prepared_evidence_checkpoint(hold, hold_path: Path, pending_path: Path,
 def _retain_agent_operations(stack: ExitStack, runtime_dir: Path,
                              *, owner: int, installed: bool = False):
     """Retain both preprovisioned Agent lock families; never provision them."""
-    runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+    runtime = str(_runtime_dir(installed))
     sys.path.insert(0, runtime)
     try:
         from game_uptime_privileged_flock import exclusive_privileged_helper_lock
@@ -285,10 +324,14 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         prepare_fresh_fixture: bool = False,
                         expected_fixture_agent_ids: list[str] | None = None,
                         inspect_existing_prepared: bool = False,
-                        expected_recovery_agent_ids: list[str] | None = None) -> Iterator[dict]:
+                        expected_recovery_agent_ids: list[str] | None = None,
+                        prepare_fresh_installed: bool = False,
+                        expected_installed_agent_ids: list[str] | None = None,
+                        shared_lease_window: tuple[int, int] | None = None) -> Iterator[dict]:
     """Acquire and RETAIN all known local locks until exiting this context.
 
-    Real paths require root and existing operator-owned hold. Fixture paths
+    Real paths require root and independently reviewed inventory/lease for
+    fresh preparation, or existing operator-owned hold. Fixture paths
     require a private marked /tmp directory. Busy or missing locks fail closed
     and release any previously acquired locks; never block or drain a game.
 
@@ -305,6 +348,28 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     if type(prepare_fresh_fixture) is not bool or (
             prepare_fresh_fixture and fixture_root is None):
         raise LocalScopeLeaseBlocked("fresh_preparation_fixture_only")
+    if (type(prepare_fresh_installed) is not bool
+            or (prepare_fresh_installed and (fixture_root is not None
+                or prepare_fresh_fixture or shared_lease_window is None))
+            or (expected_installed_agent_ids is None) == prepare_fresh_installed):
+        raise LocalScopeLeaseBlocked("invalid_installed_preparation_scope")
+    if prepare_fresh_installed:
+        ids = expected_installed_agent_ids
+        if (type(ids) is not list or not 1 <= len(ids) <= 64
+                or any(type(item) is not str
+                       or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", item)
+                       for item in ids) or len(set(ids)) != len(ids)):
+            raise LocalScopeLeaseBlocked("invalid_installed_agent_inventory")
+        expected_installed_agent_ids = sorted(ids)
+    if shared_lease_window is not None:
+        if (type(shared_lease_window) is not tuple or len(shared_lease_window) != 2
+                or any(type(t) is not int for t in shared_lease_window)
+                or not 0 < shared_lease_window[0] <= time.time() < shared_lease_window[1]
+                    <= shared_lease_window[0] + 900
+                or not (prepare_fresh_fixture or prepare_fresh_installed
+                        or inspect_existing_prepared)):
+            raise LocalScopeLeaseBlocked("invalid_shared_local_lease_window")
+    fresh = prepare_fresh_fixture or prepare_fresh_installed
     if expected_fixture_agent_ids is not None:
         if (not prepare_fresh_fixture or type(expected_fixture_agent_ids) is not list
                 or not 1 <= len(expected_fixture_agent_ids) <= 64
@@ -315,7 +380,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             raise LocalScopeLeaseBlocked("invalid_fixture_agent_inventory")
         expected_fixture_agent_ids = sorted(expected_fixture_agent_ids)
     if (type(inspect_existing_prepared) is not bool
-            or (inspect_existing_prepared and prepare_fresh_fixture)
+            or (inspect_existing_prepared and fresh)
             or (expected_recovery_agent_ids is None) != (not inspect_existing_prepared)):
         raise LocalScopeLeaseBlocked("invalid_recovery_inspection_scope")
     if inspect_existing_prepared:
@@ -349,8 +414,9 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     _directory_chain(worker_lock_dir, fixture_root=root, owner=owner)
     _directory_chain(hold_path.parent, fixture_root=root, owner=owner)
     _directory_chain(pending_path.parent, fixture_root=root, owner=owner)
-    hold = _hold_module()
-    if prepare_fresh_fixture:
+    runtime_dir = _runtime_dir(root is None)
+    hold = _hold_module(runtime_dir)
+    if fresh:
         _require_absent(hold_path, pending_path,
                         pending_path.parent / "no-drain-release-binding.json",
                         pending_path.parent / "no-drain-agent-inventory.json")
@@ -363,9 +429,10 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     acquired: list[int] = []
     agent_locks = ExitStack()
     lock_paths: list[tuple[Path, int]] = []
+    retained = True
     try:
         if root is None:
-            runtime = str(Path(__file__).resolve().parents[1] / "agents/linux/runtime")
+            runtime = str(runtime_dir)
             sys.path.insert(0, runtime)
             try:
                 from game_uptime_privileged_flock import exclusive_update_admission
@@ -385,13 +452,15 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                 raise LocalScopeLeaseBlocked("controller_or_worker_operation_in_flight") from exc
             acquired.append(fd)
             lock_paths.append((path, uid))
-        if prepare_fresh_fixture:
+        if fresh:
             agent_checkpoint = _retain_agent_operations(
-                agent_locks, controller_lock.parent, owner=owner)
-            evidence_checkpoint = _fresh_fixture_preparation(
+                agent_locks, controller_lock.parent, owner=owner, installed=root is None)
+            evidence_checkpoint = _fresh_preparation(
                 hold, hold_path, pending_path, tx=transaction_id,
-                sha=release_sha256, owner=owner,
-                agent_ids=expected_fixture_agent_ids)
+                sha=release_sha256, owner=owner, runtime_dir=runtime_dir,
+                agent_ids=(expected_installed_agent_ids if prepare_fresh_installed
+                           else expected_fixture_agent_ids),
+                shared_lease_window=shared_lease_window)
         elif inspect_existing_prepared:
             # Separate inspection path: an existing journal is still a
             # hard blocker for fresh apply, including in the composite bridge.
@@ -401,13 +470,16 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             evidence_checkpoint = _prepared_evidence_checkpoint(
                 hold, hold_path, pending_path, tx=transaction_id,
                 sha=release_sha256, owner=owner,
-                agent_ids=expected_recovery_agent_ids)
+                agent_ids=expected_recovery_agent_ids, runtime_dir=runtime_dir,
+                shared_lease_window=shared_lease_window)
         else:
             def evidence_checkpoint():
                 _check_hold(hold, hold_path, pending_path,
                             tx=transaction_id, owner=owner)
 
         def checkpoint():
+            if not retained or released:
+                raise LocalScopeLeaseBlocked("local_scope_no_longer_retained")
             for (path, uid), fd in zip(lock_paths, acquired):
                 named, held = path.lstat(), os.fstat(fd)
                 if ((named.st_dev, named.st_ino) != (held.st_dev, held.st_ino)
@@ -416,7 +488,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         or named.st_size != 0
                         or stat.S_IMODE(named.st_mode) != 0o600):
                     raise LocalScopeLeaseBlocked("retained_lock_identity_changed")
-            if prepare_fresh_fixture or inspect_existing_prepared:
+            if fresh or inspect_existing_prepared:
                 agent_checkpoint()
             evidence_checkpoint()
 
@@ -452,6 +524,9 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "controller_http_lock_exclusively_held": True,
             "worker_lock_inodes_exclusively_held": len(WORKERS),
             "fresh_durable_fixture_evidence": prepare_fresh_fixture,
+            "fresh_installed_local_evidence": prepare_fresh_installed,
+            "installed_agent_inventory_retained": prepare_fresh_installed,
+            "shared_lease_window": shared_lease_window,
             "existing_prepared_recovery_inspection_only": inspect_existing_prepared,
             "recovery_scope_inodes_retained": inspect_existing_prepared,
             "fixture_agent_inventory_retained": expected_fixture_agent_ids is not None,
@@ -473,6 +548,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
     except (OSError, RuntimeError, ValueError) as exc:
         raise LocalScopeLeaseBlocked("local_fence_unavailable") from exc
     finally:
+        retained = False
         try:
             agent_locks.close()
         finally:
@@ -481,3 +557,91 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                     fcntl.flock(fd, fcntl.LOCK_UN)
                 finally:
                     os.close(fd)
+
+
+
+@contextmanager
+def retain_installed_distributed_scopes(
+    *, transaction_id: str, release_sha256: str,
+    issued_at: int, expires_at: int, expected_agent_ids: list[str],
+    local_hybrid_agent_id: str, expected_controller_uid: int,
+    expected_worker_uid: int, recover_existing: bool = False,
+    operator_reviewed: bool = False,
+) -> Iterator[dict]:
+    """Join the real local kernel scope to the pinned SSH transport.
+
+    The caller must independently obtain the complete Controller inventory
+    and verify the signed artifact and all mutators before invoking this
+    primitive. No CLI, updater callback, commit/abort or live authorization
+    is exposed here. A partial preparation deliberately remains blocking.
+    """
+    if (os.geteuid() != 0 or type(recover_existing) is not bool
+            or operator_reviewed is not True):
+        raise LocalScopeLeaseBlocked("root_reviewed_distributed_scope_required")
+    runtime = str(_runtime_dir(True))
+    sys.path.insert(0, runtime)
+    try:
+        from game_uptime_ssh_transport import (
+            _snapshot_trusted, _root_directory, _root_file, _endpoint_inventory,
+            TRUST_DIR, LOCAL_ID, ENDPOINTS, IDENTITY_KEY, probe_ssh_agent_sessions,
+            retain_ssh_agent_sessions,
+        )
+        _snapshot_trusted()
+        if (type(expected_agent_ids) is not list or not 2 <= len(expected_agent_ids) <= 64
+                or any(type(item) is not str
+                       or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", item)
+                       for item in expected_agent_ids)
+                or len(set(expected_agent_ids)) != len(expected_agent_ids)
+                or type(local_hybrid_agent_id) is not str
+                or local_hybrid_agent_id not in expected_agent_ids):
+            raise LocalScopeLeaseBlocked("invalid_complete_operational_inventory")
+        for folder in (Path("/etc"), TRUST_DIR):
+            _root_directory(folder)
+        if _root_file(LOCAL_ID, 192) != (local_hybrid_agent_id + "\n").encode("ascii"):
+            raise LocalScopeLeaseBlocked("pinned_local_hybrid_identity_mismatch")
+        remote_ids = sorted(item for item in expected_agent_ids
+                            if item != local_hybrid_agent_id)
+        _endpoint_inventory(_root_file(ENDPOINTS, 65536), remote_ids)
+        _root_file(IDENTITY_KEY, 16384)
+        # Avoid a needless local hold when a required endpoint is already
+        # unreachable. Probe is read-only and never counts as a fence.
+        if probe_ssh_agent_sessions(remote_ids).get("status") != "all_endpoints_authenticated":
+            raise LocalScopeLeaseBlocked("required_remote_agent_unreachable")
+        options = dict(
+            transaction_id=transaction_id, release_sha256=release_sha256,
+            expected_controller_uid=expected_controller_uid,
+            expected_worker_uid=expected_worker_uid,
+            shared_lease_window=(issued_at, expires_at),
+        )
+        if recover_existing:
+            options.update(inspect_existing_prepared=True,
+                           expected_recovery_agent_ids=expected_agent_ids)
+        else:
+            options.update(prepare_fresh_installed=True,
+                           expected_installed_agent_ids=expected_agent_ids)
+        with retain_local_scopes(**options) as local:
+            with retain_ssh_agent_sessions(
+                    transaction_id=transaction_id, release_sha256=release_sha256,
+                    issued_at=issued_at, expires_at=expires_at,
+                    expected_agent_ids=expected_agent_ids,
+                    local_hybrid_agent_id=local_hybrid_agent_id,
+                    recover_existing=recover_existing,
+                    operator_reviewed=operator_reviewed) as remote:
+                def checkpoint():
+                    local["checkpoint"]()
+                    remote["checkpoint"]()
+                    local["checkpoint"]()
+                checkpoint()
+                yield {"kind": "DSM928InstalledDistributedScope",
+                       "transaction_id": transaction_id,
+                       "release_sha256": release_sha256,
+                       "agent_ids": sorted(expected_agent_ids),
+                       "local_hybrid_agent_id": local_hybrid_agent_id,
+                       "retained_remote_agent_ids": remote["prepared_agent_ids"],
+                       "checkpoint": checkpoint,
+                       "all_mutators_fenced": False,
+                       "external_jobs_acked": False,
+                       "live_no_drain_authorized": False}
+                checkpoint()
+    finally:
+        sys.path.remove(runtime)
