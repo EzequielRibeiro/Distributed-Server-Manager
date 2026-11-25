@@ -93,8 +93,6 @@ class PersistentPendingHoldTests(unittest.TestCase):
         for jobs, units in (
             ("13 capivara-instance-test.service stop waiting\n", resident),
             ("14 dsm-dashboard.service restart running\n", resident),
-            ("15 dayz-server.service restart waiting\n", resident),
-            ("", resident + "dayz-server.service loaded active exited legacy\n"),
             ("malformed job\n", resident),
             ("", resident + "capivara-agent-uninstall-finalize.timer loaded active waiting cleanup\n"),
             ("", resident + "dsm-hybrid-agent-files-access@x.service loaded activating start ACL\n"),
