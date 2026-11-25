@@ -239,7 +239,7 @@ def _terminal_decision(outcome, journal_sha256):
     return {"outcome": outcome, "journal_sha256": journal_sha256}
 
 
-def _persist_terminal_receipt(path, payload, uid):
+def _persist_terminal_receipt(path, payload, uid, *, require_existing=False):
     """Write once, or acknowledge exactly the same durable decision.
 
     A conflicting or incomplete receipt stays blocking. Never truncate,
@@ -249,6 +249,8 @@ def _persist_terminal_receipt(path, payload, uid):
     expected = (json.dumps(payload, sort_keys=True, separators=(",", ":"))
                 + "\n").encode("utf-8")
     if not os.path.lexists(path):
+        if require_existing:
+            raise HoldPreparationBlocked("original_durable_witness_missing")
         _write_once(path, payload, uid, max_bytes=32768)
     before = path.lstat()
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
@@ -260,6 +262,14 @@ def _persist_terminal_receipt(path, payload, uid):
                 or (found.st_dev, found.st_ino) != (before.st_dev, before.st_ino)
                 or os.read(fd, len(expected) + 1) != expected):
             raise HoldPreparationBlocked("terminal_decision_conflict_or_incomplete")
+        named = path.lstat()
+        after = os.fstat(fd)
+        def fingerprint(item):
+            return (item.st_dev, item.st_ino, item.st_uid, item.st_gid,
+                    item.st_mode, item.st_nlink, item.st_size,
+                    item.st_mtime_ns, item.st_ctime_ns)
+        if fingerprint(found) != fingerprint(after) or fingerprint(found) != fingerprint(named):
+            raise HoldPreparationBlocked("durable_witness_identity_changed")
         os.fsync(fd)
     finally:
         os.close(fd)
@@ -364,6 +374,110 @@ def _installed_game_snapshot():
     return {"boot_id": boot_id, "units": before}
 
 
+def _validate_agent_daemon_snapshot(unit, process, *, uid):
+    name = "capivara-agent.service"
+    if (type(uid) is not int or uid <= 0
+            or unit.get("ActiveState") != "active" or unit.get("SubState") != "running"
+            or unit.get("User") != "capivara-agent"
+            or unit.get("ControlGroup") != "/system.slice/" + name
+            or not re.fullmatch(r"[1-9][0-9]*", unit.get("MainPID", ""))
+            or not re.fullmatch(r"[0-9a-f]{32}", unit.get("InvocationID", ""))
+            or unit["InvocationID"] == "0"*32
+            or not re.fullmatch(r"[1-9][0-9]*", unit.get("ExecMainStartTimestampMonotonic", ""))):
+        raise HoldPreparationBlocked("installed_agent_unit_identity_unverified")
+    args = process.get("argv") or ()
+    if (process.get("pid") != int(unit["MainPID"])
+            or process.get("pid") <= 1
+            or process.get("uid") != uid
+            or process.get("cgroup") != unit["ControlGroup"]
+            or type(process.get("start_ticks")) is not int or process["start_ticks"] <= 0
+            or process.get("finalization_flock_opted_in") is not True
+            or len(args) != 2
+            or not re.fullmatch(r"python3(?:\.[0-9]+)?", Path(args[0]).name)
+            or args[1] != "/opt/capivara-agent/runtime/agent.py"):
+        raise HoldPreparationBlocked("installed_agent_process_or_flock_unverified")
+    return {"pid": process["pid"], "uid": uid, "start_ticks": process["start_ticks"],
+            "invocation_id": unit["InvocationID"],
+            "start_stamp": int(unit["ExecMainStartTimestampMonotonic"])}
+
+
+def _installed_agent_daemon_snapshot():
+    """Observe the actual standalone daemon; never infer external-job ACK."""
+    import pwd
+    uid = pwd.getpwnam("capivara-agent").pw_uid
+    props = ("ActiveState", "SubState", "MainPID", "User", "ControlGroup",
+             "InvocationID", "ExecMainStartTimestampMonotonic")
+    def unit():
+        result = subprocess.run(
+            ("/usr/bin/systemctl", "show", "capivara-agent.service", "--no-pager",
+             "--property=" + ",".join(props)), capture_output=True, text=True,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "SYSTEMD_COLORS": "0"},
+            check=False, timeout=5)
+        if result.returncode or len(result.stdout) > 16384:
+            raise HoldPreparationBlocked("installed_agent_systemd_unavailable")
+        values = {}
+        for line in result.stdout.splitlines():
+            key, sep, value = line.partition("=")
+            if not sep or key not in props or key in values:
+                raise HoldPreparationBlocked("invalid_installed_agent_unit_properties")
+            values[key] = value
+        if set(values) != set(props) or not re.fullmatch(r"[1-9][0-9]*", values["MainPID"]):
+            raise HoldPreparationBlocked("installed_agent_unit_properties_incomplete")
+        return values
+    def process(pid):
+        base = Path("/proc") / str(pid)
+        raw = (base / "stat").read_text()
+        close = raw.rfind(")")
+        fields = raw[close+2:].split()
+        if (close < 0 or not raw.startswith(str(pid) + " (") or len(fields) < 20
+                or fields[0] in ("Z", "X", "x")):
+            raise HoldPreparationBlocked("installed_agent_kernel_identity_unverified")
+        uids = [line.split()[1:] for line in (base / "status").read_text().splitlines()
+                if line.startswith("Uid:")]
+        if len(uids) != 1 or uids[0] != [str(uid)]*4:
+            raise HoldPreparationBlocked("installed_agent_uid_unverified")
+        groups = [line.split(":", 2)[2] for line in (base / "cgroup").read_text().splitlines()
+                  if line.startswith("0::") or ":name=systemd:" in line]
+        argv = (base / "cmdline").read_bytes()
+        env = (base / "environ").read_bytes()
+        if (len(groups) != 1 or not argv.endswith(b"\x00") or len(argv) > 16384
+                or not env.endswith(b"\x00") or len(env) > 262144):
+            raise HoldPreparationBlocked("installed_agent_process_observation_incomplete")
+        optin = [entry for entry in env[:-1].split(b"\x00")
+                 if entry.startswith(b"DSM928_AGENT_FINALIZATION_FLOCK=")]
+        return {"pid": pid, "uid": uid, "start_ticks": int(fields[19]),
+                "cgroup": groups[0],
+                "argv": tuple(x.decode("utf-8") for x in argv[:-1].split(b"\x00")),
+                "finalization_flock_opted_in": optin == [b"DSM928_AGENT_FINALIZATION_FLOCK=1"]}
+    try:
+        first = unit()
+        pid = int(first["MainPID"])
+        before, after = process(pid), process(pid)
+        if first != unit() or before != after:
+            raise HoldPreparationBlocked("installed_agent_daemon_identity_changed")
+        return _validate_agent_daemon_snapshot(first, before, uid=uid)
+    except (OSError, ValueError, KeyError, LookupError, subprocess.SubprocessError) as exc:
+        raise HoldPreparationBlocked("installed_agent_daemon_observation_failed") from exc
+
+
+def _retain_installed_agent_daemon_witness(*, pending, transaction_id, release_sha256,
+                                           agent_id, recover_existing, initial):
+    path = Path(pending).parent / ("agent-daemon-witness-" + transaction_id + ".json")
+    payload = {"kind": "DSM928InstalledStandaloneAgentWitness", "schema_version": 1,
+               "transaction_id": transaction_id, "release_sha256": release_sha256,
+               "agent_id": agent_id, "snapshot": initial, "live_no_drain_authorized": False}
+    if not recover_existing and os.path.lexists(path):
+        raise HoldPreparationBlocked("existing_agent_daemon_witness_requires_review")
+    if _installed_agent_daemon_snapshot() != initial:
+        raise HoldPreparationBlocked("installed_agent_daemon_identity_changed")
+    _persist_terminal_receipt(path, payload, 0, require_existing=recover_existing)
+    def checkpoint():
+        if _installed_agent_daemon_snapshot() != initial:
+            raise HoldPreparationBlocked("installed_agent_daemon_identity_changed")
+        _persist_terminal_receipt(path, payload, 0, require_existing=True)
+    return checkpoint
+
+
 def _retain_installed_game_witness(*, pending, transaction_id, release_sha256,
                                    agent_id, recover_existing, initial):
     """Persist the ORIGINAL boot/PID witness; never establish a new baseline on recovery."""
@@ -378,14 +492,14 @@ def _retain_installed_game_witness(*, pending, transaction_id, release_sha256,
         raise HoldPreparationBlocked("existing_installed_game_witness_requires_review")
     if _installed_game_snapshot() != initial:
         raise HoldPreparationBlocked("installed_game_identity_changed_before_binding")
-    _persist_terminal_receipt(path, payload, 0)
+    _persist_terminal_receipt(path, payload, 0, require_existing=recover_existing)
     def checkpoint():
         if _installed_game_snapshot() != initial:
             raise HoldPreparationBlocked("installed_game_identity_changed")
         # Read back exact original bytes; this must never recreate a lost witness.
         if not os.path.lexists(path):
             raise HoldPreparationBlocked("original_installed_game_witness_missing")
-        _persist_terminal_receipt(path, payload, 0)
+        _persist_terminal_receipt(path, payload, 0, require_existing=True)
     return checkpoint
 
 
@@ -605,6 +719,7 @@ def prepare_standalone_agent_scope(
             if not issued_at <= current < expires_at:
                 raise HoldPreparationBlocked("shared_agent_prepare_window_expired")
             initial_games = _installed_game_snapshot() if fixture_root is None else None
+            initial_agent = _installed_agent_daemon_snapshot() if fixture_root is None else None
             # Recovery is an explicit read-only reacquisition of an intact,
             # unexpired scope. Never recreate a lost marker, renew a lease,
             # repair a partial journal or call PREPARE on a recovery request.
@@ -617,7 +732,12 @@ def prepare_standalone_agent_scope(
             paths = (marker, pending, binding, inventory, helper, child)
             pins = tuple(identity(path) for path in paths)
             game_checkpoint = None
+            daemon_checkpoint = None
             if fixture_root is None:
+                daemon_checkpoint = _retain_installed_agent_daemon_witness(
+                    pending=pending, transaction_id=transaction_id,
+                    release_sha256=release_sha256, agent_id=local_agent_id,
+                    recover_existing=recover_existing, initial=initial_agent)
                 game_checkpoint = _retain_installed_game_witness(
                     pending=pending, transaction_id=transaction_id,
                     release_sha256=release_sha256, agent_id=local_agent_id,
@@ -648,6 +768,8 @@ def prepare_standalone_agent_scope(
                     raise HoldPreparationBlocked("shared_agent_prepare_evidence_changed")
                 if game_checkpoint is not None:
                     game_checkpoint()
+                if daemon_checkpoint is not None:
+                    daemon_checkpoint()
             checkpoint()
         except (OSError, RuntimeError, ValueError) as exc:
             raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc

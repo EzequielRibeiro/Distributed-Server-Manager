@@ -84,6 +84,24 @@ class PersistentPendingHoldTests(unittest.TestCase):
                     "unexpected.service loaded active running Game"):
             with self.assertRaises(HoldPreparationBlocked):
                 _game_inventory(raw)
+        # A running standalone Agent must match the installed unit and have
+        # opted into the shared finalization fence; a PID alone is insufficient.
+        from game_uptime_hold_coordinator import _validate_agent_daemon_snapshot
+        unit = {"ActiveState": "active", "SubState": "running",
+                "User": "capivara-agent", "MainPID": "210",
+                "ControlGroup": "/system.slice/capivara-agent.service",
+                "InvocationID": "a"*32, "ExecMainStartTimestampMonotonic": "1234"}
+        proc = {"pid": 210, "uid": 1000, "start_ticks": 500,
+                "cgroup": unit["ControlGroup"],
+                "argv": ("/usr/bin/python3", "/opt/capivara-agent/runtime/agent.py"),
+                "finalization_flock_opted_in": True}
+        witness = _validate_agent_daemon_snapshot(unit, proc, uid=1000)
+        self.assertEqual(witness["pid"], 210)
+        for invalid in ({**proc, "finalization_flock_opted_in": False},
+                        {**proc, "pid": 211}, {**proc, "uid": 0},
+                        {**proc, "cgroup": "/other"}, {**proc, "argv": ("/usr/bin/python3", "/tmp/agent.py")}):
+            with self.assertRaises(HoldPreparationBlocked):
+                _validate_agent_daemon_snapshot(unit, invalid, uid=1000)
         # The autonomous Agent updater must not consume its update request
         # when either the host admission inode or maintenance hold blocks it.
         import importlib.util
