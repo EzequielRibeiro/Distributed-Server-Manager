@@ -53,6 +53,19 @@ class PersistentPendingHoldTests(unittest.TestCase):
                        trusted_uid=self.uid, now=1700000010)
 
     def test_durable_preparation_remains_negative_and_recovers_fail_closed(self):
+        from game_uptime_hold_coordinator import _game_inventory
+        self.assertEqual(_game_inventory(
+            "capivara-instance-b.service loaded active running Game B\n"
+            "capivara-instance-a.service loaded active running Game A\n"),
+            ["capivara-instance-a.service", "capivara-instance-b.service"])
+        self.assertEqual(_game_inventory(""), [])
+        for raw in ("capivara-instance-a.service loaded activating start Game",
+                    "capivara-instance-a.service loaded active exited Game",
+                    "capivara-instance-a.service loaded active running Game\n"
+                    "capivara-instance-a.service loaded active running Game",
+                    "unexpected.service loaded active running Game"):
+            with self.assertRaises(HoldPreparationBlocked):
+                _game_inventory(raw)
         # A restrictive installer/systemd umask must not make the hold 0600.
         # Its JSON contains no credentials; Agent/Worker users need read only.
         previous_umask = os.umask(0o077)

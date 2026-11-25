@@ -716,6 +716,9 @@ def retain_installed_distributed_scopes(
             retain_ssh_agent_sessions,
         )
         _snapshot_trusted()
+        from game_uptime_hold_coordinator import (
+            _installed_game_snapshot, _retain_installed_game_witness,
+        )
         if (type(expected_agent_ids) is not list or not 2 <= len(expected_agent_ids) <= 64
                 or any(type(item) is not str
                        or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", item)
@@ -750,7 +753,12 @@ def retain_installed_distributed_scopes(
         else:
             options.update(prepare_fresh_installed=True,
                            expected_installed_agent_ids=expected_agent_ids)
+        initial_games = _installed_game_snapshot()
         with retain_local_scopes(**options) as local:
+            game_checkpoint = _retain_installed_game_witness(
+                pending=PENDING_PATH, transaction_id=transaction_id,
+                release_sha256=release_sha256, agent_id=local_hybrid_agent_id,
+                recover_existing=recover_existing, initial=initial_games)
             with retain_ssh_agent_sessions(
                     transaction_id=transaction_id, release_sha256=release_sha256,
                     issued_at=issued_at, expires_at=expires_at,
@@ -760,6 +768,7 @@ def retain_installed_distributed_scopes(
                     operator_reviewed=operator_reviewed) as remote:
                 def checkpoint():
                     local["checkpoint"]()
+                    game_checkpoint()
                     remote["checkpoint"]()
                     if _read_installed_controller_agents(
                             expected_agent_ids, local_hybrid_agent_id) != initial_inventory:

@@ -20,6 +20,8 @@ import stat
 import time
 import secrets
 import select
+import hashlib
+import subprocess
 from contextlib import contextmanager, ExitStack
 from typing import Iterator
 
@@ -268,6 +270,125 @@ def _persist_terminal_receipt(path, payload, uid):
         os.close(folder)
 
 
+def _game_inventory(raw):
+    units = []
+    for line in raw.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if (len(fields) < 4 or not re.fullmatch(
+                r"capivara-instance-[A-Za-z0-9_.-]+\.service", fields[0])
+                or fields[1:4] != ["loaded", "active", "running"]
+                or fields[0] in units):
+            raise HoldPreparationBlocked("unstable_or_invalid_managed_game_inventory")
+        units.append(fields[0])
+    if len(units) > 64:
+        raise HoldPreparationBlocked("managed_game_inventory_too_large")
+    return sorted(units)
+
+
+def _installed_game_snapshot():
+    """Observe managed games without issuing service actions or reading secrets."""
+    def systemctl(*args):
+        result = subprocess.run(
+            ("/usr/bin/systemctl", *args), capture_output=True, text=True,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "SYSTEMD_COLORS": "0"},
+            check=False, timeout=5)
+        if result.returncode != 0 or len(result.stdout) > 262144:
+            raise HoldPreparationBlocked("managed_game_systemd_observation_failed")
+        return result.stdout
+
+    def inventory():
+        return _game_inventory(systemctl(
+            "list-units", "--type=service", "--all", "--no-legend", "--plain",
+            "--no-pager", "--state=active,activating,reloading,deactivating",
+            "capivara-instance-*.service"))
+
+    def boot():
+        value = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", value):
+            raise HoldPreparationBlocked("managed_game_boot_identity_unverified")
+        return value
+
+    props = ("ActiveState", "SubState", "MainPID", "ExecMainStartTimestampMonotonic",
+             "InvocationID", "ControlGroup", "NRestarts", "FragmentPath",
+             "ExecStart", "WorkingDirectory", "PartOf", "BindsTo", "PropagatesStopTo")
+    def observe(unit):
+        raw = systemctl("show", unit, "--no-pager", "--property=" + ",".join(props))
+        values = {}
+        for line in raw.splitlines():
+            key, sep, value = line.partition("=")
+            if not sep or key not in props or key in values:
+                raise HoldPreparationBlocked("invalid_managed_game_unit_properties")
+            values[key] = value
+        if (set(values) != set(props) or values["ActiveState"] != "active"
+                or values["SubState"] != "running"
+                or not re.fullmatch(r"[1-9][0-9]*", values["MainPID"])
+                or not re.fullmatch(r"[1-9][0-9]*", values["ExecMainStartTimestampMonotonic"])
+                or not re.fullmatch(r"[0-9a-f]{32}", values["InvocationID"])
+                or values["InvocationID"] == "0"*32
+                or not values["NRestarts"].isdecimal()
+                or not values["ControlGroup"].startswith("/")
+                or not values["ExecStart"] or not values["FragmentPath"]):
+            raise HoldPreparationBlocked("managed_game_process_identity_unverified")
+        pid = int(values["MainPID"])
+        if pid <= 1:
+            raise HoldPreparationBlocked("managed_game_process_identity_unverified")
+        base = Path("/proc") / str(pid)
+        raw_stat = (base/"stat").read_text()
+        close = raw_stat.rfind(")")
+        fields = raw_stat[close+2:].split()
+        if (not raw_stat.startswith(str(pid) + " (") or close < 0 or len(fields) < 20
+                or fields[0] in ("Z", "X", "x")
+                or not fields[19].isdecimal() or int(fields[19]) <= 0):
+            raise HoldPreparationBlocked("managed_game_kernel_identity_unverified")
+        group = [line.split(":", 2)[2] for line in (base/"cgroup").read_text().splitlines()
+                 if line.startswith("0::") or ":name=systemd:" in line]
+        if len(group) != 1 or not (group[0] == values["ControlGroup"]
+                or group[0].startswith(values["ControlGroup"] + "/")):
+            raise HoldPreparationBlocked("managed_game_cgroup_identity_unverified")
+        stable = {key: values[key] for key in props if key not in (
+            "ActiveState", "SubState", "MainPID", "ExecMainStartTimestampMonotonic",
+            "InvocationID", "NRestarts")}
+        return {"unit": unit, "pid": pid, "start_ticks": int(fields[19]),
+                "start_stamp": int(values["ExecMainStartTimestampMonotonic"]),
+                "invocation_id": values["InvocationID"], "restarts": int(values["NRestarts"]),
+                "unit_sha256": hashlib.sha256(json.dumps(
+                    stable, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+
+    boot_id = boot()
+    units = inventory()
+    before = [observe(unit) for unit in units]
+    if inventory() != units or [observe(unit) for unit in units] != before or boot() != boot_id:
+        raise HoldPreparationBlocked("managed_game_identity_changed_during_observation")
+    return {"boot_id": boot_id, "units": before}
+
+
+def _retain_installed_game_witness(*, pending, transaction_id, release_sha256,
+                                   agent_id, recover_existing, initial):
+    """Persist the ORIGINAL boot/PID witness; never establish a new baseline on recovery."""
+    path = Path(pending).parent / ("game-witness-" + transaction_id + ".json")
+    payload = {"kind": "DSM928InstalledGameIdentityWitness", "schema_version": 1,
+               "transaction_id": transaction_id, "release_sha256": release_sha256,
+               "agent_id": agent_id, "snapshot": initial,
+               "live_no_drain_authorized": False}
+    if recover_existing and not os.path.lexists(path):
+        raise HoldPreparationBlocked("original_installed_game_witness_missing")
+    if not recover_existing and os.path.lexists(path):
+        raise HoldPreparationBlocked("existing_installed_game_witness_requires_review")
+    if _installed_game_snapshot() != initial:
+        raise HoldPreparationBlocked("installed_game_identity_changed_before_binding")
+    _persist_terminal_receipt(path, payload, 0)
+    def checkpoint():
+        if _installed_game_snapshot() != initial:
+            raise HoldPreparationBlocked("installed_game_identity_changed")
+        # Read back exact original bytes; this must never recreate a lost witness.
+        if not os.path.lexists(path):
+            raise HoldPreparationBlocked("original_installed_game_witness_missing")
+        _persist_terminal_receipt(path, payload, 0)
+    return checkpoint
+
+
 def _archive_fixture_hold(*, marker, pending, transaction_id, decision, uid, checkpoint):
     """Archive exact evidence before clearing a disposable, confirmed hold.
 
@@ -405,6 +526,7 @@ def prepare_standalone_agent_scope(
             current = int(time.time()) if now is None else now
             if not issued_at <= current < expires_at:
                 raise HoldPreparationBlocked("shared_agent_prepare_window_expired")
+            initial_games = _installed_game_snapshot() if fixture_root is None else None
             # Recovery is an explicit read-only reacquisition of an intact,
             # unexpired scope. Never recreate a lost marker, renew a lease,
             # repair a partial journal or call PREPARE on a recovery request.
@@ -416,6 +538,12 @@ def prepare_standalone_agent_scope(
                     binding_path=binding, expected_agent_ids=ids)
             paths = (marker, pending, binding, inventory, helper, child)
             pins = tuple(identity(path) for path in paths)
+            game_checkpoint = None
+            if fixture_root is None:
+                game_checkpoint = _retain_installed_game_witness(
+                    pending=pending, transaction_id=transaction_id,
+                    release_sha256=release_sha256, agent_id=local_agent_id,
+                    recover_existing=recover_existing, initial=initial_games)
 
             retained = True
             def checkpoint():
@@ -440,6 +568,8 @@ def prepare_standalone_agent_scope(
                         or read_inventory(path=inventory, trusted_uid=trusted_uid) != expected_inventory
                         or tuple(identity(path) for path in paths) != pins):
                     raise HoldPreparationBlocked("shared_agent_prepare_evidence_changed")
+                if game_checkpoint is not None:
+                    game_checkpoint()
             checkpoint()
         except (OSError, RuntimeError, ValueError) as exc:
             raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc
