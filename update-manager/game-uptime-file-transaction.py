@@ -20,6 +20,8 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
+import sys
 import tempfile
 
 _LIMIT = 4 * 1024 * 1024
@@ -164,11 +166,35 @@ def _replace(path, desired, expected):
             temp.unlink()
 
 
+def _worker_main():
+    """Only the unprivileged product account touches its own installation."""
+    if os.geteuid() == 0 or os.getegid() == 0 or os.getgroups():
+        raise FileTransactionBlocked("privileged_product_worker_forbidden")
+    fd = int(sys.argv[1])
+    os.fchdir(fd)
+    os.close(fd)
+    request = json.loads(sys.stdin.buffer.read(2 * _LIMIT * 2 + 65536))
+    path = _file(Path("."), request["path"])
+    current = _read(path)
+    if (current["uid"], current["gid"]) != (os.geteuid(), os.getegid()):
+        raise FileTransactionBlocked("product_account_file_owner_mismatch")
+    if request["action"] == "replace":
+        desired, expected = request["desired"], request["expected"]
+        if any((item["uid"], item["gid"]) != (os.geteuid(), os.getegid())
+               for item in (desired, expected)):
+            raise FileTransactionBlocked("product_worker_ownership_change_forbidden")
+        _replace(path, desired, expected)
+        current = _read(path)
+    elif request["action"] != "read":
+        raise FileTransactionBlocked("unknown_product_worker_operation")
+    sys.stdout.buffer.write(_encode(current))
+
+
 class FileTransaction:
     """Fixed file-operation owner for the existing retained transaction driver."""
 
     def __init__(self, workspace, installed, target, *, transaction_id,
-                 release_sha256, checkpoint):
+                 release_sha256, checkpoint, product_identity=None):
         self.workspace = Path(workspace)
         self.installed = Path(installed)
         self.target = Path(target)
@@ -189,12 +215,77 @@ class FileTransaction:
                 or (root / "fixture-owner").is_symlink()
                 or (root / "fixture-owner").read_bytes() != b"DSM928_DISPOSABLE_FIXTURE_V1\n"):
             raise FileTransactionBlocked("installed_file_transaction_not_authorized")
-        _directory(self.installed)
+        if product_identity is not None and (
+                os.geteuid() != 0 or type(product_identity) is not tuple
+                or len(product_identity) != 2
+                or any(type(value) is not int or value <= 0 for value in product_identity)):
+            raise FileTransactionBlocked("invalid_unprivileged_product_identity")
+        self.product_identity = product_identity
+        if product_identity is None:
+            _directory(self.installed)
+        else:
+            info = self.installed.lstat()
+            if (not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022
+                    or (info.st_uid, info.st_gid) != product_identity):
+                raise FileTransactionBlocked("untrusted_product_account_directory")
         _directory(self.target)
         self.transaction_id = transaction_id
         self.release_sha256 = release_sha256
         self.checkpoint = checkpoint
         self.journal = root / "dsm928-product-files.json"
+
+    def _account_operation(self, name, action, **values):
+        # The private root-owned journal parent is inaccessible to the
+        # product account. Pass only the opened installation directory,
+        # never the journal, locks or a privileged filesystem descriptor.
+        uid, gid = self.product_identity
+        fd = os.open(self.installed, os.O_RDONLY | os.O_DIRECTORY |
+                     os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            named = self.installed.lstat()
+            if ((info.st_uid, info.st_gid) != (uid, gid)
+                    or info.st_mode & 0o022
+                    or (info.st_dev, info.st_ino) != (named.st_dev, named.st_ino)):
+                raise FileTransactionBlocked("product_account_root_changed")
+            source = Path(__file__).read_text(encoding="utf-8")
+            result = subprocess.run(
+                ("/usr/bin/python3", "-I", "-S", "-B", "-c",
+                 source + "\n_worker_main()\n", str(fd)),
+                input=_encode({"path": name, "action": action, **values}),
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                user=uid, group=gid, extra_groups=[], pass_fds=(fd,),
+                cwd="/", env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                check=False, timeout=15)
+            after = self.installed.lstat()
+            if (result.returncode != 0 or len(result.stdout) > 2 * _LIMIT + 4096
+                    or (info.st_dev, info.st_ino, info.st_uid, info.st_gid, info.st_mode)
+                    != (after.st_dev, after.st_ino, after.st_uid, after.st_gid, after.st_mode)):
+                raise FileTransactionBlocked("unprivileged_product_operation_failed")
+            item = json.loads(result.stdout)
+            if (type(item) is not dict
+                    or set(item) != {"sha256", "bytes", "mode", "uid", "gid"}
+                    or (item["uid"], item["gid"]) != (uid, gid)
+                    or type(item["mode"]) is not int or item["mode"] & 0o7133
+                    or hashlib.sha256(base64.b64decode(item["bytes"], validate=True)).hexdigest()
+                       != item["sha256"]
+                    or result.stdout != _encode(item)):
+                raise FileTransactionBlocked("untrusted_product_worker_receipt")
+            return item
+        finally:
+            os.close(fd)
+
+    def _installed_read(self, name):
+        if self.product_identity is None:
+            return _read(_file(self.installed, name))
+        return self._account_operation(name, "read")
+
+    def _installed_replace(self, name, desired, expected):
+        if self.product_identity is None:
+            _replace(_file(self.installed, name), desired, expected)
+        elif self._account_operation(name, "replace", desired=desired,
+                                     expected=expected) != desired:
+            raise FileTransactionBlocked("unprivileged_product_activation_unverified")
 
     @contextmanager
     def _exclusive(self):
@@ -221,7 +312,7 @@ class FileTransaction:
             entries = []
             total = 0
             for name in sorted(changed_paths, key=lambda x: (x in _METADATA, x)):
-                old = _read(_file(self.installed, name))
+                old = self._installed_read(name)
                 new = _read(_file(self.target, name))
                 if old["mode"] != new["mode"]:
                     raise FileTransactionBlocked("incompatible_product_mode_change")
@@ -237,6 +328,7 @@ class FileTransaction:
                 "kind": "DSM928ProductFileTransaction", "schema_version": 1,
                 "transaction_id": self.transaction_id,
                 "release_sha256": self.release_sha256, "entries": entries,
+                "product_identity": list(self.product_identity) if self.product_identity else None,
                 "live_no_drain_authorized": False})
 
     def _entries(self):
@@ -245,6 +337,8 @@ class FileTransaction:
                 or report.get("schema_version") != 1
                 or report.get("transaction_id") != self.transaction_id
                 or report.get("release_sha256") != self.release_sha256
+                or report.get("product_identity") != (
+                    list(self.product_identity) if self.product_identity else None)
                 or report.get("live_no_drain_authorized") is not False
                 or type(report.get("entries")) is not list
                 or not 1 <= len(report["entries"]) <= _COUNT):
@@ -261,21 +355,19 @@ class FileTransaction:
             # Validate every recorded destination before touching any of them.
             # On recovery the installed state can legitimately be mixed.
             for entry in entries:
-                path = _file(self.installed, entry["path"])
-                if _read(path) not in (entry["before"], entry["after"]):
+                if self._installed_read(entry["path"]) not in (entry["before"], entry["after"]):
                     raise FileTransactionBlocked("unexpected_product_file_state")
             if direction == "before":
                 entries = list(reversed(entries))
             for entry in entries:
                 self.checkpoint()
-                path = _file(self.installed, entry["path"])
-                found = _read(path)
+                found = self._installed_read(entry["path"])
                 if found != entry[direction]:
-                    _replace(path, entry[direction], entry[
+                    self._installed_replace(entry["path"], entry[direction], entry[
                         "before" if direction == "after" else "after"])
                 self.checkpoint()
             for entry in entries:
-                if _read(_file(self.installed, entry["path"])) != entry[direction]:
+                if self._installed_read(entry["path"]) != entry[direction]:
                     raise FileTransactionBlocked("product_file_transaction_not_verified")
             return {"status": "files_applied" if direction == "after" else "files_restored",
                     "file_count": len(entries), "live_no_drain_authorized": False}
@@ -291,7 +383,7 @@ class FileTransaction:
         direction = "after" if outcome == "verified" else "before"
         with self._exclusive():
             for entry in self._entries():
-                if _read(_file(self.installed, entry["path"])) != entry[direction]:
+                if self._installed_read(entry["path"]) != entry[direction]:
                     raise FileTransactionBlocked("terminal_product_file_state_mismatch")
 
     def apply(self):

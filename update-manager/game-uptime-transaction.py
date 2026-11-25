@@ -83,6 +83,7 @@ def _exclusive_transaction(func):
             hybrid_id = kwargs.pop("local_fixture_agent_id", None)
             file_workspace = kwargs.pop("file_transaction_workspace", None)
             file_paths = kwargs.pop("file_transaction_paths", None)
+            product_identity = kwargs.pop("file_transaction_identity", None)
             if file_workspace is not None:
                 if options is None or distributed is None:
                     raise TransactionSafetyError("fixed product files require retained distributed scope")
@@ -90,7 +91,7 @@ def _exclusive_transaction(func):
                     raise TransactionSafetyError("fixed product files forbid caller mutation callbacks")
                 if (func.__name__ == "execute") != (file_paths is not None):
                     raise TransactionSafetyError("fixed product plan is supplied only for fresh apply")
-            elif file_paths is not None:
+            elif file_paths is not None or product_identity is not None:
                 raise TransactionSafetyError("fixed product workspace required")
             finalize = kwargs.pop("finalize_fixture", False)
             if type(finalize) is not bool or (finalize and func.__name__ != "confirm_terminal"):
@@ -157,7 +158,8 @@ def _exclusive_transaction(func):
                             file_root, file_root / "installed", file_root / "new-payload",
                             transaction_id=receipt["transaction_id"],
                             release_sha256=receipt["release_sha256"],
-                            checkpoint=receipt["checkpoint"])
+                            checkpoint=receipt["checkpoint"],
+                            product_identity=product_identity)
                         if not recovery:
                             file_owner.prepare(file_paths)
                         identity = file_root.stat()

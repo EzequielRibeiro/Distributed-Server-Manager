@@ -1609,6 +1609,15 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         fake = self.workspace/"recovery-real-updater-functions"
         fake.mkdir(mode=0o700)
         create_tiny_release_fixture(fake)
+        # Model the real DSM installation: product files are owned by a
+        # non-root service user, while the journal workspace stays root-only.
+        import pwd
+        product = pwd.getpwnam("nobody")
+        product_identity = (product.pw_uid, product.pw_gid)
+        for path in (fake/"installed", fake/"installed/dashboard",
+                     fake/"installed/dashboard/web", fake/"installed/version",
+                     fake/"installed/dashboard/web/presentation.js"):
+            os.chown(path, *product_identity)
         protected = [fake/"installed", fake/"installed/runtime/hybrid-instance-storage",
                      fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat",
                      fake/"installed/data/database.txt", fake/"installed/config/dsm.conf"]
@@ -1759,7 +1768,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 local_scope_kwargs=opts,
                 local_fixture_agent_id=hybrid_id,
                 distributed_fixture_openers=channels,
-                file_transaction_workspace=fake,
+                file_transaction_workspace=fake, file_transaction_identity=product_identity,
                 file_transaction_paths=["dashboard/web/presentation.js", "version"],
             )
         self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
@@ -1767,6 +1776,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(recorded["status"], "applied")
         binding = recorded["local_scope_binding"]
         file_journal = fake/"dsm928-product-files.json"
+        self.assertEqual(file_journal.stat().st_uid, 0)
+        self.assertEqual(file_journal.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((fake/"installed/version").stat().st_uid, product_identity[0])
         self.assertEqual(binding["product_file_binding"]["journal_sha256"],
                          hashlib.sha256(file_journal.read_bytes()).hexdigest())
         self.assertEqual({p: p.stat().st_ino for p in protected}, original_inodes)
@@ -1797,7 +1809,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 local_scope_kwargs=recovery_opts)
         outcome = transaction.recover_interrupted(
             journal, names, inspect=inspect_game, list_units=list_games,
-            file_transaction_workspace=fake, operator_reviewed=True,
+            file_transaction_workspace=fake, file_transaction_identity=product_identity, operator_reviewed=True,
             local_scope_kwargs=recovery_opts, distributed_fixture_openers=channels,
             local_fixture_agent_id=hybrid_id,
         )
@@ -1821,7 +1833,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             journal, names, inspect=inspect_game, list_units=list_games,
             operator_reviewed=True, local_scope_kwargs=recovery_opts,
             distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
-            file_transaction_workspace=fake)
+            file_transaction_workspace=fake, file_transaction_identity=product_identity)
         self.assertTrue(retried["terminal_confirmation_retried"])
         self.assertEqual(saved_confirmation, (confirmation.stat().st_ino, confirmation.read_bytes()))
         self.assertEqual(remote_errors, [])
@@ -1829,7 +1841,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             journal, names, inspect=inspect_game, list_units=list_games,
             operator_reviewed=True, local_scope_kwargs=recovery_opts,
             distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
-            finalize_fixture=True, file_transaction_workspace=fake)
+            finalize_fixture=True, file_transaction_workspace=fake, file_transaction_identity=product_identity)
         self.assertTrue(finalized["fixture_hold_released"])
         self.assertEqual(remote_errors, [])
         self.assertFalse(opts["pending_path"].exists())
