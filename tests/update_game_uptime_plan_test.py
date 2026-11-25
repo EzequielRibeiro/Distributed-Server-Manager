@@ -33,6 +33,13 @@ class UptimeImpactTest(unittest.TestCase):
         state=plan.analyze(self.installed,self.target)
         self.assertTrue(state["requires_game_drain"])
         self.assertFalse(state["live_no_drain_authorized"])
+        self.put("agents/linux/runtime/game_uptime_hold_coordinator.py", "old", "new")
+        state = plan.analyze(self.installed, self.target)
+        fixed = state["fixed_file_transaction_plan"]
+        self.assertTrue(fixed["bootstrap_installation_required"])
+        self.assertEqual(fixed["changed_paths"], [])
+        self.assertIn("initial_fence_aware_installation_or_bootstrap_update_required",
+                      fixed["blockers"])
 
     def test_unit_change_requires_drain(self):
         self.put("systemd/capivara-instance@.service","old","new")
@@ -43,6 +50,18 @@ class UptimeImpactTest(unittest.TestCase):
         state=plan.analyze(self.installed,self.target)
         self.assertEqual(state["classification"],"review_only")
         self.assertFalse(state["live_no_drain_authorized"])
+        self.put("version", "2.0.132", "2.0.133")
+        self.put("release-manifest.json", "old manifest", "new manifest")
+        fixed = plan.analyze(self.installed, self.target)["fixed_file_transaction_plan"]
+        self.assertEqual(fixed["status"], "compatible_file_plan_only")
+        self.assertEqual(fixed["changed_paths"],
+                         ["dashboard/web/style.css", "release-manifest.json", "version"])
+        self.assertFalse(fixed["live_no_drain_authorized"])
+        (self.target/"dashboard/web/extra.css").write_text("extra")
+        fixed = plan.analyze(self.installed, self.target)["fixed_file_transaction_plan"]
+        self.assertEqual(fixed["status"], "blocked")
+        self.assertEqual(fixed["changed_paths"], [])
+        self.assertEqual(fixed["incompatible_file_count"], 1)
 
     def test_unknown_file_is_critical(self):
         self.put("new-module/loader.py","old","new")

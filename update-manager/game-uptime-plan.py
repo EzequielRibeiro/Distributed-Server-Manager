@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
+from importlib.machinery import SourceFileLoader
 import json
 import os
 from pathlib import Path
@@ -125,6 +127,82 @@ def _inventory(root: Path) -> dict[str, tuple[int, str]]:
     return files
 
 
+# These are bootstrap components: an older installed tree cannot be
+# assumed to honor a fence supplied by the candidate that replaces it.
+_BOOTSTRAP = (
+    "update-manager/game-uptime-file-transaction.py",
+    "update-manager/game-uptime-local-scope-lease.py",
+    "agents/linux/runtime/game_uptime_hold_coordinator.py",
+    "agents/linux/runtime/game_uptime_ssh_transport.py",
+    "agents/linux/runtime/game_uptime_privileged_flock.py",
+    "agents/linux/runtime/game_uptime_finalization_flock.py",
+    "dashboard/game_uptime_controller_mutation_gate.py",
+    "dashboard/workers/maintenance_hold_gate.py",
+    "systemd/dsm-dashboard.service",
+    "systemd/dsm-dashboard-worker.service",
+)
+
+
+def _fixed_file_plan(installed, target, before, after, changed):
+    """Exact candidate for the actual bounded file engine; never an ACK.
+
+    Keep the existing advisory classifier unchanged. The fixed-file engine
+    is deliberately narrower: no additions/removals, no arbitrary changes
+    to docs or runtime state and no changes to the updater that owns it.
+    Metadata may change only alongside compatible existing product files.
+    """
+    loader = SourceFileLoader("dsm928_fixed_file_plan_engine",
+                              str(Path(__file__).with_name("game-uptime-file-transaction.py")))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    engine = importlib.util.module_from_spec(spec)
+    loader.exec_module(engine)
+    bootstrap = [name for name in _BOOTSTRAP
+                 if name in after and before.get(name) != after[name]]
+    blocked = []
+    entries = []
+    encoded_size = 0
+    for name in changed:
+        old, new = before.get(name), after.get(name)
+        if name in bootstrap:
+            reason = "bootstrap_component_changed"
+        elif old is None or new is None:
+            reason = "addition_or_removal"
+        elif old[0] != new[0] or old[0] & 0o7133:
+            reason = "incompatible_file_mode"
+        elif not engine._approved_path(name):
+            reason = "outside_fixed_file_engine"
+        else:
+            sizes = [(root / name).lstat().st_size for root in (installed, target)]
+            if max(sizes) > engine._LIMIT:
+                reason = "file_exceeds_engine_limit"
+            else:
+                encoded_size += sum(4 * ((size + 2) // 3) for size in sizes)
+                entries.append(name)
+                continue
+        blocked.append({"path": name, "reason": reason})
+    reasons = []
+    if bootstrap:
+        reasons.append("initial_fence_aware_installation_or_bootstrap_update_required")
+    if blocked:
+        reasons.append("incompatible_product_changes")
+    if len(entries) > engine._COUNT or encoded_size > engine._TOTAL - 1048576:
+        reasons.append("fixed_file_transaction_capacity_exceeded")
+    if not changed:
+        reasons.append("no_product_changes")
+    eligible = not reasons
+    exact_plan = sorted(entries, key=lambda name: (name in engine._METADATA, name))
+    # Never hand off a partial or truncated plan to an executor.
+    return {"status": ("compatible_file_plan_only" if eligible else "blocked"),
+            "bootstrap_installation_required": bool(bootstrap),
+            "bootstrap_components_changed": bootstrap,
+            "file_count": len(entries),
+            "changed_paths": exact_plan if eligible else [],
+            "incompatible_file_count": len(blocked),
+            "incompatible_examples": blocked[:40],
+            "blockers": reasons,
+            "live_no_drain_authorized": False}
+
+
 def analyze(installed: Path, target: Path) -> dict[str, object]:
     before = _inventory(installed)
     after = _inventory(target)
@@ -136,8 +214,10 @@ def analyze(installed: Path, target: Path) -> dict[str, object]:
         and not any(name.startswith(prefix) for prefix in COSMETIC_PREFIX)
     ]
     tiers = _tiers(changed, before, after)
+    fixed = _fixed_file_plan(installed, target, before, after, changed)
     return {
         **tiers,
+        "fixed_file_transaction_plan": fixed,
         "kind": "CapivaraDSMGameUptimeImpact",
         "schema_version": 1,
         "mode": "read_only_diagnostic",

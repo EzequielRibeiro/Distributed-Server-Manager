@@ -220,6 +220,42 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
     return state
 
 
+def _execution_boundary(result):
+    """One decision summary for the existing --no-drain-report entrypoint.
+
+    Do not confuse a bootstrap release or an exact file list with permission
+    to mutate an installed system. The actual owner remains disconnected
+    until operational coverage and recovery have been verified.
+    """
+    impact = result.get("release_impact") or {}
+    fixed = impact.get("fixed_file_transaction_plan") or {}
+    review = result.get("operational_release_review") or {}
+    blockers = list(fixed.get("blockers", []))
+    if fixed.get("status") != "compatible_file_plan_only" and not blockers:
+        blockers.append("fixed_file_transaction_plan_unavailable")
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True):
+        blockers.append("signed_exact_target_not_verified")
+    if result.get("no_drain_handoff_witness_verified") is not True:
+        blockers.append("game_handoff_unverified")
+    if result.get("no_drain_operational_coverage_verified") is not True:
+        blockers.append("complete_game_inventory_unverified")
+    if result.get("no_drain_compatibility_verified") is not True:
+        blockers.append("runtime_compatibility_unverified")
+    if review.get("operational_guarantees_complete") is not True:
+        blockers.append("operational_guarantees_unverified")
+    blockers.append("installed_updater_transaction_owner_not_connected")
+    bootstrap = fixed.get("bootstrap_installation_required") is True
+    return {
+        "status": "blocked",
+        "release_path": ("bootstrap_requires_separately_approved_maintenance"
+                         if bootstrap else "compatible_update_review_only"),
+        "ordinary_draining_update_automatically_selected": False,
+        "live_no_drain_authorized": False,
+        "blockers": sorted(set(blockers)),
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("installed", type=Path)
@@ -247,6 +283,7 @@ def main():
             "live_no_drain_authorized": False,
             "blockers": ["operational_release_review_unavailable"],
         }
+    result["operational_execution_boundary"] = _execution_boundary(result)
     print(json.dumps(result, ensure_ascii=False))
     return 2 if result["classification"] == "blocked" else 0
 

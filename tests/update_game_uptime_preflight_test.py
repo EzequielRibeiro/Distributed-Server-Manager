@@ -60,6 +60,14 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertEqual(state["classification"],"maintenance_required")
         self.assertTrue(state["requires_game_drain"])
         self.assertFalse(any(x["no_drain_candidate"] for x in state["units"]))
+        self.write("update-manager/game-uptime-file-transaction.py", "old", "new")
+        state = self.result()
+        boundary = module._execution_boundary(state)
+        self.assertEqual(boundary["release_path"],
+                         "bootstrap_requires_separately_approved_maintenance")
+        self.assertFalse(boundary["ordinary_draining_update_automatically_selected"])
+        self.assertFalse(boundary["live_no_drain_authorized"])
+        self.assertIn("installed_updater_transaction_owner_not_connected", boundary["blockers"])
 
     def test_bad_inventory_fails_closed(self):
         self.write("dashboard/web/style.css","old","new")
