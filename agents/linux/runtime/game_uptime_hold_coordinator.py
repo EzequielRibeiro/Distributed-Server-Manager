@@ -280,6 +280,64 @@ def _persist_terminal_receipt(path, payload, uid, *, require_existing=False):
         os.close(folder)
 
 
+def _require_idle_managed_systemd_work(jobs, units):
+    """Reject queued systemd actions and active independent Agent helpers.
+
+    Only the known resident console reader and completed runtime identity
+    oneshot may remain active in the helper namespace. This is a negative
+    witness for systemd work, not proof of arbitrary external jobs or cron.
+    """
+    for line in jobs.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) != 4 or not fields[0].isdecimal():
+            raise HoldPreparationBlocked("systemd_job_inventory_invalid")
+        unit = fields[1]
+        if unit.startswith(("capivara-", "dsm-")):
+            raise HoldPreparationBlocked("managed_systemd_job_pending:" + unit[:191])
+    for line in units.splitlines():
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) < 4 or fields[1] != "loaded":
+            raise HoldPreparationBlocked("agent_helper_unit_inventory_invalid")
+        unit, active, sub = fields[0], fields[2], fields[3]
+        if not (unit.startswith(("capivara-agent-", "dsm-hybrid-agent-"))
+                and unit.endswith((".service", ".timer"))):
+            raise HoldPreparationBlocked("unexpected_agent_helper_unit")
+        if ((unit, active, sub) not in (
+                ("capivara-agent-console-reader.service", "active", "running"),
+                ("capivara-agent-runtime-identity.service", "active", "exited"))):
+            raise HoldPreparationBlocked("independent_agent_systemd_work_pending:" + unit[:191])
+
+
+def _check_installed_systemd_work():
+    def systemctl(*args):
+        result = subprocess.run(
+            ("/usr/bin/systemctl", *args), capture_output=True, text=True,
+            env={"PATH": "/usr/bin:/bin", "LANG": "C", "SYSTEMD_COLORS": "0"},
+            check=False, timeout=5)
+        if result.returncode != 0 or len(result.stdout) > 262144:
+            raise HoldPreparationBlocked("systemd_work_observation_failed")
+        return result.stdout
+
+    def jobs():
+        return systemctl("list-jobs", "--no-legend", "--no-pager", "--plain")
+
+    def units():
+        return systemctl(
+            "list-units", "--all", "--no-legend", "--plain", "--no-pager",
+            "--state=active,activating,reloading,deactivating",
+            "capivara-agent-*.service", "dsm-hybrid-agent-*.service",
+            "capivara-agent-uninstall-finalize.timer")
+
+    # Both observations must be clean; a queued action can move from the
+    # job inventory into an active helper between the two systemd queries.
+    _require_idle_managed_systemd_work(jobs(), units())
+    _require_idle_managed_systemd_work(jobs(), units())
+
+
 def _game_inventory(raw):
     units = []
     for line in raw.splitlines():
@@ -718,6 +776,8 @@ def prepare_standalone_agent_scope(
             current = int(time.time()) if now is None else now
             if not issued_at <= current < expires_at:
                 raise HoldPreparationBlocked("shared_agent_prepare_window_expired")
+            if fixture_root is None:
+                _check_installed_systemd_work()
             initial_games = _installed_game_snapshot() if fixture_root is None else None
             initial_agent = _installed_agent_daemon_snapshot() if fixture_root is None else None
             # Recovery is an explicit read-only reacquisition of an intact,
@@ -770,6 +830,7 @@ def prepare_standalone_agent_scope(
                     game_checkpoint()
                 if daemon_checkpoint is not None:
                     daemon_checkpoint()
+                    _check_installed_systemd_work()
             checkpoint()
         except (OSError, RuntimeError, ValueError) as exc:
             raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc

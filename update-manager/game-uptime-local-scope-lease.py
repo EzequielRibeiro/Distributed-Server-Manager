@@ -855,7 +855,7 @@ def retain_installed_distributed_scopes(
         _snapshot_trusted()
         from game_uptime_hold_coordinator import (
             _installed_game_snapshot, _retain_installed_game_witness,
-            _agent_terminal_payload, _installed_confirmation, _terminal_decision,
+            _check_installed_systemd_work, _agent_terminal_payload, _installed_confirmation, _terminal_decision,
             _persist_terminal_receipt, _validate_installed_confirmation,
         )
         if (type(expected_agent_ids) is not list or not 2 <= len(expected_agent_ids) <= 64
@@ -917,6 +917,7 @@ def retain_installed_distributed_scopes(
                 raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
             _check_daemon_witness(_root_file(witness_path, 32768), daemon_payload)
 
+        _check_installed_systemd_work()
         initial_games = _installed_game_snapshot()
         with retain_local_scopes(**options) as local:
             local["checkpoint"]()
@@ -943,6 +944,7 @@ def retain_installed_distributed_scopes(
                 def checkpoint():
                     local["checkpoint"]()
                     game_checkpoint()
+                    _check_installed_systemd_work()
                     remote["checkpoint"]()
                     daemon_checkpoint()
                     local["checkpoint"]()
@@ -1002,6 +1004,7 @@ def retain_installed_distributed_scopes(
                     local["checkpoint"]()
                     game_checkpoint()
                     daemon_checkpoint()
+                    _check_installed_systemd_work()
                     result = local["release_installed"](confirmation, decision, local_hybrid_agent_id)
                     if result.get("installed_hold_released") is not True:
                         raise LocalScopeLeaseBlocked("installed_local_release_incomplete")

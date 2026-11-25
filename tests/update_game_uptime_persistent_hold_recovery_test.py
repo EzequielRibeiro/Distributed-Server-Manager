@@ -84,6 +84,23 @@ class PersistentPendingHoldTests(unittest.TestCase):
                     "unexpected.service loaded active running Game"):
             with self.assertRaises(HoldPreparationBlocked):
                 _game_inventory(raw)
+        # Queued systemd actions, detached uninstall timers and independent
+        # root helpers are not represented by a zero Controller job count.
+        from game_uptime_hold_coordinator import _require_idle_managed_systemd_work
+        resident = ("capivara-agent-console-reader.service loaded active running reader\n"
+                    "capivara-agent-runtime-identity.service loaded active exited identity\n")
+        _require_idle_managed_systemd_work("12 unrelated.service start running\n", resident)
+        for jobs, units in (
+            ("13 capivara-instance-test.service stop waiting\n", resident),
+            ("14 dsm-dashboard.service restart running\n", resident),
+            ("malformed job\n", resident),
+            ("", resident + "capivara-agent-uninstall-finalize.timer loaded active waiting cleanup\n"),
+            ("", resident + "dsm-hybrid-agent-files-access@x.service loaded activating start ACL\n"),
+            ("", resident + "capivara-agent-update.service loaded active running updater\n"),
+        ):
+            with self.subTest(jobs=jobs, units=units):
+                with self.assertRaises(HoldPreparationBlocked):
+                    _require_idle_managed_systemd_work(jobs, units)
         # A running standalone Agent must match the installed unit and have
         # opted into the shared finalization fence; a PID alone is insufficient.
         from game_uptime_hold_coordinator import _validate_agent_daemon_snapshot
