@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 import json
+import hashlib
 import subprocess
 from typing import Iterator
 
@@ -496,6 +497,21 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
 
         released = False
 
+        def release_installed(confirmation, decision, local_agent_id):
+            nonlocal released
+            if root is not None or released or not inspect_existing_prepared or shared_lease_window is None:
+                raise LocalScopeLeaseBlocked("reviewed_installed_terminal_release_required")
+            from game_uptime_hold_coordinator import _release_confirmed_installed_hold
+            issued, expires = shared_lease_window
+            result = _release_confirmed_installed_hold(
+                scope={"transaction_id": transaction_id, "release_sha256": release_sha256,
+                       "issued_at": issued, "expires_at": expires,
+                       "expected_agent_ids": expected_recovery_agent_ids},
+                agent_id=local_agent_id, confirmation=confirmation,
+                decision=decision, checkpoint=checkpoint)
+            released = True
+            return result
+
         def release_fixture(outcome, journal_sha256, confirmation_sha256):
             nonlocal released
             if root is None or released or not inspect_existing_prepared:
@@ -535,6 +551,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "fixture_privileged_helper_lock_retained": prepare_fresh_fixture,
             "fixture_finalization_child_lock_retained": prepare_fresh_fixture,
             "checkpoint": checkpoint, "release_fixture": release_fixture,
+            "release_installed": release_installed,
             "controller_routes_opted_in_verified": False,
             "worker_process_inventory_verified": False,
             "all_mutators_fenced": False,
@@ -718,6 +735,8 @@ def retain_installed_distributed_scopes(
         _snapshot_trusted()
         from game_uptime_hold_coordinator import (
             _installed_game_snapshot, _retain_installed_game_witness,
+            _agent_terminal_payload, _installed_confirmation, _terminal_decision,
+            _persist_terminal_receipt, _validate_installed_confirmation,
         )
         if (type(expected_agent_ids) is not list or not 2 <= len(expected_agent_ids) <= 64
                 or any(type(item) is not str
@@ -775,6 +794,68 @@ def retain_installed_distributed_scopes(
                         raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
                     local["checkpoint"]()
                     remote["checkpoint"]()
+                released = False
+
+                def finalize_terminal(journal_sha256):
+                    """Internal finalization only, never an update admission.
+
+                    The installed transaction owner must durably write the exact
+                    terminal journal under the fixed recovery workspace first.
+                    The coordinator cannot turn a fixture or caller-provided
+                    outcome into an installed terminal decision.
+                    """
+                    nonlocal released
+                    if not recover_existing or released or type(journal_sha256) is not str or not _SHA.fullmatch(journal_sha256):
+                        raise LocalScopeLeaseBlocked("reviewed_installed_terminal_journal_required")
+                    workspace = PENDING_PATH.parent / ("transaction-" + transaction_id)
+                    _safe_directory(workspace, owner=0)
+                    if stat.S_IMODE(workspace.lstat().st_mode) != 0o700:
+                        raise LocalScopeLeaseBlocked("installed_terminal_workspace_not_private")
+                    raw = _root_file(workspace / "game-uptime-transaction.json", 65536)
+                    if hashlib.sha256(raw).hexdigest() != journal_sha256:
+                        raise LocalScopeLeaseBlocked("installed_terminal_journal_digest_mismatch")
+                    report = json.loads(raw)
+                    scope = {"transaction_id": transaction_id, "release_sha256": release_sha256,
+                             "issued_at": issued_at, "expires_at": expires_at,
+                             "expected_agent_ids": sorted(expected_agent_ids)}
+                    if (type(report) is not dict
+                            or report.get("kind") != "DSM928InstalledUptimeTransaction"
+                            or report.get("schema_version") != 1
+                            or report.get("scope") != scope
+                            or report.get("local_hybrid_agent_id") != local_hybrid_agent_id
+                            or report.get("live_no_drain_authorized") is not False):
+                        raise LocalScopeLeaseBlocked("installed_terminal_journal_scope_mismatch")
+                    decision = _terminal_decision(report.get("status"), journal_sha256)
+                    checkpoint()
+                    confirmed = remote["record_terminal"](**decision)
+                    if (confirmed.get("recorded_agent_ids") != remote_ids
+                            or confirmed.get("pending_evidence_retained") is not True):
+                        raise LocalScopeLeaseBlocked("installed_remote_terminal_incomplete")
+                    _persist_terminal_receipt(
+                        PENDING_PATH.parent / ("terminal-" + transaction_id + ".json"),
+                        _agent_terminal_payload(scope, local_hybrid_agent_id, decision), 0)
+                    confirmation = _installed_confirmation(
+                        scope, local_hybrid_agent_id, sorted(expected_agent_ids), **decision)
+                    confirmation_path = PENDING_PATH.parent / ("terminal-confirmation-" + transaction_id + ".json")
+                    _persist_terminal_receipt(confirmation_path, confirmation, 0)
+                    digest = _validate_installed_confirmation(confirmation, scope, decision)
+                    checkpoint()
+                    result = remote["release_installed"](confirmation)
+                    if (result.get("released_agent_ids") != remote_ids
+                            or result.get("confirmation_sha256") != digest):
+                        raise LocalScopeLeaseBlocked("installed_remote_release_incomplete")
+                    # The local sentinel is removed only after all remote
+                    # release receipts and the original local game witness.
+                    local["checkpoint"]()
+                    game_checkpoint()
+                    result = local["release_installed"](confirmation, decision, local_hybrid_agent_id)
+                    if result.get("installed_hold_released") is not True:
+                        raise LocalScopeLeaseBlocked("installed_local_release_incomplete")
+                    released = True
+                    return {"status": "installed_terminal_holds_released",
+                            "confirmation_sha256": digest,
+                            "live_no_drain_authorized": False}
+
                 checkpoint()
                 yield {"kind": "DSM928InstalledDistributedScope",
                        "transaction_id": transaction_id,
@@ -784,9 +865,11 @@ def retain_installed_distributed_scopes(
                        "retained_remote_agent_ids": remote["prepared_agent_ids"],
                        "controller_registry_inventory_matched": True,
                        "checkpoint": checkpoint,
+                       "finalize_terminal": finalize_terminal,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
                        "live_no_drain_authorized": False}
-                checkpoint()
+                if not released:
+                    checkpoint()
     finally:
         sys.path.remove(runtime)

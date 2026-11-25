@@ -389,6 +389,46 @@ def _retain_installed_game_witness(*, pending, transaction_id, release_sha256,
     return checkpoint
 
 
+def _installed_confirmation(scope, local_hybrid_agent_id, recorded_agent_ids,
+                            outcome, journal_sha256):
+    """The authenticated coordinator must confirm every participant, not a subset."""
+    decision = _terminal_decision(outcome, journal_sha256)
+    ids = scope["expected_agent_ids"]
+    if (type(recorded_agent_ids) is not list or recorded_agent_ids != ids
+            or type(local_hybrid_agent_id) is not str
+            or local_hybrid_agent_id not in ids):
+        raise HoldPreparationBlocked("installed_terminal_inventory_incomplete")
+    return {
+        "kind": "DSM928InstalledDistributedTerminalConfirmation",
+        "schema_version": 1,
+        "transaction_id": scope["transaction_id"],
+        "release_sha256": scope["release_sha256"],
+        "issued_at": scope["issued_at"], "expires_at": scope["expires_at"],
+        "local_hybrid_agent_id": local_hybrid_agent_id,
+        "recorded_agent_ids": ids.copy(), **decision,
+        "live_no_drain_authorized": False,
+    }
+
+
+def _validate_installed_confirmation(confirmation, scope, decision):
+    if type(confirmation) is not dict:
+        raise HoldPreparationBlocked("installed_terminal_confirmation_invalid")
+    expected = _installed_confirmation(
+        scope, confirmation.get("local_hybrid_agent_id"),
+        confirmation.get("recorded_agent_ids"), **decision)
+    raw = (json.dumps(expected, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    actual = (json.dumps(confirmation, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    if actual != raw:
+        raise HoldPreparationBlocked("installed_terminal_confirmation_mismatch")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _agent_terminal_payload(scope, agent_id, decision):
+    return {"kind": "DSM928AgentTerminalDecision", "schema_version": 1,
+            **scope, "agent_id": agent_id, **decision,
+            "live_no_drain_authorized": False, "pending_evidence_retained": True}
+
+
 def _archive_fixture_hold(*, marker, pending, transaction_id, decision, uid, checkpoint):
     """Archive exact evidence before clearing a disposable, confirmed hold.
 
@@ -404,6 +444,13 @@ def _archive_fixture_hold(*, marker, pending, transaction_id, decision, uid, che
             or marker == HOLD_PATH or pending == PENDING_PATH
             or not _ID.fullmatch(transaction_id)):
         raise HoldPreparationBlocked("fixture_terminal_release_only")
+    return _archive_confirmed_hold(
+        marker=marker, pending=pending, transaction_id=transaction_id,
+        decision=decision, uid=uid, checkpoint=checkpoint, installed=False)
+
+
+def _archive_confirmed_hold(*, marker, pending, transaction_id, decision,
+                            uid, checkpoint, installed):
     paths = [marker, pending.parent / "no-drain-release-binding.json",
              pending.parent / "no-drain-agent-inventory.json", pending]
     checkpoint()
@@ -423,7 +470,8 @@ def _archive_fixture_hold(*, marker, pending, transaction_id, decision, uid, che
     checkpoint()
     archive = pending.parent / ("released-" + transaction_id + ".json")
     _persist_terminal_receipt(archive, {
-        "kind": "DSM928ArchivedFixtureHold", "schema_version": 1,
+        "kind": ("DSM928ArchivedInstalledHold" if installed
+                 else "DSM928ArchivedFixtureHold"), "schema_version": 1,
         "transaction_id": transaction_id, **decision,
         "evidence": records, "live_no_drain_authorized": False}, uid)
     checkpoint()
@@ -434,7 +482,37 @@ def _archive_fixture_hold(*, marker, pending, transaction_id, decision, uid, che
             os.fsync(folder)
         finally:
             os.close(folder)
-    return {"fixture_hold_released": True, "live_no_drain_authorized": False}
+    return {("installed_hold_released" if installed else "fixture_hold_released"): True,
+            "live_no_drain_authorized": False}
+
+
+def _release_confirmed_installed_hold(*, scope, agent_id, confirmation, decision, checkpoint):
+    """Fixed-path finalization primitive; only under the original retained locks.
+
+    The caller must already have independently verified the terminal product
+    journal. No new terminal decision can be manufactured by this function.
+    A partial release still requires explicit administrative reconciliation.
+    """
+    if os.geteuid() != 0 or agent_id not in scope["expected_agent_ids"]:
+        raise HoldPreparationBlocked("installed_terminal_release_requires_root")
+    confirmation_sha = _validate_installed_confirmation(confirmation, scope, decision)
+    checkpoint()
+    tx = scope["transaction_id"]
+    if not _ID.fullmatch(tx):
+        raise HoldPreparationBlocked("invalid_installed_terminal_transaction")
+    terminal = PENDING_PATH.parent / ("terminal-" + tx + ".json")
+    witness = PENDING_PATH.parent / ("game-witness-" + tx + ".json")
+    if not os.path.lexists(terminal) or not os.path.lexists(witness):
+        raise HoldPreparationBlocked("installed_terminal_or_game_witness_missing")
+    _persist_terminal_receipt(terminal, _agent_terminal_payload(scope, agent_id, decision), 0)
+    # Persist the full confirmation locally before clearing any sentinel.
+    _persist_terminal_receipt(PENDING_PATH.parent / ("terminal-confirmation-" + tx + ".json"),
+                              confirmation, 0)
+    checkpoint()
+    return _archive_confirmed_hold(
+        marker=HOLD_PATH, pending=PENDING_PATH, transaction_id=tx,
+        decision={**decision, "confirmation_sha256": confirmation_sha},
+        uid=0, checkpoint=checkpoint, installed=True)
 
 
 @contextmanager
@@ -574,18 +652,20 @@ def prepare_standalone_agent_scope(
         except (OSError, RuntimeError, ValueError) as exc:
             raise HoldPreparationBlocked("standalone_agent_prepare_blocked") from exc
 
+        terminal_recorded = None
+        terminal_scope = {"transaction_id": transaction_id, "release_sha256": release_sha256,
+                          "issued_at": issued_at, "expires_at": expires_at,
+                          "expected_agent_ids": ids}
+
         def record_terminal(outcome, journal_sha256):
+            nonlocal terminal_recorded
             decision = _terminal_decision(outcome, journal_sha256)
             checkpoint()
             _persist_terminal_receipt(
                 pending.parent / ("terminal-" + transaction_id + ".json"),
-                {"kind": "DSM928AgentTerminalDecision", "schema_version": 1,
-                 "transaction_id": transaction_id, "release_sha256": release_sha256,
-                 "issued_at": issued_at, "expires_at": expires_at,
-                 "expected_agent_ids": ids, "agent_id": local_agent_id,
-                 **decision, "live_no_drain_authorized": False,
-                 "pending_evidence_retained": True}, trusted_uid)
+                _agent_terminal_payload(terminal_scope, local_agent_id, decision), trusted_uid)
             checkpoint()
+            terminal_recorded = decision
             return decision
 
         released = False
@@ -605,6 +685,20 @@ def prepare_standalone_agent_scope(
             released = True
             return result
 
+        def release_installed(confirmation):
+            nonlocal released
+            if (fixture_root is not None or released or not recover_existing
+                    or terminal_recorded is None):
+                raise HoldPreparationBlocked("reviewed_installed_terminal_release_required")
+            if confirmation.get("local_hybrid_agent_id") == local_agent_id:
+                raise HoldPreparationBlocked("standalone_agent_cannot_be_local_hybrid")
+            result = _release_confirmed_installed_hold(
+                scope=terminal_scope, agent_id=local_agent_id,
+                confirmation=confirmation, decision=terminal_recorded,
+                checkpoint=checkpoint)
+            released = True
+            return result
+
         try:
             yield {
                 "status": "standalone_agent_prepared_local_scope_retained",
@@ -616,6 +710,7 @@ def prepare_standalone_agent_scope(
                 "cooperating_local_lock_families_retained": 2,
                 "checkpoint": checkpoint, "record_terminal": record_terminal,
                 "release_fixture": release_fixture,
+                "release_installed": release_installed,
                 "remote_agents_acked": False, "external_jobs_acked": False,
                 "live_no_drain_authorized": False,
             }
@@ -769,7 +864,7 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
             raise HoldPreparationBlocked("agent_session_local_witness_invalid")
         def answer(action, challenge, decision=None):
             frame_deadline()
-            if action != "fixture_released":
+            if action not in ("fixture_released", "installed_released"):
                 lease["checkpoint"]()
             _session_write(write_fd, {
                 **scope, "protocol": _SESSION_PROTOCOL, "action": action,
@@ -788,17 +883,36 @@ def serve_prepared_agent_session(read_fd: int, write_fd: int, *,
             challenge = req.get("challenge")
             terminal = req.get("action") == "record_terminal"
             release = req.get("action") == "release_fixture"
+            installed_release = req.get("action") == "release_installed"
             extra = {"outcome", "journal_sha256"} if terminal or release else set()
             if release:
                 extra.add("confirmation_sha256")
+            if installed_release:
+                extra.add("confirmation")
             if (set(req) != {"protocol", "action", "session_id", "challenge"} | extra
                     or req.get("protocol") != _SESSION_PROTOCOL
                     or req.get("session_id") != session
-                    or req.get("action") not in ("checkpoint", "close", "record_terminal", "release_fixture")
+                    or req.get("action") not in (
+                        "checkpoint", "close", "record_terminal", "release_fixture",
+                        "release_installed")
                     or type(challenge) is not str or not _ID.fullmatch(challenge)
                     or challenge in seen or len(seen) >= 4096):
                 raise HoldPreparationBlocked("agent_session_challenge_invalid")
             seen.add(challenge)
+            if installed_release:
+                if not recovering or not callable(lease.get("release_installed")):
+                    raise HoldPreparationBlocked("installed_terminal_release_unavailable")
+                confirmation = req["confirmation"]
+                if type(confirmation) is not dict:
+                    raise HoldPreparationBlocked("installed_terminal_confirmation_invalid")
+                decision = _terminal_decision(confirmation.get("outcome"),
+                                              confirmation.get("journal_sha256"))
+                digest = _validate_installed_confirmation(confirmation, scope, decision)
+                result = lease["release_installed"](confirmation)
+                if result != {"installed_hold_released": True, "live_no_drain_authorized": False}:
+                    raise HoldPreparationBlocked("installed_release_receipt_invalid")
+                answer("installed_released", challenge, {"confirmation_sha256": digest})
+                return
             if release:
                 if not callable(lease.get("release_fixture")):
                     raise HoldPreparationBlocked("fixture_terminal_release_unavailable")
@@ -900,17 +1014,23 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         reply = _session_read(read_fd, limit)
         session_deadline()
         session_id = reply.get("session_id")
+        response_decision = decision
+        if action == "release_installed":
+            confirmation = decision["confirmation"]
+            response_decision = {"confirmation_sha256": _validate_installed_confirmation(
+                confirmation, scope, terminal_recorded)}
         expected = {
             **scope, "protocol": _SESSION_PROTOCOL,
             "action": {"prepare": "prepared", "recover": "recovered",
                        "checkpoint": "retained", "close": "closed",
                        "record_terminal": "terminal_recorded",
-                       "release_fixture": "fixture_released"}[action],
+                       "release_fixture": "fixture_released",
+                       "release_installed": "installed_released"}[action],
             "agent_id": agent, "challenge": challenge, "session_id": session_id,
             "persistent_journal_prepared": True, "recovery_scope_only": recover_existing,
             "cooperating_local_lock_families_retained": 2,
             "external_jobs_acked": False, "remote_agents_acked": False,
-            "live_no_drain_authorized": False, **(decision or {}),
+            "live_no_drain_authorized": False, **(response_decision or {}),
         }
         if (_session_bytes(reply) != _session_bytes(expected)
                 or type(session_id) is not str or not _ID.fullmatch(session_id)
@@ -968,6 +1088,25 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
         active = False
         return {"released_agent_ids": ids.copy(), "live_no_drain_authorized": False}
 
+    def release_installed(confirmation):
+        nonlocal active, released
+        if not recover_existing or terminal_recorded is None or local_hybrid_agent_id is None:
+            raise HoldPreparationBlocked("reviewed_installed_terminal_release_required")
+        if type(confirmation) is not dict or confirmation.get("local_hybrid_agent_id") != local_hybrid_agent_id:
+            raise HoldPreparationBlocked("installed_terminal_hybrid_identity_mismatch")
+        digest = _validate_installed_confirmation(confirmation, scope, terminal_recorded)
+        checkpoint()
+        try:
+            for agent in ids:
+                exchange(agent, "release_installed", {"confirmation": confirmation})
+        except (OSError, RuntimeError, ValueError) as exc:
+            active = False
+            raise HoldPreparationBlocked("partial_installed_release_requires_review") from exc
+        released = True
+        active = False
+        return {"released_agent_ids": ids.copy(), "confirmation_sha256": digest,
+                "live_no_drain_authorized": False}
+
     with ExitStack() as stack:
         try:
             # Open every required channel first. A missing endpoint must
@@ -992,6 +1131,7 @@ def retain_distributed_agent_sessions(*, transaction_id: str, release_sha256: st
                 "cooperating_local_scopes_retained": len(ids),
                 "checkpoint": checkpoint, "record_terminal": record_terminal,
                 "release_fixture": release_fixture,
+                "release_installed": release_installed,
                 "transport_authentication_independently_verified": False,
                 "remote_agents_acked": False, "external_jobs_acked": False,
                 "live_no_drain_authorized": False,

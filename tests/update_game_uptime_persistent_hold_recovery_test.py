@@ -59,6 +59,24 @@ class PersistentPendingHoldTests(unittest.TestCase):
             "capivara-instance-a.service loaded active running Game A\n"),
             ["capivara-instance-a.service", "capivara-instance-b.service"])
         self.assertEqual(_game_inventory(""), [])
+        from game_uptime_hold_coordinator import (
+            _installed_confirmation, _validate_installed_confirmation,
+            _release_confirmed_installed_hold,
+        )
+        scope = {"transaction_id": self.tx, "release_sha256": "a"*64,
+                 "issued_at": 1700000000, "expires_at": 1700000600,
+                 "expected_agent_ids": ["hybrid", "vps"]}
+        decision = {"outcome": "recovered_rollback", "journal_sha256": "b"*64}
+        confirmation = _installed_confirmation(
+            scope, "hybrid", ["hybrid", "vps"], **decision)
+        self.assertRegex(_validate_installed_confirmation(confirmation, scope, decision),
+                         r"^[0-9a-f]{64}$")
+        for invalid in ({**confirmation, "recorded_agent_ids": ["vps"]},
+                        {**confirmation, "release_sha256": "c"*64},
+                        {**confirmation, "journal_sha256": "c"*64},
+                        {**confirmation, "live_no_drain_authorized": True}):
+            with self.assertRaises(HoldPreparationBlocked):
+                _validate_installed_confirmation(invalid, scope, decision)
         for raw in ("capivara-instance-a.service loaded activating start Game",
                     "capivara-instance-a.service loaded active exited Game",
                     "capivara-instance-a.service loaded active running Game\n"
