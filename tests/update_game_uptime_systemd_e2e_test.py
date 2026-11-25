@@ -1607,14 +1607,13 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         """
         originals = [self._start("recovery-alpha"), self._start("recovery-beta")]
         fake = self.workspace/"recovery-real-updater-functions"
+        fake.mkdir(mode=0o700)
         create_tiny_release_fixture(fake)
-
-        def run(step):
-            result = run_real_update_fns(fake, step)
-            if result.returncode:
-                raise RuntimeError("fixture " + step + " failed: " + result.stderr[-450:])
-
-        run("prepare")
+        protected = [fake/"installed", fake/"installed/runtime/hybrid-instance-storage",
+                     fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat",
+                     fake/"installed/data/database.txt", fake/"installed/config/dsm.conf"]
+        original_inodes = {p: p.stat().st_ino for p in protected}
+        interrupt_after_apply = [False]
         journal = self.workspace/"interrupted-real-systemd-journal"
         journal.mkdir(mode=0o700)
 
@@ -1717,6 +1716,12 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             channels[agent] = make_opener(agent, remote_options)
         locks.extend(remote_locks)
         def inspect_game(name):
+            if (interrupt_after_apply[0] and
+                    (fake/"installed/version").read_text() == "2.0.999-fixture"):
+                interrupt_after_apply[0] = False
+                assert_locks()
+                self._assert_unchanged(originals)
+                raise SystemExit(47)
             result = self._snapshot(name)
             result["unit_config_sha256"] = hashlib.sha256(
                 self._run("systemctl", "cat", name).stdout.encode()).hexdigest()
@@ -1736,12 +1741,6 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 finally:
                     os.close(fd)
-        def interrupted_apply():
-            assert_locks()
-            run("apply")
-            self._assert_unchanged(originals)
-            raise SystemExit(47)
-
         # Reject omitted/misclassified members before any durable evidence.
         with self.assertRaisesRegex(transaction.TransactionSafetyError, "inventory incomplete"):
             transaction.execute(
@@ -1751,6 +1750,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 apply=lambda: self.fail("incomplete partition applied"),
                 rollback=lambda: self.fail("unexpected rollback"))
         self.assertFalse(opts["pending_path"].exists())
+        interrupt_after_apply[0] = True
         with self.assertRaises(SystemExit):
             transaction.execute(
                 journal,
@@ -1759,13 +1759,17 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 local_scope_kwargs=opts,
                 local_fixture_agent_id=hybrid_id,
                 distributed_fixture_openers=channels,
-                apply=interrupted_apply,
-                rollback=lambda: run("rollback"),
+                file_transaction_workspace=fake,
+                file_transaction_paths=["dashboard/web/presentation.js", "version"],
             )
         self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
         recorded = json.loads((journal/"game-uptime-transaction.json").read_text())
-        self.assertEqual(recorded["status"], "prepared")
+        self.assertEqual(recorded["status"], "applied")
         binding = recorded["local_scope_binding"]
+        file_journal = fake/"dsm928-product-files.json"
+        self.assertEqual(binding["product_file_binding"]["journal_sha256"],
+                         hashlib.sha256(file_journal.read_bytes()).hexdigest())
+        self.assertEqual({p: p.stat().st_ino for p in protected}, original_inodes)
         self.assertEqual(binding["agent_ids"], sorted(agent_ids))
         self.assertEqual(binding["distributed_scope_binding"]["agent_ids"],
                          sorted(remote_ids))
@@ -1791,12 +1795,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 journal, names, inspect=inspect_game, list_units=list_games,
                 rollback=lambda: self.fail("remote scope omitted"), operator_reviewed=True,
                 local_scope_kwargs=recovery_opts)
-        def guarded_rollback():
-            assert_locks()
-            run("rollback")
         outcome = transaction.recover_interrupted(
             journal, names, inspect=inspect_game, list_units=list_games,
-            rollback=guarded_rollback, operator_reviewed=True,
+            file_transaction_workspace=fake, operator_reviewed=True,
             local_scope_kwargs=recovery_opts, distributed_fixture_openers=channels,
             local_fixture_agent_id=hybrid_id,
         )
@@ -1819,7 +1820,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         retried = transaction.confirm_terminal(
             journal, names, inspect=inspect_game, list_units=list_games,
             operator_reviewed=True, local_scope_kwargs=recovery_opts,
-            distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id)
+            distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
+            file_transaction_workspace=fake)
         self.assertTrue(retried["terminal_confirmation_retried"])
         self.assertEqual(saved_confirmation, (confirmation.stat().st_ino, confirmation.read_bytes()))
         self.assertEqual(remote_errors, [])
@@ -1827,7 +1829,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             journal, names, inspect=inspect_game, list_units=list_games,
             operator_reviewed=True, local_scope_kwargs=recovery_opts,
             distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
-            finalize_fixture=True)
+            finalize_fixture=True, file_transaction_workspace=fake)
         self.assertTrue(finalized["fixture_hold_released"])
         self.assertEqual(remote_errors, [])
         self.assertFalse(opts["pending_path"].exists())
@@ -1847,6 +1849,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual((fake/"installed/data/database.txt").read_text(), "db durable")
         self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
                          "recovered_rollback")
+        self.assertEqual({p: p.stat().st_ino for p in protected}, original_inodes)
         self._assert_unchanged(originals)
 
 

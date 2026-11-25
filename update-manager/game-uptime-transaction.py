@@ -81,6 +81,17 @@ def _exclusive_transaction(func):
             options = kwargs.pop("local_scope_kwargs", None)
             distributed = kwargs.pop("distributed_fixture_openers", None)
             hybrid_id = kwargs.pop("local_fixture_agent_id", None)
+            file_workspace = kwargs.pop("file_transaction_workspace", None)
+            file_paths = kwargs.pop("file_transaction_paths", None)
+            if file_workspace is not None:
+                if options is None or distributed is None:
+                    raise TransactionSafetyError("fixed product files require retained distributed scope")
+                if "apply" in kwargs or "rollback" in kwargs:
+                    raise TransactionSafetyError("fixed product files forbid caller mutation callbacks")
+                if (func.__name__ == "execute") != (file_paths is not None):
+                    raise TransactionSafetyError("fixed product plan is supplied only for fresh apply")
+            elif file_paths is not None:
+                raise TransactionSafetyError("fixed product workspace required")
             finalize = kwargs.pop("finalize_fixture", False)
             if type(finalize) is not bool or (finalize and func.__name__ != "confirm_terminal"):
                 raise TransactionSafetyError("fixture finalization requires reviewed terminal confirmation")
@@ -131,6 +142,34 @@ def _exclusive_transaction(func):
                         if hybrid_id is not None:
                             receipt["distributed_scope_binding"]["local_hybrid_agent_id"] = hybrid_id
                         combined_checkpoint()
+                    file_owner = None
+                    if file_workspace is not None:
+                        file_root = _workspace(Path(file_workspace))
+                        if file_root == root or file_root.parent != root.parent:
+                            raise TransactionSafetyError("independent sibling product workspace required")
+                        loader = SourceFileLoader(
+                            "dsm928_fixed_product_file_owner",
+                            str(Path(__file__).with_name("game-uptime-file-transaction.py")))
+                        spec = importlib.util.spec_from_loader(loader.name, loader)
+                        module = importlib.util.module_from_spec(spec)
+                        loader.exec_module(module)
+                        file_owner = module.FileTransaction(
+                            file_root, file_root / "installed", file_root / "new-payload",
+                            transaction_id=receipt["transaction_id"],
+                            release_sha256=receipt["release_sha256"],
+                            checkpoint=receipt["checkpoint"])
+                        if not recovery:
+                            file_owner.prepare(file_paths)
+                        identity = file_root.stat()
+                        receipt["product_file_binding"] = {
+                            "workspace": str(file_root), "device": identity.st_dev,
+                            "inode": identity.st_ino,
+                            "journal_sha256": file_owner.journal_digest(),
+                        }
+                        if func.__name__ == "execute":
+                            kwargs.update(apply=file_owner.apply, rollback=file_owner.rollback)
+                        elif func.__name__ == "recover_interrupted":
+                            kwargs["rollback"] = file_owner.rollback
                     def record_terminal_if_present():
                         if distributed is None:
                             return
@@ -143,6 +182,10 @@ def _exclusive_transaction(func):
                         if outcome not in ("verified", "rolled_back", "recovered_rollback"):
                             return
                         combined_checkpoint()
+                        if file_owner is not None:
+                            file_owner.verify_terminal(outcome)
+                            if file_owner.journal_digest() != receipt["product_file_binding"]["journal_sha256"]:
+                                raise TransactionSafetyError("durable product file journal changed")
                         decision = remote["record_terminal"](
                             outcome, hashlib.sha256(raw).hexdigest())
                         if (decision.get("recorded_agent_ids") != remote_ids
@@ -303,6 +346,8 @@ def _scope_binding(scope: Mapping | None) -> dict | None:
               "evidence_sha256": scope["evidence_sha256"]}
     if "distributed_scope_binding" in scope:
         result["distributed_scope_binding"] = scope["distributed_scope_binding"]
+    if "product_file_binding" in scope:
+        result["product_file_binding"] = scope["product_file_binding"]
     return result
 
 

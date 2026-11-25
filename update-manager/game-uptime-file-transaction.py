@@ -280,6 +280,20 @@ class FileTransaction:
             return {"status": "files_applied" if direction == "after" else "files_restored",
                     "file_count": len(entries), "live_no_drain_authorized": False}
 
+    def journal_digest(self):
+        with self._exclusive():
+            self._entries()
+            return hashlib.sha256(_encode(_read_journal(self.journal))).hexdigest()
+
+    def verify_terminal(self, outcome):
+        if outcome not in ("verified", "rolled_back", "recovered_rollback"):
+            raise FileTransactionBlocked("invalid_product_terminal_outcome")
+        direction = "after" if outcome == "verified" else "before"
+        with self._exclusive():
+            for entry in self._entries():
+                if _read(_file(self.installed, entry["path"])) != entry[direction]:
+                    raise FileTransactionBlocked("terminal_product_file_state_mismatch")
+
     def apply(self):
         return self._transition("after")
 
