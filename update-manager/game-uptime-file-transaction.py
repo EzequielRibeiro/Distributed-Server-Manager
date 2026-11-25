@@ -19,6 +19,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import stat
 import subprocess
 import sys
@@ -146,11 +147,25 @@ def _replace(path, desired, expected):
     raw = base64.b64decode(desired["bytes"], validate=True)
     if hashlib.sha256(raw).hexdigest() != desired["sha256"]:
         raise FileTransactionBlocked("snapshot_digest_mismatch")
-    fd, temporary = tempfile.mkstemp(prefix=".dsm928-", dir=path.parent)
-    temp = Path(temporary)
+    # mkstemp converts relative directories into absolute paths. The
+    # unprivileged worker deliberately enters a product directory by fd
+    # beneath a root-private ancestor, so absolute traversal is forbidden.
+    # Keep the sibling name relative to that retained working directory.
+    for _ in range(16):
+        temp = path.parent / (".dsm928-" + secrets.token_hex(16))
+        try:
+            fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                         os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileTransactionBlocked("product_temporary_file_collision")
     try:
         with os.fdopen(fd, "wb") as stream:
-            os.fchown(stream.fileno(), desired["uid"], desired["gid"])
+            current = os.fstat(stream.fileno())
+            if (current.st_uid, current.st_gid) != (desired["uid"], desired["gid"]):
+                os.fchown(stream.fileno(), desired["uid"], desired["gid"])
             os.fchmod(stream.fileno(), desired["mode"])
             stream.write(raw)
             stream.flush()
