@@ -1,0 +1,287 @@
+#!/usr/bin/env python3
+"""#928: bounded in-place product-file transaction, separate from draining updater.
+
+The retained-scope owner supplies the reviewed exact changed-file set and a
+checkpoint. This engine does not stop services, change systemd, migrate the
+database, replace the installation root or move any preserved game tree.
+Only existing compatible regular files are supported. Durable before/after
+bytes are written before the first mutation; rollback accepts only either
+of the recorded states. Installed execution remains unavailable until the
+production admission and finalization owner is integrated.
+"""
+from __future__ import annotations
+
+import base64
+from contextlib import contextmanager
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import tempfile
+
+_LIMIT = 4 * 1024 * 1024
+_TOTAL = 48 * 1024 * 1024
+_COUNT = 256
+_PREFIXES = ("dashboard/", "api/", "scheduler/", "notification/", "metrics/", "monitor/")
+_SUFFIXES = {".py", ".js", ".css", ".html", ".htm", ".json", ".svg", ".png",
+             ".ico", ".woff", ".woff2", ".map"}
+_METADATA = {"version", "release-manifest.json"}
+
+
+class FileTransactionBlocked(RuntimeError):
+    pass
+
+
+def _approved_path(relative):
+    if type(relative) is not str or not 1 <= len(relative) <= 512:
+        return False
+    parts = relative.split("/")
+    if any(not part or part in (".", "..") or
+           not re.fullmatch(r"[A-Za-z0-9_.+-]+", part) for part in parts):
+        return False
+    if relative in _METADATA:
+        return True
+    return (relative.startswith(_PREFIXES) and Path(relative).suffix.lower() in _SUFFIXES
+            and not any(part in ("state", "runtime", "logs", "data", "uploads",
+                                 "backups", "__pycache__") for part in parts[:-1]))
+
+
+def _directory(path):
+    info = path.lstat()
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid()
+            or info.st_mode & 0o022):
+        raise FileTransactionBlocked("untrusted_product_directory")
+    return info
+
+
+def _file(root, relative):
+    if not _approved_path(relative):
+        raise FileTransactionBlocked("incompatible_product_path")
+    _directory(root)
+    parts = relative.split("/")
+    for index in range(1, len(parts)):
+        _directory(root.joinpath(*parts[:index]))
+    return root.joinpath(*parts)
+
+
+def _read(path):
+    named = path.lstat()
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        info = os.fstat(fd)
+        def identity(item):
+            return (item.st_dev, item.st_ino, item.st_uid, item.st_gid,
+                    item.st_mode, item.st_nlink, item.st_size,
+                    item.st_mtime_ns, item.st_ctime_ns)
+        if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                or info.st_mode & 0o7133 or info.st_size > _LIMIT
+                or identity(named) != identity(info)
+                or os.listxattr(fd)):
+            raise FileTransactionBlocked("incompatible_product_file")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(_LIMIT + 1)
+        if (len(raw) != info.st_size
+                or identity(os.fstat(fd)) != identity(info)
+                or identity(path.lstat()) != identity(info)):
+            raise FileTransactionBlocked("product_file_changed_while_reading")
+        return {"sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": base64.b64encode(raw).decode("ascii"),
+                "mode": stat.S_IMODE(info.st_mode), "uid": info.st_uid, "gid": info.st_gid}
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _encode(value):
+    return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+
+def _write_once(path, payload):
+    raw = _encode(payload)
+    if len(raw) > _TOTAL:
+        raise FileTransactionBlocked("file_transaction_snapshot_too_large")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                 os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    _fsync_dir(path.parent)
+
+
+def _read_journal(path):
+    before = path.lstat()
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid()
+                or info.st_nlink != 1 or stat.S_IMODE(info.st_mode) != 0o600
+                or (before.st_dev, before.st_ino) != (info.st_dev, info.st_ino)
+                or not 0 < info.st_size <= _TOTAL):
+            raise FileTransactionBlocked("untrusted_file_transaction_journal")
+        raw = stream.read(_TOTAL + 1)
+    result = json.loads(raw)
+    if len(raw) != info.st_size or raw != _encode(result):
+        raise FileTransactionBlocked("invalid_file_transaction_journal")
+    return result
+
+
+def _replace(path, desired, expected):
+    # Never overwrite an unexpected third state. Write a fresh inode beside
+    # the destination, preserve owner/mode, fsync before atomic replacement.
+    if _read(path) != expected:
+        raise FileTransactionBlocked("product_file_drift_before_replace")
+    raw = base64.b64decode(desired["bytes"], validate=True)
+    if hashlib.sha256(raw).hexdigest() != desired["sha256"]:
+        raise FileTransactionBlocked("snapshot_digest_mismatch")
+    fd, temporary = tempfile.mkstemp(prefix=".dsm928-", dir=path.parent)
+    temp = Path(temporary)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            os.fchown(stream.fileno(), desired["uid"], desired["gid"])
+            os.fchmod(stream.fileno(), desired["mode"])
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if _read(path) != expected or _read(temp) != desired:
+            raise FileTransactionBlocked("product_file_drift_before_activation")
+        os.replace(temp, path)
+        _fsync_dir(path.parent)
+        if _read(path) != desired:
+            raise FileTransactionBlocked("product_file_activation_unverified")
+    finally:
+        if temp.exists():
+            temp.unlink()
+
+
+class FileTransaction:
+    """Fixed file-operation owner for the existing retained transaction driver."""
+
+    def __init__(self, workspace, installed, target, *, transaction_id,
+                 release_sha256, checkpoint):
+        self.workspace = Path(workspace)
+        self.installed = Path(installed)
+        self.target = Path(target)
+        if (not isinstance(transaction_id, str) or
+                not re.fullmatch(r"[0-9a-f]{32}", transaction_id)
+                or not isinstance(release_sha256, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", release_sha256)
+                or not callable(checkpoint)):
+            raise FileTransactionBlocked("unbound_file_transaction")
+        # Keep live activation unavailable until the installed owner has all
+        # positive operational guarantees. Do not accept caller flags as proof.
+        root = self.workspace
+        tmp = Path(tempfile.gettempdir()).resolve(strict=True)
+        if (tmp not in root.parents or root.resolve(strict=True) != root
+                or _directory(root).st_mode & 0o077
+                or self.installed != root / "installed"
+                or self.target != root / "new-payload"
+                or (root / "fixture-owner").is_symlink()
+                or (root / "fixture-owner").read_bytes() != b"DSM928_DISPOSABLE_FIXTURE_V1\n"):
+            raise FileTransactionBlocked("installed_file_transaction_not_authorized")
+        _directory(self.installed)
+        _directory(self.target)
+        self.transaction_id = transaction_id
+        self.release_sha256 = release_sha256
+        self.checkpoint = checkpoint
+        self.journal = root / "dsm928-product-files.json"
+
+    @contextmanager
+    def _exclusive(self):
+        fd = os.open(self.workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as exc:
+                raise FileTransactionBlocked("product_file_transaction_busy") from exc
+            self.checkpoint()
+            yield
+            self.checkpoint()
+        finally:
+            os.close(fd)
+
+    def prepare(self, changed_paths):
+        if (type(changed_paths) is not list or not 1 <= len(changed_paths) <= _COUNT
+                or any(not _approved_path(x) for x in changed_paths)
+                or len(set(changed_paths)) != len(changed_paths)):
+            raise FileTransactionBlocked("invalid_compatible_file_plan")
+        with self._exclusive():
+            if os.path.lexists(self.journal):
+                raise FileTransactionBlocked("existing_product_file_transaction")
+            entries = []
+            total = 0
+            for name in sorted(changed_paths, key=lambda x: (x in _METADATA, x)):
+                old = _read(_file(self.installed, name))
+                new = _read(_file(self.target, name))
+                if old["mode"] != new["mode"]:
+                    raise FileTransactionBlocked("incompatible_product_mode_change")
+                new = {**new, "uid": old["uid"], "gid": old["gid"]}
+                if old == new:
+                    raise FileTransactionBlocked("unchanged_product_file_in_plan")
+                total += len(old["bytes"]) + len(new["bytes"])
+                if total > _TOTAL - 1048576:
+                    raise FileTransactionBlocked("file_transaction_snapshot_too_large")
+                entries.append({"path": name, "before": old, "after": new})
+            self.checkpoint()
+            _write_once(self.journal, {
+                "kind": "DSM928ProductFileTransaction", "schema_version": 1,
+                "transaction_id": self.transaction_id,
+                "release_sha256": self.release_sha256, "entries": entries,
+                "live_no_drain_authorized": False})
+
+    def _entries(self):
+        report = _read_journal(self.journal)
+        if (type(report) is not dict or report.get("kind") != "DSM928ProductFileTransaction"
+                or report.get("schema_version") != 1
+                or report.get("transaction_id") != self.transaction_id
+                or report.get("release_sha256") != self.release_sha256
+                or report.get("live_no_drain_authorized") is not False
+                or type(report.get("entries")) is not list
+                or not 1 <= len(report["entries"]) <= _COUNT):
+            raise FileTransactionBlocked("file_transaction_binding_mismatch")
+        entries = report["entries"]
+        names = [entry["path"] for entry in entries]
+        if (any(not _approved_path(x) for x in names) or len(set(names)) != len(names)):
+            raise FileTransactionBlocked("invalid_durable_product_file_plan")
+        return entries
+
+    def _transition(self, direction):
+        with self._exclusive():
+            entries = self._entries()
+            # Validate every recorded destination before touching any of them.
+            # On recovery the installed state can legitimately be mixed.
+            for entry in entries:
+                path = _file(self.installed, entry["path"])
+                if _read(path) not in (entry["before"], entry["after"]):
+                    raise FileTransactionBlocked("unexpected_product_file_state")
+            if direction == "before":
+                entries = list(reversed(entries))
+            for entry in entries:
+                self.checkpoint()
+                path = _file(self.installed, entry["path"])
+                found = _read(path)
+                if found != entry[direction]:
+                    _replace(path, entry[direction], entry[
+                        "before" if direction == "after" else "after"])
+                self.checkpoint()
+            for entry in entries:
+                if _read(_file(self.installed, entry["path"])) != entry[direction]:
+                    raise FileTransactionBlocked("product_file_transaction_not_verified")
+            return {"status": "files_applied" if direction == "after" else "files_restored",
+                    "file_count": len(entries), "live_no_drain_authorized": False}
+
+    def apply(self):
+        return self._transition("after")
+
+    def rollback(self):
+        return self._transition("before")

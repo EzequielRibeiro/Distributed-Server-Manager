@@ -87,6 +87,39 @@ class RealUpdateFunctionsFixtureTest(unittest.TestCase):
         self.assertEqual((self.original/"runtime/hybrid-agent-state/backup-index/keep.txt").read_text(), "protected")
         self.assertFalse((self.workspace/"installed.update-preserved").exists())
 
+        # The no-drain file owner must not move the installation directory
+        # or any game/runtime tree, even during compensation.
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+        loader = SourceFileLoader("dsm928_product_file_transaction_test",
+            str(ROOT / "update-manager/game-uptime-file-transaction.py"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        protected = [self.original, self.world, self.original/"data/database.txt",
+                     self.original/"runtime/hybrid-instance-storage",
+                     self.original/"config/dsm.conf"]
+        inodes = {p: p.stat().st_ino for p in protected}
+        tx = module.FileTransaction(self.workspace, self.original,
+            self.workspace/"new-payload", transaction_id="a"*32,
+            release_sha256="b"*64, checkpoint=lambda: None)
+        with self.assertRaises(module.FileTransactionBlocked):
+            tx.prepare(["version", "core/bootstrap.sh"])
+        self.assertFalse(tx.journal.exists())
+        tx.prepare(["version", "dashboard/web/presentation.js"])
+        self.assertEqual(tx.apply()["status"], "files_applied")
+        self.assertEqual((self.original/"version").read_text(), "2.0.999-fixture")
+        self.assertEqual(tx.apply()["status"], "files_applied")
+        # Recreate the driver after apply; rollback uses only durable bytes.
+        recovered = module.FileTransaction(self.workspace, self.original,
+            self.workspace/"new-payload", transaction_id="a"*32,
+            release_sha256="b"*64, checkpoint=lambda: None)
+        self.assertEqual(recovered.rollback()["status"], "files_restored")
+        self.assertEqual(recovered.rollback()["status"], "files_restored")
+        self.assertEqual((self.original/"version").read_text(), "2.0.998-fixture")
+        self.assertEqual({p: p.stat().st_ino for p in protected}, inodes)
+        self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+
     def test_actual_rollback_reports_reload_and_partial_restart_failures(self):
         scenarios = {
             "rollback_reload_failure": ("CRITICAL: rollback systemd reload failed", None),
