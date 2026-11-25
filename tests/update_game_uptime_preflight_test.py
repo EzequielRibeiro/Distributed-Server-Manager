@@ -328,6 +328,25 @@ class UpdatePreflightTest(unittest.TestCase):
                             for x in result["planned_game_actions"]))
         self.assertFalse(result["no_drain_disposable_rehearsal_candidate"])
 
+        # Installed caches and umask-induced mode drift must be visible
+        # separately from real content changes, without weakening admission.
+        self.write("dashboard/web/mode-only.css", "same", "same")
+        (self.installed / "dashboard/web/mode-only.css").chmod(0o644)
+        (self.target / "dashboard/web/mode-only.css").chmod(0o600)
+        cache = self.installed / "dashboard/__pycache__/worker.cpython-312.pyc"
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(b"generated-cache")
+        report = module.plan.analyze(self.installed, self.target)
+        counts = report["difference_counts"]
+        self.assertGreaterEqual(counts["mode_only"], 1)
+        self.assertGreaterEqual(counts["content_changed"], 1)
+        self.assertGreaterEqual(counts["removed"], 1)
+        self.assertEqual(counts["python_cache_paths"], 1)
+        self.assertEqual(sum(counts[k] for k in ("added", "removed", "content_changed", "mode_only")),
+                         report["changed_count"])
+        self.assertTrue(report["requires_game_drain"])
+        self.assertFalse(report["live_no_drain_authorized"])
+
 
     def test_operator_signed_release_review_is_read_only_and_never_authorizes(self):
         """The actual no-drain-report entrypoint must expose missing live proof."""

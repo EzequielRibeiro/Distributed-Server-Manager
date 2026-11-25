@@ -53,7 +53,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-git -C "${ROOT}" archive --format=tar --prefix="${PACKAGE_NAME}/" "${COMMIT}" | tar -xf - -C "${WORK_DIR}"
+# Preserve canonical Git file modes regardless of the caller's umask or
+# local tar.umask configuration. WORK_DIR remains private (mktemp -d).
+# Do not widen permissions on the output archive or signing keys.
+git -C "${ROOT}" -c tar.umask=0022 archive --format=tar --prefix="${PACKAGE_NAME}/" "${COMMIT}" |
+    tar --same-permissions -xf - -C "${WORK_DIR}"
 [[ -d "${PACKAGE_ROOT}" && "${PACKAGE_ROOT}" == "${WORK_DIR}/"* ]] || fail "unsafe staging directory"
 
 # Hotfix release packaging guard for updater rollback systemd rendering.
