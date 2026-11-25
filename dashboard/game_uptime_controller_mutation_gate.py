@@ -2,7 +2,9 @@
 """DSM #928: final Controller HTTP mutation admission gate, never an ACK.
 
 This is the outermost installed handler wrapper.  Under an operator-owned
-hold, new HTTP mutations fail closed before reaching child routing layers.
+hold, new HTTP requests fail closed before reaching child routing layers (except
+for the explicitly read-only Agent observation). GET and HEAD are included
+because handler implementations may perform incidental writes.
 An opt-in shared flock also tracks whole requests across Controller processes;
 it is NOT installed by the updater or enabled for live maintenance by itself.
 """
@@ -24,7 +26,7 @@ from game_uptime_controller_agent_http_flock import (
 
 # Read-only authenticated observation must remain reachable during hold.
 _READONLY_POST = frozenset({"/api/agent/no-drain/observe"})
-_MUTATION_METHODS = ("do_POST", "do_PUT", "do_PATCH", "do_DELETE")
+_MUTATION_METHODS = ("do_GET", "do_HEAD", "do_POST", "do_PUT", "do_PATCH", "do_DELETE")
 
 
 def _hold_blocks() -> bool:
