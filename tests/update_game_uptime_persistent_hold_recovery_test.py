@@ -720,7 +720,8 @@ class PersistentPendingHoldTests(unittest.TestCase):
             self.assertNotIn("ReadWritePaths=/run", unit)
         # Hybrid helpers run in independent systemd units, not in the
         # Worker process's environment. Each must opt in at its own boundary.
-        for name in ("materialize@", "native-command@", "backup-restore@", "firewall@"):
+        for name in ("materialize@", "native-command@", "backup-restore@", "firewall@",
+                     "files-access@"):
             unit = (ROOT / "systemd" /
                     ("dsm-hybrid-agent-" + name + ".service.in")).read_text()
             self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1\n", unit)
