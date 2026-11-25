@@ -613,6 +613,57 @@ def _validate_controller_agent_inventory(rows, expected_ids, hybrid_id):
     return tuple(sorted(retained.items()))
 
 
+# Only durable operation/command queues, not desired-state or policy rows.
+# Unknown statuses are deliberately nonterminal. Absence of outstanding
+# records is necessary but does NOT attest detached processes or cron jobs.
+_COMMON_TERMINAL = ("completed", "failed", "cancelled", "canceled",
+                    "succeeded", "success", "skipped", "expired",
+                    "rolled_back", "rejected", "aborted")
+_JOB_TERMINAL = {
+    name: _COMMON_TERMINAL for name in (
+        "operations", "agent_instance_commands", "agent_game_data_jobs",
+        "agent_instance_provisioning", "backup_jobs", "automation_runs",
+        "yarax_admin_operations", "instance_console_commands",
+        "instance_file_commands", "instance_resource_commands",
+        "instance_update_runs", "instance_maintenance_runs",
+        "artifact_transfers", "dayz_operations", "native_restart_commands",
+    )
+}
+_JOB_TERMINAL["notification_outbox"] = ("delivered", "failed", "cancelled")
+_JOB_TERMINAL["broadcast_deliveries"] = (*_COMMON_TERMINAL, "acknowledged")
+_JOB_TERMINAL["ha_failover_operations"] = _COMMON_TERMINAL
+
+
+def _job_inventory_sql():
+    # Identifiers and status literals come exclusively from the fixed
+    # audited schema contract above, never the database or operator input.
+    queries = []
+    for name, states in sorted(_JOB_TERMINAL.items()):
+        field = "state" if name == "ha_failover_operations" else "status"
+        terminal = ",".join("'" + value + "'" for value in states)
+        queries.append("SELECT '" + name + "' AS queue, COUNT(*) AS outstanding "
+                       "FROM public." + name + " WHERE " + field + " IS NULL OR "
+                       + field + " NOT IN (" + terminal + ")")
+    return " UNION ALL ".join(queries)
+
+
+def _validate_job_inventory(rows):
+    if type(rows) is not list or len(rows) != len(_JOB_TERMINAL):
+        raise LocalScopeLeaseBlocked("controller_job_inventory_incomplete")
+    seen = {}
+    for row in rows:
+        if (type(row) is not dict or set(row) != {"queue", "outstanding"}
+                or type(row["queue"]) is not str or row["queue"] not in _JOB_TERMINAL
+                or row["queue"] in seen or type(row["outstanding"]) is not int
+                or row["outstanding"] < 0):
+            raise LocalScopeLeaseBlocked("invalid_controller_job_inventory")
+        seen[row["queue"]] = row["outstanding"]
+    busy = [name for name, count in sorted(seen.items()) if count]
+    if busy:
+        raise LocalScopeLeaseBlocked("controller_jobs_not_terminal:" + ",".join(busy))
+    return tuple(sorted(seen.items()))
+
+
 def _read_installed_controller_agents(expected_ids, hybrid_id):
     """Query the actual installed PostgreSQL Controller under its service UID.
 
@@ -684,13 +735,15 @@ if backend.name != "postgresql":
     raise SystemExit(2)
 with backend.connect() as connection:
     with connection.transaction():
-        connection.execute("SET TRANSACTION READ ONLY")
+        connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         connection.execute("SET LOCAL statement_timeout = '5s'")
         rows = connection.execute(sys.argv[1]).fetchall()
-        print(json.dumps([dict(row) for row in rows], separators=(",", ":")))
+        jobs = connection.execute(sys.argv[2]).fetchall()
+        print(json.dumps({"agents": [dict(row) for row in rows],
+                          "jobs": [dict(row) for row in jobs]}, separators=(",", ":")))
 """
         result = subprocess.run(
-            ("/usr/bin/python3", "-I", "-B", "-c", reader, sql),
+            ("/usr/bin/python3", "-I", "-B", "-c", reader, sql, _job_inventory_sql()),
             user=uid, group=gid, extra_groups=groups,
             env=env, cwd="/", stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -698,8 +751,13 @@ with backend.connect() as connection:
         if (result.returncode != 0 or len(result.stdout) > 1048576
                 or identity._controller_identity() != before):
             raise ValueError("controller inventory observation failed")
-        return _validate_controller_agent_inventory(json.loads(result.stdout),
-                                                    expected_ids, hybrid_id)
+        observed = json.loads(result.stdout)
+        if type(observed) is not dict or set(observed) != {"agents", "jobs"}:
+            raise ValueError("controller inventory contract invalid")
+        agents = _validate_controller_agent_inventory(observed["agents"],
+                                                       expected_ids, hybrid_id)
+        jobs = _validate_job_inventory(observed["jobs"])
+        return (agents, jobs)
     except LocalScopeLeaseBlocked:
         raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
@@ -864,6 +922,7 @@ def retain_installed_distributed_scopes(
                        "local_hybrid_agent_id": local_hybrid_agent_id,
                        "retained_remote_agent_ids": remote["prepared_agent_ids"],
                        "controller_registry_inventory_matched": True,
+                       "known_database_job_queues_terminal": True,
                        "checkpoint": checkpoint,
                        "finalize_terminal": finalize_terminal,
                        "all_mutators_fenced": False,

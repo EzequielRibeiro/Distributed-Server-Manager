@@ -590,6 +590,18 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
             with self.assertRaises(scope.LocalScopeLeaseBlocked):
                 scope._validate_controller_agent_inventory(
                     [*rows[:2], {**rows[2], **change}], ["hybrid", "vps"], "hybrid")
+        queues = [{"queue": name, "outstanding": 0}
+                  for name in sorted(scope._JOB_TERMINAL)]
+        self.assertEqual(len(scope._validate_job_inventory(queues)), len(queues))
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._validate_job_inventory(queues[:-1])
+        for name in ("instance_update_runs", "backup_jobs", "instance_file_commands",
+                     "native_restart_commands", "ha_failover_operations"):
+            busy = [{**row, "outstanding": int(row["queue"] == name)} for row in queues]
+            with self.assertRaisesRegex(scope.LocalScopeLeaseBlocked, name):
+                scope._validate_job_inventory(busy)
+        self.assertIn("FROM public.ha_failover_operations WHERE state IS NULL",
+                      scope._job_inventory_sql())
 
 
 if __name__ == "__main__":
