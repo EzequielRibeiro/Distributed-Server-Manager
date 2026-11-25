@@ -312,6 +312,46 @@ def _require_idle_managed_systemd_work(jobs, units):
             raise HoldPreparationBlocked("independent_agent_systemd_work_pending:" + unit[:191])
 
 
+def _check_external_cron_inventory():
+    """Reject visible DSM cron entries; never infer a global external ACK.
+
+    Root-owned installed coordinator only. Unknown or unreadable inventory
+    fails closed. Unrelated operating-system schedules are not modified.
+    """
+    pattern = re.compile(r"capivara|/opt/dsm(?:/|\\b)|(?:^|[\\s/])dsm[-_]", re.I)
+    paths = [Path("/etc/crontab"), Path("/etc/anacrontab")]
+    for directory in (Path("/etc/cron.d"), Path("/etc/cron.hourly"),
+                      Path("/etc/cron.daily"), Path("/etc/cron.weekly"),
+                      Path("/etc/cron.monthly"), Path("/var/spool/cron/crontabs")):
+        try:
+            paths.extend(sorted(directory.iterdir()))
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise HoldPreparationBlocked("external_cron_inventory_unavailable") from exc
+    for path in paths:
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            if path in (Path("/etc/crontab"), Path("/etc/anacrontab")):
+                continue
+            raise HoldPreparationBlocked("external_cron_inventory_changed")
+        if not stat.S_ISREG(info.st_mode) or info.st_size > 1048576:
+            raise HoldPreparationBlocked("external_cron_inventory_untrusted")
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(1048577)
+            if len(raw) > 1048576:
+                raise HoldPreparationBlocked("external_cron_inventory_untrusted")
+            lines = raw.decode("utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise HoldPreparationBlocked("external_cron_inventory_unavailable") from exc
+        if pattern.search(path.name) or any(
+                pattern.search(line) for line in lines
+                if line.strip() and not line.lstrip().startswith("#")):
+            raise HoldPreparationBlocked("managed_external_cron_requires_review")
+
+
 def _check_installed_systemd_work():
     def systemctl(*args):
         result = subprocess.run(
@@ -334,8 +374,10 @@ def _check_installed_systemd_work():
 
     # Both observations must be clean; a queued action can move from the
     # job inventory into an active helper between the two systemd queries.
+    _check_external_cron_inventory()
     _require_idle_managed_systemd_work(jobs(), units())
     _require_idle_managed_systemd_work(jobs(), units())
+    _check_external_cron_inventory()
 
 
 def _game_inventory(raw):
