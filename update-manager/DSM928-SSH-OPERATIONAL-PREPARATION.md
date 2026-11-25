@@ -61,3 +61,19 @@ partition and retains the local and remote fences together. It is not an
 operator entrypoint: do not invoke it to apply a release. Actual daemon
 coverage, external-job fencing, production apply and installed terminal
 release remain unverified. Keep no-drain blocked.
+
+## Remaining operational admission boundary
+
+A green CI is not permission to install or execute the no-drain updater.
+The installed owner is intentionally blocked: the read-only operational
+review cannot emit positive retained ACKs, and the installed distributed
+scope has not yet attested every external mutator. Do not flip those flags
+or manufacture receipts to bypass the gate. The existing signature was for
+an earlier candidate, not the current HEAD. The first fence-aware release
+changes systemd/Agent/updater code and may require separately approved
+maintenance; never fall back to a draining update automatically.
+
+The original Controller/Worker/alert identity and registry/queue inventory
+are now bound to the same transaction across reconnects. A missing or changed
+witness blocks recovery. This is additional evidence, not proof of live
+coverage, expiry/reboot recovery, or Python control-plane restart compatibility.

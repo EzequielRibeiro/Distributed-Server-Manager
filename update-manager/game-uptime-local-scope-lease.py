@@ -807,6 +807,25 @@ with backend.connect() as connection:
         raise LocalScopeLeaseBlocked("controller_agent_inventory_unverified") from exc
 
 
+def _daemon_witness_payload(scope, inventory):
+    """Bind the original inventory (including daemon PIDs) to this lease.
+
+    Store a digest rather than potentially thousands of registry rows.
+    Reconnection must compare to the original immutable receipt, not
+    establish a fresh baseline after losing the session.
+    """
+    raw = json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"kind": "DSM928InstalledDaemonInventoryWitness", "schema_version": 1,
+            **scope, "inventory_sha256": hashlib.sha256(raw).hexdigest(),
+            "live_no_drain_authorized": False}
+
+
+def _check_daemon_witness(raw, payload):
+    expected = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    if raw != expected:
+        raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
+
+
 @contextmanager
 def retain_installed_distributed_scopes(
     *, transaction_id: str, release_sha256: str,
@@ -876,8 +895,40 @@ def retain_installed_distributed_scopes(
         else:
             options.update(prepare_fresh_installed=True,
                            expected_installed_agent_ids=expected_agent_ids)
+        witness_path = PENDING_PATH.parent / ("daemon-witness-" + transaction_id + ".json")
+        daemon_payload = _daemon_witness_payload({
+            "transaction_id": transaction_id, "release_sha256": release_sha256,
+            "issued_at": issued_at, "expires_at": expires_at,
+            "expected_agent_ids": sorted(expected_agent_ids),
+            "local_hybrid_agent_id": local_hybrid_agent_id,
+            "controller_uid": expected_controller_uid,
+        }, initial_inventory)
+        if recover_existing:
+            # Read-only comparison before reacquiring any holds. Missing,
+            # changed or noncanonical evidence must not be recreated.
+            _check_daemon_witness(_root_file(witness_path, 32768), daemon_payload)
+        elif os.path.lexists(witness_path):
+            raise LocalScopeLeaseBlocked("existing_daemon_inventory_witness_requires_review")
+
+        def daemon_checkpoint():
+            if _read_installed_controller_agents(
+                    expected_agent_ids, local_hybrid_agent_id,
+                    expected_uid=expected_controller_uid) != initial_inventory:
+                raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
+            _check_daemon_witness(_root_file(witness_path, 32768), daemon_payload)
+
         initial_games = _installed_game_snapshot()
         with retain_local_scopes(**options) as local:
+            local["checkpoint"]()
+            if not recover_existing:
+                if os.path.lexists(witness_path):
+                    raise LocalScopeLeaseBlocked("existing_daemon_inventory_witness_requires_review")
+                if _read_installed_controller_agents(
+                        expected_agent_ids, local_hybrid_agent_id,
+                        expected_uid=expected_controller_uid) != initial_inventory:
+                    raise LocalScopeLeaseBlocked("controller_agent_inventory_changed_before_binding")
+                _persist_terminal_receipt(witness_path, daemon_payload, 0)
+            daemon_checkpoint()
             game_checkpoint = _retain_installed_game_witness(
                 pending=PENDING_PATH, transaction_id=transaction_id,
                 release_sha256=release_sha256, agent_id=local_hybrid_agent_id,
@@ -893,10 +944,7 @@ def retain_installed_distributed_scopes(
                     local["checkpoint"]()
                     game_checkpoint()
                     remote["checkpoint"]()
-                    if _read_installed_controller_agents(
-                            expected_agent_ids, local_hybrid_agent_id,
-                            expected_uid=expected_controller_uid) != initial_inventory:
-                        raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
+                    daemon_checkpoint()
                     local["checkpoint"]()
                     remote["checkpoint"]()
                 released = False
@@ -953,6 +1001,7 @@ def retain_installed_distributed_scopes(
                     # release receipts and the original local game witness.
                     local["checkpoint"]()
                     game_checkpoint()
+                    daemon_checkpoint()
                     result = local["release_installed"](confirmation, decision, local_hybrid_agent_id)
                     if result.get("installed_hold_released") is not True:
                         raise LocalScopeLeaseBlocked("installed_local_release_incomplete")

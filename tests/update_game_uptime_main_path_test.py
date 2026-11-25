@@ -625,6 +625,27 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
         with self.assertRaises(scope.LocalScopeLeaseBlocked):
             scope._stable_daemon_inventory(controller, workers, alert, 1001)
 
+        # A reconnect cannot adopt a replacement daemon or a different
+        # lease as its new baseline, even if all current queues are empty.
+        witness_scope = {"transaction_id": "a"*32, "release_sha256": "b"*64,
+                         "issued_at": 1700000000, "expires_at": 1700000900,
+                         "expected_agent_ids": ["hybrid", "vps"],
+                         "local_hybrid_agent_id": "hybrid", "controller_uid": 1000}
+        inventory = (("hybrid", "vps"), tuple((x["queue"], 0) for x in queues), original)
+        receipt = scope._daemon_witness_payload(witness_scope, inventory)
+        raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        scope._check_daemon_witness(raw, receipt)
+        changed = scope._stable_daemon_inventory(
+            controller, workers, {**alert, "pid": 401}, 1000)
+        for invalid in (
+            scope._daemon_witness_payload(witness_scope, (*inventory[:2], changed)),
+            scope._daemon_witness_payload({**witness_scope, "expires_at": 1700000800}, inventory),
+        ):
+            with self.assertRaises(scope.LocalScopeLeaseBlocked):
+                scope._check_daemon_witness(raw, invalid)
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._check_daemon_witness(b"", receipt)
+
         # Auxiliary alert cycles must share the existing Controller barrier,
         # including the initialize/cursor mutations at the start of a cycle.
         import os
