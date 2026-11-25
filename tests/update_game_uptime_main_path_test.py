@@ -603,6 +603,28 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
         self.assertIn("FROM public.ha_failover_operations WHERE state IS NULL",
                       scope._job_inventory_sql())
 
+        controller = {"identity_verified": True, "flock_opted_in_verified": True,
+                      "pid": 200, "start_ticks": 500}
+        workers = {"supervisor_verified": True, "all_nine_workers_verified": True,
+                   "observed_worker_count": len(scope.WORKERS),
+                   "supervisor_identity": {"pid": 300, "start_ticks": 600},
+                   "worker_identities": {
+                       name: {"pid": 301+i, "start_ticks": 601+i}
+                       for i, name in enumerate(scope.WORKERS)}}
+        alert = {"pid": 400, "start_ticks": 700, "uid": 1000}
+        original = scope._stable_daemon_inventory(controller, workers, alert, 1000)
+        self.assertEqual(len(original), 12)
+        self.assertNotEqual(original, scope._stable_daemon_inventory(
+            {**controller, "start_ticks": 501}, workers, alert, 1000))
+        self.assertNotEqual(original, scope._stable_daemon_inventory(
+            controller, workers, {**alert, "pid": 401}, 1000))
+        for bad in ({**workers, "observed_worker_count": 8},
+                    {**workers, "supervisor_identity": {"pid": 200, "start_ticks": 600}}):
+            with self.assertRaises(scope.LocalScopeLeaseBlocked):
+                scope._stable_daemon_inventory(controller, bad, alert, 1000)
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._stable_daemon_inventory(controller, workers, alert, 1001)
+
         # Auxiliary alert cycles must share the existing Controller barrier,
         # including the initialize/cursor mutations at the start of a cycle.
         import os

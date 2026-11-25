@@ -664,7 +664,36 @@ def _validate_job_inventory(rows):
     return tuple(sorted(seen.items()))
 
 
-def _read_installed_controller_agents(expected_ids, hybrid_id):
+def _stable_daemon_inventory(controller, workers, alert, expected_uid):
+    """Immutable identity witness, NOT permission to update.
+
+    Include the complete Controller/Worker/alert group in every retained
+    checkpoint. Equal Agent registry rows cannot hide a daemon restart.
+    """
+    if (type(expected_uid) is not int or expected_uid <= 0
+            or controller.get("identity_verified") is not True
+            or controller.get("flock_opted_in_verified") is not True
+            or workers.get("supervisor_verified") is not True
+            or workers.get("all_nine_workers_verified") is not True
+            or workers.get("observed_worker_count") != len(WORKERS)
+            or type(workers.get("worker_identities")) is not dict
+            or set(workers["worker_identities"]) != set(WORKERS)
+            or alert.get("uid") != expected_uid):
+        raise LocalScopeLeaseBlocked("installed_daemon_inventory_incomplete")
+    entries = {"controller": controller, "worker_supervisor": workers.get("supervisor_identity"),
+               "alert_engine": alert, **workers["worker_identities"]}
+    if any(type(item) is not dict
+           or type(item.get("pid")) is not int or item["pid"] <= 1
+           or type(item.get("start_ticks")) is not int or item["start_ticks"] <= 0
+           for item in entries.values()):
+        raise LocalScopeLeaseBlocked("installed_daemon_process_witness_invalid")
+    if len({item["pid"] for item in entries.values()}) != len(entries):
+        raise LocalScopeLeaseBlocked("installed_daemon_process_witness_duplicate")
+    return tuple(sorted((name, item["pid"], item["start_ticks"])
+                        for name, item in entries.items()))
+
+
+def _read_installed_controller_agents(expected_ids, hybrid_id, *, expected_uid):
     """Query the actual installed PostgreSQL Controller under its service UID.
 
     Never import the mutable installed database package into the root
@@ -691,9 +720,11 @@ def _read_installed_controller_agents(expected_ids, hybrid_id):
         if len(uids) != 4 or len(gids) != 4 or len(set(uids)) != 1 or len(set(gids)) != 1:
             raise ValueError("unexpected service credentials")
         uid, gid = int(uids[0]), int(gids[0])
-        if uid <= 0 or gid <= 0:
-            raise ValueError("privileged controller identity")
+        if uid <= 0 or gid <= 0 or uid != expected_uid:
+            raise ValueError("controller service account mismatch")
         alert_before = identity._alert_engine_identity(expected_uid=uid)
+        daemon_before = _stable_daemon_inventory(
+            before, identity._workers_identity(), alert_before, expected_uid)
         groups = [int(x) for x in status["Groups"].split()]
         if 0 in groups:
             raise ValueError("privileged controller group")
@@ -719,12 +750,12 @@ def _read_installed_controller_agents(expected_ids, hybrid_id):
         # counts include every Agent, including retired registrations.
         sql = """
 SELECT a.id, a.status, n.role,
-       (SELECT COUNT(*) FROM instances i WHERE i.node_id=a.node_id) AS instances,
-       (SELECT COUNT(*) FROM agent_credentials c WHERE c.agent_id=a.id
+       (SELECT COUNT(*) FROM public.instances i WHERE i.node_id=a.node_id) AS instances,
+       (SELECT COUNT(*) FROM public.agent_credentials c WHERE c.agent_id=a.id
           AND c.status='active') AS credentials,
-       (SELECT COUNT(*) FROM agent_instance_commands j WHERE j.agent_id=a.id
+       (SELECT COUNT(*) FROM public.agent_instance_commands j WHERE j.agent_id=a.id
           AND j.status IN ('queued','delivered')) AS commands
-FROM agents a LEFT JOIN nodes n ON n.id=a.node_id
+FROM public.agents a LEFT JOIN public.nodes n ON n.id=a.node_id
 ORDER BY a.id LIMIT 4097
 """
         reader = """
@@ -759,7 +790,17 @@ with backend.connect() as connection:
         agents = _validate_controller_agent_inventory(observed["agents"],
                                                        expected_ids, hybrid_id)
         jobs = _validate_job_inventory(observed["jobs"])
-        return (agents, jobs, alert_before)
+        daemon_after = _stable_daemon_inventory(
+            identity._controller_identity(), identity._workers_identity(),
+            identity._alert_engine_identity(expected_uid=uid), expected_uid)
+        if daemon_before != daemon_after:
+            raise LocalScopeLeaseBlocked("installed_daemon_identity_changed")
+        # Preserve exact registry counts as well as the partition. A change
+        # in instances/credentials is evidence drift even if IDs are unchanged.
+        registry = tuple(sorted((row["id"], row["status"], row["role"],
+                                 row["instances"], row["credentials"], row["commands"])
+                                for row in observed["agents"]))
+        return (agents, jobs, daemon_before, registry)
     except LocalScopeLeaseBlocked:
         raise
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
@@ -810,8 +851,11 @@ def retain_installed_distributed_scopes(
             _root_directory(folder)
         if _root_file(LOCAL_ID, 192) != (local_hybrid_agent_id + "\n").encode("ascii"):
             raise LocalScopeLeaseBlocked("pinned_local_hybrid_identity_mismatch")
+        if expected_worker_uid != expected_controller_uid:
+            raise LocalScopeLeaseBlocked("installed_controller_worker_account_mismatch")
         initial_inventory = _read_installed_controller_agents(
-            expected_agent_ids, local_hybrid_agent_id)
+            expected_agent_ids, local_hybrid_agent_id,
+            expected_uid=expected_controller_uid)
         remote_ids = sorted(item for item in expected_agent_ids
                             if item != local_hybrid_agent_id)
         _endpoint_inventory(_root_file(ENDPOINTS, 65536), remote_ids)
@@ -850,7 +894,8 @@ def retain_installed_distributed_scopes(
                     game_checkpoint()
                     remote["checkpoint"]()
                     if _read_installed_controller_agents(
-                            expected_agent_ids, local_hybrid_agent_id) != initial_inventory:
+                            expected_agent_ids, local_hybrid_agent_id,
+                            expected_uid=expected_controller_uid) != initial_inventory:
                         raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
                     local["checkpoint"]()
                     remote["checkpoint"]()
