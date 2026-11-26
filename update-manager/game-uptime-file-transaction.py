@@ -339,7 +339,41 @@ class FileTransaction:
         finally:
             os.close(fd)
 
-    def prepare(self, changed_paths):
+    def prepare_control_plane(self, plan):
+        """Prepare a restart candidate in a disposable workspace only.
+
+        The ordinary installed admission is unchanged. This entry point
+        validates the exact diagnostic plan and reuses the durable file
+        journal; it does not restart services or claim runtime compatibility.
+        """
+        if self.installed_execution:
+            raise FileTransactionBlocked("control_plane_restart_fixture_only")
+        if (type(plan) is not dict
+                or plan.get("status") != "restart_candidate_review_only"
+                or plan.get("live_no_drain_authorized") is not False
+                or plan.get("blocking_path_count") != 0
+                or plan.get("blocking_paths") != []):
+            raise FileTransactionBlocked("invalid_control_plane_restart_plan")
+        paths = plan.get("changed_paths")
+        if (type(paths) is not list or not 1 <= len(paths) <= _COUNT
+                or any(not _approved_path(name) for name in paths)
+                or len(set(paths)) != len(paths)):
+            raise FileTransactionBlocked("invalid_control_plane_restart_paths")
+        python_paths = []
+        for name in paths:
+            if ("game_uptime" in name or "maintenance_hold" in name):
+                raise FileTransactionBlocked("control_plane_fence_change_forbidden")
+            if name.startswith("dashboard/") and name.endswith(".py"):
+                python_paths.append(name)
+            elif not (name in _METADATA or
+                      (name.startswith("dashboard/web/") and
+                       Path(name).suffix.lower() in _SUFFIXES - {".py"})):
+                raise FileTransactionBlocked("outside_control_plane_restart_scope")
+        if not python_paths or len(python_paths) != plan.get("candidate_python_file_count"):
+            raise FileTransactionBlocked("control_plane_candidate_count_mismatch")
+        self.prepare(paths, _validate_python=True)
+
+    def prepare(self, changed_paths, *, _validate_python=False):
         if (type(changed_paths) is not list or not 1 <= len(changed_paths) <= _COUNT
                 or any(not _approved_path(x) for x in changed_paths)
                 or len(set(changed_paths)) != len(changed_paths)):
@@ -352,6 +386,13 @@ class FileTransaction:
             for name in sorted(changed_paths, key=lambda x: (x in _METADATA, x)):
                 old = self._installed_read(name)
                 new = _read(_file(self.target, name))
+                if _validate_python and name.endswith(".py"):
+                    try:
+                        for item in (old, new):
+                            compile(base64.b64decode(item["bytes"], validate=True),
+                                    name, "exec", dont_inherit=True)
+                    except (SyntaxError, ValueError) as exc:
+                        raise FileTransactionBlocked("control_plane_python_syntax_invalid") from exc
                 if old["mode"] != new["mode"]:
                     raise FileTransactionBlocked("incompatible_product_mode_change")
                 new = {**new, "uid": old["uid"], "gid": old["gid"]}
