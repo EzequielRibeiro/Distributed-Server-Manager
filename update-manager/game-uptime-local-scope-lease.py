@@ -1127,6 +1127,46 @@ def retain_installed_distributed_scopes(
                     _check_installed_systemd_work()
                     daemon_checkpoint()
                     retained_fence_checkpoint()
+                def record_observed_restart():
+                    """Record a replacement under retained fences; never initiate it.
+
+                    This is an internal evidence operation, not restart admission.
+                    A failed or partial replacement leaves the scope blocked.
+                    """
+                    nonlocal initial_inventory, recovery_evidence, original_evidence
+                    retained_fence_checkpoint()
+                    _check_installed_systemd_work()
+                    raw = _root_file(witness_path, 32768)
+                    if read_restart_evidence() != recovery_evidence:
+                        raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
+                    if recovery_evidence:
+                        if raw != original_evidence:
+                            raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
+                        _validate_restart_receipt_chain(
+                            raw, recovery_evidence, witness_scope, initial_inventory)
+                    else:
+                        _check_daemon_witness(raw, daemon_payload)
+                    if len(recovery_evidence) >= 2:
+                        raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
+                    after = _read_installed_controller_agents(
+                        expected_agent_ids, local_hybrid_agent_id,
+                        expected_uid=expected_controller_uid)
+                    _persist_restart_transition(
+                        witness_scope, initial_inventory, after,
+                        sequence=len(recovery_evidence) + 1,
+                        root_file=_root_file, persist_receipt=_persist_terminal_receipt,
+                        fence_checkpoint=retained_fence_checkpoint)
+                    receipts = read_restart_evidence()
+                    if len(receipts) != len(recovery_evidence) + 1 or receipts[:-1] != recovery_evidence:
+                        raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
+                    _validate_restart_receipt_chain(raw, receipts, witness_scope, after)
+                    original_evidence = raw
+                    recovery_evidence = receipts
+                    initial_inventory = after
+                    checkpoint()
+                    return {"status": "restart_transition_recorded",
+                            "sequence": len(receipts), "live_no_drain_authorized": False}
+
                 released = False
 
                 def finalize_terminal(journal_sha256):
@@ -1202,6 +1242,7 @@ def retain_installed_distributed_scopes(
                        "known_database_job_queues_terminal": True,
                        "checkpoint": checkpoint,
                        "finalize_terminal": finalize_terminal,
+                       "record_observed_restart": record_observed_restart,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
                        "live_no_drain_authorized": False}
