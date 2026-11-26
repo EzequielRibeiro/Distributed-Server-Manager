@@ -1048,11 +1048,30 @@ def retain_installed_distributed_scopes(
             "local_hybrid_agent_id": local_hybrid_agent_id,
             "controller_uid": expected_controller_uid,
         }, initial_inventory)
+        restart_paths = tuple(PENDING_PATH.parent /
+                              ("daemon-restart-" + transaction_id + "-" + str(n) + ".json")
+                              for n in (1, 2))
+        witness_scope = {key: value for key, value in daemon_payload.items()
+                         if key not in ("kind", "schema_version", "inventory_sha256",
+                                        "live_no_drain_authorized")}
+
+        def read_restart_evidence():
+            present = tuple(os.path.lexists(path) for path in restart_paths)
+            if present == (False, True):
+                raise LocalScopeLeaseBlocked("restart_receipt_sequence_gap")
+            return tuple(_root_file(path, 32768)
+                         for path, exists in zip(restart_paths, present) if exists)
+
+        recovery_evidence = read_restart_evidence()
+        original_evidence = None
         if recover_existing:
-            # Read-only comparison before reacquiring any holds. Missing,
-            # changed or noncanonical evidence must not be recreated.
-            _check_daemon_witness(_root_file(witness_path, 32768), daemon_payload)
-        elif os.path.lexists(witness_path):
+            original_evidence = _root_file(witness_path, 32768)
+            if recovery_evidence:
+                _validate_restart_receipt_chain(
+                    original_evidence, recovery_evidence, witness_scope, initial_inventory)
+            else:
+                _check_daemon_witness(original_evidence, daemon_payload)
+        elif os.path.lexists(witness_path) or recovery_evidence:
             raise LocalScopeLeaseBlocked("existing_daemon_inventory_witness_requires_review")
 
         def daemon_checkpoint():
@@ -1060,7 +1079,16 @@ def retain_installed_distributed_scopes(
                     expected_agent_ids, local_hybrid_agent_id,
                     expected_uid=expected_controller_uid) != initial_inventory:
                 raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
-            _check_daemon_witness(_root_file(witness_path, 32768), daemon_payload)
+            raw = _root_file(witness_path, 32768)
+            receipts = read_restart_evidence()
+            if receipts != recovery_evidence:
+                raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
+            if recover_existing and raw != original_evidence:
+                raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
+            if receipts:
+                _validate_restart_receipt_chain(raw, receipts, witness_scope, initial_inventory)
+            else:
+                _check_daemon_witness(raw, daemon_payload)
 
         _check_installed_systemd_work()
         initial_games = _installed_game_snapshot()
