@@ -119,6 +119,60 @@ class UpdatePreflightTest(unittest.TestCase):
         with self.assertRaises(installed_owner.InstalledTransactionBlocked):
             installed_owner.recover(tx)
 
+    def test_installed_restart_selection_and_terminal_receipts_stay_guarded(self):
+        from unittest.mock import Mock
+        owner = module._load("dsm928_installed_restart_contract_test",
+                             "game-uptime-installed-transaction.py")
+        self.write("dashboard/workers/worker.py", "x = 1", "x = 2")
+        self.write("version", "2.0.133-rc.6", "2.0.133-rc.7")
+        impact = module.plan.analyze(self.installed, self.target)
+        report = {"release_impact": impact, "operational_release_review": {
+            "artifact_origin_verified": True, "target_tree_bound_to_signed_tar": True,
+            "verified_archive_sha256": "b"*64}}
+        digest, paths, restart = owner._select_candidate(report)
+        self.assertEqual(digest, "b"*64)
+        self.assertEqual(set(paths), {"dashboard/workers/worker.py", "version"})
+        self.assertTrue(restart)
+        with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
+                                    "restart_service_ownership_unverified"):
+            owner._validate_plan(report)
+        bad = {**impact, "fixed_file_transaction_plan": {
+            **impact["fixed_file_transaction_plan"], "bootstrap_installation_required": True}}
+        with self.assertRaises(owner.InstalledTransactionBlocked):
+            owner._select_candidate({**report, "release_impact": bad})
+
+        # Pure orchestration fixture: no installed admission, systemd, or game
+        # operation is exercised by these mocked callbacks.
+        engine = Mock()
+        scope = {"all_mutators_fenced": False, "external_jobs_acked": False,
+                 "checkpoint": Mock()}
+        with self.assertRaises(owner.InstalledTransactionBlocked):
+            owner._execute_file_transaction(engine, scope, restart_required=True)
+        engine.apply.assert_not_called()
+        count = [0]
+        def restart_once():
+            count[0] += 1
+            return {"status": "restart_transition_recorded", "sequence": count[0],
+                    "live_no_drain_authorized": False}
+        scope.update(all_mutators_fenced=True, external_jobs_acked=True,
+                     restart_receipt_count=lambda: count[0],
+                     restart_control_plane=restart_once)
+        self.assertEqual(owner._execute_file_transaction(engine, scope, restart_required=True),
+                         "verified")
+        self.assertEqual(count[0], 1)
+        engine.rollback.assert_not_called()
+        with self.assertRaises(owner.InstalledTransactionBlocked):
+            owner._verify_terminal_restart(scope, False, "verified")
+        count[0] = 0
+        engine.reset_mock()
+        engine.verify_terminal.side_effect = [RuntimeError("failed verification"), None]
+        self.assertEqual(owner._execute_file_transaction(engine, scope, restart_required=True),
+                         "rolled_back")
+        self.assertEqual(count[0], 2)
+        engine.rollback.assert_called_once()
+        with self.assertRaises(owner.InstalledTransactionBlocked):
+            owner._verify_terminal_restart(scope, True, "verified")
+
     def test_bad_inventory_fails_closed(self):
         self.write("dashboard/web/style.css","old","new")
         state=module.preflight(self.installed,self.target,list_units=lambda:["invalid.service"])

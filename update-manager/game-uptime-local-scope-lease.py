@@ -1243,6 +1243,10 @@ def retain_installed_distributed_scopes(
 
                 released = False
 
+                def restart_receipt_count():
+                    checkpoint()
+                    return len(recovery_evidence)
+
                 def finalize_terminal(journal_sha256):
                     """Internal finalization only, never an update admission.
 
@@ -1317,6 +1321,7 @@ def retain_installed_distributed_scopes(
                        "checkpoint": checkpoint,
                        "finalize_terminal": finalize_terminal,
                        "restart_control_plane": restart_control_plane,
+                       "restart_receipt_count": restart_receipt_count,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
                        "live_no_drain_authorized": False}

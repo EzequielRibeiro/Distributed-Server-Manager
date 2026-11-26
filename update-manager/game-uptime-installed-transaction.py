@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Installed #928 execution owner. No game/service/database operations.
+"""Installed #928 execution owner. Never drains games or migrates databases.
 
-Initial admission remains fail-closed: the existing operational review and
-retained scope do not yet positively attest all mutators and external jobs.
-The fixed file transaction is intentionally limited to restart-free static
-web assets and release metadata. Python/control-plane restarts are not
-silently treated as compatible. No caller-provided approval booleans.
+Both bounded file modes share the retained transaction and recovery owner.
+Restart candidates require separate ownership and rollback evidence.
+The existing operational review and retained scope still do not attest
+all mutators and external jobs; no caller-provided approval booleans.
 """
 from __future__ import annotations
 import hashlib
@@ -129,49 +128,95 @@ def _validate_restart_candidate(report):
                   or (p.startswith("dashboard/web/") and Path(p).suffix.lower() in
                       (".css", ".js", ".html", ".htm", ".svg", ".png", ".ico", ".woff", ".woff2", ".map"))):
             raise InstalledTransactionBlocked("unsupported_restart_candidate_path")
+    fixed = (report.get("release_impact") or {}).get("fixed_file_transaction_plan") or {}
+    fixed_paths = fixed.get("changed_paths")
     if (len(set(paths)) != len(paths) or not python_count
-            or python_count != plan.get("candidate_python_file_count")):
+            or python_count != plan.get("candidate_python_file_count")
+            or fixed.get("status") != "compatible_file_plan_only"
+            or fixed.get("bootstrap_installation_required") is not False
+            or fixed.get("blockers") != []
+            or type(fixed_paths) is not list
+            or any(type(p) is not str for p in fixed_paths)
+            or len(fixed_paths) != len(paths)
+            or set(fixed_paths) != set(paths)
+            or fixed.get("file_count") != len(paths)):
         raise InstalledTransactionBlocked("restart_candidate_inventory_mismatch")
     return digest, paths
 
 
-def _validate_plan(report):
+def _select_candidate(report):
+    impact = report.get("release_impact") or {}
+    if (impact.get("control_plane_restart_plan") or {}).get("status") == "restart_candidate_review_only":
+        digest, paths = _validate_restart_candidate(report)
+        return digest, paths, True
     digest, paths = _validate_static_plan(report)
+    return digest, paths, False
+
+
+def _validate_plan(report):
+    digest, paths, restart_required = _select_candidate(report)
     review = report.get("operational_release_review") or {}
     blockers = list((report.get("operational_execution_boundary") or {}).get("blockers", []))
     if not all(review.get(key) is True for key in (
             "operational_guarantees_complete", "operational_quiescence_acked",
             "external_jobs_acked", "durable_cross_host_recovery_verified")):
         blockers.append("positive_operational_admission_missing")
+    if restart_required:
+        plan = report["release_impact"]["control_plane_restart_plan"]
+        if plan.get("service_ownership_verified") is not True:
+            blockers.append("restart_service_ownership_unverified")
+        if plan.get("restart_rollback_verified") is not True:
+            blockers.append("restart_rollback_unverified")
     if blockers:
         raise InstalledTransactionBlocked(";".join(sorted(set(blockers))))
-    return digest, paths
+    return digest, paths, restart_required
+
+
+def _restart_count(scope):
+    count = scope["restart_receipt_count"]()
+    if type(count) is not int or count not in (0, 1, 2):
+        raise InstalledTransactionBlocked("invalid_retained_restart_count")
+    return count
+
+
+def _restart_verified(scope):
+    before = _restart_count(scope)
+    restart = scope.get("restart_control_plane")
+    if before >= 2 or not callable(restart):
+        raise InstalledTransactionBlocked("retained_restart_owner_missing_or_exhausted")
+    result = restart()
+    if (type(result) is not dict
+            or result.get("status") != "restart_transition_recorded"
+            or result.get("live_no_drain_authorized") is not False
+            or result.get("sequence") != before + 1
+            or _restart_count(scope) != before + 1):
+        raise InstalledTransactionBlocked("restart_transition_not_verified")
+
+
+def _verify_terminal_restart(scope, restart_required, outcome):
+    count = _restart_count(scope)
+    allowed = (0,) if not restart_required else (
+        (1,) if outcome == "verified" else (1, 2))
+    if count not in allowed:
+        raise InstalledTransactionBlocked("terminal_restart_receipts_mismatch")
 
 
 def _execute_file_transaction(engine, scope, *, restart_required=False):
-    """Shared application/rollback orchestration under retained admission.
-
-    Restart candidates remain excluded by installed plan admission until
-    service ownership and operational coverage are independently proven.
-    """
+    """Shared application/rollback orchestration under retained admission."""
     if (scope.get("all_mutators_fenced") is not True
             or scope.get("external_jobs_acked") is not True):
         raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
-    restart = scope.get("restart_control_plane") if restart_required else None
-    if restart_required and not callable(restart):
+    if _restart_count(scope) != 0:
+        raise InstalledTransactionBlocked("fresh_transaction_has_restart_receipts")
+    if restart_required and not callable(scope.get("restart_control_plane")):
         raise InstalledTransactionBlocked("retained_restart_owner_missing")
-    def verify_restart():
-        result = restart()
-        if (type(result) is not dict
-                or result.get("status") != "restart_transition_recorded"
-                or result.get("live_no_drain_authorized") is not False):
-            raise InstalledTransactionBlocked("restart_transition_not_verified")
     scope["checkpoint"]()
     try:
         engine.apply()
         if restart_required:
-            verify_restart()
+            _restart_verified(scope)
         engine.verify_terminal("verified")
+        _verify_terminal_restart(scope, restart_required, "verified")
         scope["checkpoint"]()
         return "verified"
     except Exception:
@@ -180,8 +225,9 @@ def _execute_file_transaction(engine, scope, *, restart_required=False):
         scope["checkpoint"]()
         engine.rollback()
         if restart_required:
-            verify_restart()
+            _restart_verified(scope)
         engine.verify_terminal("rolled_back")
+        _verify_terminal_restart(scope, restart_required, "rolled_back")
         scope["checkpoint"]()
         return "rolled_back"
 
@@ -236,11 +282,8 @@ def run(target):
     preflight = _load("game-uptime-preflight.py")
     review = preflight.collect_operational_review(INSTALLED, TARGET)
     # No holds, backups or mutations before positive independent admission.
-    digest, paths = _validate_static_plan(review)
+    digest, paths, restart_required = _validate_plan(review)
     _require_forward_version(INSTALLED, TARGET)
-    # Operational coverage is still required BEFORE creating any persistent
-    # hold. Never convert static eligibility into an execution permit.
-    _validate_plan(review)
     lease = _load("game-uptime-local-scope-lease.py")
     module = _load("game-uptime-file-transaction.py")
     identity_probe = _load("game-uptime-live-daemon-identity.py")
@@ -287,10 +330,17 @@ def run(target):
         finally:
             os.close(parent)
         engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
-        # Recheck exact reviewed plan immediately before snapshot.
-        if preflight.plan.analyze(INSTALLED, TARGET)["fixed_file_transaction_plan"]["changed_paths"] != paths:
+        # Recheck both classifiers and signed binding immediately before snapshot.
+        impact = preflight.plan.analyze(INSTALLED, TARGET)
+        if _select_candidate({"release_impact": impact,
+                              "operational_release_review": proof}) != (digest, paths, restart_required):
             raise InstalledTransactionBlocked("exact_file_plan_changed")
-        engine.prepare(paths)
+        if restart_required:
+            engine.prepare_control_plane(impact["control_plane_restart_plan"])
+        else:
+            engine.prepare(paths)
+        if engine.requires_control_plane_restart() is not restart_required:
+            raise InstalledTransactionBlocked("product_journal_restart_mode_mismatch")
         report = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 1,
                   "scope": {key: options[key] for key in ("transaction_id", "release_sha256",
                       "issued_at", "expires_at", "expected_agent_ids")},
@@ -299,7 +349,7 @@ def run(target):
                   "product_identity": [uid, gid], "live_no_drain_authorized": False}
         _write_status(workspace, report, "prepared")
         try:
-            outcome = _execute_file_transaction(engine, scope)
+            outcome = _execute_file_transaction(engine, scope, restart_required=restart_required)
         except Exception:
             _write_status(workspace, report, "manual_recovery_required")
             raise
@@ -310,7 +360,10 @@ def run(target):
         engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
         if engine.journal_digest() != report["product_file_journal_sha256"]:
             raise InstalledTransactionBlocked("product_file_journal_changed")
+        if engine.requires_control_plane_restart() is not restart_required:
+            raise InstalledTransactionBlocked("product_journal_restart_mode_mismatch")
         engine.verify_terminal(outcome)
+        _verify_terminal_restart(scope, restart_required, outcome)
         result = scope["finalize_terminal"](terminal)
         if result.get("status") != "installed_terminal_holds_released":
             raise InstalledTransactionBlocked("terminal_release_incomplete")
@@ -414,20 +467,33 @@ def recover(tx):
         if engine.journal_digest() != report["product_file_journal_sha256"]:
             raise InstalledTransactionBlocked("product_file_journal_changed")
         outcome = report["status"]
+        restart_required = engine.requires_control_plane_restart()
         if outcome == "prepared":
             for prefix in ("terminal-", "terminal-confirmation-", "released-"):
                 if os.path.lexists(STATE / (prefix + tx + ".json")):
                     raise InstalledTransactionBlocked("existing_terminal_decision_requires_review")
             # The before/after file journal handles an interrupted mixed
             # state. A failed rollback keeps the prepared journal and holds.
-            engine.rollback()
+            count = _restart_count(scope)
+            if not restart_required and count:
+                raise InstalledTransactionBlocked("unexpected_static_restart_receipts")
+            if restart_required and count == 2:
+                # Both restart transitions are already durable. Never apply a
+                # third restart or change files behind the recorded daemons.
+                engine.verify_terminal("recovered_rollback")
+            else:
+                engine.rollback()
+                if restart_required:
+                    _restart_verified(scope)
             outcome = "recovered_rollback"
             engine.verify_terminal(outcome)
+            _verify_terminal_restart(scope, restart_required, outcome)
             scope["checkpoint"]()
             terminal = _write_status(workspace, report, outcome)
         else:
             # An already durable decision is immutable; only finish it.
             engine.verify_terminal(outcome)
+            _verify_terminal_restart(scope, restart_required, outcome)
         scope["checkpoint"]()
         result = scope["finalize_terminal"](terminal)
         if result.get("status") != "installed_terminal_holds_released":

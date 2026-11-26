@@ -222,6 +222,7 @@ class FileTransaction:
             raise FileTransactionBlocked("unbound_file_transaction")
         root = self.workspace
         self.installed_execution = _installed_scope is not None
+        self._installed_restart_owner = None
         if not self.installed_execution:
             tmp = Path(tempfile.gettempdir()).resolve(strict=True)
             if (tmp not in root.parents or root.resolve(strict=True) != root
@@ -253,6 +254,7 @@ class FileTransaction:
             if stat.S_IMODE(root.lstat().st_mode) != 0o700:
                 raise FileTransactionBlocked("installed_transaction_workspace_not_private")
             checkpoint()
+            self._installed_restart_owner = _installed_scope.get("restart_control_plane")
         if product_identity is not None and (
                 os.geteuid() != 0 or type(product_identity) is not tuple
                 or len(product_identity) != 2
@@ -434,14 +436,14 @@ class FileTransaction:
         return self.run_control_plane_fixture(plan, restart, verify)
 
     def prepare_control_plane(self, plan):
-        """Prepare a restart candidate in a disposable workspace only.
+        """Prepare the exact restart plan under an already admitted owner.
 
-        The ordinary installed admission is unchanged. This entry point
-        validates the exact diagnostic plan and reuses the durable file
-        journal; it does not restart services or claim runtime compatibility.
+        Fixtures remain disposable. Installed execution requires the retained
+        restart owner, in addition to all constructor admission checks.
+        This method only prepares files; it never restarts services.
         """
-        if self.installed_execution:
-            raise FileTransactionBlocked("control_plane_restart_fixture_only")
+        if self.installed_execution and not callable(self._installed_restart_owner):
+            raise FileTransactionBlocked("control_plane_restart_owner_required")
         if (type(plan) is not dict
                 or plan.get("status") != "restart_candidate_review_only"
                 or plan.get("live_no_drain_authorized") is not False
@@ -546,6 +548,11 @@ class FileTransaction:
                     raise FileTransactionBlocked("product_file_transaction_not_verified")
             return {"status": "files_applied" if direction == "after" else "files_restored",
                     "file_count": len(entries), "live_no_drain_authorized": False}
+
+    def requires_control_plane_restart(self):
+        # Derive mode from the immutable, digest-bound product journal.
+        with self._exclusive():
+            return any(entry["path"].endswith(".py") for entry in self._entries())
 
     def journal_digest(self):
         with self._exclusive():
