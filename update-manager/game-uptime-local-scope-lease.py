@@ -1063,6 +1063,11 @@ def retain_installed_distributed_scopes(
                          for path, exists in zip(restart_paths, present) if exists)
 
         recovery_evidence = read_restart_evidence()
+        for sequence in (1, 2):
+            intent = PENDING_PATH.parent / (
+                "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
+            if os.path.lexists(intent) and sequence > len(recovery_evidence):
+                raise LocalScopeLeaseBlocked("unfinished_restart_intent_requires_manual_review")
         original_evidence = None
         if recover_existing:
             original_evidence = _root_file(witness_path, 32768)
@@ -1177,6 +1182,21 @@ def retain_installed_distributed_scopes(
                     checkpoint()
                     if len(recovery_evidence) >= 2:
                         raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
+                    retained_fence_checkpoint()
+                    sequence = len(recovery_evidence) + 1
+                    intent = PENDING_PATH.parent / (
+                        "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
+                    if os.path.lexists(intent):
+                        raise LocalScopeLeaseBlocked("existing_restart_intent_requires_review")
+                    payload = {"kind": "DSM928DaemonRestartIntent", "schema_version": 1,
+                               "transaction_id": transaction_id, "release_sha256": release_sha256,
+                               "sequence": sequence,
+                               "before_inventory_sha256": hashlib.sha256(
+                                   json.dumps(initial_inventory, sort_keys=True,
+                                              separators=(",", ":")).encode()).hexdigest(),
+                               "live_no_drain_authorized": False}
+                    _persist_terminal_receipt(intent, payload, 0)
+                    _check_daemon_witness(_root_file(intent, 32768), payload)
                     retained_fence_checkpoint()
                     subprocess.run(
                         ["/usr/bin/systemctl", "restart", "dsm-dashboard.service",
