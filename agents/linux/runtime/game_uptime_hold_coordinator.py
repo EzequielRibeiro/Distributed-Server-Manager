@@ -303,13 +303,20 @@ def _require_idle_managed_systemd_work(jobs, units):
         if len(fields) < 4 or fields[1] != "loaded":
             raise HoldPreparationBlocked("agent_helper_unit_inventory_invalid")
         unit, active, sub = fields[0], fields[2], fields[3]
-        if not (unit.startswith(("capivara-agent-", "dsm-hybrid-agent-"))
-                and unit.endswith((".service", ".timer"))):
+        if not ((unit.startswith(("capivara-agent-", "dsm-hybrid-agent-"))
+                 and unit.endswith(".service"))
+                or (unit.startswith(("capivara-", "dsm-")) and unit.endswith(".timer"))):
             raise HoldPreparationBlocked("unexpected_agent_helper_unit")
         if ((unit, active, sub) not in (
                 ("capivara-agent-console-reader.service", "active", "running"),
                 ("capivara-agent-runtime-identity.service", "active", "exited"))):
             raise HoldPreparationBlocked("independent_agent_systemd_work_pending:" + unit[:191])
+
+
+# Match bare /opt/dsm and whitespace-delimited DSM command names as well
+# as explicit paths. Keep the check conservative; no global external ACK.
+_MANAGED_EXTERNAL_COMMAND = re.compile(
+    r"capivara|/opt/dsm(?:/|\b)|(?:^|[\s/])dsm[-_]", re.I)
 
 
 def _check_external_cron_inventory():
@@ -318,7 +325,7 @@ def _check_external_cron_inventory():
     Root-owned installed coordinator only. Unknown or unreadable inventory
     fails closed. Unrelated operating-system schedules are not modified.
     """
-    pattern = re.compile(r"capivara|/opt/dsm(?:/|\\b)|(?:^|[\\s/])dsm[-_]", re.I)
+    pattern = _MANAGED_EXTERNAL_COMMAND
     paths = [Path("/etc/crontab"), Path("/etc/anacrontab")]
     for directory in (Path("/etc/cron.d"), Path("/etc/cron.hourly"),
                       Path("/etc/cron.daily"), Path("/etc/cron.weekly"),
@@ -370,7 +377,7 @@ def _check_installed_systemd_work():
             "list-units", "--all", "--no-legend", "--plain", "--no-pager",
             "--state=active,activating,reloading,deactivating",
             "capivara-agent-*.service", "dsm-hybrid-agent-*.service",
-            "capivara-agent-uninstall-finalize.timer")
+            "capivara-*.timer", "dsm-*.timer")
 
     # Both observations must be clean; a queued action can move from the
     # job inventory into an active helper between the two systemd queries.

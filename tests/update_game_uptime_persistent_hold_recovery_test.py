@@ -95,12 +95,19 @@ class PersistentPendingHoldTests(unittest.TestCase):
             ("14 dsm-dashboard.service restart running\n", resident),
             ("malformed job\n", resident),
             ("", resident + "capivara-agent-uninstall-finalize.timer loaded active waiting cleanup\n"),
+            ("", resident + "dsm-backup.timer loaded active waiting backup\n"),
+            ("", resident + "capivara-update.timer loaded active waiting update\n"),
             ("", resident + "dsm-hybrid-agent-files-access@x.service loaded activating start ACL\n"),
             ("", resident + "capivara-agent-update.service loaded active running updater\n"),
         ):
             with self.subTest(jobs=jobs, units=units):
                 with self.assertRaises(HoldPreparationBlocked):
                     _require_idle_managed_systemd_work(jobs, units)
+        from game_uptime_hold_coordinator import _MANAGED_EXTERNAL_COMMAND
+        for command in ("cd /opt/dsm", "5 * * * * dsm-backup",
+                        "0 0 * * * /usr/local/bin/dsm_job", "capivara-backup"):
+            self.assertIsNotNone(_MANAGED_EXTERNAL_COMMAND.search(command))
+        self.assertIsNone(_MANAGED_EXTERNAL_COMMAND.search("0 0 * * * /usr/bin/logrotate"))
         # A running standalone Agent must match the installed unit and have
         # opted into the shared finalization fence; a PID alone is insufficient.
         from game_uptime_hold_coordinator import _validate_agent_daemon_snapshot
