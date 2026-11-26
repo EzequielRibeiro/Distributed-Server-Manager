@@ -1144,6 +1144,19 @@ def retain_installed_distributed_scopes(
                     retained_fence_checkpoint()
                     _check_installed_systemd_work()
                     raw = _root_file(witness_path, 32768)
+                    if raw != original_evidence:
+                        raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
+                    sequence = len(recovery_evidence) + 1
+                    intent = PENDING_PATH.parent / (
+                        "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
+                    expected_intent = {"kind": "DSM928DaemonRestartIntent", "schema_version": 1,
+                                       "transaction_id": transaction_id, "release_sha256": release_sha256,
+                                       "sequence": sequence,
+                                       "before_inventory_sha256": hashlib.sha256(
+                                           json.dumps(initial_inventory, sort_keys=True,
+                                                      separators=(",", ":")).encode()).hexdigest(),
+                                       "live_no_drain_authorized": False}
+                    _check_daemon_witness(_root_file(intent, 32768), expected_intent)
                     if read_restart_evidence() != recovery_evidence:
                         raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
                     if recovery_evidence:
@@ -1280,7 +1293,6 @@ def retain_installed_distributed_scopes(
                        "known_database_job_queues_terminal": True,
                        "checkpoint": checkpoint,
                        "finalize_terminal": finalize_terminal,
-                       "record_observed_restart": record_observed_restart,
                        "restart_control_plane": restart_control_plane,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
