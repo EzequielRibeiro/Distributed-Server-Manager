@@ -223,9 +223,8 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
 def _execution_boundary(result):
     """One decision summary for the existing --no-drain-report entrypoint.
 
-    Do not confuse a bootstrap release or an exact file list with permission
-    to mutate an installed system. The actual owner remains disconnected
-    until operational coverage and recovery have been verified.
+    A bootstrap release or exact file list cannot authorize mutation.
+    The installed owner must obtain the retained scope separately.
     """
     impact = result.get("release_impact") or {}
     fixed = impact.get("fixed_file_transaction_plan") or {}
@@ -248,7 +247,7 @@ def _execution_boundary(result):
         blockers.append("runtime_compatibility_unverified")
     if review.get("operational_guarantees_complete") is not True:
         blockers.append("operational_guarantees_unverified")
-    blockers.append("installed_updater_transaction_owner_not_connected")
+    blockers.append("retained_installed_admission_required")
     bootstrap = fixed.get("bootstrap_installation_required") is True
     return {
         "status": "blocked",
@@ -263,7 +262,6 @@ def _execution_boundary(result):
 
 
 def collect_operational_review(installed, target):
-    result = preflight(installed, target)
     # The production updater invokes this diagnostic in --no-drain-report
     # BEFORE acquiring privileges, backups, service stops or file mutations.
     # Inspect independently trusted release evidence if provisioned, but
@@ -272,9 +270,9 @@ def collect_operational_review(installed, target):
         operator_review = _load(
             "game_uptime_operational_release_review",
             "game-uptime-operational-release-review.py")
-        result["operational_release_review"] = operator_review.evaluate(target)
+        review = operator_review.evaluate(target)
     except Exception:
-        result["operational_release_review"] = {
+        review = {
             "kind": "DSM928OperationalReleaseReview",
             "mode": "read_only",
             "artifact_origin_verified": False,
@@ -285,6 +283,17 @@ def collect_operational_review(installed, target):
             "live_no_drain_authorized": False,
             "blockers": ["operational_release_review_unavailable"],
         }
+    inputs = {}
+    inputs_sha256 = None
+    if review.get("target_tree_bound_to_signed_tar") is True:
+        try:
+            inputs, inputs_sha256 = operator_review.read_operational_inputs(installed, target, review)
+        except (OSError, ValueError, SyntaxError, TypeError, RuntimeError):
+            review.setdefault("operational_preparation_blockers", []).append(
+                "reviewed_operational_inputs_unavailable")
+    result = preflight(installed, target, **inputs)
+    result["reviewed_operational_inputs_sha256"] = inputs_sha256
+    result["operational_release_review"] = review
     result["operational_execution_boundary"] = _execution_boundary(result)
     return result
 

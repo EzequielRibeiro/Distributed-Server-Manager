@@ -73,7 +73,7 @@ class UpdatePreflightTest(unittest.TestCase):
             installed_owner._validate_plan(state)
         with self.assertRaises(installed_owner.InstalledTransactionBlocked):
             installed_owner.run(self.target)
-        self.assertIn("installed_updater_transaction_owner_not_connected", boundary["blockers"])
+        self.assertIn("retained_installed_admission_required", boundary["blockers"])
         self.assertIn("initial_fence_aware_installation_or_bootstrap_update_required",
                       boundary["static_blockers"])
         self.assertIn("operational_guarantees_unverified", boundary["operational_blockers"])
@@ -135,7 +135,7 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertEqual(set(paths), {"dashboard/workers/worker.py", "version"})
         self.assertTrue(restart)
         with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
-                                    "restart_service_ownership_unverified"):
+                                    "preparation_evidence_unavailable"):
             owner._validate_plan(report)
         bad = {**impact, "fixed_file_transaction_plan": {
             **impact["fixed_file_transaction_plan"], "bootstrap_installation_required": True}}
@@ -166,7 +166,7 @@ class UpdatePreflightTest(unittest.TestCase):
             owner._verify_terminal_restart(scope, False, "verified")
         count[0] = 0
         engine.reset_mock()
-        engine.verify_terminal.side_effect = [RuntimeError("failed verification"), None]
+        engine.verify_terminal.side_effect = [None, RuntimeError("failed verification"), None]
         self.assertEqual(owner._execute_file_transaction(engine, scope, restart_required=True),
                          "rolled_back")
         self.assertEqual(count[0], 2)
@@ -309,6 +309,55 @@ class UpdatePreflightTest(unittest.TestCase):
             with self.assertRaisesRegex(lease.LocalScopeLeaseBlocked, "source_changed"):
                 lease._check_hybrid_mutators(installed, snapshot, units,
                                              systemctl=systemctl, identity=identity)
+
+    def test_root_reviewed_inputs_bind_inventory_and_contracts_to_archive(self):
+        import hashlib
+        import json
+        import os
+
+        if os.geteuid() != 0:
+            self.skipTest("requires disposable root ownership")
+        reviewer = module._load("dsm928_operational_inputs_test",
+                                "game-uptime-operational-release-review.py")
+        self.write("version", "2.0.998", "2.0.999")
+        folder = self.target / "reviewed-release"
+        folder.mkdir()
+        (self.target / "supervisor-versions").mkdir()
+        contract = {field: "v1" for field in module.compatibility.CONTRACT_FIELDS}
+        source = "WIRE_CONTRACT = " + repr(contract) + "\n"
+        for relative in ("dashboard/game_uptime_heartbeat_compat.py",
+                         "agents/linux/runtime/game_uptime_agent_wire.py"):
+            self.write(relative, source, source)
+        record = {
+            "schema_version": 1, "release_sha256": "b" * 64,
+            "installed_version": "2.0.998",
+            "controller_contract": contract, "agent_contract": contract,
+            "expected_active_units": self.units,
+            "supervisor_expected_sha256": "c" * 64,
+        }
+        path = folder / "operational-inputs.json"
+        raw = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        path.write_bytes(raw)
+        proof = {"artifact_origin_verified": True,
+                 "target_tree_bound_to_signed_tar": True,
+                 "verified_archive_sha256": record["release_sha256"]}
+        inputs, digest = reviewer.read_operational_inputs(
+            self.installed, self.target, proof, review_dir=folder)
+        self.assertEqual(inputs["expected_active_units"], self.units)
+        self.assertEqual(inputs["controller_contract"], contract)
+        self.assertEqual(inputs["agent_contract"], contract)
+        self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+        with self.assertRaisesRegex(reviewer.OperationalReviewBlocked, "binding_invalid"):
+            reviewer.read_operational_inputs(self.installed, self.target, {
+                **proof, "verified_archive_sha256": "d" * 64,
+            }, review_dir=folder)
+        controller = self.target / "dashboard/game_uptime_heartbeat_compat.py"
+        controller.write_text("WIRE_CONTRACT = {'protocol': 'unreviewed'}\n")
+        with self.assertRaisesRegex(reviewer.OperationalReviewBlocked, "wire_contract_mismatch"):
+            reviewer.read_operational_inputs(self.installed, self.target, proof, review_dir=folder)
+        path.chmod(0o666)
+        with self.assertRaisesRegex(reviewer.OperationalReviewBlocked, "untrusted"):
+            reviewer.read_operational_inputs(self.installed, self.target, proof, review_dir=folder)
 
     def test_bad_inventory_fails_closed(self):
         self.write("dashboard/web/style.css","old","new")

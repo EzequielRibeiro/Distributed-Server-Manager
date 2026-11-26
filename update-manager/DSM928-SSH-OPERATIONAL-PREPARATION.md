@@ -118,6 +118,21 @@ an earlier candidate, not the current HEAD. The first fence-aware release
 changes systemd/Agent/updater code and may require separately approved
 maintenance; never fall back to a draining update automatically.
 
+The read-only preflight consumes a canonical, independently reviewed
+`operational-inputs.json` beside the signed release. Its schema version is
+1. It names the verified archive SHA-256, installed version, Controller and
+Agent compatibility contracts, exact expected active unit names and the
+Minecraft supervisor SHA-256. The supervisor version directory is the
+root-owned `supervisor-versions` sibling of `reviewed-release`. The
+executor re-reads these inputs under the retained scope and re-checks the
+game witnesses before preparing the file journal.
+
+The restart candidate in the file plan does not establish service ownership
+or claim a rollback result. Ownership comes from the retained service
+inventory and fixed restart operation. Before mutating files, the executor
+verifies the journal's original bytes. It checks the resulting bytes and
+restart receipts at the terminal boundary.
+
 The original Controller/Worker/alert identity and registry/queue inventory
 are now bound to the same transaction across reconnects. A missing or changed
 witness blocks recovery. This is additional evidence, not proof of live

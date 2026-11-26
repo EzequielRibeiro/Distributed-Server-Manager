@@ -176,12 +176,6 @@ def _validate_plan(report):
                 "no_drain_compatibility_verified"):
         if report.get(key) is not True:
             blockers.append(key + "_missing")
-    if restart_required:
-        plan = report["release_impact"]["control_plane_restart_plan"]
-        if plan.get("service_ownership_verified") is not True:
-            blockers.append("restart_service_ownership_unverified")
-        if plan.get("restart_rollback_verified") is not True:
-            blockers.append("restart_rollback_unverified")
     if blockers:
         raise InstalledTransactionBlocked(";".join(sorted(set(blockers))))
     return digest, paths, restart_required
@@ -257,6 +251,9 @@ def _execute_file_transaction(engine, scope, *, restart_required=False):
     if restart_required and not callable(scope.get("restart_control_plane")):
         raise InstalledTransactionBlocked("retained_restart_owner_missing")
     scope["checkpoint"]()
+    # Check the durable before-images while the installed bytes still match.
+    # A terminal rollback result can only be verified after rollback runs.
+    engine.verify_terminal("recovered_rollback")
     try:
         engine.apply()
         if restart_required:
@@ -357,12 +354,25 @@ def run(target):
     workspace = STATE / ("transaction-" + tx)
     with lease.retain_installed_host_scope(**options) as scope:
         _require_retained_admission(scope, options)
+        if restart_required and not callable(scope.get("restart_control_plane")):
+            raise InstalledTransactionBlocked("retained_restart_owner_missing")
         scope["checkpoint"]()
-        proof = _load("game-uptime-operational-release-review.py").verify_reviewed_artifact(TARGET)
+        operator_review = _load("game-uptime-operational-release-review.py")
+        proof = operator_review.verify_reviewed_artifact(TARGET)
         if (proof.get("artifact_origin_verified") is not True
                 or proof.get("target_tree_bound_to_signed_tar") is not True
                 or proof.get("verified_archive_sha256") != digest):
             raise InstalledTransactionBlocked("signed_target_changed_under_retained_scope")
+        # Re-read the reviewed expectations and the actual game witnesses
+        # while the local scope is held. A new active set cannot be adopted.
+        inputs, inputs_sha256 = operator_review.read_operational_inputs(INSTALLED, TARGET, proof)
+        if inputs_sha256 != review.get("reviewed_operational_inputs_sha256"):
+            raise InstalledTransactionBlocked("reviewed_operational_inputs_changed")
+        retained_review = preflight.preflight(INSTALLED, TARGET, **inputs)
+        for field in ("handoff_witness", "operational_coverage", "compatibility_gate",
+                      "supervisor_pin_evidence"):
+            if retained_review.get(field) != review.get(field):
+                raise InstalledTransactionBlocked("reviewed_operational_evidence_changed:" + field)
         _require_forward_version(INSTALLED, TARGET)
         scope["checkpoint"]()
         workspace.mkdir(mode=0o700)

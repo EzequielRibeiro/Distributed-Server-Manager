@@ -8,9 +8,11 @@ release verifier. The updater's --no-drain-report calls this through preflight.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 from importlib.machinery import SourceFileLoader
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -77,6 +79,76 @@ def _trusted_reviewed_commit(path: Path) -> str:
         return value
     except (OSError, UnicodeError) as exc:
         raise OperationalReviewBlocked("reviewed_commit_unreadable") from exc
+
+
+def _wire_contract(root, relative):
+    with (root / relative).open("rb") as stream:
+        raw = stream.read(65537)
+    if len(raw) > 65536:
+        raise OperationalReviewBlocked("reviewed_wire_contract_source_too_large")
+    matches = [node.value for node in ast.parse(raw).body if isinstance(node, ast.Assign)
+               and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+               and node.targets[0].id == "WIRE_CONTRACT"]
+    if len(matches) != 1:
+        raise OperationalReviewBlocked("reviewed_wire_contract_source_unverified")
+    return ast.literal_eval(matches[0])
+
+
+def read_operational_inputs(installed: Path, target: Path, proof: dict, *,
+                            review_dir: Path = REVIEW_DIR):
+    """Read an independent host review bound to the signed release bytes."""
+    if (proof.get("artifact_origin_verified") is not True
+            or proof.get("target_tree_bound_to_signed_tar") is not True):
+        raise OperationalReviewBlocked("operational_inputs_require_signed_candidate")
+    _trusted_root_dir(review_dir)
+    path = review_dir / "operational-inputs.json"
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0
+                or before.st_nlink != 1 or before.st_mode & 0o022
+                or not 0 < before.st_size <= 16384):
+            raise OperationalReviewBlocked("untrusted_operational_inputs")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(16385)
+        def fingerprint(item):
+            return (item.st_dev, item.st_ino, item.st_uid, item.st_mode,
+                    item.st_nlink, item.st_size, item.st_ctime_ns, item.st_mtime_ns)
+        if (len(raw) != before.st_size or fingerprint(os.fstat(fd)) != fingerprint(before)
+                or fingerprint(path.lstat()) != fingerprint(before)):
+            raise OperationalReviewBlocked("operational_inputs_changed")
+    finally:
+        os.close(fd)
+    inputs = json.loads(raw)
+    if (raw != (json.dumps(inputs, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            or type(inputs) is not dict
+            or set(inputs) != {"schema_version", "release_sha256", "installed_version",
+                               "controller_contract", "agent_contract", "expected_active_units",
+                               "supervisor_expected_sha256"}
+            or type(inputs["schema_version"]) is not int or inputs["schema_version"] != 1
+            or not re.fullmatch(r"[0-9a-f]{64}", str(inputs["release_sha256"]))
+            or inputs["release_sha256"] != proof.get("verified_archive_sha256")
+            or inputs["installed_version"] != (installed / "version").read_text().strip()):
+        raise OperationalReviewBlocked("operational_inputs_binding_invalid")
+    pin = inputs["supervisor_expected_sha256"]
+    if type(pin) is not str or not re.fullmatch(r"[0-9a-f]{64}", pin):
+        raise OperationalReviewBlocked("operational_supervisor_pin_invalid")
+    for role, relative in (
+            ("controller_contract", "dashboard/game_uptime_heartbeat_compat.py"),
+            ("agent_contract", "agents/linux/runtime/game_uptime_agent_wire.py")):
+        expected = inputs[role]
+        if type(expected) is not dict or any(
+                _wire_contract(root, relative) != expected for root in (installed, target)):
+            raise OperationalReviewBlocked("reviewed_wire_contract_mismatch:" + role)
+    versions = review_dir.parent / "supervisor-versions"
+    _trusted_root_dir(versions)
+    return {
+        "expected_active_units": inputs["expected_active_units"],
+        "controller_contract": inputs["controller_contract"],
+        "agent_contract": inputs["agent_contract"],
+        "supervisor_expected_sha256": pin,
+        "supervisor_versions_dir": versions,
+    }, hashlib.sha256(raw).hexdigest()
 
 
 def _target_byte_match(target: Path, archive: Path, root_name: str) -> int:
@@ -433,6 +505,7 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
     retained_only = {
         "no_durable_quiescence_hold_established",
         "daemon_lock_coverage_and_inflight_jobs_not_proven",
+        "transactional_fence_not_held_by_live_updater",
         "remote_agent_quiescence_not_acknowledged",
         "expected_agent_wire_receipts_missing",
         "durable_remote_wire_inventory_unverified",

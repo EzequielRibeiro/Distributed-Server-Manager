@@ -237,8 +237,6 @@ def _control_plane_restart_plan(changed, before, after, fixed):
             "candidate_python_file_count": len(candidates),
             "blocking_paths": blockers[:40],
             "blocking_path_count": len(blockers),
-            "service_ownership_verified": False,
-            "restart_rollback_verified": False,
             "live_no_drain_authorized": False}
 
 
