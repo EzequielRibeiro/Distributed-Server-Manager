@@ -101,6 +101,40 @@ def _validate_static_plan(report):
     return digest, paths
 
 
+def _validate_restart_candidate(report):
+    """Validate the exact diagnostic candidate without granting admission."""
+    review = report.get("operational_release_review") or {}
+    plan = (report.get("release_impact") or {}).get("control_plane_restart_plan") or {}
+    digest = review.get("verified_archive_sha256")
+    paths = plan.get("changed_paths")
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True
+            or type(digest) is not str or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or plan.get("status") != "restart_candidate_review_only"
+            or plan.get("live_no_drain_authorized") is not False
+            or plan.get("blocking_path_count") != 0
+            or plan.get("blocking_paths") != []
+            or type(paths) is not list or not paths):
+        raise InstalledTransactionBlocked("exact_signed_restart_candidate_required")
+    python_count = 0
+    for p in paths:
+        if (type(p) is not str or Path(p).is_absolute()
+                or Path(p).as_posix() != p or ".." in Path(p).parts
+                or "game_uptime" in p or "maintenance_hold" in p
+                or "__pycache__" in Path(p).parts):
+            raise InstalledTransactionBlocked("unsafe_restart_candidate_path")
+        if p.startswith("dashboard/") and p.endswith(".py"):
+            python_count += 1
+        elif not (p in ("version", "release-manifest.json")
+                  or (p.startswith("dashboard/web/") and Path(p).suffix.lower() in
+                      (".css", ".js", ".html", ".htm", ".svg", ".png", ".ico", ".woff", ".woff2", ".map"))):
+            raise InstalledTransactionBlocked("unsupported_restart_candidate_path")
+    if (len(set(paths)) != len(paths) or not python_count
+            or python_count != plan.get("candidate_python_file_count")):
+        raise InstalledTransactionBlocked("restart_candidate_inventory_mismatch")
+    return digest, paths
+
+
 def _validate_plan(report):
     digest, paths = _validate_static_plan(report)
     review = report.get("operational_release_review") or {}
