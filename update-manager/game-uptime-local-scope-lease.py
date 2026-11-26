@@ -977,14 +977,19 @@ def retain_installed_distributed_scopes(
                     local_hybrid_agent_id=local_hybrid_agent_id,
                     recover_existing=recover_existing,
                     operator_reviewed=operator_reviewed) as remote:
-                def checkpoint():
+                def retained_fence_checkpoint():
+                    # Independent of the Controller/Worker process witness.
+                    # This is not an admission or a complete checkpoint.
                     local["checkpoint"]()
                     game_checkpoint()
-                    _check_installed_systemd_work()
                     remote["checkpoint"]()
-                    daemon_checkpoint()
                     local["checkpoint"]()
-                    remote["checkpoint"]()
+
+                def checkpoint():
+                    retained_fence_checkpoint()
+                    _check_installed_systemd_work()
+                    daemon_checkpoint()
+                    retained_fence_checkpoint()
                 released = False
 
                 def finalize_terminal(journal_sha256):
