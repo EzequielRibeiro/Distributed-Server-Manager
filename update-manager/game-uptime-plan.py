@@ -203,6 +203,43 @@ def _fixed_file_plan(installed, target, before, after, changed):
             "live_no_drain_authorized": False}
 
 
+def _control_plane_restart_plan(changed, before, after, fixed):
+    """Exact diagnostic candidate, separate from executable file admission.
+
+    Restrict the initial restart scope to existing dashboard Python files.
+    Fence/bootstrap code and every other incompatible change remain blocked.
+    Service ownership, import contracts and rollback still require proof.
+    """
+    candidates = []
+    blockers = []
+    for name in changed:
+        if name in _BOOTSTRAP or "game_uptime" in name or "maintenance_hold" in name:
+            blockers.append(name)
+        elif (name.startswith("dashboard/") and name.endswith(".py")
+              and "__pycache__" not in Path(name).parts
+              and _change_tier(name, before, after) == "control_plane_restart_candidate"
+              and before[name][0] == after[name][0]
+              and not before[name][0] & 0o7133):
+            candidates.append(name)
+        elif not (name in before and name in after
+                  and before[name][0] == after[name][0]
+                  and not before[name][0] & 0o7133
+                  and (name in ("version", "release-manifest.json")
+                       or (name.startswith("dashboard/web/")
+                           and Path(name).suffix.lower() in CONTROL_PLANE_SUFFIXES
+                           and not name.endswith(".py")))):
+            blockers.append(name)
+    eligible = bool(candidates) and not blockers and not fixed["bootstrap_installation_required"]
+    return {"status": "restart_candidate_review_only" if eligible else "blocked",
+            "changed_paths": sorted(changed) if eligible else [],
+            "candidate_python_file_count": len(candidates),
+            "blocking_paths": blockers[:40],
+            "blocking_path_count": len(blockers),
+            "service_ownership_verified": False,
+            "restart_rollback_verified": False,
+            "live_no_drain_authorized": False}
+
+
 def analyze(installed: Path, target: Path) -> dict[str, object]:
     before = _inventory(installed)
     after = _inventory(target)
@@ -232,6 +269,7 @@ def analyze(installed: Path, target: Path) -> dict[str, object]:
     return {
         **tiers,
         "fixed_file_transaction_plan": fixed,
+        "control_plane_restart_plan": _control_plane_restart_plan(changed, before, after, fixed),
         "kind": "CapivaraDSMGameUptimeImpact",
         "schema_version": 1,
         "mode": "read_only_diagnostic",
