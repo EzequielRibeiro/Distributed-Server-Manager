@@ -843,6 +843,30 @@ def _validate_restart_inventory(before, after):
             "live_no_drain_authorized": False}
 
 
+def _restart_transition_payload(scope, before, after, *, sequence, previous_sha256):
+    """Build a canonical diagnostic receipt; never replace the original witness."""
+    if (type(sequence) is not int or sequence not in (1, 2)
+            or type(previous_sha256) is not str
+            or not _SHA.fullmatch(previous_sha256)
+            or type(scope) is not dict
+            or type(scope.get("transaction_id")) is not str
+            or not re.fullmatch(r"[0-9a-f]{32}", scope["transaction_id"])
+            or type(scope.get("release_sha256")) is not str
+            or not _SHA.fullmatch(scope["release_sha256"])):
+        raise LocalScopeLeaseBlocked("invalid_restart_transition_binding")
+    _validate_restart_inventory(before, after)
+    def digest(inventory):
+        return hashlib.sha256(json.dumps(
+            inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    return {"kind": "DSM928DaemonRestartTransitionWitness",
+            "schema_version": 1, "transaction_id": scope["transaction_id"],
+            "release_sha256": scope["release_sha256"], "sequence": sequence,
+            "previous_sha256": previous_sha256,
+            "before_inventory_sha256": digest(before),
+            "after_inventory_sha256": digest(after),
+            "live_no_drain_authorized": False}
+
+
 def _daemon_witness_payload(scope, inventory):
     """Bind the original inventory (including daemon PIDs) to this lease.
 
