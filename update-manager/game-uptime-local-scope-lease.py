@@ -910,6 +910,48 @@ def _persist_restart_transition(scope, before, after, *, sequence,
     return payload
 
 
+def _validate_restart_receipt_chain(original_raw, receipt_bytes, scope, inventory):
+    """Validate recorded transitions without granting recovery admission."""
+    if type(receipt_bytes) not in (list, tuple) or len(receipt_bytes) not in (1, 2):
+        raise LocalScopeLeaseBlocked("invalid_restart_receipt_count")
+    def decode(raw):
+        value = json.loads(raw)
+        if (type(value) is not dict or raw != (json.dumps(
+                value, sort_keys=True, separators=(",", ":")) + "\n").encode()):
+            raise LocalScopeLeaseBlocked("noncanonical_restart_receipt")
+        return value
+    original = decode(original_raw)
+    if (original.get("kind") != "DSM928InstalledDaemonInventoryWitness"
+            or original.get("schema_version") != 1
+            or original.get("live_no_drain_authorized") is not False
+            or any(original.get(key) != value for key, value in scope.items())):
+        raise LocalScopeLeaseBlocked("restart_original_scope_mismatch")
+    previous = original_raw
+    digest = original.get("inventory_sha256")
+    if type(digest) is not str or not _SHA.fullmatch(digest):
+        raise LocalScopeLeaseBlocked("invalid_original_inventory_digest")
+    for sequence, raw in enumerate(receipt_bytes, 1):
+        receipt = decode(raw)
+        after = receipt.get("after_inventory_sha256")
+        expected = {"kind": "DSM928DaemonRestartTransitionWitness",
+                    "schema_version": 1, "transaction_id": scope["transaction_id"],
+                    "release_sha256": scope["release_sha256"], "sequence": sequence,
+                    "previous_sha256": hashlib.sha256(previous).hexdigest(),
+                    "before_inventory_sha256": digest,
+                    "after_inventory_sha256": after,
+                    "live_no_drain_authorized": False}
+        if (receipt != expected or type(after) is not str
+                or not _SHA.fullmatch(after) or after == digest):
+            raise LocalScopeLeaseBlocked("invalid_restart_receipt_chain")
+        previous, digest = raw, after
+    observed = hashlib.sha256(json.dumps(
+        inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    if observed != digest:
+        raise LocalScopeLeaseBlocked("restart_terminal_inventory_mismatch")
+    return {"status": "restart_receipt_chain_verified_only",
+            "sequence": len(receipt_bytes), "live_no_drain_authorized": False}
+
+
 def _daemon_witness_payload(scope, inventory):
     """Bind the original inventory (including daemon PIDs) to this lease.
 
