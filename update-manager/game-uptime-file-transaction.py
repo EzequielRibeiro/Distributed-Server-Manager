@@ -369,6 +369,52 @@ class FileTransaction:
             self.verify_terminal("rolled_back")
             return {"status": "rolled_back", "live_no_drain_authorized": False}
 
+    def run_verified_restart_fixture(self, plan, *, observe_inventory,
+                                     observe_games, restart_services,
+                                     verify_services, validate_replacement):
+        """Compose replacement and game witnesses with disposable recovery.
+
+        Observers and restart callbacks are fixture inputs, not installed
+        authority. The retained checkpoint must remain valid throughout.
+        """
+        if self.installed_execution:
+            raise FileTransactionBlocked("control_plane_restart_fixture_only")
+        callbacks = (observe_inventory, observe_games, restart_services,
+                     verify_services, validate_replacement)
+        if not all(callable(item) for item in callbacks):
+            raise FileTransactionBlocked("restart_fixture_callbacks_required")
+        import copy
+        self.checkpoint()
+        games = copy.deepcopy(observe_games())
+        previous = copy.deepcopy(observe_inventory())
+        if not games or not previous:
+            raise FileTransactionBlocked("restart_fixture_witness_missing")
+
+        def restart():
+            nonlocal previous
+            self.checkpoint()
+            if observe_games() != games:
+                raise FileTransactionBlocked("restart_fixture_game_identity_changed")
+            # Capture the actual pre-restart identity, including on rollback.
+            previous = copy.deepcopy(observe_inventory())
+            restart_services()
+            self.checkpoint()
+
+        def verify():
+            current = observe_inventory()
+            result = validate_replacement(previous, current)
+            if (type(result) is not dict
+                    or result.get("status") != "replacement_inventory_verified_only"
+                    or result.get("replacement_count") != 11
+                    or result.get("live_no_drain_authorized") is not False
+                    or observe_games() != games
+                    or verify_services() is not True):
+                return False
+            self.checkpoint()
+            return observe_games() == games and observe_inventory() == current
+
+        return self.run_control_plane_fixture(plan, restart, verify)
+
     def prepare_control_plane(self, plan):
         """Prepare a restart candidate in a disposable workspace only.
 
