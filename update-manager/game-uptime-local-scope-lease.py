@@ -1062,12 +1062,34 @@ def retain_installed_distributed_scopes(
             return tuple(_root_file(path, 32768)
                          for path, exists in zip(restart_paths, present) if exists)
 
+        def verify_restart_intents(receipts):
+            # A failed systemctl invocation can leave the original daemon
+            # inventory unchanged even though restart intent is durable.
+            # Treat that state as uncertain at every ordinary checkpoint,
+            # not merely when reopening the recovery session.
+            for sequence in (1, 2):
+                intent = PENDING_PATH.parent / (
+                    "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
+                exists = os.path.lexists(intent)
+                if sequence > len(receipts):
+                    if exists:
+                        raise LocalScopeLeaseBlocked("unfinished_restart_intent_requires_manual_review")
+                    continue
+                if not exists:
+                    raise LocalScopeLeaseBlocked("restart_receipt_without_intent")
+                receipt = json.loads(receipts[sequence - 1])
+                if type(receipt) is not dict:
+                    raise LocalScopeLeaseBlocked("invalid_restart_receipt_chain")
+                _check_daemon_witness(_root_file(intent, 32768), {
+                    "kind": "DSM928DaemonRestartIntent", "schema_version": 1,
+                    "transaction_id": transaction_id, "release_sha256": release_sha256,
+                    "sequence": sequence,
+                    "before_inventory_sha256": receipt.get("before_inventory_sha256"),
+                    "live_no_drain_authorized": False,
+                })
+
         recovery_evidence = read_restart_evidence()
-        for sequence in (1, 2):
-            intent = PENDING_PATH.parent / (
-                "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
-            if os.path.lexists(intent) and sequence > len(recovery_evidence):
-                raise LocalScopeLeaseBlocked("unfinished_restart_intent_requires_manual_review")
+        verify_restart_intents(recovery_evidence)
         original_evidence = None
         if recover_existing:
             original_evidence = _root_file(witness_path, 32768)
@@ -1088,6 +1110,7 @@ def retain_installed_distributed_scopes(
             receipts = read_restart_evidence()
             if receipts != recovery_evidence:
                 raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
+            verify_restart_intents(receipts)
             if original_evidence is not None and raw != original_evidence:
                 raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
             if receipts:
