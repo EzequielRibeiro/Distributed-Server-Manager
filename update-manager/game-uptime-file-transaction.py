@@ -339,6 +339,36 @@ class FileTransaction:
         finally:
             os.close(fd)
 
+    def run_control_plane_fixture(self, plan, restart_services, verify_services):
+        """Exercise file and service recovery with disposable callbacks only.
+
+        A failed rollback propagates; the durable journal remains available.
+        No installed service command or production admission is exposed.
+        """
+        if self.installed_execution:
+            raise FileTransactionBlocked("control_plane_restart_fixture_only")
+        if not callable(restart_services) or not callable(verify_services):
+            raise FileTransactionBlocked("control_plane_fixture_callbacks_required")
+        self.prepare_control_plane(plan)
+        try:
+            self.apply()
+            self.checkpoint()
+            restart_services()
+            self.checkpoint()
+            if verify_services() is not True:
+                raise FileTransactionBlocked("control_plane_fixture_health_failed")
+            self.verify_terminal("verified")
+            return {"status": "verified", "live_no_drain_authorized": False}
+        except Exception:
+            self.rollback()
+            self.checkpoint()
+            restart_services()
+            self.checkpoint()
+            if verify_services() is not True:
+                raise FileTransactionBlocked("control_plane_fixture_rollback_health_failed")
+            self.verify_terminal("rolled_back")
+            return {"status": "rolled_back", "live_no_drain_authorized": False}
+
     def prepare_control_plane(self, plan):
         """Prepare a restart candidate in a disposable workspace only.
 
