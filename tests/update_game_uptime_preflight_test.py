@@ -173,6 +173,63 @@ class UpdatePreflightTest(unittest.TestCase):
         with self.assertRaises(owner.InstalledTransactionBlocked):
             owner._verify_terminal_restart(scope, True, "verified")
 
+    def test_preparation_and_retained_admission_are_distinct(self):
+        # Pure validator fixture: a preparation report is not an installed
+        # permission, even when the eligibility inputs are complete.
+        owner = module._load("dsm928_preparation_boundary_test",
+                             "game-uptime-installed-transaction.py")
+        from unittest.mock import Mock
+        self.write("dashboard/web/style.css", "old", "new")
+        report = {
+            "release_impact": module.plan.analyze(self.installed, self.target),
+            "operational_execution_boundary": {"static_blockers": [],
+                                               "blockers": ["operational_guarantees_unverified"]},
+            "operational_release_review": {
+                "artifact_origin_verified": True, "target_tree_bound_to_signed_tar": True,
+                "verified_archive_sha256": "b"*64,
+                "maintenance_hold": {"active": False},
+                "operational_preparation_blockers": [],
+                "operational_guarantees_complete": False,
+                "operational_quiescence_acked": False,
+                "external_jobs_acked": False,
+                "durable_cross_host_recovery_verified": False,
+            },
+            "no_drain_handoff_witness_verified": True,
+            "no_drain_operational_coverage_verified": True,
+            "no_drain_compatibility_verified": True,
+        }
+        self.assertEqual(owner._validate_plan(report),
+                         ("b"*64, ["dashboard/web/style.css"], False))
+        bad = {**report, "operational_release_review": {
+            **report["operational_release_review"],
+            "operational_preparation_blockers": ["external_jobs_quiescence_not_integrated"]}}
+        with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
+                                    "external_jobs_quiescence_not_integrated"):
+            owner._validate_plan(bad)
+        with self.assertRaises(owner.InstalledTransactionBlocked):
+            owner._validate_plan({**report, "no_drain_compatibility_verified": False})
+        options = {"transaction_id": "a"*32, "release_sha256": "b"*64,
+                   "issued_at": 1700000000, "expires_at": 1700000900,
+                   "expected_agent_ids": ["hybrid", "vps"], "local_hybrid_agent_id": "hybrid"}
+        checkpoint = Mock()
+        scope = {"kind": "DSM928InstalledDistributedScope",
+                 **{key: options[key] for key in ("transaction_id", "release_sha256",
+                                                   "issued_at", "expires_at", "local_hybrid_agent_id")},
+                 "agent_ids": ["hybrid", "vps"], "retained_remote_agent_ids": ["vps"],
+                 "controller_registry_inventory_matched": True,
+                 "known_database_job_queues_terminal": True,
+                 "authenticated_remote_scope_retained": True,
+                 "all_mutators_fenced": False, "external_jobs_acked": False,
+                 "durable_cross_host_recovery_verified": False,
+                 "checkpoint": checkpoint, "finalize_terminal": Mock()}
+        with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
+                                    "retained_operational_guarantees_missing"):
+            owner._require_retained_admission(scope, options)
+        with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
+                                    "retained_scope_binding_mismatch"):
+            owner._require_retained_admission({**scope, "expires_at": 1700001000}, options)
+        checkpoint.assert_not_called()
+
     def test_bad_inventory_fails_closed(self):
         self.write("dashboard/web/style.css","old","new")
         state=module.preflight(self.installed,self.target,list_units=lambda:["invalid.service"])

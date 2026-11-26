@@ -154,13 +154,29 @@ def _select_candidate(report):
 
 
 def _validate_plan(report):
+    """Read-only eligibility for preparation, never a retained mutation permit.
+
+    ACKs produced by a retained transaction cannot be prerequisites for
+    creating that transaction. Missing enforcement implementations, unknown
+    compatibility or incomplete inventories still block before any hold.
+    """
     digest, paths, restart_required = _select_candidate(report)
     review = report.get("operational_release_review") or {}
-    blockers = list((report.get("operational_execution_boundary") or {}).get("blockers", []))
-    if not all(review.get(key) is True for key in (
-            "operational_guarantees_complete", "operational_quiescence_acked",
-            "external_jobs_acked", "durable_cross_host_recovery_verified")):
-        blockers.append("positive_operational_admission_missing")
+    boundary = report.get("operational_execution_boundary") or {}
+    blockers = []
+    for evidence in (boundary.get("static_blockers"),
+                     review.get("operational_preparation_blockers")):
+        if type(evidence) is not list or any(type(item) is not str for item in evidence):
+            blockers.append("preparation_evidence_unavailable")
+        else:
+            blockers.extend(evidence)
+    if (review.get("maintenance_hold") or {}).get("active") is not False:
+        blockers.append("existing_hold_or_recovery_unverified")
+    for key in ("no_drain_handoff_witness_verified",
+                "no_drain_operational_coverage_verified",
+                "no_drain_compatibility_verified"):
+        if report.get(key) is not True:
+            blockers.append(key + "_missing")
     if restart_required:
         plan = report["release_impact"]["control_plane_restart_plan"]
         if plan.get("service_ownership_verified") is not True:
@@ -170,6 +186,39 @@ def _validate_plan(report):
     if blockers:
         raise InstalledTransactionBlocked(";".join(sorted(set(blockers))))
     return digest, paths, restart_required
+
+
+def _require_retained_admission(scope, options):
+    """The only installed mutation gate: exact retained transaction evidence.
+
+    This cannot be satisfied by a read-only report, a probe, an empty job
+    queue, or an authenticated SSH channel alone. It is rechecked after
+    reconnect and before terminal release.
+    """
+    if type(scope) is not dict:
+        raise InstalledTransactionBlocked("retained_scope_unavailable")
+    expected = {
+        "kind": "DSM928InstalledDistributedScope",
+        "transaction_id": options["transaction_id"],
+        "release_sha256": options["release_sha256"],
+        "issued_at": options["issued_at"],
+        "expires_at": options["expires_at"],
+        "agent_ids": sorted(options["expected_agent_ids"]),
+        "local_hybrid_agent_id": options["local_hybrid_agent_id"],
+        "retained_remote_agent_ids": sorted(
+            agent for agent in options["expected_agent_ids"]
+            if agent != options["local_hybrid_agent_id"]),
+    }
+    if any(scope.get(key) != value for key, value in expected.items()):
+        raise InstalledTransactionBlocked("retained_scope_binding_mismatch")
+    if not all(scope.get(key) is True for key in (
+            "controller_registry_inventory_matched", "known_database_job_queues_terminal",
+            "authenticated_remote_scope_retained", "all_mutators_fenced",
+            "external_jobs_acked", "durable_cross_host_recovery_verified")):
+        raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+    if not callable(scope.get("checkpoint")) or not callable(scope.get("finalize_terminal")):
+        raise InstalledTransactionBlocked("retained_scope_owner_unavailable")
+    scope["checkpoint"]()
 
 
 def _restart_count(scope):
@@ -281,7 +330,8 @@ def run(target):
     _require_trusted_snapshot(target)
     preflight = _load("game-uptime-preflight.py")
     review = preflight.collect_operational_review(INSTALLED, TARGET)
-    # No holds, backups or mutations before positive independent admission.
+    # Read-only eligibility must pass before durable preparation. Retained
+    # admission below is separate and must pass before product mutations.
     digest, paths, restart_required = _validate_plan(review)
     _require_forward_version(INSTALLED, TARGET)
     lease = _load("game-uptime-local-scope-lease.py")
@@ -312,9 +362,7 @@ def run(target):
                    expected_worker_uid=uid, operator_reviewed=True)
     workspace = STATE / ("transaction-" + tx)
     with lease.retain_installed_distributed_scopes(**options) as scope:
-        if (scope.get("all_mutators_fenced") is not True
-                or scope.get("external_jobs_acked") is not True):
-            raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+        _require_retained_admission(scope, options)
         scope["checkpoint"]()
         proof = _load("game-uptime-operational-release-review.py").verify_reviewed_artifact(TARGET)
         if (proof.get("artifact_origin_verified") is not True
@@ -357,6 +405,7 @@ def run(target):
     # Persistent holds bridge the transition to the explicitly reviewed
     # recovery session. A disconnect or expired window never clears them.
     with lease.retain_installed_distributed_scopes(**options, recover_existing=True) as scope:
+        _require_retained_admission(scope, options)
         engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
         if engine.journal_digest() != report["product_file_journal_sha256"]:
             raise InstalledTransactionBlocked("product_file_journal_changed")
@@ -458,9 +507,7 @@ def recover(tx):
     lease = _load("game-uptime-local-scope-lease.py")
     module = _load("game-uptime-file-transaction.py")
     with lease.retain_installed_distributed_scopes(**options) as scope:
-        if (scope.get("all_mutators_fenced") is not True
-                or scope.get("external_jobs_acked") is not True):
-            raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+        _require_retained_admission(scope, options)
         if _read_recovery_report(workspace) != (report, terminal):
             raise InstalledTransactionBlocked("installed_recovery_journal_changed")
         engine = _engine(module, workspace, tuple(report["product_identity"]), scope, digest, tx)

@@ -417,10 +417,24 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
     # Real Controller/Worker/Agent/external-job acknowledgements MUST be
     # implemented by their owners and persisted with replay-resistant IDs.
     # No synthetic fixture receipt from 2.6 can satisfy these requirements.
-    status["blockers"].extend([
+    implementation_blockers = [
         "operational_controller_worker_agent_ack_protocol_not_integrated",
         "external_jobs_quiescence_not_integrated",
         "cross_host_transaction_recovery_not_integrated",
+    ]
+    status["blockers"].extend(implementation_blockers)
+    status["blockers"].append("updater_no_drain_production_entrypoint_not_authorized")
+    # A missing retained ACK is not itself a preparation failure. Keep all
+    # unknown blockers, especially missing enforcement implementations and
+    # unhealthy observations, fail-closed before any persistent hold.
+    retained_only = {
+        "no_durable_quiescence_hold_established",
+        "daemon_lock_coverage_and_inflight_jobs_not_proven",
+        "remote_agent_quiescence_not_acknowledged",
+        "expected_agent_wire_receipts_missing",
         "updater_no_drain_production_entrypoint_not_authorized",
-    ])
+        *("operational_guarantee_" + key + "_unverified" for key in guarantees),
+    }
+    status["operational_preparation_blockers"] = sorted(
+        set(status["blockers"]) - retained_only)
     return status

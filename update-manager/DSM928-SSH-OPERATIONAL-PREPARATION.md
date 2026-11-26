@@ -65,9 +65,13 @@ release remain unverified. Keep no-drain blocked.
 ## Remaining operational admission boundary
 
 A green CI is not permission to install or execute the no-drain updater.
-The installed owner is intentionally blocked: the read-only operational
-review cannot emit positive retained ACKs, and the installed distributed
-scope has not yet attested every external mutator. Do not flip those flags
+The read-only review now separates preparation blockers from retained ACKs.
+The installed owner checks preparation eligibility before creating a hold,
+then requires the exact transaction-bound, authenticated retained scope
+before product mutations or terminal release. Missing enforcement
+implementations (complete mutator coverage, external job fencing and
+distributed recovery) still block preparation; compatibility and game
+inventory must also be independently verified. Do not flip those flags
 or manufacture receipts to bypass the gate. The existing signature was for
 an earlier candidate, not the current HEAD. The first fence-aware release
 changes systemd/Agent/updater code and may require separately approved

@@ -1310,20 +1310,32 @@ def retain_installed_distributed_scopes(
                             "live_no_drain_authorized": False}
 
                 checkpoint()
+                if (remote.get("ssh_host_keys_authenticated") is not True
+                        or remote.get("ssh_remote_agent_id_matched") is not True
+                        or remote.get("transaction_id") != transaction_id
+                        or remote.get("release_sha256") != release_sha256
+                        or remote.get("issued_at") != issued_at
+                        or remote.get("expires_at") != expires_at
+                        or remote.get("expected_agent_ids") != sorted(expected_agent_ids)
+                        or remote.get("prepared_agent_ids") != remote_ids):
+                    raise LocalScopeLeaseBlocked("authenticated_remote_scope_binding_mismatch")
                 scope_result = {"kind": "DSM928InstalledDistributedScope",
                        "transaction_id": transaction_id,
                        "release_sha256": release_sha256,
+                       "issued_at": issued_at, "expires_at": expires_at,
                        "agent_ids": sorted(expected_agent_ids),
                        "local_hybrid_agent_id": local_hybrid_agent_id,
                        "retained_remote_agent_ids": remote["prepared_agent_ids"],
                        "controller_registry_inventory_matched": True,
                        "known_database_job_queues_terminal": True,
+                       "authenticated_remote_scope_retained": True,
                        "checkpoint": checkpoint,
                        "finalize_terminal": finalize_terminal,
                        "restart_control_plane": restart_control_plane,
                        "restart_receipt_count": restart_receipt_count,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
+                       "durable_cross_host_recovery_verified": False,
                        "live_no_drain_authorized": False}
                 yield dict(scope_result)
                 if not released:
