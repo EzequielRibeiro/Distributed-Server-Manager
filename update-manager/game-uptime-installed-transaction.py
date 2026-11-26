@@ -148,6 +148,44 @@ def _validate_plan(report):
     return digest, paths
 
 
+def _execute_file_transaction(engine, scope, *, restart_required=False):
+    """Shared application/rollback orchestration under retained admission.
+
+    Restart candidates remain excluded by installed plan admission until
+    service ownership and operational coverage are independently proven.
+    """
+    if (scope.get("all_mutators_fenced") is not True
+            or scope.get("external_jobs_acked") is not True):
+        raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+    restart = scope.get("restart_control_plane") if restart_required else None
+    if restart_required and not callable(restart):
+        raise InstalledTransactionBlocked("retained_restart_owner_missing")
+    def verify_restart():
+        result = restart()
+        if (type(result) is not dict
+                or result.get("status") != "restart_transition_recorded"
+                or result.get("live_no_drain_authorized") is not False):
+            raise InstalledTransactionBlocked("restart_transition_not_verified")
+    scope["checkpoint"]()
+    try:
+        engine.apply()
+        if restart_required:
+            verify_restart()
+        engine.verify_terminal("verified")
+        scope["checkpoint"]()
+        return "verified"
+    except Exception:
+        # An uncertain restart must not be treated as a verified rollback.
+        # The retained checkpoint rejects an unrecorded daemon replacement.
+        scope["checkpoint"]()
+        engine.rollback()
+        if restart_required:
+            verify_restart()
+        engine.verify_terminal("rolled_back")
+        scope["checkpoint"]()
+        return "rolled_back"
+
+
 def _write_status(workspace, report, status):
     path = workspace / "game-uptime-transaction.json"
     temporary = workspace / (".journal-" + uuid.uuid4().hex)
@@ -261,19 +299,10 @@ def run(target):
                   "product_identity": [uid, gid], "live_no_drain_authorized": False}
         _write_status(workspace, report, "prepared")
         try:
-            engine.apply()
-            engine.verify_terminal("verified")
-            scope["checkpoint"]()
-            outcome = "verified"
+            outcome = _execute_file_transaction(engine, scope)
         except Exception:
-            try:
-                engine.rollback()
-                engine.verify_terminal("rolled_back")
-                scope["checkpoint"]()
-                outcome = "rolled_back"
-            except Exception:
-                _write_status(workspace, report, "manual_recovery_required")
-                raise
+            _write_status(workspace, report, "manual_recovery_required")
+            raise
         terminal = _write_status(workspace, report, outcome)
     # Persistent holds bridge the transition to the explicitly reviewed
     # recovery session. A disconnect or expired window never clears them.
