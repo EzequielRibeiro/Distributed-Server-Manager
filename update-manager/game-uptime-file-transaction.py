@@ -390,25 +390,43 @@ class FileTransaction:
         if not games or not previous:
             raise FileTransactionBlocked("restart_fixture_witness_missing")
 
+        original = copy.deepcopy(previous)
+        attempts = 0
+
         def restart():
-            nonlocal previous
+            nonlocal previous, attempts
             self.checkpoint()
             if observe_games() != games:
                 raise FileTransactionBlocked("restart_fixture_game_identity_changed")
-            # Capture the actual pre-restart identity, including on rollback.
-            previous = copy.deepcopy(observe_inventory())
+            attempts += 1
+            if attempts == 1:
+                if observe_inventory() != original:
+                    raise FileTransactionBlocked("restart_fixture_inventory_changed")
+            else:
+                # A failed startup can leave the service inventory unreadable.
+                # Restore the old files and attempt restart anyway, but never
+                # certify a rollback without a valid replacement witness.
+                try:
+                    previous = copy.deepcopy(observe_inventory())
+                except (OSError, RuntimeError, ValueError):
+                    previous = None
             restart_services()
             self.checkpoint()
 
         def verify():
-            current = observe_inventory()
-            result = validate_replacement(previous, current)
-            if (type(result) is not dict
-                    or result.get("status") != "replacement_inventory_verified_only"
-                    or result.get("replacement_count") != 11
-                    or result.get("live_no_drain_authorized") is not False
-                    or observe_games() != games
-                    or verify_services() is not True):
+            current = copy.deepcopy(observe_inventory())
+            if previous is None:
+                return False
+            # Preserve the original registry, queues and alert identity even
+            # when the rollback has its own immediate pre-restart witness.
+            for baseline in (original, previous):
+                result = validate_replacement(baseline, current)
+                if (type(result) is not dict
+                        or result.get("status") != "replacement_inventory_verified_only"
+                        or result.get("replacement_count") != 11
+                        or result.get("live_no_drain_authorized") is not False):
+                    return False
+            if observe_games() != games or verify_services() is not True:
                 return False
             self.checkpoint()
             return observe_games() == games and observe_inventory() == current
