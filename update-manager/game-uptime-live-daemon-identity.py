@@ -302,3 +302,52 @@ def compare_installed_daemon_observations(before: dict, after: dict) -> dict:
         "external_jobs_acked": False,
         "live_no_drain_authorized": False,
     }
+
+
+def compare_control_plane_restart(before: dict, after: dict) -> dict:
+    """Diagnostic witness for intentional replacement, never a fence ACK."""
+    def identities(snapshot):
+        if snapshot.get("live_no_drain_authorized") is not False:
+            raise ValueError("unexpected_live_authorization")
+        controller = snapshot["controller"]
+        group = snapshot["worker_group"]
+        if (controller.get("identity_verified") is not True
+                or controller.get("flock_opted_in_verified") is not True
+                or group.get("supervisor_verified") is not True
+                or group.get("all_nine_workers_verified") is not True):
+            raise ValueError("restart_identity_unverified")
+        workers = group["worker_identities"]
+        expected = {"scheduler_worker", "automation_worker",
+                    "content_update_worker", "maintenance_worker",
+                    "observability_retention_worker", "content_upload_retention_worker",
+                    "database_intelligence_worker", "hybrid_agent_worker",
+                    "hybrid_customer_workspace_worker"}
+        if set(workers) != expected:
+            raise ValueError("restart_worker_inventory_mismatch")
+        items = {"controller": controller, "supervisor": group["supervisor_identity"],
+                 **workers}
+        result = {}
+        for name, item in items.items():
+            pid, ticks = item["pid"], item["start_ticks"]
+            if type(pid) is not int or type(ticks) is not int or min(pid, ticks) < 1:
+                raise ValueError("restart_identity_invalid")
+            result[name] = (pid, ticks)
+        if len({pid for pid, _ in result.values()}) != len(result):
+            raise ValueError("restart_duplicate_pid")
+        return result
+
+    try:
+        old, new = identities(before), identities(after)
+        if set(old.values()) & set(new.values()):
+            raise ValueError("restart_old_process_identity_retained")
+        if any(new[name][1] < old[name][1] for name in old):
+            raise ValueError("restart_process_time_regressed")
+        return {"status": "replacement_identities_verified_only",
+                "replacement_count": len(new), "blockers": [],
+                "fence_continuity_verified": False,
+                "live_no_drain_authorized": False}
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        return {"status": "blocked", "replacement_count": 0,
+                "blockers": [type(exc).__name__],
+                "fence_continuity_verified": False,
+                "live_no_drain_authorized": False}
