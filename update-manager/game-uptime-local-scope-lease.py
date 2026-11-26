@@ -1169,6 +1169,22 @@ def retain_installed_distributed_scopes(
                     return {"status": "restart_transition_recorded",
                             "sequence": len(receipts), "live_no_drain_authorized": False}
 
+                def restart_control_plane():
+                    """Fixed restart operation, gated by positive retained admission."""
+                    if (scope_result.get("all_mutators_fenced") is not True
+                            or scope_result.get("external_jobs_acked") is not True):
+                        raise LocalScopeLeaseBlocked("retained_operational_guarantees_missing")
+                    checkpoint()
+                    if len(recovery_evidence) >= 2:
+                        raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
+                    retained_fence_checkpoint()
+                    subprocess.run(
+                        ["/usr/bin/systemctl", "restart", "dsm-dashboard.service",
+                         "dsm-dashboard-worker.service"],
+                        check=True, timeout=120, stdin=subprocess.DEVNULL)
+                    retained_fence_checkpoint()
+                    return record_observed_restart()
+
                 released = False
 
                 def finalize_terminal(journal_sha256):
@@ -1234,7 +1250,7 @@ def retain_installed_distributed_scopes(
                             "live_no_drain_authorized": False}
 
                 checkpoint()
-                yield {"kind": "DSM928InstalledDistributedScope",
+                scope_result = {"kind": "DSM928InstalledDistributedScope",
                        "transaction_id": transaction_id,
                        "release_sha256": release_sha256,
                        "agent_ids": sorted(expected_agent_ids),
@@ -1245,9 +1261,11 @@ def retain_installed_distributed_scopes(
                        "checkpoint": checkpoint,
                        "finalize_terminal": finalize_terminal,
                        "record_observed_restart": record_observed_restart,
+                       "restart_control_plane": restart_control_plane,
                        "all_mutators_fenced": False,
                        "external_jobs_acked": False,
                        "live_no_drain_authorized": False}
+                yield dict(scope_result)
                 if not released:
                     checkpoint()
     finally:
