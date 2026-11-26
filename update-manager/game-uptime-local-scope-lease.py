@@ -1083,7 +1083,7 @@ def retain_installed_distributed_scopes(
             receipts = read_restart_evidence()
             if receipts != recovery_evidence:
                 raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
-            if recover_existing and raw != original_evidence:
+            if original_evidence is not None and raw != original_evidence:
                 raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
             if receipts:
                 _validate_restart_receipt_chain(raw, receipts, witness_scope, initial_inventory)
@@ -1102,6 +1102,8 @@ def retain_installed_distributed_scopes(
                         expected_uid=expected_controller_uid) != initial_inventory:
                     raise LocalScopeLeaseBlocked("controller_agent_inventory_changed_before_binding")
                 _persist_terminal_receipt(witness_path, daemon_payload, 0)
+                original_evidence = _root_file(witness_path, 32768)
+                _check_daemon_witness(original_evidence, daemon_payload)
             daemon_checkpoint()
             game_checkpoint = _retain_installed_game_witness(
                 pending=PENDING_PATH, transaction_id=transaction_id,
