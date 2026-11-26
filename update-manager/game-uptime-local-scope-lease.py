@@ -867,6 +867,49 @@ def _restart_transition_payload(scope, before, after, *, sequence, previous_sha2
             "live_no_drain_authorized": False}
 
 
+def _persist_restart_transition(scope, before, after, *, sequence,
+                                root_file, persist_receipt, fence_checkpoint):
+    """Append a bound receipt under the existing root-owned state directory.
+
+    This internal primitive does not authorize restart or recovery admission.
+    The caller must retain the independent local, game and remote fences.
+    """
+    if os.geteuid() != 0 or type(sequence) is not int or sequence not in (1, 2):
+        raise LocalScopeLeaseBlocked("root_restart_transition_required")
+    tx = scope.get("transaction_id")
+    if type(tx) is not str or not _TX.fullmatch(tx):
+        raise LocalScopeLeaseBlocked("invalid_restart_transition_binding")
+    directory = PENDING_PATH.parent
+    _directory_chain(directory, fixture_root=None, owner=0)
+    original = directory / ("daemon-witness-" + tx + ".json")
+    previous = original if sequence == 1 else directory / (
+        "daemon-restart-" + tx + "-1.json")
+    destination = directory / ("daemon-restart-" + tx + "-" + str(sequence) + ".json")
+    fence_checkpoint()
+    raw = root_file(previous, 32768)
+    prior = json.loads(raw)
+    if (raw != (json.dumps(prior, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            or prior.get("transaction_id") != tx
+            or prior.get("release_sha256") != scope.get("release_sha256")
+            or prior.get("live_no_drain_authorized") is not False
+            or prior.get("kind") != ("DSM928InstalledDaemonInventoryWitness" if sequence == 1
+                                    else "DSM928DaemonRestartTransitionWitness")
+            or (sequence == 2 and prior.get("sequence") != 1)):
+        raise LocalScopeLeaseBlocked("restart_transition_previous_receipt_invalid")
+    payload = _restart_transition_payload(scope, before, after, sequence=sequence,
+                                         previous_sha256=hashlib.sha256(raw).hexdigest())
+    if payload["before_inventory_sha256"] != prior.get(
+            "inventory_sha256" if sequence == 1 else "after_inventory_sha256"):
+        raise LocalScopeLeaseBlocked("restart_transition_inventory_chain_mismatch")
+    if os.path.lexists(destination):
+        raise LocalScopeLeaseBlocked("restart_transition_already_exists")
+    fence_checkpoint()
+    persist_receipt(destination, payload, 0)
+    _check_daemon_witness(root_file(destination, 32768), payload)
+    fence_checkpoint()
+    return payload
+
+
 def _daemon_witness_payload(scope, inventory):
     """Bind the original inventory (including daemon PIDs) to this lease.
 
