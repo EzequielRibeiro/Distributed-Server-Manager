@@ -417,11 +417,14 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
     # Real Controller/Worker/Agent/external-job acknowledgements MUST be
     # implemented by their owners and persisted with replay-resistant IDs.
     # No synthetic fixture receipt from 2.6 can satisfy these requirements.
-    implementation_blockers = [
-        "operational_controller_worker_agent_ack_protocol_not_integrated",
-        "external_jobs_quiescence_not_integrated",
-        "cross_host_transaction_recovery_not_integrated",
-    ]
+    try:
+        lease = _load("dsm928_installed_mutator_review", "game-uptime-local-scope-lease.py")
+        status["managed_mutator_coverage_blockers"] = list(
+            lease.observe_managed_mutator_coverage())
+    except Exception:
+        status["managed_mutator_coverage_blockers"] = ["installed_mutator_observation_unavailable"]
+    implementation_blockers = (["managed_local_mutator_coverage_unverified"]
+                               if status["managed_mutator_coverage_blockers"] else [])
     status["blockers"].extend(implementation_blockers)
     status["blockers"].append("updater_no_drain_production_entrypoint_not_authorized")
     # A missing retained ACK is not itself a preparation failure. Keep all
@@ -432,6 +435,7 @@ def evaluate(target: Path, *, review_dir: Path = REVIEW_DIR,
         "daemon_lock_coverage_and_inflight_jobs_not_proven",
         "remote_agent_quiescence_not_acknowledged",
         "expected_agent_wire_receipts_missing",
+        "durable_remote_wire_inventory_unverified",
         "updater_no_drain_production_entrypoint_not_authorized",
         *("operational_guarantee_" + key + "_unverified" for key in guarantees),
     }

@@ -100,7 +100,7 @@ class UpdatePreflightTest(unittest.TestCase):
         # inventory; it must not retry a fresh transaction after a crash.
         tx = "a"*32
         now = 1700000100
-        recovery = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 1,
+        recovery = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 2,
                     "scope": {"transaction_id": tx, "release_sha256": "b"*64,
                               "issued_at": 1700000000, "expires_at": 1700000900,
                               "expected_agent_ids": ["hybrid", "vps"]},
@@ -112,7 +112,8 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertEqual(options["expires_at"], 1700000900)
         for bad in ({**recovery, "status": "manual_recovery_required"},
                     {**recovery, "scope": {**recovery["scope"], "expires_at": now}},
-                    {**recovery, "scope": {**recovery["scope"], "expected_agent_ids": ["hybrid"]}},
+                    {**recovery, "scope": {**recovery["scope"], "expected_agent_ids": ["vps"]}},
+                    {**recovery, "schema_version": 1},
                     {**recovery, "live_no_drain_authorized": True}):
             with self.assertRaises(installed_owner.InstalledTransactionBlocked):
                 installed_owner._validate_recovery_report(bad, tx, now)
@@ -212,15 +213,13 @@ class UpdatePreflightTest(unittest.TestCase):
                    "issued_at": 1700000000, "expires_at": 1700000900,
                    "expected_agent_ids": ["hybrid", "vps"], "local_hybrid_agent_id": "hybrid"}
         checkpoint = Mock()
-        scope = {"kind": "DSM928InstalledDistributedScope",
+        scope = {"kind": "DSM928InstalledHostScope",
                  **{key: options[key] for key in ("transaction_id", "release_sha256",
                                                    "issued_at", "expires_at", "local_hybrid_agent_id")},
-                 "agent_ids": ["hybrid", "vps"], "retained_remote_agent_ids": ["vps"],
+                 "agent_ids": ["hybrid", "vps"],
                  "controller_registry_inventory_matched": True,
                  "known_database_job_queues_terminal": True,
-                 "authenticated_remote_scope_retained": True,
                  "all_mutators_fenced": False, "external_jobs_acked": False,
-                 "durable_cross_host_recovery_verified": False,
                  "checkpoint": checkpoint, "finalize_terminal": Mock()}
         with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
                                     "retained_operational_guarantees_missing"):
@@ -229,6 +228,87 @@ class UpdatePreflightTest(unittest.TestCase):
                                     "retained_scope_binding_mismatch"):
             owner._require_retained_admission({**scope, "expires_at": 1700001000}, options)
         checkpoint.assert_not_called()
+        retained = {
+            **scope, "all_mutators_fenced": True, "external_jobs_acked": True,
+        }
+        with self.assertRaisesRegex(owner.InstalledTransactionBlocked,
+                                    "managed_local_mutator_coverage_unverified"):
+            owner._require_retained_admission(retained, options)
+        observer = Mock(return_value=())
+        owner._require_retained_admission({
+            **retained, "managed_mutator_blockers": observer,
+        }, options)
+        observer.assert_called_once_with()
+
+    def test_local_scope_refuses_to_activate_unfenced_topology_writer(self):
+        from unittest.mock import Mock, patch
+
+        lease = module._load("dsm928_host_topology_test", "game-uptime-local-scope-lease.py")
+        settled = ("LoadState=loaded\nActiveState=active\nSubState=exited\n"
+                   "RemainAfterExit=yes\nNeedDaemonReload=no\n")
+        with patch.object(lease.subprocess, "run", return_value=Mock(stdout=settled)):
+            lease._check_controller_topology_settled()
+        for observation in (
+                settled.replace("SubState=exited", "SubState=running"),
+                settled.replace("ActiveState=active", "ActiveState=inactive"),
+                settled.replace("NeedDaemonReload=no", "NeedDaemonReload=yes")):
+            with patch.object(lease.subprocess, "run", return_value=Mock(stdout=observation)):
+                with self.assertRaisesRegex(lease.LocalScopeLeaseBlocked,
+                                            "unfenced_controller_topology_activation"):
+                    lease._check_controller_topology_settled()
+
+    def test_hybrid_mutator_inventory_verifies_sources_and_effective_units(self):
+        from unittest.mock import Mock, patch
+
+        lease = module._load("dsm928_hybrid_inventory_test", "game-uptime-local-scope-lease.py")
+        snapshot, units = self.target, self.installed / "units"
+        installed = self.installed
+        units.mkdir()
+        for name in lease._PINNED_MUTATORS:
+            self.write(name, "audited source", "audited source")
+        helper_names = {f"dsm-hybrid-agent-{kind}@.service" for kind in lease._HYBRID_HELPERS}
+        topology = "dsm-controller-service-topology.service"
+        for unit in helper_names | {topology}:
+            (snapshot / "systemd").mkdir(exist_ok=True)
+            expected = snapshot / "systemd" / (unit + ".in" if unit in helper_names else unit)
+            expected.write_text("[Service]\nType=oneshot\n")
+            (units / unit).write_bytes(expected.read_bytes())
+
+        observations = {name: {"start_ticks": 10**16, "pid": 123} for name in lease.WORKERS}
+        identity = Mock()
+        identity._systemd_status.return_value = {"User": "dsm"}
+        identity._workers_identity.return_value = {
+            "all_nine_workers_verified": True, "worker_identities": observations,
+        }
+        extra = ""
+        dropin = ""
+
+        def systemctl(*args):
+            if args[0] == "list-unit-files":
+                return "".join(f"{unit} static\n" for unit in sorted(helper_names)) + extra
+            unit = args[1].replace("@dsm928-probe.", "@.")
+            return (f"LoadState=loaded\nFragmentPath={units / unit}\nDropInPaths={dropin}\n"
+                    "NeedDaemonReload=no\nKillMode=control-group\n")
+
+        read = lease._mutator_bytes
+        with patch.object(lease, "_mutator_bytes", side_effect=lambda path, **_: read(path)), \
+                patch.object(lease, "_check_hybrid_helper_selectors"):
+            lease._check_hybrid_mutators(installed, snapshot, units,
+                                         systemctl=systemctl, identity=identity)
+            extra = "dsm-hybrid-agent-unknown@.service static\n"
+            with self.assertRaisesRegex(lease.LocalScopeLeaseBlocked, "uncovered_installed"):
+                lease._check_hybrid_mutators(installed, snapshot, units,
+                                             systemctl=systemctl, identity=identity)
+            extra = ""
+            dropin = "/etc/systemd/system/override.conf"
+            with self.assertRaisesRegex(lease.LocalScopeLeaseBlocked, "unit_unverified"):
+                lease._check_hybrid_mutators(installed, snapshot, units,
+                                             systemctl=systemctl, identity=identity)
+            dropin = ""
+            (installed / lease._PINNED_MUTATORS[0]).write_text("unreviewed launcher")
+            with self.assertRaisesRegex(lease.LocalScopeLeaseBlocked, "source_changed"):
+                lease._check_hybrid_mutators(installed, snapshot, units,
+                                             systemctl=systemctl, identity=identity)
 
     def test_bad_inventory_fails_closed(self):
         self.write("dashboard/web/style.css","old","new")

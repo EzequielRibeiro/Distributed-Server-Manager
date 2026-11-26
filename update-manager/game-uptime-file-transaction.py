@@ -237,7 +237,7 @@ class FileTransaction:
             # guarantees, not an operator override or a standalone CLI.
             state = Path("/var/lib/capivara-dsm-928")
             if (os.geteuid() != 0 or type(_installed_scope) is not dict
-                    or _installed_scope.get("kind") != "DSM928InstalledDistributedScope"
+                    or _installed_scope.get("kind") != "DSM928InstalledHostScope"
                     or _installed_scope.get("transaction_id") != transaction_id
                     or _installed_scope.get("release_sha256") != release_sha256
                     or _installed_scope.get("checkpoint") is not checkpoint

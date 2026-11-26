@@ -137,6 +137,8 @@ _BOOTSTRAP = (
     "agents/linux/runtime/game_uptime_privileged_flock.py",
     "agents/linux/runtime/game_uptime_finalization_flock.py",
     "dashboard/game_uptime_controller_mutation_gate.py",
+    "dashboard/workers/hybrid_agent_worker.py",
+    "dashboard/workers/hybrid_customer_workspace_worker.py",
     "dashboard/workers/maintenance_hold_gate.py",
     "systemd/dsm-dashboard.service",
     "systemd/dsm-dashboard-worker.service",

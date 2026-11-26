@@ -64,14 +64,55 @@ release remain unverified. Keep no-drain blocked.
 
 ## Remaining operational admission boundary
 
+The first supported no-drain operation is scoped to the Controller,
+Dashboard, and Workers on one host. Standalone and local Hybrid Agents must
+keep running on the same version. Agent code, game adapters, supervisors,
+database changes, and incompatible dependencies require conventional
+maintenance. The controller-side command store and its schema must remain
+compatible with both versions throughout activation and rollback.
+
+Controller unavailability during restart is expected. Commands retain their
+IDs across heartbeat retries, and the Controller must commit a terminal
+result and its console output together so a lost reply cannot duplicate the
+output. This covers a Controller restart with the Agent still running.
+Restarting an Agent that may have an unresolved command is outside this
+scope.
+
+The installed executor and its recovery now use the host's locks and journal.
+Controller registry rows are checked locally. External Agents do not take
+part in preparation or terminal release. The prior distributed journal format
+requires administrative review and cannot be recovered as a host transaction.
+Manual administrative operations that change DSM units, game state, or the
+reviewed package are prohibited during the transaction.
+
+The systemd adapter checks the hold across start, stop, restart, and any
+post-stop reset-failed call. A split restart retains the same guard across
+both actions. Read-only status and doctor calls remain available. The
+Controller topology service takes the existing privileged helper lock before
+reconciling units. A normal bootstrap must install the guarded service before
+it can count as coverage.
+
+Admission remains blocked until installed coverage is verified for Hybrid
+callers and direct helper launches. These include unit materialization and
+daemon-reload, native/DayZ operations, backup/restore, firewall, and customer
+file-access helpers. An idle job queue and a settled topology service alone
+do not verify these paths.
+
+The coverage verifier compares pinned mutator source with the independently
+installed updater snapshot, checks both Hybrid worker identities and helper
+selectors, and verifies effective systemd fragments against the rendered
+templates. Unknown helper units, drop-ins, and stale workers block admission.
+Disposable CI can exercise the verifier without enrolling a host. Installing
+the reviewed snapshot and proving coverage against the real installation
+belong to the deployment phase.
+
 A green CI is not permission to install or execute the no-drain updater.
 The read-only review now separates preparation blockers from retained ACKs.
 The installed owner checks preparation eligibility before creating a hold,
 then requires the exact transaction-bound, authenticated retained scope
-before product mutations or terminal release. Missing enforcement
-implementations (complete mutator coverage, external job fencing and
-distributed recovery) still block preparation; compatibility and game
-inventory must also be independently verified. Do not flip those flags
+before product mutations or terminal release. Missing host evidence for
+mutator coverage still blocks preparation. Compatibility and game inventory
+must also be independently verified. Do not flip those flags
 or manufacture receipts to bypass the gate. The existing signature was for
 an earlier candidate, not the current HEAD. The first fence-aware release
 changes systemd/Agent/updater code and may require separately approved

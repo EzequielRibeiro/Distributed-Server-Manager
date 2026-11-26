@@ -27,7 +27,7 @@ import time
 import json
 import hashlib
 import subprocess
-from typing import Iterator
+from typing import Callable, Iterator
 
 CONTROLLER_LOCK = Path("/run/capivara-dsm/controller-agent-http.lock")
 WORKER_LOCK_DIR = Path("/run/capivara-dsm/worker-operations")
@@ -330,7 +330,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         expected_recovery_agent_ids: list[str] | None = None,
                         prepare_fresh_installed: bool = False,
                         expected_installed_agent_ids: list[str] | None = None,
-                        shared_lease_window: tuple[int, int] | None = None) -> Iterator[dict]:
+                        shared_lease_window: tuple[int, int] | None = None,
+                        before_prepare: Callable[[], None] | None = None) -> Iterator[dict]:
     """Acquire and RETAIN all known local locks until exiting this context.
 
     Real paths require root and independently reviewed inventory/lease for
@@ -373,6 +374,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                         or inspect_existing_prepared)):
             raise LocalScopeLeaseBlocked("invalid_shared_local_lease_window")
     fresh = prepare_fresh_fixture or prepare_fresh_installed
+    if before_prepare is not None and (not fresh or not callable(before_prepare)):
+        raise LocalScopeLeaseBlocked("invalid_preparation_guard")
     if expected_fixture_agent_ids is not None:
         if (not prepare_fresh_fixture or type(expected_fixture_agent_ids) is not list
                 or not 1 <= len(expected_fixture_agent_ids) <= 64
@@ -441,7 +444,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
                 from game_uptime_privileged_flock import exclusive_update_admission
             finally:
                 sys.path.remove(runtime)
-            agent_locks.enter_context(exclusive_update_admission())
+            agent_locks.enter_context(exclusive_update_admission(provision=False))
         for path, uid in (
             (controller_lock, expected_controller_uid),
             *((worker_lock_dir / (name + ".lock"), expected_worker_uid)
@@ -458,6 +461,8 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
         if fresh:
             agent_checkpoint = _retain_agent_operations(
                 agent_locks, controller_lock.parent, owner=owner, installed=root is None)
+            if before_prepare is not None:
+                before_prepare()
             evidence_checkpoint = _fresh_preparation(
                 hold, hold_path, pending_path, tx=transaction_id,
                 sha=release_sha256, owner=owner, runtime_dir=runtime_dir,
@@ -497,18 +502,14 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
 
         released = False
 
-        def release_installed(confirmation, decision, local_agent_id):
+        def release_host(decision, verify_terminal):
             nonlocal released
-            if root is not None or released or not inspect_existing_prepared or shared_lease_window is None:
+            if root is not None or released or not inspect_existing_prepared:
                 raise LocalScopeLeaseBlocked("reviewed_installed_terminal_release_required")
-            from game_uptime_hold_coordinator import _release_confirmed_installed_hold
-            issued, expires = shared_lease_window
-            result = _release_confirmed_installed_hold(
-                scope={"transaction_id": transaction_id, "release_sha256": release_sha256,
-                       "issued_at": issued, "expires_at": expires,
-                       "expected_agent_ids": expected_recovery_agent_ids},
-                agent_id=local_agent_id, confirmation=confirmation,
-                decision=decision, checkpoint=checkpoint)
+            from game_uptime_hold_coordinator import _archive_confirmed_hold
+            result = _archive_confirmed_hold(
+                marker=hold_path, pending=pending_path, transaction_id=transaction_id,
+                decision=decision, uid=owner, checkpoint=verify_terminal, installed=True)
             released = True
             return result
 
@@ -551,7 +552,7 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             "fixture_privileged_helper_lock_retained": prepare_fresh_fixture,
             "fixture_finalization_child_lock_retained": prepare_fresh_fixture,
             "checkpoint": checkpoint, "release_fixture": release_fixture,
-            "release_installed": release_installed,
+            "release_host": release_host,
             "controller_routes_opted_in_verified": False,
             "worker_process_inventory_verified": False,
             "all_mutators_fenced": False,
@@ -608,7 +609,8 @@ def _validate_controller_agent_inventory(rows, expected_ids, hybrid_id):
         if row["role"] != ("hybrid" if agent == hybrid_id else "agent"):
             raise LocalScopeLeaseBlocked("controller_agent_role_mismatch")
         retained[agent] = row["role"]
-    if (set(retained) != set(expected_ids) or hybrid_id not in retained):
+    if (hybrid_id not in retained
+            or (expected_ids is not None and set(retained) != set(expected_ids))):
         raise LocalScopeLeaseBlocked("controller_agent_inventory_mismatch")
     return tuple(sorted(retained.items()))
 
@@ -872,7 +874,7 @@ def _persist_restart_transition(scope, before, after, *, sequence,
     """Append a bound receipt under the existing root-owned state directory.
 
     This internal primitive does not authorize restart or recovery admission.
-    The caller must retain the independent local, game and remote fences.
+    The caller must retain the independent local and game fences.
     """
     if os.geteuid() != 0 or type(sequence) is not int or sequence not in (1, 2):
         raise LocalScopeLeaseBlocked("root_restart_transition_required")
@@ -971,39 +973,210 @@ def _check_daemon_witness(raw, payload):
         raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
 
 
+def _check_controller_topology_settled():
+    """A Controller restart must not activate the unfenced topology writer."""
+    output = subprocess.run(
+        ("/usr/bin/systemctl", "show", "dsm-controller-service-topology.service",
+         "--property=LoadState,ActiveState,SubState,RemainAfterExit,NeedDaemonReload",
+         "--no-pager"),
+        check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        stdin=subprocess.DEVNULL, text=True, timeout=5,
+    ).stdout.splitlines()
+    if len(output) != 5 or set(output) != {
+            "LoadState=loaded", "ActiveState=active", "SubState=exited",
+            "RemainAfterExit=yes", "NeedDaemonReload=no"}:
+        raise LocalScopeLeaseBlocked("unfenced_controller_topology_activation")
+
+
+# These are the root unit entrypoints reachable from the Hybrid worker.
+_HYBRID_HELPERS = {
+    "backup-restore": "restore_instance_backup.py",
+    "files-access": "prepare_customer_files.py",
+    "firewall": "reconcile_firewall.py",
+    "materialize": "materialize_instance.py",
+    "native-command": "native_command.py",
+}
+_HYBRID_HELPER_SELECTORS = {
+    b"CAPIVARA_BACKUP_RESTORE_UNIT_TEMPLATE": b"dsm-hybrid-agent-backup-restore@{command_id}.service",
+    b"CAPIVARA_FIREWALL_UNIT_TEMPLATE": b"dsm-hybrid-agent-firewall@{instance_id}.service",
+    b"CAPIVARA_HYBRID_FILES_ACCESS_UNIT_TEMPLATE": b"dsm-hybrid-agent-files-access@{instance_id}.service",
+    b"CAPIVARA_MATERIALIZER_UNIT_TEMPLATE": b"dsm-hybrid-agent-materialize@{instance_id}.service",
+    b"CAPIVARA_NATIVE_COMMAND_UNIT_TEMPLATE": b"dsm-hybrid-agent-native-command@{command_id}.service",
+}
+_PINNED_MUTATORS = (
+    "dashboard/workers/worker.sh",
+    "dashboard/workers/hybrid_agent_worker.py",
+    "dashboard/workers/hybrid_customer_workspace_worker.py",
+    "dashboard/workers/maintenance_hold_gate.py",
+    "dashboard/game_uptime_controller_mutation_gate.py",
+    "dashboard/game_uptime_controller_agent_http_flock.py",
+    "agents/linux/runtime/adapters/systemd.py",
+    "agents/linux/runtime/materializers/systemd.py",
+    "agents/linux/runtime/backup_client.py",
+    "agents/linux/runtime/dayz_operation_client.py",
+    "agents/linux/runtime/privileged_materialization.py",
+    "agents/linux/runtime/privileged_firewall.py",
+    "agents/linux/runtime/game_uptime_finalization_flock.py",
+    "agents/linux/runtime/game_uptime_privileged_flock.py",
+    "agents/linux/runtime/game_uptime_privileged_admission.py",
+    "agents/linux/runtime/game_uptime_maintenance_hold.py",
+    "systemd/controller-service-topology.sh",
+    *("agents/linux/privileged/" + script for script in _HYBRID_HELPERS.values()),
+)
+
+
+def _systemd_read(*arguments):
+    raw = subprocess.run(
+        ("/usr/bin/systemctl", *arguments), check=True,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+        env={"PATH": "/usr/bin:/bin", "LANG": "C", "SYSTEMD_COLORS": "0"},
+        text=True, timeout=5,
+    ).stdout
+    if len(raw) > 262144:
+        raise LocalScopeLeaseBlocked("installed_mutator_observation_too_large")
+    return raw
+
+
+def _mutator_bytes(path, *, owner=None):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or before.st_mode & 0o022 or not 0 < before.st_size <= 1048576
+                or (owner is not None and before.st_uid != owner)):
+            raise LocalScopeLeaseBlocked("untrusted_installed_mutator:" + path.name)
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            content = stream.read(1048577)
+        fingerprint = lambda item: (item.st_dev, item.st_ino, item.st_mode,
+                                    item.st_uid, item.st_size, item.st_ctime_ns)
+        if (len(content) != before.st_size
+                or fingerprint(before) != fingerprint(os.fstat(fd))
+                or fingerprint(before) != fingerprint(path.lstat())):
+            raise LocalScopeLeaseBlocked("installed_mutator_changed:" + path.name)
+        return content, before.st_ctime_ns
+    finally:
+        os.close(fd)
+
+
+def _effective_mutator_unit(unit, fragment, expected, *, systemctl):
+    raw = systemctl("show", unit, "--no-pager",
+                    "--property=LoadState,FragmentPath,DropInPaths,NeedDaemonReload,KillMode")
+    required = {"LoadState=loaded", "FragmentPath=" + str(fragment),
+                "DropInPaths=", "NeedDaemonReload=no", "KillMode=control-group"}
+    if len(raw.splitlines()) != len(required) or set(raw.splitlines()) != required:
+        raise LocalScopeLeaseBlocked("installed_mutator_unit_unverified:" + unit)
+    if _mutator_bytes(fragment, owner=0)[0] != expected:
+        raise LocalScopeLeaseBlocked("installed_mutator_unit_changed:" + unit)
+
+
+def _check_hybrid_helper_selectors(pid):
+    with (Path("/proc") / str(pid) / "environ").open("rb") as stream:
+        raw = stream.read(262145)
+    if len(raw) > 262144 or not raw.endswith(b"\x00"):
+        raise LocalScopeLeaseBlocked("installed_hybrid_environment_unverified")
+    seen = set()
+    for entry in raw[:-1].split(b"\x00"):
+        key, _, value = entry.partition(b"=")
+        if key.startswith(b"CAPIVARA_") and key.endswith(b"_UNIT_TEMPLATE"):
+            if key in seen or value != _HYBRID_HELPER_SELECTORS.get(key):
+                raise LocalScopeLeaseBlocked("uncovered_installed_hybrid_helper_selector")
+            seen.add(key)
+
+
+def _check_hybrid_mutators(installed, snapshot, units, *, systemctl, identity):
+    status = identity._systemd_status("dsm-dashboard-worker.service")
+    account = status.get("User", "")
+    if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", account) or account == "root":
+        raise LocalScopeLeaseBlocked("installed_hybrid_worker_account_unverified")
+    worker_before = identity._workers_identity()
+    if worker_before.get("all_nine_workers_verified") is not True:
+        raise LocalScopeLeaseBlocked("installed_hybrid_worker_processes_unverified")
+
+    latest_source_change = 0
+    for relative in _PINNED_MUTATORS:
+        expected, _ = _mutator_bytes(snapshot / relative, owner=0)
+        installed_bytes, changed_at = _mutator_bytes(installed / relative)
+        if installed_bytes != expected:
+            raise LocalScopeLeaseBlocked("installed_mutator_source_changed:" + relative)
+        latest_source_change = max(latest_source_change, changed_at)
+    # /proc start ticks establish that the long-lived Hybrid Python processes
+    # were forked after the verified source was installed. btime is rounded
+    # down, so a same-second replacement is refused.
+    boot_rows = [line.split()[1] for line in Path("/proc/stat").read_text().splitlines()
+                 if line.startswith("btime ")]
+    if len(boot_rows) != 1 or not boot_rows[0].isdecimal():
+        raise LocalScopeLeaseBlocked("installed_hybrid_boot_time_unverified")
+    boot_ns = int(boot_rows[0]) * 10**9
+    ticks_per_second = os.sysconf("SC_CLK_TCK")
+    for name in ("hybrid_agent_worker", "hybrid_customer_workspace_worker"):
+        worker = worker_before["worker_identities"][name]
+        start_ns = boot_ns + worker["start_ticks"] * 10**9 // ticks_per_second
+        if start_ns <= latest_source_change:
+            raise LocalScopeLeaseBlocked("installed_hybrid_worker_predates_mutator_source:" + name)
+        _check_hybrid_helper_selectors(worker["pid"])
+
+    known = {f"dsm-hybrid-agent-{kind}@.service" for kind in _HYBRID_HELPERS}
+    listing = systemctl("list-unit-files", "--no-legend", "--no-pager",
+                        "dsm-hybrid-agent-*", "capivara-agent*")
+    entries = [line.split() for line in listing.splitlines() if line.strip()]
+    if any(len(row) < 2 or row[0] not in known for row in entries):
+        raise LocalScopeLeaseBlocked("uncovered_installed_mutator_unit")
+    if {row[0] for row in entries} != known:
+        raise LocalScopeLeaseBlocked("installed_hybrid_helper_inventory_incomplete")
+    for name in sorted(known):
+        expected, _ = _mutator_bytes(snapshot / "systemd" / (name + ".in"), owner=0)
+        expected = expected.replace(b"@DSM_ROOT@", os.fsencode(installed))
+        expected = expected.replace(b"@DSM_USER@", account.encode("ascii"))
+        _effective_mutator_unit(name.replace("@.", "@dsm928-probe."), units / name,
+                                expected, systemctl=systemctl)
+    topology = "dsm-controller-service-topology.service"
+    expected, _ = _mutator_bytes(snapshot / "systemd" / topology, owner=0)
+    _effective_mutator_unit(topology, units / topology, expected, systemctl=systemctl)
+    if identity._workers_identity() != worker_before:
+        raise LocalScopeLeaseBlocked("installed_hybrid_worker_identity_changed")
+
+
+def observe_managed_mutator_coverage():
+    """Verify the installed paths; observations alone do not retain admission."""
+    try:
+        _check_controller_topology_settled()
+        snapshot = Path(__file__).resolve().parents[1]
+        path = snapshot / "update-manager/game-uptime-live-daemon-identity.py"
+        loader = SourceFileLoader("dsm928_mutator_worker_identity", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        identity = importlib.util.module_from_spec(spec)
+        loader.exec_module(identity)
+        _check_hybrid_mutators(Path("/opt/dsm"), snapshot, Path("/etc/systemd/system"),
+                               systemctl=_systemd_read, identity=identity)
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError,
+            subprocess.SubprocessError) as exc:
+        reason = str(exc) if isinstance(exc, LocalScopeLeaseBlocked) else type(exc).__name__
+        return ("installed_systemd_mutation_callers_unverified", reason)
+    return ()
+
+
 @contextmanager
-def retain_installed_distributed_scopes(
+def retain_installed_host_scope(
     *, transaction_id: str, release_sha256: str,
     issued_at: int, expires_at: int, expected_agent_ids: list[str],
     local_hybrid_agent_id: str, expected_controller_uid: int,
     expected_worker_uid: int, recover_existing: bool = False,
     operator_reviewed: bool = False,
 ) -> Iterator[dict]:
-    """Join the real local kernel scope to the pinned SSH transport.
-
-    The caller must independently obtain the complete Controller inventory
-    and verify the signed artifact and all mutators before invoking this
-    primitive. No CLI, updater callback, commit/abort or live authorization
-    is exposed here. A partial preparation deliberately remains blocking.
-    """
+    """Retain the installed host fences without opening sessions to Agents."""
     if (os.geteuid() != 0 or type(recover_existing) is not bool
             or operator_reviewed is not True):
-        raise LocalScopeLeaseBlocked("root_reviewed_distributed_scope_required")
+        raise LocalScopeLeaseBlocked("root_reviewed_host_scope_required")
     runtime = str(_runtime_dir(True))
     sys.path.insert(0, runtime)
     try:
-        from game_uptime_ssh_transport import (
-            _snapshot_trusted, _root_directory, _root_file, _endpoint_inventory,
-            TRUST_DIR, LOCAL_ID, ENDPOINTS, IDENTITY_KEY, probe_ssh_agent_sessions,
-            retain_ssh_agent_sessions,
-        )
-        _snapshot_trusted()
+        from game_uptime_ssh_transport import _root_directory, _root_file, TRUST_DIR, LOCAL_ID
         from game_uptime_hold_coordinator import (
             _installed_game_snapshot, _retain_installed_game_witness,
-            _check_installed_systemd_work, _agent_terminal_payload, _installed_confirmation, _terminal_decision,
-            _persist_terminal_receipt, _validate_installed_confirmation,
+            _check_installed_systemd_work, _terminal_decision,
+            _persist_terminal_receipt,
         )
-        if (type(expected_agent_ids) is not list or not 2 <= len(expected_agent_ids) <= 64
+        if (type(expected_agent_ids) is not list or not 1 <= len(expected_agent_ids) <= 64
                 or any(type(item) is not str
                        or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", item)
                        for item in expected_agent_ids)
@@ -1020,14 +1193,6 @@ def retain_installed_distributed_scopes(
         initial_inventory = _read_installed_controller_agents(
             expected_agent_ids, local_hybrid_agent_id,
             expected_uid=expected_controller_uid)
-        remote_ids = sorted(item for item in expected_agent_ids
-                            if item != local_hybrid_agent_id)
-        _endpoint_inventory(_root_file(ENDPOINTS, 65536), remote_ids)
-        _root_file(IDENTITY_KEY, 16384)
-        # Avoid a needless local hold when a required endpoint is already
-        # unreachable. Probe is read-only and never counts as a fence.
-        if probe_ssh_agent_sessions(remote_ids).get("status") != "all_endpoints_authenticated":
-            raise LocalScopeLeaseBlocked("required_remote_agent_unreachable")
         options = dict(
             transaction_id=transaction_id, release_sha256=release_sha256,
             expected_controller_uid=expected_controller_uid,
@@ -1036,10 +1201,10 @@ def retain_installed_distributed_scopes(
         )
         if recover_existing:
             options.update(inspect_existing_prepared=True,
-                           expected_recovery_agent_ids=expected_agent_ids)
+                           expected_recovery_agent_ids=[local_hybrid_agent_id])
         else:
             options.update(prepare_fresh_installed=True,
-                           expected_installed_agent_ids=expected_agent_ids)
+                           expected_installed_agent_ids=[local_hybrid_agent_id])
         witness_path = PENDING_PATH.parent / ("daemon-witness-" + transaction_id + ".json")
         daemon_payload = _daemon_witness_payload({
             "transaction_id": transaction_id, "release_sha256": release_sha256,
@@ -1118,8 +1283,23 @@ def retain_installed_distributed_scopes(
             else:
                 _check_daemon_witness(raw, daemon_payload)
 
+        _check_controller_topology_settled()
         _check_installed_systemd_work()
         initial_games = _installed_game_snapshot()
+        if not recover_existing:
+            def before_prepare():
+                if observe_managed_mutator_coverage():
+                    raise LocalScopeLeaseBlocked("managed_local_mutator_coverage_unverified")
+                _check_controller_topology_settled()
+                _check_installed_systemd_work()
+                if _installed_game_snapshot() != initial_games:
+                    raise LocalScopeLeaseBlocked("game_inventory_changed_before_preparation")
+                if _read_installed_controller_agents(
+                        expected_agent_ids, local_hybrid_agent_id,
+                        expected_uid=expected_controller_uid) != initial_inventory:
+                    raise LocalScopeLeaseBlocked("controller_inventory_changed_before_preparation")
+
+            options["before_prepare"] = before_prepare
         with retain_local_scopes(**options) as local:
             local["checkpoint"]()
             if not recover_existing:
@@ -1137,208 +1317,172 @@ def retain_installed_distributed_scopes(
                 pending=PENDING_PATH, transaction_id=transaction_id,
                 release_sha256=release_sha256, agent_id=local_hybrid_agent_id,
                 recover_existing=recover_existing, initial=initial_games)
-            with retain_ssh_agent_sessions(
-                    transaction_id=transaction_id, release_sha256=release_sha256,
-                    issued_at=issued_at, expires_at=expires_at,
-                    expected_agent_ids=expected_agent_ids,
-                    local_hybrid_agent_id=local_hybrid_agent_id,
-                    recover_existing=recover_existing,
-                    operator_reviewed=operator_reviewed) as remote:
-                def retained_fence_checkpoint():
-                    # Independent of the Controller/Worker process witness.
-                    # This is not an admission or a complete checkpoint.
-                    local["checkpoint"]()
-                    game_checkpoint()
-                    remote["checkpoint"]()
-                    local["checkpoint"]()
+            def retained_fence_checkpoint():
+                # Independent of the Controller/Worker process witness.
+                # This is not an admission or a complete checkpoint.
+                local["checkpoint"]()
+                game_checkpoint()
+                local["checkpoint"]()
 
-                def checkpoint():
-                    retained_fence_checkpoint()
-                    _check_installed_systemd_work()
-                    daemon_checkpoint()
-                    retained_fence_checkpoint()
-                def record_observed_restart():
-                    """Record a replacement under retained fences; never initiate it.
+            def checkpoint():
+                retained_fence_checkpoint()
+                _check_controller_topology_settled()
+                _check_installed_systemd_work()
+                daemon_checkpoint()
+                if observe_managed_mutator_coverage():
+                    raise LocalScopeLeaseBlocked("managed_local_mutator_coverage_unverified")
+                retained_fence_checkpoint()
+            def record_observed_restart():
+                """Record a replacement under retained fences; never initiate it.
 
-                    This is an internal evidence operation, not restart admission.
-                    A failed or partial replacement leaves the scope blocked.
-                    """
-                    nonlocal initial_inventory, recovery_evidence, original_evidence
-                    retained_fence_checkpoint()
-                    _check_installed_systemd_work()
-                    raw = _root_file(witness_path, 32768)
+                This is an internal evidence operation, not restart admission.
+                A failed or partial replacement leaves the scope blocked.
+                """
+                nonlocal initial_inventory, recovery_evidence, original_evidence
+                retained_fence_checkpoint()
+                _check_installed_systemd_work()
+                raw = _root_file(witness_path, 32768)
+                if raw != original_evidence:
+                    raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
+                sequence = len(recovery_evidence) + 1
+                intent = PENDING_PATH.parent / (
+                    "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
+                expected_intent = {"kind": "DSM928DaemonRestartIntent", "schema_version": 1,
+                                   "transaction_id": transaction_id, "release_sha256": release_sha256,
+                                   "sequence": sequence,
+                                   "before_inventory_sha256": hashlib.sha256(
+                                       json.dumps(initial_inventory, sort_keys=True,
+                                                  separators=(",", ":")).encode()).hexdigest(),
+                                   "live_no_drain_authorized": False}
+                _check_daemon_witness(_root_file(intent, 32768), expected_intent)
+                if read_restart_evidence() != recovery_evidence:
+                    raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
+                if recovery_evidence:
                     if raw != original_evidence:
                         raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
-                    sequence = len(recovery_evidence) + 1
-                    intent = PENDING_PATH.parent / (
-                        "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
-                    expected_intent = {"kind": "DSM928DaemonRestartIntent", "schema_version": 1,
-                                       "transaction_id": transaction_id, "release_sha256": release_sha256,
-                                       "sequence": sequence,
-                                       "before_inventory_sha256": hashlib.sha256(
-                                           json.dumps(initial_inventory, sort_keys=True,
-                                                      separators=(",", ":")).encode()).hexdigest(),
-                                       "live_no_drain_authorized": False}
-                    _check_daemon_witness(_root_file(intent, 32768), expected_intent)
-                    if read_restart_evidence() != recovery_evidence:
-                        raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
-                    if recovery_evidence:
-                        if raw != original_evidence:
-                            raise LocalScopeLeaseBlocked("original_daemon_inventory_witness_changed")
-                        _validate_restart_receipt_chain(
-                            raw, recovery_evidence, witness_scope, initial_inventory)
-                    else:
-                        _check_daemon_witness(raw, daemon_payload)
-                    if len(recovery_evidence) >= 2:
-                        raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
-                    after = _read_installed_controller_agents(
-                        expected_agent_ids, local_hybrid_agent_id,
-                        expected_uid=expected_controller_uid)
-                    _persist_restart_transition(
-                        witness_scope, initial_inventory, after,
-                        sequence=len(recovery_evidence) + 1,
-                        root_file=_root_file, persist_receipt=_persist_terminal_receipt,
-                        fence_checkpoint=retained_fence_checkpoint)
-                    receipts = read_restart_evidence()
-                    if len(receipts) != len(recovery_evidence) + 1 or receipts[:-1] != recovery_evidence:
-                        raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
-                    _validate_restart_receipt_chain(raw, receipts, witness_scope, after)
-                    original_evidence = raw
-                    recovery_evidence = receipts
-                    initial_inventory = after
-                    checkpoint()
-                    return {"status": "restart_transition_recorded",
-                            "sequence": len(receipts), "live_no_drain_authorized": False}
+                    _validate_restart_receipt_chain(
+                        raw, recovery_evidence, witness_scope, initial_inventory)
+                else:
+                    _check_daemon_witness(raw, daemon_payload)
+                if len(recovery_evidence) >= 2:
+                    raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
+                after = _read_installed_controller_agents(
+                    expected_agent_ids, local_hybrid_agent_id,
+                    expected_uid=expected_controller_uid)
+                _persist_restart_transition(
+                    witness_scope, initial_inventory, after,
+                    sequence=len(recovery_evidence) + 1,
+                    root_file=_root_file, persist_receipt=_persist_terminal_receipt,
+                    fence_checkpoint=retained_fence_checkpoint)
+                receipts = read_restart_evidence()
+                if len(receipts) != len(recovery_evidence) + 1 or receipts[:-1] != recovery_evidence:
+                    raise LocalScopeLeaseBlocked("restart_evidence_changed_during_scope")
+                _validate_restart_receipt_chain(raw, receipts, witness_scope, after)
+                original_evidence = raw
+                recovery_evidence = receipts
+                initial_inventory = after
+                checkpoint()
+                return {"status": "restart_transition_recorded",
+                        "sequence": len(receipts), "live_no_drain_authorized": False}
 
-                def restart_control_plane():
-                    """Fixed restart operation, gated by positive retained admission."""
-                    if (scope_result.get("all_mutators_fenced") is not True
-                            or scope_result.get("external_jobs_acked") is not True):
-                        raise LocalScopeLeaseBlocked("retained_operational_guarantees_missing")
-                    checkpoint()
-                    if len(recovery_evidence) >= 2:
-                        raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
-                    retained_fence_checkpoint()
-                    sequence = len(recovery_evidence) + 1
-                    intent = PENDING_PATH.parent / (
-                        "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
-                    if os.path.lexists(intent):
-                        raise LocalScopeLeaseBlocked("existing_restart_intent_requires_review")
-                    payload = {"kind": "DSM928DaemonRestartIntent", "schema_version": 1,
-                               "transaction_id": transaction_id, "release_sha256": release_sha256,
-                               "sequence": sequence,
-                               "before_inventory_sha256": hashlib.sha256(
-                                   json.dumps(initial_inventory, sort_keys=True,
-                                              separators=(",", ":")).encode()).hexdigest(),
-                               "live_no_drain_authorized": False}
-                    _persist_terminal_receipt(intent, payload, 0)
-                    _check_daemon_witness(_root_file(intent, 32768), payload)
-                    retained_fence_checkpoint()
-                    subprocess.run(
-                        ["/usr/bin/systemctl", "restart", "dsm-dashboard.service",
-                         "dsm-dashboard-worker.service"],
-                        check=True, timeout=120, stdin=subprocess.DEVNULL)
-                    retained_fence_checkpoint()
-                    return record_observed_restart()
+            def restart_control_plane():
+                """Fixed restart operation, gated by positive retained admission."""
+                if (scope_result.get("all_mutators_fenced") is not True
+                        or scope_result.get("external_jobs_acked") is not True
+                        or observe_managed_mutator_coverage()):
+                    raise LocalScopeLeaseBlocked("retained_operational_guarantees_missing")
+                checkpoint()
+                if len(recovery_evidence) >= 2:
+                    raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
+                retained_fence_checkpoint()
+                sequence = len(recovery_evidence) + 1
+                intent = PENDING_PATH.parent / (
+                    "daemon-restart-intent-" + transaction_id + "-" + str(sequence) + ".json")
+                if os.path.lexists(intent):
+                    raise LocalScopeLeaseBlocked("existing_restart_intent_requires_review")
+                payload = {"kind": "DSM928DaemonRestartIntent", "schema_version": 1,
+                           "transaction_id": transaction_id, "release_sha256": release_sha256,
+                           "sequence": sequence,
+                           "before_inventory_sha256": hashlib.sha256(
+                               json.dumps(initial_inventory, sort_keys=True,
+                                          separators=(",", ":")).encode()).hexdigest(),
+                           "live_no_drain_authorized": False}
+                _persist_terminal_receipt(intent, payload, 0)
+                _check_daemon_witness(_root_file(intent, 32768), payload)
+                retained_fence_checkpoint()
+                subprocess.run(
+                    ["/usr/bin/systemctl", "restart", "dsm-dashboard.service",
+                     "dsm-dashboard-worker.service"],
+                    check=True, timeout=120, stdin=subprocess.DEVNULL)
+                retained_fence_checkpoint()
+                return record_observed_restart()
 
-                released = False
+            released = False
 
-                def restart_receipt_count():
-                    checkpoint()
-                    return len(recovery_evidence)
+            def restart_receipt_count():
+                checkpoint()
+                return len(recovery_evidence)
 
-                def finalize_terminal(journal_sha256):
-                    """Internal finalization only, never an update admission.
+            def finalize_terminal(journal_sha256):
+                """Internal finalization only, never an update admission.
 
-                    The installed transaction owner must durably write the exact
-                    terminal journal under the fixed recovery workspace first.
-                    The coordinator cannot turn a fixture or caller-provided
-                    outcome into an installed terminal decision.
-                    """
-                    nonlocal released
-                    if not recover_existing or released or type(journal_sha256) is not str or not _SHA.fullmatch(journal_sha256):
-                        raise LocalScopeLeaseBlocked("reviewed_installed_terminal_journal_required")
-                    workspace = PENDING_PATH.parent / ("transaction-" + transaction_id)
-                    _safe_directory(workspace, owner=0)
-                    if stat.S_IMODE(workspace.lstat().st_mode) != 0o700:
-                        raise LocalScopeLeaseBlocked("installed_terminal_workspace_not_private")
-                    raw = _root_file(workspace / "game-uptime-transaction.json", 65536)
-                    if hashlib.sha256(raw).hexdigest() != journal_sha256:
-                        raise LocalScopeLeaseBlocked("installed_terminal_journal_digest_mismatch")
-                    report = json.loads(raw)
-                    scope = {"transaction_id": transaction_id, "release_sha256": release_sha256,
-                             "issued_at": issued_at, "expires_at": expires_at,
-                             "expected_agent_ids": sorted(expected_agent_ids)}
-                    if (type(report) is not dict
-                            or report.get("kind") != "DSM928InstalledUptimeTransaction"
-                            or report.get("schema_version") != 1
-                            or report.get("scope") != scope
-                            or report.get("local_hybrid_agent_id") != local_hybrid_agent_id
-                            or report.get("live_no_drain_authorized") is not False):
-                        raise LocalScopeLeaseBlocked("installed_terminal_journal_scope_mismatch")
-                    decision = _terminal_decision(report.get("status"), journal_sha256)
-                    checkpoint()
-                    confirmed = remote["record_terminal"](**decision)
-                    if (confirmed.get("recorded_agent_ids") != remote_ids
-                            or confirmed.get("pending_evidence_retained") is not True):
-                        raise LocalScopeLeaseBlocked("installed_remote_terminal_incomplete")
-                    _persist_terminal_receipt(
-                        PENDING_PATH.parent / ("terminal-" + transaction_id + ".json"),
-                        _agent_terminal_payload(scope, local_hybrid_agent_id, decision), 0)
-                    confirmation = _installed_confirmation(
-                        scope, local_hybrid_agent_id, sorted(expected_agent_ids), **decision)
-                    confirmation_path = PENDING_PATH.parent / ("terminal-confirmation-" + transaction_id + ".json")
-                    _persist_terminal_receipt(confirmation_path, confirmation, 0)
-                    digest = _validate_installed_confirmation(confirmation, scope, decision)
-                    checkpoint()
-                    result = remote["release_installed"](confirmation)
-                    if (result.get("released_agent_ids") != remote_ids
-                            or result.get("confirmation_sha256") != digest):
-                        raise LocalScopeLeaseBlocked("installed_remote_release_incomplete")
-                    # The local sentinel is removed only after all remote
-                    # release receipts and the original local game witness.
-                    local["checkpoint"]()
-                    game_checkpoint()
-                    daemon_checkpoint()
-                    _check_installed_systemd_work()
-                    result = local["release_installed"](confirmation, decision, local_hybrid_agent_id)
-                    if result.get("installed_hold_released") is not True:
-                        raise LocalScopeLeaseBlocked("installed_local_release_incomplete")
-                    released = True
-                    return {"status": "installed_terminal_holds_released",
-                            "confirmation_sha256": digest,
+                The installed transaction owner must durably write the exact
+                terminal journal under the fixed recovery workspace first.
+                The coordinator cannot turn a fixture or caller-provided
+                outcome into an installed terminal decision.
+                """
+                nonlocal released
+                if not recover_existing or released or type(journal_sha256) is not str or not _SHA.fullmatch(journal_sha256):
+                    raise LocalScopeLeaseBlocked("reviewed_installed_terminal_journal_required")
+                workspace = PENDING_PATH.parent / ("transaction-" + transaction_id)
+                _safe_directory(workspace, owner=0)
+                if stat.S_IMODE(workspace.lstat().st_mode) != 0o700:
+                    raise LocalScopeLeaseBlocked("installed_terminal_workspace_not_private")
+                raw = _root_file(workspace / "game-uptime-transaction.json", 65536)
+                if hashlib.sha256(raw).hexdigest() != journal_sha256:
+                    raise LocalScopeLeaseBlocked("installed_terminal_journal_digest_mismatch")
+                report = json.loads(raw)
+                scope = {"transaction_id": transaction_id, "release_sha256": release_sha256,
+                         "issued_at": issued_at, "expires_at": expires_at,
+                         "expected_agent_ids": sorted(expected_agent_ids)}
+                if (type(report) is not dict
+                        or report.get("kind") != "DSM928InstalledUptimeTransaction"
+                        or report.get("schema_version") != 2
+                        or report.get("scope") != scope
+                        or report.get("local_hybrid_agent_id") != local_hybrid_agent_id
+                        or report.get("live_no_drain_authorized") is not False):
+                    raise LocalScopeLeaseBlocked("installed_terminal_journal_scope_mismatch")
+                decision = _terminal_decision(report.get("status"), journal_sha256)
+                checkpoint()
+                result = local["release_host"](decision, checkpoint)
+                if result.get("installed_hold_released") is not True:
+                    raise LocalScopeLeaseBlocked("installed_local_release_incomplete")
+                released = True
+                return {"status": "installed_terminal_holds_released",
                             "live_no_drain_authorized": False}
 
+            checkpoint()
+            # checkpoint verified managed callers while every local lock is
+            # retained and independently rejected queued jobs and cron work.
+            coverage = observe_managed_mutator_coverage()
+            scope_result = {"kind": "DSM928InstalledHostScope",
+                   "transaction_id": transaction_id,
+                   "release_sha256": release_sha256,
+                   "issued_at": issued_at, "expires_at": expires_at,
+                   "agent_ids": sorted(expected_agent_ids),
+                   "local_hybrid_agent_id": local_hybrid_agent_id,
+                   "controller_registry_inventory_matched": True,
+                   "known_database_job_queues_terminal": True,
+                   "checkpoint": checkpoint,
+                   "managed_mutator_blockers": observe_managed_mutator_coverage,
+                   "finalize_terminal": finalize_terminal,
+                   "restart_control_plane": restart_control_plane,
+                   "restart_receipt_count": restart_receipt_count,
+                   "all_mutators_fenced": not coverage,
+                   "external_jobs_acked": not coverage,
+                   "live_no_drain_authorized": False}
+            yield dict(scope_result)
+            if not released:
                 checkpoint()
-                if (remote.get("ssh_host_keys_authenticated") is not True
-                        or remote.get("ssh_remote_agent_id_matched") is not True
-                        or remote.get("transaction_id") != transaction_id
-                        or remote.get("release_sha256") != release_sha256
-                        or remote.get("issued_at") != issued_at
-                        or remote.get("expires_at") != expires_at
-                        or remote.get("expected_agent_ids") != sorted(expected_agent_ids)
-                        or remote.get("prepared_agent_ids") != remote_ids):
-                    raise LocalScopeLeaseBlocked("authenticated_remote_scope_binding_mismatch")
-                scope_result = {"kind": "DSM928InstalledDistributedScope",
-                       "transaction_id": transaction_id,
-                       "release_sha256": release_sha256,
-                       "issued_at": issued_at, "expires_at": expires_at,
-                       "agent_ids": sorted(expected_agent_ids),
-                       "local_hybrid_agent_id": local_hybrid_agent_id,
-                       "retained_remote_agent_ids": remote["prepared_agent_ids"],
-                       "controller_registry_inventory_matched": True,
-                       "known_database_job_queues_terminal": True,
-                       "authenticated_remote_scope_retained": True,
-                       "checkpoint": checkpoint,
-                       "finalize_terminal": finalize_terminal,
-                       "restart_control_plane": restart_control_plane,
-                       "restart_receipt_count": restart_receipt_count,
-                       "all_mutators_fenced": False,
-                       "external_jobs_acked": False,
-                       "durable_cross_host_recovery_verified": False,
-                       "live_no_drain_authorized": False}
-                yield dict(scope_result)
-                if not released:
-                    checkpoint()
     finally:
         sys.path.remove(runtime)

@@ -405,6 +405,18 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         local_scope = module_from_spec(scope_spec)
         scope_spec.loader.exec_module(local_scope)
 
+        for original in originals:
+            unit = original["unit"]
+            fragment = Path(local_scope._systemd_read(
+                "show", unit, "--property=FragmentPath", "--value").strip())
+            content = fragment.read_bytes()
+            local_scope._effective_mutator_unit(
+                unit, fragment, content, systemctl=local_scope._systemd_read)
+            with self.assertRaisesRegex(local_scope.LocalScopeLeaseBlocked, "unit_changed"):
+                local_scope._effective_mutator_unit(
+                    unit, fragment, content + b"\n# unreviewed",
+                    systemctl=local_scope._systemd_read)
+
         # Stage 2.2 moved the extracted tree into the incompatible fixture.
         # Reuse that verified package instead of its now-empty old path.
         real_tree = fixture / "new-payload"
@@ -602,6 +614,23 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                     finally:
                         os.close(busy)
                 scoped_locks.extend((helper_lock, child_lock))
+
+                def reject_uncovered_mutator():
+                    self._assert_unchanged(originals)
+                    for lockfile in scoped_locks:
+                        with lockfile.open("r+b") as outsider:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    raise local_scope.LocalScopeLeaseBlocked("uncovered_local_mutator")
+
+                with self.assertRaisesRegex(local_scope.LocalScopeLeaseBlocked,
+                                            "uncovered_local_mutator"):
+                    with local_scope.retain_local_scopes(
+                            **lease_args, before_prepare=reject_uncovered_mutator):
+                        self.fail("rejected preparation yielded a scope")
+                for path in (hold_path, pending_path, binding_path, inventory_path):
+                    self.assertFalse(path.exists())
+
                 def execute_only_under_locks():
                     pending = json.loads(pending_path.read_text())
                     binding = json.loads(binding_path.read_text())

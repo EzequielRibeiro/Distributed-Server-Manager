@@ -252,11 +252,22 @@ def exclusive_update_admission(*, provision=True):
 if __name__ == "__main__":
     import sys
     if (sys.argv[1:] not in (["--provision"], ["--provision-with-state"],
-                             ["--provision-updater-admission"])
+                             ["--provision-updater-admission"], ["--run-controller-topology"])
             or os.geteuid() != 0):
         raise SystemExit(2)
     if sys.argv[1:] == ["--provision-updater-admission"]:
         provision_update_admission_lock()
+    elif sys.argv[1:] == ["--run-controller-topology"]:
+        import subprocess
+        from game_uptime_maintenance_hold import observe
+
+        with shared_privileged_helper_lock(enabled=True):
+            if observe()["active"] is not False:
+                raise SystemExit("Controller topology blocked by local maintenance")
+            raise SystemExit(subprocess.run(
+                ["/bin/bash", "/opt/dsm/systemd/controller-service-topology.sh"],
+                check=False,
+            ).returncode)
     else:
         if sys.argv[1:] == ["--provision-with-state"]:
             provision_recovery_state()

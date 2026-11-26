@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Installed #928 execution owner. Never drains games or migrates databases.
 
-Both bounded file modes share the retained transaction and recovery owner.
+Both bounded file modes share the host-local transaction and recovery owner.
 Restart candidates require separate ownership and rollback evidence.
-The existing operational review and retained scope still do not attest
-all mutators and external jobs; no caller-provided approval booleans.
+Managed mutator coverage is mandatory before any installed mutation.
 """
 from __future__ import annotations
 import hashlib
@@ -191,34 +190,32 @@ def _validate_plan(report):
 def _require_retained_admission(scope, options):
     """The only installed mutation gate: exact retained transaction evidence.
 
-    This cannot be satisfied by a read-only report, a probe, an empty job
-    queue, or an authenticated SSH channel alone. It is rechecked after
-    reconnect and before terminal release.
+    This cannot be satisfied by a read-only report or an empty job queue.
+    It is rechecked before mutation and terminal release.
     """
     if type(scope) is not dict:
         raise InstalledTransactionBlocked("retained_scope_unavailable")
     expected = {
-        "kind": "DSM928InstalledDistributedScope",
+        "kind": "DSM928InstalledHostScope",
         "transaction_id": options["transaction_id"],
         "release_sha256": options["release_sha256"],
         "issued_at": options["issued_at"],
         "expires_at": options["expires_at"],
         "agent_ids": sorted(options["expected_agent_ids"]),
         "local_hybrid_agent_id": options["local_hybrid_agent_id"],
-        "retained_remote_agent_ids": sorted(
-            agent for agent in options["expected_agent_ids"]
-            if agent != options["local_hybrid_agent_id"]),
     }
     if any(scope.get(key) != value for key, value in expected.items()):
         raise InstalledTransactionBlocked("retained_scope_binding_mismatch")
     if not all(scope.get(key) is True for key in (
             "controller_registry_inventory_matched", "known_database_job_queues_terminal",
-            "authenticated_remote_scope_retained", "all_mutators_fenced",
-            "external_jobs_acked", "durable_cross_host_recovery_verified")):
+            "all_mutators_fenced", "external_jobs_acked")):
         raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
     if not callable(scope.get("checkpoint")) or not callable(scope.get("finalize_terminal")):
         raise InstalledTransactionBlocked("retained_scope_owner_unavailable")
     scope["checkpoint"]()
+    observe_mutators = scope.get("managed_mutator_blockers")
+    if not callable(observe_mutators) or observe_mutators() != ():
+        raise InstalledTransactionBlocked("managed_local_mutator_coverage_unverified")
 
 
 def _restart_count(scope):
@@ -345,15 +342,12 @@ def run(target):
     uid, gid = user.pw_uid, user.pw_gid
     if uid <= 0 or gid <= 0 or getpwnam(worker["User"]).pw_uid != uid:
         raise InstalledTransactionBlocked("installed_service_account_mismatch")
-    # The actual registry and SSH pins are checked again by the retained owner.
+    # The retained owner independently checks the local identity and registry.
     _trusted(TRUST, directory=True)
-    for name in ("agent-session-id", "agent-session-endpoints.json"):
-        _trusted(TRUST / name)
+    _trusted(TRUST / "agent-session-id")
     hybrid = (TRUST / "agent-session-id").read_text().strip()
-    endpoints = json.loads((TRUST / "agent-session-endpoints.json").read_text())
-    ids = sorted([hybrid, *endpoints.keys()])
-    if len(ids) != len(set(ids)):
-        raise InstalledTransactionBlocked("invalid_pinned_agent_partition")
+    inventory = lease._read_installed_controller_agents(None, hybrid, expected_uid=uid)
+    ids = [agent for agent, _ in inventory[0]]
     tx = uuid.uuid4().hex
     issued = int(time.time())
     options = dict(transaction_id=tx, release_sha256=digest,
@@ -361,7 +355,7 @@ def run(target):
                    local_hybrid_agent_id=hybrid, expected_controller_uid=uid,
                    expected_worker_uid=uid, operator_reviewed=True)
     workspace = STATE / ("transaction-" + tx)
-    with lease.retain_installed_distributed_scopes(**options) as scope:
+    with lease.retain_installed_host_scope(**options) as scope:
         _require_retained_admission(scope, options)
         scope["checkpoint"]()
         proof = _load("game-uptime-operational-release-review.py").verify_reviewed_artifact(TARGET)
@@ -389,7 +383,7 @@ def run(target):
             engine.prepare(paths)
         if engine.requires_control_plane_restart() is not restart_required:
             raise InstalledTransactionBlocked("product_journal_restart_mode_mismatch")
-        report = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 1,
+        report = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 2,
                   "scope": {key: options[key] for key in ("transaction_id", "release_sha256",
                       "issued_at", "expires_at", "expected_agent_ids")},
                   "local_hybrid_agent_id": hybrid,
@@ -402,9 +396,8 @@ def run(target):
             _write_status(workspace, report, "manual_recovery_required")
             raise
         terminal = _write_status(workspace, report, outcome)
-    # Persistent holds bridge the transition to the explicitly reviewed
-    # recovery session. A disconnect or expired window never clears them.
-    with lease.retain_installed_distributed_scopes(**options, recover_existing=True) as scope:
+    # The persistent hold spans the transition to local terminal verification.
+    with lease.retain_installed_host_scope(**options, recover_existing=True) as scope:
         _require_retained_admission(scope, options)
         engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
         if engine.journal_digest() != report["product_file_journal_sha256"]:
@@ -428,7 +421,7 @@ def _validate_recovery_report(report, tx, now):
                 "product_file_journal_sha256", "product_identity",
                 "live_no_drain_authorized", "status"}
             or report["kind"] != "DSM928InstalledUptimeTransaction"
-            or report["schema_version"] != 1
+            or report["schema_version"] != 2
             or report["live_no_drain_authorized"] is not False
             or report["status"] not in ("prepared", "verified", "rolled_back", "recovered_rollback")):
         raise InstalledTransactionBlocked("installed_recovery_journal_invalid_or_manual_review_required")
@@ -446,7 +439,7 @@ def _validate_recovery_report(report, tx, now):
             or any(type(x) is not int or x <= 0 for x in identity)):
         raise InstalledTransactionBlocked("installed_recovery_binding_or_lease_invalid")
     ids = scope["expected_agent_ids"]
-    if (type(ids) is not list or not 2 <= len(ids) <= 64
+    if (type(ids) is not list or not 1 <= len(ids) <= 64
             or any(type(x) is not str or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", x) for x in ids)
             or ids != sorted(set(ids))
             or report["local_hybrid_agent_id"] not in ids):
@@ -506,7 +499,7 @@ def recover(tx):
         raise InstalledTransactionBlocked("original_signed_recovery_payload_unverified")
     lease = _load("game-uptime-local-scope-lease.py")
     module = _load("game-uptime-file-transaction.py")
-    with lease.retain_installed_distributed_scopes(**options) as scope:
+    with lease.retain_installed_host_scope(**options) as scope:
         _require_retained_admission(scope, options)
         if _read_recovery_report(workspace) != (report, terminal):
             raise InstalledTransactionBlocked("installed_recovery_journal_changed")

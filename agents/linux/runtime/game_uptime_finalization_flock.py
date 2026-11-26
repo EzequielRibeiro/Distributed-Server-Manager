@@ -14,11 +14,13 @@ import grp
 import os
 from pathlib import Path
 import stat
+import threading
 from typing import Iterator
 
 LOCK_PATH = Path("/run/capivara-dsm/agent-finalization-operations.lock")
 ENABLE_ENV = "DSM928_AGENT_FINALIZATION_FLOCK"
 AGENT_GROUP = "capivara-agent"
+_installed_shared = threading.local()
 
 
 class FinalizationFenceUnavailable(RuntimeError):
@@ -93,6 +95,10 @@ def shared_finalization_lock(*, path: Path = LOCK_PATH,
         return
     path = Path(path)
     owner_uid, agent_gid = _identities(path, trusted_uid, group_gid)
+    installed = path == LOCK_PATH
+    if installed and getattr(_installed_shared, "pid", None) == os.getpid():
+        yield True
+        return
     fd = _open_inode(path, owner_uid, agent_gid)
     try:
         try:
@@ -100,8 +106,12 @@ def shared_finalization_lock(*, path: Path = LOCK_PATH,
         except OSError as exc:
             raise FinalizationFenceUnavailable("finalization_lock_busy") from exc
         try:
+            if installed:
+                _installed_shared.pid = os.getpid()
             yield True
         finally:
+            if installed:
+                del _installed_shared.pid
             fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)

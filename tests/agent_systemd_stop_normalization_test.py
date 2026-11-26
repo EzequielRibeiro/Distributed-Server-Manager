@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -40,6 +41,37 @@ class FakeRunner:
 
 
 class SystemdStopNormalizationTest(unittest.TestCase):
+    def test_hold_refuses_mutations_and_leaves_status_available(self):
+        runner = FakeRunner(["active"])
+        adapter = SystemdAdapter(runner=runner)
+        with patch("game_uptime_maintenance_hold.observe", return_value={"active": True}):
+            for action in (adapter.start, adapter.stop, adapter.restart):
+                with self.assertRaisesRegex(AdapterError, "local maintenance"):
+                    action(INSTANCE)
+            self.assertTrue(adapter.status(INSTANCE)["running"])
+        self.assertEqual([command[1] for command in runner.commands], ["show"])
+
+    def test_split_restart_keeps_one_guard_across_both_actions(self):
+        events = []
+
+        @contextmanager
+        def guard():
+            events.append("acquire")
+            try:
+                yield True
+            finally:
+                events.append("release")
+
+        def lifecycle(action, instance):
+            events.append(action)
+            return {}
+
+        adapter = SystemdAdapter(runner=FakeRunner([]))
+        with patch("adapters.systemd.tracked_agent_operation", guard), \
+                patch.object(adapter, "_lifecycle", side_effect=lifecycle):
+            adapter.restart({**INSTANCE, "stop_signal": "SIGINT"})
+        self.assertEqual(events, ["acquire", "stop", "start", "release"])
+
     def test_successful_stop_clears_residual_failed_state(self):
         runner = FakeRunner(["active", "failed", "inactive"])
         result = SystemdAdapter(runner=runner).stop(INSTANCE)
