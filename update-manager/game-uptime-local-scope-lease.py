@@ -807,6 +807,42 @@ with backend.connect() as connection:
         raise LocalScopeLeaseBlocked("controller_agent_inventory_unverified") from exc
 
 
+def _validate_restart_inventory(before, after):
+    """Validate a replacement witness without granting installed admission.
+
+    Registry and job inventory must be identical. Only Controller and the
+    Worker group may change; the auxiliary alert writer must remain intact.
+    """
+    if (type(before) is not tuple or type(after) is not tuple
+            or len(before) != 4 or len(after) != 4
+            or any(before[i] != after[i] for i in (0, 1, 3))):
+        raise LocalScopeLeaseBlocked("restart_registry_or_jobs_changed")
+    expected = {"controller", "worker_supervisor", "alert_engine", *WORKERS}
+    def identities(rows):
+        if type(rows) is not tuple or len(rows) != len(expected):
+            raise LocalScopeLeaseBlocked("restart_daemon_inventory_invalid")
+        result = {}
+        for name, pid, ticks in rows:
+            if (name not in expected or name in result
+                    or type(pid) is not int or pid <= 1
+                    or type(ticks) is not int or ticks <= 0):
+                raise LocalScopeLeaseBlocked("restart_daemon_identity_invalid")
+            result[name] = (pid, ticks)
+        if len({pid for pid, _ in result.values()}) != len(expected):
+            raise LocalScopeLeaseBlocked("restart_daemon_pid_duplicate")
+        return result
+    old, new = identities(before[2]), identities(after[2])
+    if old["alert_engine"] != new["alert_engine"]:
+        raise LocalScopeLeaseBlocked("restart_alert_engine_changed")
+    replaced = expected - {"alert_engine"}
+    if ({old[name] for name in replaced} & {new[name] for name in replaced}
+            or any(new[name][1] < old[name][1] for name in replaced)):
+        raise LocalScopeLeaseBlocked("restart_daemon_replacement_unverified")
+    return {"status": "replacement_inventory_verified_only",
+            "replacement_count": len(replaced),
+            "live_no_drain_authorized": False}
+
+
 def _daemon_witness_payload(scope, inventory):
     """Bind the original inventory (including daemon PIDs) to this lease.
 
