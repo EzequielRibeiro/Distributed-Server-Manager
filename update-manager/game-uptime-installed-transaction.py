@@ -6,6 +6,7 @@ Restart candidates require separate ownership and rollback evidence.
 Managed mutator coverage is mandatory before any installed mutation.
 """
 from __future__ import annotations
+from contextlib import contextmanager
 import hashlib
 import importlib.util
 from importlib.machinery import SourceFileLoader
@@ -320,10 +321,28 @@ def _require_trusted_snapshot(target):
         _trusted(folder, directory=True)
 
 
+@contextmanager
+def _installed_runtime_imports():
+    # Resolve runtime dependencies from the same verified snapshot used
+    # by retained admission, including imports made during preflight.
+    module = _load("game-uptime-local-scope-lease.py")
+    runtime = str(module._runtime_dir(True))
+    sys.path.insert(0, runtime)
+    try:
+        yield
+    finally:
+        sys.path.remove(runtime)
+
+
 def run(target):
     _require_trusted_snapshot(target)
+    with _installed_runtime_imports():
+        return _run_installed()
+
+
+def _run_installed():
     preflight = _load("game-uptime-preflight.py")
-    review = preflight.collect_operational_review(INSTALLED, TARGET)
+    review = preflight.collect_operational_review(INSTALLED, TARGET, include_remote_diagnostics=False)
     # Read-only eligibility must pass before durable preparation. Retained
     # admission below is separate and must pass before product mutations.
     digest, paths, restart_required = _validate_plan(review)
@@ -496,13 +515,18 @@ def recover(tx):
     Missing/expired/partially released evidence stays for manual review.
     """
     _require_trusted_snapshot(TARGET)
+    with _installed_runtime_imports():
+        return _recover_installed(tx)
+
+
+def _recover_installed(tx):
     if type(tx) is not str or not re.fullmatch(r"[0-9a-f]{32}", tx):
         raise InstalledTransactionBlocked("invalid_installed_recovery_transaction")
     workspace = STATE / ("transaction-" + tx)
     report, terminal = _read_recovery_report(workspace)
     options = _validate_recovery_report(report, tx, int(time.time()))
     digest = options["release_sha256"]
-    review = _load("game-uptime-operational-release-review.py").evaluate(TARGET)
+    review = _load("game-uptime-operational-release-review.py").verify_reviewed_artifact(TARGET)
     if (review.get("artifact_origin_verified") is not True
             or review.get("target_tree_bound_to_signed_tar") is not True
             or review.get("verified_archive_sha256") != digest):

@@ -261,7 +261,7 @@ def _execution_boundary(result):
     }
 
 
-def collect_operational_review(installed, target):
+def collect_operational_review(installed, target, *, include_remote_diagnostics=True):
     # The production updater invokes this diagnostic in --no-drain-report
     # BEFORE acquiring privileges, backups, service stops or file mutations.
     # Inspect independently trusted release evidence if provisioned, but
@@ -270,7 +270,7 @@ def collect_operational_review(installed, target):
         operator_review = _load(
             "game_uptime_operational_release_review",
             "game-uptime-operational-release-review.py")
-        review = operator_review.evaluate(target)
+        review = operator_review.evaluate(target, include_remote_diagnostics=include_remote_diagnostics)
     except Exception:
         review = {
             "kind": "DSM928OperationalReleaseReview",

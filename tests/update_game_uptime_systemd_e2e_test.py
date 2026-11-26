@@ -146,6 +146,359 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(set(properties), returned)
         self.assertEqual(self._snapshot(unit["unit"]), unit)
 
+    def test_installed_entrypoint_accepts_signed_restart_candidate(self):
+        """Exercise the real fixed-path owner on the disposable systemd host."""
+        from contextlib import ExitStack
+        import fcntl
+        import grp
+        import hashlib
+        import pwd
+        import tarfile
+
+        installed = Path("/opt/dsm")
+        snapshot = Path("/usr/local/libexec/capivara-dsm-928-updater")
+        agent_snapshot = snapshot.with_name("capivara-dsm-928-agent")
+        state = Path("/var/lib/capivara-dsm-928")
+        runtime = Path("/run/capivara-dsm")
+        trust = Path("/etc/capivara-dsm")
+        unit_dir = Path("/etc/systemd/system")
+        roots = (installed, snapshot, agent_snapshot, state, runtime, trust)
+        self.assertTrue(all(not os.path.lexists(path) for path in roots))
+
+        suite = self.workspace
+        suite.chmod(0o755)
+        account = pwd.getpwnam("nobody")
+        pg_bin = Path(self._run("pg_config", "--bindir").stdout.strip())
+        python = "/usr/bin/python3"
+
+        def run(*args, timeout=30, **kwargs):
+            result = subprocess.run(tuple(map(str, args)), text=True, capture_output=True,
+                                    timeout=timeout, **kwargs)
+            self.assertEqual(result.returncode, 0, result.stdout[-2200:] + result.stderr[-2200:])
+            return result.stdout
+
+        def canonical(value):
+            return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+        def provision_unit(cleanup, name, content):
+            path = unit_dir / name
+            with path.open("x") as stream:
+                stream.write(content)
+            cleanup.callback(path.unlink)
+
+        def cleanup_units(names):
+            subprocess.run(("systemctl", "stop", *names), capture_output=True, timeout=30)
+
+        with ExitStack() as cleanup:
+            cleanup.callback(os.umask, os.umask(0o022))
+            cleanup.callback(run, "systemctl", "daemon-reload")
+            # Hosted images may grant their provisioning group write access
+            # under /usr/local. The installed owner requires a root-only
+            # trust chain; restore the disposable image's mode on exit.
+            prefix = snapshot.parent.parent
+            prefix_mode = prefix.stat().st_mode & 0o7777
+            if prefix_mode & 0o022:
+                prefix.chmod(prefix_mode & ~0o022)
+                cleanup.callback(prefix.chmod, prefix_mode)
+            if not snapshot.parent.exists():
+                snapshot.parent.mkdir(mode=0o755)
+                cleanup.callback(snapshot.parent.rmdir)
+            for path in roots:
+                path.mkdir(mode=0o755)
+                cleanup.callback(shutil.rmtree, path)
+            try:
+                grp.getgrnam("capivara-agent")
+            except KeyError:
+                run("groupadd", "--system", "capivara-agent")
+                cleanup.callback(run, "groupdel", "capivara-agent")
+
+            # The real inventory reader uses the host interpreter in isolated
+            # mode. Supply its PostgreSQL adapter on the disposable host.
+            if subprocess.run((python, "-I", "-c", "import psycopg"),
+                              capture_output=True).returncode:
+                run("apt-get", "install", "-y", "--no-install-recommends",
+                    "python3-psycopg", timeout=120)
+
+            postgres = suite / "postgres"
+            sockets = suite / "postgres-socket"
+            for folder in (postgres, sockets):
+                folder.mkdir()
+                os.chown(folder, account.pw_uid, account.pw_gid)
+            run("runuser", "-u", account.pw_name, "--", pg_bin / "initdb", "-D", postgres,
+                "--auth=trust", "--no-locale", "--encoding=UTF8", timeout=45)
+            run("runuser", "-u", account.pw_name, "--", pg_bin / "pg_ctl", "-D", postgres,
+                "-l", postgres / "server.log", "-o", f"-h '' -k {sockets}", "-w", "start")
+            cleanup.callback(run, "runuser", "-u", account.pw_name, "--", pg_bin / "pg_ctl",
+                             "-D", postgres, "-m", "immediate", "-w", "stop")
+
+            # Real PostgreSQL rows and real locks. The disposable Controller
+            # and Workers exercise the same hold readers while remaining
+            # independent of any customer inventory or network.
+            scope_loader = SourceFileLoader("dsm928_acceptance_scope",
+                str(ROOT / "update-manager/game-uptime-local-scope-lease.py"))
+            scope_spec = importlib.util.spec_from_loader(scope_loader.name, scope_loader)
+            lease = importlib.util.module_from_spec(scope_spec)
+            scope_loader.exec_module(lease)
+            statements = [
+                "CREATE TABLE nodes (id text, role text)",
+                "CREATE TABLE agents (id text, status text, node_id text)",
+                "CREATE TABLE instances (node_id text)",
+                "CREATE TABLE agent_credentials (agent_id text, status text)",
+                "INSERT INTO nodes VALUES ('local-node','hybrid')",
+                "INSERT INTO agents VALUES ('local-agent','active','local-node')",
+            ]
+            for queue in lease._JOB_TERMINAL:
+                columns = ("state text" if queue == "ha_failover_operations" else "status text")
+                if queue == "agent_instance_commands":
+                    columns += ", agent_id text"
+                statements.append(f"CREATE TABLE {queue} ({columns})")
+            run(pg_bin / "psql", "-h", sockets, "-U", account.pw_name,
+                "-d", "postgres", "-v", "ON_ERROR_STOP=1",
+                input=";\n".join(statements) + ";\n")
+
+            for name in ("update-manager", "agents", "database", "dashboard", "systemd"):
+                shutil.copytree(ROOT / name, installed / name,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            (installed / "monitor").mkdir()
+            daemon = ("import time\n"
+                      "from game_uptime_maintenance_hold import observe\n"
+                      "while True:\n    observe()\n    time.sleep(0.5)\n")
+            (installed / "dashboard/server_part22.py").write_text(daemon)
+            (installed / "monitor/alert_engine.py").write_text(daemon)
+            for worker in lease.WORKERS:
+                folder = installed / "dashboard/workers"
+                if worker == "scheduler_worker":
+                    script = folder / "scheduler_worker.sh"
+                    script.write_text("#!/bin/bash\nwhile true; do sleep 1; done\n")
+                    script.chmod(0o755)
+                else:
+                    (folder / (worker + ".py")).write_text(
+                        "import time\nfrom pathlib import Path\n"
+                        "from maintenance_hold_gate import tracked_operation\n"
+                        f"with tracked_operation({worker!r}, root=Path('/opt/dsm')):\n"
+                        "    pass\nwhile True:\n    time.sleep(1)\n")
+            (installed / "version").write_text("2.0.998\n")
+            (installed / "release-manifest.json").write_text("{}\n")
+            probe = installed / "dashboard/acceptance_probe.py"
+            probe.write_text("generation = 1\n")
+            for path in (installed, *installed.rglob("*")):
+                # Release files have no ACLs. Strip any ACL inherited from
+                # the runner image before copying this disposable baseline.
+                for attribute in os.listxattr(path):
+                    if attribute.startswith("system.posix_acl_"):
+                        os.removexattr(path, attribute)
+                path.chmod(path.stat().st_mode & 0o7755)
+
+            # Snapshot the audited fixture before the systemd processes start.
+            for name in ("update-manager", "agents", "dashboard", "systemd"):
+                shutil.copytree(installed / name, snapshot / name)
+            shutil.copytree(installed / "agents/linux/runtime", agent_snapshot, dirs_exist_ok=True)
+
+            reviewed = state / "reviewed-release"
+            reviewed.mkdir()
+            payload = reviewed / "payload"
+            shutil.copytree(installed, payload)
+            (payload / "version").write_text("2.0.999\n")
+            (payload / probe.relative_to(installed)).write_text("generation = 2\n")
+            commit = run("git", "-c", f"safe.directory={ROOT}", "-C", ROOT,
+                         "rev-parse", "HEAD").strip()
+            (reviewed / "reviewed-commit").write_text(commit + "\n")
+            name = "capivara-dsm-2.0.999"
+            archive = reviewed / (name + ".tar.gz")
+            manifest = {
+                "schema_version": 1, "kind": "CapivaraReleaseManifest",
+                "name": "capivara-dsm", "version": "2.0.999", "git_commit": commit,
+                "created_at": "2026-01-01T00:00:00Z", "archive": archive.name,
+                "file_count": sum(path.is_file() for path in payload.rglob("*")),
+                "required_files": ["version", str(probe.relative_to(installed))],
+            }
+            manifest_bytes = canonical(manifest)
+            (payload / "release-manifest.json").write_bytes(manifest_bytes)
+            (reviewed / (name + ".manifest.json")).write_bytes(manifest_bytes)
+            with tarfile.open(archive, "w:gz") as package:
+                package.add(payload, arcname=name)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            statement = reviewed / (name + ".provenance.json")
+            statement.write_bytes(canonical({
+                "schema_version": 1, "kind": "CapivaraDSMReleaseProvenance",
+                "repository": "EzequielRibeiro/Distributed-Server-Manager",
+                "version": "2.0.999", "git_commit": commit, "archive": archive.name,
+                "archive_sha256": digest,
+                "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            }))
+            key = suite / "publisher.key"
+            run("openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+                "-out", key)
+            key.chmod(0o600)
+            run("openssl", "pkey", "-in", key, "-pubout", "-out",
+                trust / "release-signing-public.pem")
+            run("openssl", "dgst", "-sha256", "-sign", key, "-out",
+                reviewed / (name + ".provenance.sig"), statement)
+            (trust / "agent-session-id").write_text("local-agent\n")
+            (trust / "agent-session-id").chmod(0o600)
+
+            versions = state / "supervisor-versions"
+            versions.mkdir()
+            supervisor = installed / "agents/linux/runtime/console_supervisor.py"
+            pin = hashlib.sha256(supervisor.read_bytes()).hexdigest()
+            stage_loader = SourceFileLoader("dsm928_acceptance_supervisor",
+                str(ROOT / "update-manager/game-uptime-supervisor-stage.py"))
+            stage_spec = importlib.util.spec_from_loader(stage_loader.name, stage_loader)
+            stage = importlib.util.module_from_spec(stage_spec)
+            stage_loader.exec_module(stage)
+            pinned = stage.stage_supervisor(supervisor, versions, expected_sha256=pin)["path"]
+            games = (f"capivara-instance-minecraft-{self.prefix}.service",
+                     f"capivara-instance-dayz-{self.prefix}.service")
+            contract = {"protocol": "dsm928-readonly-v1", "schema": "1",
+                        "controller_api": "agent-heartbeat-v1", "agent_api": "agent-heartbeat-v1"}
+            (reviewed / "operational-inputs.json").write_bytes(canonical({
+                "schema_version": 1, "release_sha256": digest, "installed_version": "2.0.998",
+                "controller_contract": contract, "agent_contract": contract,
+                "expected_active_units": sorted(games), "supervisor_expected_sha256": pin,
+            }))
+
+            for path in (installed, *installed.rglob("*")):
+                os.chown(path, account.pw_uid, account.pw_gid)
+            (installed / "logs").mkdir()
+            os.chown(installed / "logs", account.pw_uid, account.pw_gid)
+            provision = installed / "agents/linux/runtime/game_uptime_privileged_flock.py"
+            run(python, "-B", provision, "--provision-with-state")
+            run(python, "-B", provision, "--provision-updater-admission")
+            run(python, "-B", provision.with_name("game_uptime_finalization_flock.py"), "--provision")
+            provision_workers = (python, "-B",
+                installed / "dashboard/workers/prepare_maintenance_worker_locks.py",
+                "--user", account.pw_name, "--group", grp.getgrgid(account.pw_gid).gr_name)
+            run(*provision_workers)
+            run(*provision_workers, "--controller-only")
+            for kind in lease._HYBRID_HELPERS:
+                unit = f"dsm-hybrid-agent-{kind}@.service"
+                template = (installed / "systemd" / (unit + ".in")).read_text()
+                provision_unit(cleanup, unit,
+                               template.replace("@DSM_ROOT@", str(installed)).replace("@DSM_USER@", account.pw_name))
+
+            topology = "dsm-controller-service-topology.service"
+            provision_unit(cleanup, topology, (installed / "systemd" / topology).read_text())
+            controller, workers, alert = ("dsm-dashboard.service", "dsm-dashboard-worker.service",
+                                          "dsm-alert-engine.service")
+            common = (f"[Service]\nUser={account.pw_name}\n"
+                      "Environment=PYTHONDONTWRITEBYTECODE=1\n"
+                      "Environment=PYTHONPATH=/opt/dsm/agents/linux/runtime\n"
+                      "Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1\n")
+            restart_probe = suite / "assert-retained-locks.py"
+            restart_probe.write_text(
+                "import fcntl\nfrom pathlib import Path\n"
+                f"runtime = Path({str(runtime)!r})\n"
+                "if (runtime / 'no-drain-maintenance.json').is_file():\n"
+                f"    paths = [Path({str(state / 'updater-admission.lock')!r}),\n"
+                "        runtime / 'controller-agent-http.lock',\n"
+                "        runtime / 'agent-privileged-operations.lock',\n"
+                "        runtime / 'agent-finalization-operations.lock',\n"
+                "        *(runtime / 'worker-operations').iterdir()]\n"
+                "    for path in paths:\n"
+                "        with path.open('rb') as stream:\n"
+                "            try:\n"
+                "                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                "            except BlockingIOError:\n"
+                "                continue\n"
+                "            raise SystemExit(f'lock not retained: {path.name}')\n"
+                f"    Path({str(suite / 'restart-locks-retained')!r}).touch()\n")
+            provision_unit(cleanup, controller, "[Unit]\nAfter=" + topology + "\n" + common
+                + f"Environment=DSM_DATABASE_DRIVER=postgresql\nEnvironment=DSM_DATABASE_NAME=postgres\n"
+                  f"Environment=DSM_DATABASE_USER={account.pw_name}\nEnvironment=DSM_DATABASE_HOST={sockets}\n"
+                  "Environment=DSM_DATABASE_TLS=disable\n"
+                  f"ExecStart={python} /opt/dsm/dashboard/server_part22.py\n")
+            provision_unit(cleanup, alert, common + f"ExecStart={python} /opt/dsm/monitor/alert_engine.py\n")
+            provision_unit(cleanup, workers, common
+                + "ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh\nExecStartPost=/usr/bin/sleep 1\n"
+                + f"ExecStartPost=+{python} {restart_probe}\n")
+            provision_unit(cleanup, games[0], f"[Service]\nExecStart={python} {pinned} "
+                           f"--socket {suite / 'minecraft.sock'} -- /usr/bin/sleep 180\n")
+            provision_unit(cleanup, games[1], "[Service]\nExecStart=/usr/bin/sleep 180\n")
+
+            run("systemctl", "daemon-reload")
+            cleanup.callback(cleanup_units, (*games, workers, controller, alert, topology))
+            # Ensure old source inodes predate the running workers even on
+            # kernels exposing boot time only at whole-second precision.
+            time.sleep(2)
+            run("systemctl", "start", topology, alert, workers, controller, *games)
+            before = [self._snapshot(unit) for unit in games]
+            self.assertTrue(all(item["state"] == "active" and item["pid"] > 1 for item in before))
+            control_before = [self._snapshot(unit) for unit in (controller, workers)]
+            for root in (installed, payload):
+                for relative in ("dashboard/acceptance_probe.py", "version", "release-manifest.json"):
+                    self.assertEqual(os.listxattr(root / relative), [], str(root / relative))
+            for path in (Path("/"), Path("/usr"), prefix, snapshot.parent,
+                         snapshot, *snapshot.rglob("*"), Path("/var"), Path("/var/lib"),
+                         state, reviewed, payload):
+                info = path.lstat()
+                self.assertEqual(info.st_uid, 0, str(path))
+                self.assertFalse(info.st_mode & 0o022, str(path))
+            # The runner's operating-system cron tree is outside the DSM
+            # fixture. Give the owner a private, empty scheduler inventory
+            # without changing the host's cron files or service state.
+            empty_cron = suite / "cron"
+            empty_cron.mkdir()
+            cron_dirs = ("/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily",
+                         "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron/crontabs")
+            # Capture chained errors from the owner without changing its
+            # stdout contract or replacing any of its entrypoint functions.
+            trace = (
+                "import runpy, sys, traceback\n"
+                "entrypoint = sys.argv[1]\n"
+                "def trace_main(frame, event, arg):\n"
+                "    if event == 'exception':\n"
+                "        traceback.print_exception(arg[1])\n"
+                "    return trace_main\n"
+                "def select(frame, event, arg):\n"
+                "    if frame.f_code.co_filename == entrypoint and frame.f_code.co_name == 'main':\n"
+                "        return trace_main\n"
+                "sys.settrace(select)\n"
+                "sys.argv = sys.argv[1:]\n"
+                "runpy.run_path(entrypoint, run_name='__main__')\n"
+            )
+            result = subprocess.run(
+                ("unshare", "--mount", "--propagation", "private", "/bin/bash", "-ec",
+                 'empty="$1"; shift; while [ "$1" != -- ]; do '
+                 'if [ -d "$1" ]; then mount --bind "$empty" "$1"; fi; shift; done; '
+                 'shift; exec "$@"',
+                 "dsm928", empty_cron, *cron_dirs, "--", python, "-I", "-S", "-B", "-c", trace,
+                 snapshot / "update-manager/game-uptime-installed-transaction.py", payload),
+                text=True, capture_output=True, timeout=150)
+            if result.returncode:
+                diagnostic = json.loads(run(
+                    python, "-I", "-S", "-B", snapshot / "update-manager/game-uptime-preflight.py",
+                    installed, payload))
+                details = {key: diagnostic.get(key) for key in (
+                    "units", "handoff_witness", "operational_coverage",
+                    "supervisor_pin_evidence", "compatibility_gate")}
+                self.fail(result.stdout + result.stderr + json.dumps(details, sort_keys=True))
+            result = json.loads(result.stdout)
+            self.assertEqual(result["status"], "verified")
+            self.assertTrue(result["terminal_holds_released"])
+            self.assertFalse(result["game_drain_performed"])
+            self._assert_unchanged(before)
+            for original in control_before:
+                replacement = self._snapshot(original["unit"])
+                self.assertEqual(replacement["state"], "active")
+                self.assertNotEqual(replacement["pid"], original["pid"])
+            self.assertEqual(probe.read_text(), "generation = 2\n")
+            self.assertTrue((suite / "restart-locks-retained").is_file())
+            tx = result["transaction_id"]
+            journal = json.loads((state / f"transaction-{tx}/game-uptime-transaction.json").read_text())
+            self.assertEqual(journal["status"], "verified")
+            self.assertEqual(journal["scope"]["release_sha256"], digest)
+            self.assertTrue((state / f"daemon-restart-{tx}-1.json").is_file())
+            self.assertTrue((state / f"released-{tx}.json").is_file())
+            self.assertFalse((runtime / "no-drain-maintenance.json").exists())
+            self.assertFalse((state / "no-drain-pending.json").exists())
+            for path in (runtime / "controller-agent-http.lock",
+                         runtime / "agent-privileged-operations.lock",
+                         runtime / "agent-finalization-operations.lock",
+                         state / "updater-admission.lock",
+                         *(runtime / "worker-operations").iterdir()):
+                with path.open("rb") as stream:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
     def test_real_release_package_cannot_bypass_no_drain_gate_with_live_disposable_pids(self):
         """#928 stage 2.2: actual DSM release bytes must fail closed.
 

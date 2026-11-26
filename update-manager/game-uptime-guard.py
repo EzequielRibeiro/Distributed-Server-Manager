@@ -60,6 +60,26 @@ def inspect(unit: str, call: Callable[..., str] = _call) -> dict[str, object]:
         k, v = line.split("=", 1)
         if k in props:
             data[k] = v.strip()
+    # systemctl omits empty execution arrays even when explicitly requested.
+    # Confirm their typed D-Bus values before interpreting omissions as empty.
+    optional_arrays = dict.fromkeys(LIFECYCLE_PROPERTIES, "a(sasbttttuii)")
+    optional_arrays["EnvironmentFiles"] = "a(sb)"
+    missing_arrays = set(props) - data.keys()
+    if missing_arrays - optional_arrays.keys():
+        raise GateError("incomplete systemd evidence")
+    if missing_arrays:
+        escaped = "".join(char if char.isascii() and char.isalnum()
+                          else f"_{ord(char):02x}" for char in unit)
+        for name in sorted(missing_arrays):
+            try:
+                empty = json.loads(call(
+                    "/usr/bin/busctl", "--json=short", "get-property", "org.freedesktop.systemd1",
+                    "/org/freedesktop/systemd1/unit/" + escaped,
+                    "org.freedesktop.systemd1.Service", name))
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                raise GateError("incomplete systemd execution evidence") from exc
+            if empty == {"type": optional_arrays[name], "data": []}:
+                data[name] = ""
     if set(props) - data.keys():
         raise GateError("incomplete systemd evidence")
     if data["ActiveState"] != "active":
