@@ -30,8 +30,8 @@ class BaselineUpgradeEngineTest(unittest.TestCase):
         self.backend = SQLiteBackend()
         self.connection = sqlite3.connect(":memory:")
         self.connection.row_factory = sqlite3.Row
-        # The baseline engine now has 22 registered upgrades. Use the
-        # consolidated schema instead of an obsolete two-table v2 fixture;
+        # Use the current baseline and the complete registered upgrade chain.
+        # Use the consolidated schema instead of an obsolete two-table v2 fixture;
         # later upgrades require alert_events and other core tables.
         self.connection.executescript(
             (ROOT / "database" / "schemas" / "sqlite.sql").read_text(encoding="utf-8")
@@ -86,6 +86,37 @@ class BaselineUpgradeEngineTest(unittest.TestCase):
         )
         self.assertEqual(completed, list(range(2, latest_upgrade_version() + 1)))
         self.assertEqual(self.versions(), list(range(1, latest_upgrade_version() + 1)))
+
+    def test_v22_missing_outbox_is_repaired_and_existing_queue_preserved(self) -> None:
+        seed_current_upgrades(self.backend, self.connection)
+        self.connection.execute("DELETE FROM baseline_upgrades WHERE version = 23")
+        self.connection.execute("DROP TABLE notification_outbox")
+        self.assertEqual(apply_pending_upgrades(
+            self.backend, self.connection,
+            installed_checksum="v22-without-outbox",
+        ), [23])
+        self.connection.execute(
+            "INSERT INTO notification_outbox(notification_id,channel,recipient,message) "
+            "VALUES ('preserved','test','recipient','message')"
+        )
+        # Reconciliation after an interrupted ledger publication must not reset data.
+        self.connection.execute("DELETE FROM baseline_upgrades WHERE version = 23")
+        seed_current_upgrades(self.backend, self.connection)
+        self.assertEqual(self.connection.execute(
+            "SELECT status, message FROM notification_outbox "
+            "WHERE notification_id='preserved'"
+        ).fetchone()[:], ("pending", "message"))
+        self.assertEqual(upgrade_status(self.backend, self.connection)["pending"], [])
+
+    def test_v23_rejects_incomplete_existing_outbox(self) -> None:
+        seed_current_upgrades(self.backend, self.connection)
+        self.connection.execute("DELETE FROM baseline_upgrades WHERE version = 23")
+        self.connection.execute("DROP TABLE notification_outbox")
+        self.connection.execute("CREATE TABLE notification_outbox(notification_id TEXT)")
+        with self.assertRaises(DatabaseMigrationError):
+            apply_pending_upgrades(self.backend, self.connection,
+                                   installed_checksum="v22-incomplete-outbox")
+        self.assertNotIn(23, self.versions())
 
     def test_unknown_pre_ledger_checksum_is_rejected(self) -> None:
         with self.assertRaises(DatabaseMigrationError):

@@ -172,6 +172,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "notification_outbox"),
                 ],
             )
 
@@ -220,6 +221,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 20, "name": "legacy_minecraft_contract_products"},
                     {"version": 21, "name": "dayz_management_operations"},
                     {"version": 22, "name": "instance_evidence_parameters"},
+                    {"version": 23, "name": "notification_outbox"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -279,6 +281,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "notification_outbox"),
                 ],
             )
 
@@ -330,6 +333,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "notification_outbox"),
                 ],
             )
 
@@ -370,6 +374,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 20, "name": "legacy_minecraft_contract_products"},
                     {"version": 21, "name": "dayz_management_operations"},
                     {"version": 22, "name": "instance_evidence_parameters"},
+                    {"version": 23, "name": "notification_outbox"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -413,6 +418,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "notification_outbox"),
                 ],
             )
 
@@ -450,6 +456,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     {"version": 20, "name": "legacy_minecraft_contract_products"},
                     {"version": 21, "name": "dayz_management_operations"},
                     {"version": 22, "name": "instance_evidence_parameters"},
+                    {"version": 23, "name": "notification_outbox"},
                 ],
             )
             self.assertEqual(self.guard_classifier(before_payload).returncode, 0)
@@ -487,6 +494,7 @@ class BaselineUpdatePathTest(unittest.TestCase):
                     (20, "legacy_minecraft_contract_products"),
                     (21, "dayz_management_operations"),
                     (22, "instance_evidence_parameters"),
+                    (23, "notification_outbox"),
                 ],
             )
 
@@ -598,6 +606,27 @@ process_guard_database_check_is_upgradeable "$PAYLOAD" "{ROOT}"
         }
         result = self.guard_classifier(payload)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_process_guard_only_allows_registered_missing_outbox_repair(self) -> None:
+        payload = {
+            "kind": "DatabaseCheck", "connected": True, "initialized": True,
+            "baseline": "capivara-baseline-v2", "expected_baseline": "capivara-baseline-v2",
+            "baseline_checksum": "historical", "checksum_matches": False,
+            "upgrade_ledger": True, "upgrade_version": 22,
+            "upgrade_latest": latest_upgrade_version(), "upgrade_error": None,
+            "missing_tables": ["notification_outbox"],
+            "pending_upgrades": [{"version": 23, "name": "notification_outbox"}],
+        }
+        self.assertEqual(self.guard_classifier(payload).returncode, 0)
+        self.assertNotEqual(self.guard_classifier({
+            **payload, "missing_tables": ["notification_outbox", "agents"],
+        }).returncode, 0)
+        self.assertNotEqual(self.guard_classifier({
+            **payload, "pending_upgrades": [],
+        }).returncode, 0)
+        self.assertNotEqual(self.guard_classifier({
+            **payload, "upgrade_version": 23,
+        }).returncode, 0)
 
     def test_process_guard_rejects_checksum_mismatch_without_pending_upgrade(self) -> None:
         payload = {
