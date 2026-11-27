@@ -100,6 +100,7 @@ def prepare_controller(uid: int, gid: int, *,
                        mode=0o700)
     lock = runtime / "controller-agent-http.lock"
     _prepare_inode(lock, uid, gid)
+    _prepare_inode(runtime / "controller-agent-http-admission.lock", uid, gid)
     return lock
 
 

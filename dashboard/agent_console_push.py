@@ -27,6 +27,7 @@ from instance_workspace_repository import InstanceWorkspaceRepository
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
 from game_uptime_controller_agent_http_flock import (
     ControllerHttpLockUnavailable, shared_controller_agent_http_lock,
+    controller_http_admission_open,
 )
 
 CONSOLE_PUSH_PATH = "/api/agent/console/stream"
@@ -298,12 +299,18 @@ def _serve_agent_console_stream_under_fence(handler, *, headers, backend) -> Non
     total_bytes = accepted = duplicates = rejected = frames = 0
     try:
         while True:
+            if not controller_http_admission_open():
+                _send_console_maintenance_blocked(handler, fence=True)
+                return
             raw = _read_chunk(handler.rfile)
             if raw is None:
                 return
             # A long-lived chunked stream may have been admitted BEFORE
             # maintenance began. Re-check after every read and before any
             # keepalive touch, ownership query or in-memory event mutation.
+            if not controller_http_admission_open():
+                _send_console_maintenance_blocked(handler, fence=True)
+                return
             if _console_maintenance_hold_blocked():
                 _send_console_maintenance_blocked(handler)
                 return
@@ -357,6 +364,8 @@ def _console_maintenance_hold_blocked() -> bool:
 
 
 def _send_console_maintenance_blocked(handler, *, fence: bool = False) -> None:
+    # Unread chunked request bytes must never be parsed as another request.
+    handler.close_connection = True
     handler.send_json(423, {
         "status": "blocked",
         "reason": ("controller_http_interprocess_fence_unavailable" if fence

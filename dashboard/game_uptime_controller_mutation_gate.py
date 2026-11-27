@@ -38,6 +38,7 @@ def _hold_blocks() -> bool:
 
 
 def _deny(handler, *, locked: bool = False) -> None:
+    handler.close_connection = True
     handler.send_json(423, {
         "status": "blocked",
         "reason": ("controller_http_interprocess_fence_unavailable"

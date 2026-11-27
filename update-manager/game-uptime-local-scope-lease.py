@@ -30,6 +30,7 @@ import subprocess
 from typing import Callable, Iterator
 
 CONTROLLER_LOCK = Path("/run/capivara-dsm/controller-agent-http.lock")
+CONTROLLER_ADMISSION_LOCK = CONTROLLER_LOCK.with_name("controller-agent-http-admission.lock")
 WORKER_LOCK_DIR = Path("/run/capivara-dsm/worker-operations")
 HOLD_PATH = Path("/run/capivara-dsm/no-drain-maintenance.json")
 PENDING_PATH = Path("/var/lib/capivara-dsm-928/no-drain-pending.json")
@@ -455,17 +456,38 @@ def retain_local_scopes(*, transaction_id: str, release_sha256: str,
             finally:
                 sys.path.remove(runtime)
             agent_locks.enter_context(exclusive_update_admission(provision=False))
-        for path, uid in (
+        # Installed scopes reserve HTTP admission before waiting for current
+        # holders. Fixtures retain their original nonblocking contract.
+        # No hold or positive evidence is created until ALL locks are held.
+        deadline = time.monotonic()
+        if root is None:
+            budget = 45.0
+            if shared_lease_window is not None:
+                budget = min(budget, max(0.0, shared_lease_window[1] - time.time()))
+            deadline += budget
+        ordered = (
             (controller_lock, expected_controller_uid),
             *((worker_lock_dir / (name + ".lock"), expected_worker_uid)
               for name in WORKERS),
-        ):
+        )
+        if root is None:
+            ordered = ((CONTROLLER_ADMISSION_LOCK, expected_controller_uid), *ordered)
+        for path, uid in ordered:
             fd = _open_existing_lock(path, owner_uid=uid)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except (OSError, BlockingIOError) as exc:
+                while True:
+                    try:
+                        if root is None and time.monotonic() >= deadline:
+                            raise LocalScopeLeaseBlocked("local_admission_wait_deadline")
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError as exc:
+                        if root is not None or time.monotonic() >= deadline:
+                            raise LocalScopeLeaseBlocked("controller_or_worker_operation_in_flight") from exc
+                        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+            except BaseException:
                 os.close(fd)
-                raise LocalScopeLeaseBlocked("controller_or_worker_operation_in_flight") from exc
+                raise
             acquired.append(fd)
             lock_paths.append((path, uid))
         if fresh:
