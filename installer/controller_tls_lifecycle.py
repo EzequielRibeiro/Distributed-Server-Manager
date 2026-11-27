@@ -483,7 +483,12 @@ def main():
             os.chmod(lock.fileno(), 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             if args.recover_only:
+                interrupted = lifecycle.pending.exists()
                 lifecycle.recover()
+                if interrupted:
+                    raise RotationError("interrupted_activation_rolled_back")
+                if os.environ.get("SERVICE_RESULT") in {"timeout", "signal", "core-dump", "oom-kill", "watchdog"}:
+                    raise RotationError("rotation_service_terminated_check_systemd")
             elif args.enroll:
                 lifecycle.enroll()
             elif args.bootstrap:

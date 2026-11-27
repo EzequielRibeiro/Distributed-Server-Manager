@@ -139,7 +139,9 @@ class ControllerTlsTransportTest(unittest.TestCase):
         self.assertNotIn("geolocation=()", runtime)
         self.assertIn("; Secure", runtime)
         self.assertIn("SameSite=Lax", runtime)
-        self.assertIn("renewal-hooks/deploy/capivara-dashboard", helper)
+        lifecycle = (ROOT / "installer" / "controller_tls_lifecycle.py").read_text()
+        self.assertIn("renewal-hooks/deploy/capivara-dashboard", lifecycle)
+        self.assertNotIn("enable --now dsm-controller-tls.timer", helper)
 
     def test_noninteractive_http_and_https_selection_contract(self):
         helper = ROOT / "installer" / "web_transport.sh"
