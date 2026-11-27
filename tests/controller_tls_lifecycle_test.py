@@ -1,4 +1,5 @@
 import contextlib
+from contextlib import ExitStack
 import hashlib
 import io
 import os
@@ -261,10 +262,87 @@ class ControllerTlsLifecycleTest(unittest.TestCase):
         for days in (30, 15, 7, 1, 0):
             with patch.object(time, "time", return_value=expiry - days * 86400):
                 output = io.StringIO()
-                with contextlib.redirect_stdout(output):
+                with contextlib.redirect_stdout(output), patch.object(rotation, "notify") as notify:
                     lifecycle.expiry()
                     lifecycle.expiry()
+                    notify.assert_called_once_with(None, "certificate_expiry",
+                                                   f"controller=controller.test days_threshold={days}")
                 self.assertEqual(output.getvalue().count(f"days_threshold={days}\n"), 1)
+
+    def test_expiry_notification_retries_until_mail_is_accepted(self):
+        lifecycle = rotation.Lifecycle(self.config, self.native)
+        lifecycle.prepare()
+        lifecycle.refresh(bootstrap=True)
+        self.config["alert_to"] = "admin@example.test"
+        original_run = subprocess.run
+
+        def mail_result(status):
+            def execute(args, **kwargs):
+                if args[0] == rotation.SENDMAIL:
+                    return subprocess.CompletedProcess(args, status)
+                return original_run(args, **kwargs)
+            return execute
+
+        with patch.object(rotation.subprocess, "run", side_effect=mail_result(75)):
+            with self.assertRaisesRegex(rotation.RotationError, "administrator_alert_transport_failed"):
+                lifecycle.expiry()
+        self.assertFalse(lifecycle.alerts.exists())
+        with patch.object(rotation.subprocess, "run", side_effect=mail_result(0)) as run:
+            lifecycle.expiry()
+            lifecycle.expiry()
+        (args, kwargs), = [call for call in run.call_args_list if call.args[0][0] == rotation.SENDMAIL]
+        self.assertEqual(args[0], [rotation.SENDMAIL, "-i", self.config["alert_to"]])
+        self.assertIn(b"days_threshold=30", kwargs["input"])
+
+    def test_missing_admission_blocks_provisioned_hosts_even_with_legacy_opt_in(self):
+        state = self.directory / "dsm928"
+        owner = self.directory / "owner"
+        with patch.object(rotation, "UPDATE_LOCK", state / "lock"), patch.object(rotation, "UPDATE_OWNER", owner):
+            with ExitStack() as locks:
+                with self.assertRaisesRegex(rotation.RotationError, "updater_admission_missing"):
+                    rotation.retain_update_admission(locks)
+                rotation.retain_update_admission(locks, allow_legacy=True)
+                owner.mkdir()
+                with self.assertRaisesRegex(rotation.RotationError, "updater_admission_missing"):
+                    rotation.retain_update_admission(locks, allow_legacy=True)
+                owner.rmdir()
+                state.mkdir()
+                with self.assertRaisesRegex(rotation.RotationError, "updater_admission_missing"):
+                    rotation.retain_update_admission(locks, allow_legacy=True)
+
+    def test_enrollment_leaves_active_pair_and_hook_until_unattended_preflight_succeeds(self):
+        lifecycle = self.bootstrap()
+        old = lifecycle.current()
+        hook = self.directory / "legacy-hook"
+        hook.touch()
+        self.config["certbot_lineage"] = "controller.test"
+
+        def manual_lineage(args, code, **kwargs):
+            self.assertIn("--dry-run", args)
+            self.assertIn("--non-interactive", args)
+            raise rotation.RotationError(code)
+
+        original_run = rotation.run
+        def execute(args, code, **kwargs):
+            if args[0] == "/usr/bin/certbot":
+                return manual_lineage(args, code, **kwargs)
+            return original_run(args, code, **kwargs)
+
+        with patch.object(rotation, "LEGACY_HOOK", hook):
+            with patch.object(rotation, "run", side_effect=execute), patch.object(rotation, "notify") as mail:
+                with self.assertRaisesRegex(rotation.RotationError, "certbot_unattended_preflight_failed"):
+                    lifecycle.enroll()
+                mail.assert_not_called()
+            self.assertTrue(hook.exists())
+            self.assertFalse(lifecycle.enrollment.exists())
+            self.config.pop("certbot_lineage")
+            self.select(self.second)
+            with patch.object(rotation, "notify"):
+                lifecycle.enroll()
+            lifecycle.require_enrollment()
+            self.assertFalse(hook.exists())
+        self.assertEqual(lifecycle.current(), old)
+        self.serves(self.first)
 
     def test_invalid_startup_pair_never_constructs_listener(self):
         with patch.object(tls_runtime, "_transport", return_value=("https", "127.0.0.1", 8443, None, None)):

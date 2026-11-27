@@ -241,7 +241,10 @@ persist_web_transport_config(){
         systemctl restart dsm-dashboard.service || return 1
         if [[ "${DSM_TLS_CERT_MODE}" == letsencrypt ]]; then
             /usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py --verify-active || return 1
-            systemctl enable --now dsm-controller-tls.timer || return 1
+            printf '[Capivara] Rotação TLS requer enrollment e confirmação de entrega ao administrador antes de habilitar o timer.\n'
+            if [[ "${DSM_TLS_ACME_CHALLENGE}" == dns-01-manual ]]; then
+                printf '[Capivara] DNS-01 manual exige migração para uma fonte não interativa.\n'
+            fi
         fi
     fi
 }
@@ -261,9 +264,6 @@ install_controller_tls_lifecycle(){
         return 1
     fi
     install -m 0644 -o root -g root "${installer_dir}/"dsm-controller-tls.{service,timer} /etc/systemd/system/ || return 1
-    # Retire the legacy global hook before the distribution Certbot timer can
-    # copy an unmatched pair or restart the Controller behind this lifecycle.
-    rm -f /etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard || return 1
     systemctl daemon-reload
 }
 

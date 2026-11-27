@@ -1,59 +1,139 @@
-# Controller TLS certificate lifecycle
+# Ciclo de vida TLS do Controller
 
-DSM serves HTTPS directly. The lifecycle uses a root-owned systemd timer and a
-provider-controlled certificate source. It verifies the full chain, validity
-window, hostname or IP, key match and readability as the installed Dashboard
-account. It then switches one symlink to an immutable pair under
-`/etc/capivara/tls/versions`. New connections load the selected pair in the
-running Dashboard. Existing connections retain their current TLS context.
+O Controller carrega cada par de uma geração imutável em
+`/etc/capivara/tls/versions`. A rotação troca um único link, exige HTTPS
+verificado com o leaf esperado e HTTP 200 em `/health` com estado `healthy`.
+Uma falha restaura o link anterior e verifica o HTTPS novamente. Conexões
+abertas mantêm seu contexto TLS. A rotação não usa restart nem opera sobre
+unidades de jogo.
 
-The deployment commits after a loopback request with the public TLS identity,
-trusted CA, exact candidate leaf and HTTP 200 with a healthy `/health` response.
-An activation failure restores the prior pointer and checks its HTTPS health.
-A durable pending record lets systemd recover an interrupted activation in
-`ExecStopPost` or on the next timer invocation. The same rejected pair requires
-operator review before retry. Renewal, verification and rollback do not call
-`systemctl restart` or manipulate game units. The #928 updater still performs its
-independent admission, compatibility and recovery checks. Rotation takes a
-shared lock on its existing updater admission inode when provisioned.
+## Procedimento único de homologação Horizon + VPS
 
-## Source selection and enrollment
+Use a topologia Horizon + VPS aprovada para ensaio, com CA confiável nos dois
+hosts e um Agent ativo no VPS. Qualquer intervenção em hosts reais precisa de
+autorização operacional própria. Registre versão, SHA, horários UTC e resultados
+no mesmo registro. Use a suíte **Controller TLS Transport** do HEAD aprovado
+para a prova isolada de falhas, rollback e permissões. A etapa integrada usa
+somente renovação normal e observação. Mantenha a #1161 aberta até anexar as
+evidências e mantenha a release #1096 em HOLD.
 
-- **New ACME install**. Select HTTPS and ACME in the installer. Use
-  `DSM_TLS_ACME_CHALLENGE=http-01` for Certbot standalone on public TCP/80, or
-  `dns-01-hook` with `DSM_TLS_DNS_AUTH_HOOK` and `DSM_TLS_DNS_CLEANUP_HOOK`.
-  The historical `letsencrypt` mode name accepts an alternate HTTPS ACME
-  directory through `DSM_TLS_ACME_SERVER`. Certbot stores the server and
-  challenge in its lineage. The CA must already be trusted on Controller and
-  Agents. An interactive legacy DNS-01 lineage must be reconfigured for
-  unattended renewal or switched to an external publisher before acceptance.
-- **Existing Controller or external issuer**. Use an approved DSM candidate
-  with the live TLS loader running first. When migrating the historical native
-  paths `/etc/capivara/tls/server.crt` and `server.key`, leave the working pair
-  in place for the initial rollback. If the Controller uses other files,
-  arrange an authorized Controller configuration change to that native
-  layout, preserving the previous pair and trust configuration. Once a
-  managed generation is verified, the explicit paths
-  `/etc/capivara/tls/active/server.crt` and `server.key` can be persisted at the
-  next authorized Controller configuration change so older Dashboard code can
-  load the active pair at startup.
-- From the verified DSM installer tree, as root, source
-  `installer/web_transport.sh` and run `install_controller_tls_lifecycle` during
-  enrollment. This installs the root program and unit files, reloads systemd,
-  and removes the legacy nontransactional Certbot deploy hook. Confirm no
-  legacy hook is already executing. Preserve a copy of the current TLS setup
-  in root-only storage before migration.
-- Create `/etc/capivara/controller-tls.json` as root (mode `0600`). Set
-  `hostname` to the public TLS identity, `address` to the locally reachable
-  numeric bind address (defaults to `127.0.0.1`), `port` to the internal HTTPS
-  port, and the service account to the actual User and Group reported by
-  `systemctl show dsm-dashboard.service -p User -p Group`. For a private issuer
-  set `ca_file` to the root-controlled trust bundle and configure the same
-  trust on DSM and Agents. For Certbot replace the two source keys below
-  with `"certbot_lineage": "controller.example.com"` using the actual lineage
-  name. Keep the ACME account files and DNS credentials root-owned and
-  root-readable only. DNS hooks must avoid logging credentials and use the
-  narrowest DNS permissions available for the challenge zone.
+### 1. Instalar o componente em janela autorizada
+
+No Horizon, use o pacote já assinado para o commit aprovado, com os sidecars
+do mesmo artefato, em diretório root-only. Substitua as variáveis abaixo pelos
+caminhos absolutos e pelo SHA registrado na revisão. Use o verificador e a
+âncora de confiança da instalação #928 existente, fora do pacote candidato.
+
+```bash
+export REVIEWED_SHA='<SHA de 40 caracteres>'
+export ARCHIVE='/root/dsm-tls/capivara-dsm-<versão>.tar.gz'
+export MANIFEST='/root/dsm-tls/release-manifest.json'
+export STATEMENT='/root/dsm-tls/<prova assinada>.json'
+export SIGNATURE='/root/dsm-tls/<assinatura>.sig'
+sudo --preserve-env=REVIEWED_SHA,ARCHIVE,MANIFEST,STATEMENT,SIGNATURE bash -eu <<'BASH'
+owner=/usr/local/libexec/capivara-dsm-928-updater/update-manager
+/usr/bin/python3 -I -S -B - "$owner" "$ARCHIVE" "$MANIFEST" "$STATEMENT" "$SIGNATURE" "$REVIEWED_SHA" <<'PY'
+import importlib.util
+from pathlib import Path
+import sys
+owner, archive, manifest, statement, signature, sha = sys.argv[1:]
+spec = importlib.util.spec_from_file_location("provenance", Path(owner) / "game-uptime-release-provenance.py")
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+result = module.verify_signed_release(
+    Path(archive), Path(manifest), Path(statement), Path(signature), expected_commit=sha
+)
+assert result["artifact_signature_verified"]
+print("artifact_signature_verified", result["git_commit"])
+PY
+export DSM_ROOT=/opt/dsm
+log_error() { printf '%s\n' "$*" >&2; }
+source /opt/dsm/update-manager/verify-release.sh
+verify_release "$ARCHIVE" "$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
+install -d -m 0700 /root/dsm-tls/staging
+stage=$(mktemp -d /root/dsm-tls/staging/candidate.XXXXXX)
+tar --no-same-owner -xzf "$ARCHIVE" -C "$stage"
+find "$stage" -mindepth 2 -maxdepth 2 -type f -name version -printf '%h\n'
+BASH
+```
+
+Defina `PKG_ROOT` com o caminho impresso. Esta instalação inicial altera
+installer, systemd e updater e requer a janela de manutenção convencional.
+O classificador restrito da #928 não autoriza `--no-drain-execute` para este
+pacote. O atualizador convencional pode drenar jogos durante **essa janela**.
+O Controller pode reiniciar na instalação inicial. A prova de PIDs da rotação
+começa depois da estabilização, com os jogos esperados novamente ativos.
+
+```bash
+PKG_ROOT='/root/dsm-tls/staging/candidate.<id>/capivara-dsm-<versão>'
+sudo "$PKG_ROOT/update.sh" "$PKG_ROOT"
+sudo bash -eu -c 'source "$1/installer/web_transport.sh"; install_controller_tls_lifecycle' _ "$PKG_ROOT"
+sudo stat -c '%u:%g %a %h %s %F' /var/lib/capivara-dsm-928/updater-admission.lock
+```
+
+O inode existente deve ser arquivo regular root:root, modo 600, link count 1
+e tamanho zero. Ausência ou identidade inesperada em host com o estado ou o
+owner da #928 bloqueia o enrollment e as rotações. Use o procedimento de
+recuperação da #928 para corrigir isso. O componente TLS nunca cria ou substitui
+esse inode. Em instalação genuinamente legada, sem
+`/var/lib/capivara-dsm-928` e sem
+`/usr/local/libexec/capivara-dsm-928-updater`, um administrador pode registrar
+`"legacy_without_dsm928": true` e excluir concorrência com manutenção por
+procedimento operacional. Remova essa opção ao migrar para #928.
+
+Se a implantação usa caminhos personalizados, migre para o par nativo
+`/etc/capivara/tls/server.crt` e `server.key` na janela inicial. Mantenha uma
+cópia root-only do par e da configuração anteriores, verifique o acesso à chave
+como conta de serviço e verifique HTTPS antes do enrollment. Para instalações
+com caminho legado, o loader novo detecta `active` automaticamente. Ao
+persistir caminhos em uma alteração autorizada posterior, use
+`/etc/capivara/tls/active/server.crt` e `server.key` para que código de uma
+versão anterior também possa abrir o par ativo.
+
+### 2. Migrar DNS-01 manual e confirmar o destinatário
+
+Registre a lineage existente com `sudo certbot certificates`, o fingerprint
+servido e a validade. Preserve a lineage e o par DSM válido durante a migração.
+Inspecione a configuração protegida de renovação para hooks antigos de
+pre/post/deploy que escrevam no DSM ou reiniciem serviços. A lineage nova deve
+usar apenas os hooks de desafio necessários. Coordene a janela para que
+nenhuma execução do Certbot legado esteja em curso ou possa iniciar até o
+enrollment aposentar o hook global DSM. Preserve o agendamento das outras
+lineages. Antes do enrollment, guarde uma cópia do hook legado em storage
+root-only quando ele existir.
+
+DNS-01 manual serve apenas para emissão interativa e fica sem timer. Para
+migrar, emita sob **outro nome de lineage**, mantendo o hostname e a CA
+aprovados. Os dois scripts devem ser executáveis e root-owned, sem permissões
+de escrita por outros usuários em seu caminho. Guarde credenciais do DNS fora
+dos argumentos, em arquivo root-only modo 0600. Os scripts devem restringir a
+permissão aos TXT de desafio e evitar saída com segredos.
+
+```bash
+TLS_HOST='controller.example.com'
+LINEAGE="${TLS_HOST}-dsm-unattended"
+ACME_EMAIL='acme-admin@example.com'
+TLSCTL=(sudo /usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py)
+"${TLSCTL[@]}" --verify-hook /etc/capivara/acme/auth
+"${TLSCTL[@]}" --verify-hook /etc/capivara/acme/cleanup
+sudo certbot certonly --non-interactive --agree-tos --no-directory-hooks \
+  --cert-name "$LINEAGE" --email "$ACME_EMAIL" -d "$TLS_HOST" \
+  --manual --preferred-challenges dns \
+  --manual-auth-hook /etc/capivara/acme/auth \
+  --manual-cleanup-hook /etc/capivara/acme/cleanup
+```
+
+Um plugin DNS instalado pode substituir as opções `--manual` e dos hooks pelas
+opções e pelo arquivo de credenciais da sua documentação. Para HTTP-01 use
+`--standalone --preferred-challenges http` e TCP/80 público disponível. Se
+necessário adicione `--server "$ACME_DIRECTORY"` com o endpoint HTTPS aprovado.
+Use a opção externa se a CA não fornecer staging compatível com o dry-run do
+Certbot ou se outro sistema já fizer a emissão.
+
+Obtenha a conta com
+`systemctl show dsm-dashboard.service -p User -p Group`. Edite
+`/etc/capivara/controller-tls.json` com `sudoedit` e aplique owner root:root e
+modo 0600 antes de executar o helper. Exemplo para a lineage criada acima:
 
 ```json
 {
@@ -62,91 +142,182 @@ shared lock on its existing updater admission inode when provisioned.
   "port": 8443,
   "service_user": "dsm",
   "service_group": "dsm",
-  "source_cert": "/etc/capivara/issuer/fullchain.pem",
-  "source_key": "/etc/capivara/issuer/privkey.pem"
+  "certbot_lineage": "controller.example.com-dsm-unattended",
+  "alert_to": "dsm-admin@example.com"
 }
 ```
 
-An external scheduler issues/renews independently and publishes a PEM fullchain
-and unencrypted PEM key under a root-controlled directory. Publish the source
-pair together through a generation directory and an atomic symlink switch.
-Use mode `0600` for the source key. The installed pair uses root ownership,
-Dashboard group, directories `0750` and files `0640`. Start the rotation once
-with `systemctl start dsm-controller-tls.service`. After it succeeds, run
-`systemctl enable --now dsm-controller-tls.timer`. The timer runs after boot
-and then roughly every six hours. It deals only with the configured lineage.
-Keep other Certbot lineages and their scheduling intact.
+Use a porta HTTPS interna e o endereço local numérico alcançável. Para CA
+privada, defina `ca_file` com o caminho raiz-controlado da CA e configure a
+mesma confiança no VPS e nos Agents. Para fonte externa substitua
+`certbot_lineage` por `source_cert` e `source_key` com os caminhos absolutos de
+`fullchain.pem` e da chave PEM sem senha. O publisher automático deve trocar
+uma geração de origem por link atômico, com chave root-only modo 0600. Registre
+a execução bem-sucedida desse publisher, pois o helper testa o par publicado e
+a prontidão, enquanto a política de emissão fica no sistema externo.
 
-## Monitoring and recovery
+Configure um MTA local com interface `/usr/sbin/sendmail` e rota para a caixa
+monitorada `alert_to`. Confirme a chegada da mensagem **delivery_test** na
+caixa do administrador antes de executar o enrollment. Registre assunto e
+horário de recebimento, sem expor endereço privado ou conteúdo de logs.
 
-Use `journalctl -u dsm-controller-tls.service` and the unit's failed state.
-Route journal priority warning and above for `capivara-controller-tls` to the
-site's existing alert destination. Expiry events are sent on entry to the 30,
-15, 7 and 1 day windows and on expiry. A host that misses timer runs reports its
-current urgency when it comes back. Renewal, invalid artifacts, access,
-rollback and HTTPS faults are surfaced as actionable journal events without PEM
-or provider output. Retain diagnostics for the installed Certbot locally under
-its protected log directory.
+```bash
+sudo chown root:root /etc/capivara/controller-tls.json
+sudo chmod 0600 /etc/capivara/controller-tls.json
+"${TLSCTL[@]}" --verify-active
+"${TLSCTL[@]}" --test-alert
+# Prossiga após confirmar o recebimento de delivery_test.
+"${TLSCTL[@]}" --enroll
+```
 
-1. On failure, check systemd, the activity journal, public hostname and local
-   address/port, then confirm the current leaf with verified HTTPS. Check
-   source/trust ownership and modes, CA chain, time and the configured
-   provider's completion. Fix the renewal source before triggering the service
-   again.
-2. If a valid pair was rejected because of an unrelated readiness failure,
-   resolve the underlying Dashboard fault, then run
-   `sudo /usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py --retry`.
-   The same validation, locks and rollback apply. The helper's `--verify-active`
-   performs a read/verify check of the current pair and its served HTTPS.
-3. If the previous certificate is unusable, deploy a corrected trusted pair.
-   If the Dashboard cannot start at all, keep the timer stopped, preserve the
-   configuration and key material, and use the authorized recovery window to
-   restore a trusted pair. Use the managed installer bootstrap only for a new
-   empty TLS store. Start the Controller once after repair, verify HTTPS and
-   re-enable the timer. Use the DSM updater's own recovery procedures for
-   product rollback and never repoint only one member of a certificate pair.
+O enrollment toma a admissão e faz `certbot renew --non-interactive --dry-run`
+somente para a lineage configurada. Exige HTTPS atual válido, valida cadeia,
+hostname, vigência, chave e leitura pela conta de serviço na fonte e testa o
+MTA. Só então retira o hook global legado, caso exista, e autoriza a
+configuração. O par servido permanece intacto. Confirme
+`enrollment_preflight_passed` e o recebimento de **enrollment_test**.
+Persistir outra configuração exige repetir o enrollment antes de voltar a
+rodar o timer.
 
-A deployment probe verifies the local Controller. During the bounded probe,
-new connections can see the candidate. After a host crash, the candidate can
-remain selected until systemd runs recovery. Any proxy, published port,
-external DNS routing, real Agent trust and continuity must be checked separately
-in the integrated procedure below. A failing underlying `/health` causes
-certificate deployment to roll back even when the candidate is cryptographically
-valid. If no active certificate is valid, restoring an old
-pointer cannot restore verified service. Local self-signed mode still uses
-explicit trust. Rotating its trust anchor requires coordinated Agent trust
-migration before enrollment.
+### 3. Provar rotação e continuidade nos dois hosts
 
-## Single operational acceptance procedure
+No Horizon e no VPS, use um diretório de evidências privado e capture o mesmo
+conjunto de jogos observados. Falhe se estiver vazio ou faltar um jogo
+esperado. Use a mesma função antes e depois da rotação.
 
-Use one evidence record for all three checks. Use the reviewed commit/package
-and isolated systems with an approved Horizon and external VPS topology.
-Require explicit separate authorization before touching production hosts.
+```bash
+set -o pipefail
+umask 077
+EVIDENCE=$(mktemp -d /tmp/dsm-tls-evidence.XXXXXX)
+snapshot_games() {
+  local unit pid ticks
+  while read -r unit; do
+    pid=$(systemctl show "$unit" -p MainPID --value) || return
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    ticks=$(sudo awk '{sub(/^.*\) /,""); print $20}' "/proc/$pid/stat") || return
+    [[ "$ticks" =~ ^[0-9]+$ ]] || return 1
+    printf '%s %s %s\n' "$unit" "$pid" "$ticks"
+  done < <(systemctl list-units 'capivara-instance-*.service' --state=running \
+    --no-legend --plain | awk '{print $1}' | sort)
+}
+snapshot_games >"$EVIDENCE/games.before"
+test -s "$EVIDENCE/games.before"
+date -u +%FT%TZ >"$EVIDENCE/start"
+# Somente no Horizon:
+systemctl show dsm-dashboard.service -p MainPID -p NRestarts \
+  -p ExecMainStartTimestampMonotonic >"$EVIDENCE/controller.before"
+```
 
-1. **Isolated scheduled success**. Enroll one of the supported sources on the
-   disposable Controller. Record the exact build SHA, timer status, source
-   mode, active pointer, file owner/mode, old leaf fingerprint, Controller
-   PID and both game process identities. Have the chosen publisher complete a
-   renewal and let the timer run. Capture `activation_verified`, the new leaf
-   and healthy `/health` with ordinary trusted HTTPS, plus the original
-   Controller and game PIDs. Record the CI Controller TLS Transport run
-   containing Linux and Windows installer syntax checks, transport, lifecycle
-   and updater readiness tests. CI uses an isolated CA and a fake Certbot
-   adapter, with real file permissions and HTTPS in the runner.
-2. **Isolated failure injection**. With the previous leaf still valid, publish a
-   mismatched pair, then a pair with a bad source key mode or simulate a
-   renewal failure. Confirm failed unit/journal, unchanged active leaf and
-   PIDs, and verified health. In the same run force a readiness failure after
-   candidate activation and show pointer rollback, verified prior HTTPS, and
-   no repeated activation of the rejected pair. Restore a healthy fixture at
-   the end. Record failure codes and fingerprints without key material.
-3. **Integrated Horizon and external VPS**. With the approved test endpoints,
-   record baseline UTC time, identities (unit, PID and start time) for active
-   games on both hosts, public served leaf from the VPS, Agent heartbeat and
-   representative console stream cursor. Perform one normal timer-driven
-   rotation at the Controller. From the VPS, verify HTTPS using normal CA and
-   hostname validation, the new leaf, a fresh authenticated Agent heartbeat,
-   and console frames after the baseline cursor. Confirm the exact before and
-   after process identities on both hosts and the Controller restart count
-   during the same window. Attach redacted evidence to #1161 before closing it
-   or unblocking release.
+No VPS, defina o hostname e a porta públicos, o ID/instância observados e o
+caminho de um cookie jar Netscape modo 0600 de sessão Controller autorizada
+com `console.read`. Use a confiança normal do sistema. Em ambiente de CA
+privada, a CA deve estar instalada também no trust store normal do Agent.
+Não use opções que desabilitem validação TLS.
+
+```bash
+TLS_HOST='controller.example.com'
+TLS_PORT=443
+AGENT_ID='<ID do Agent no VPS>'
+INSTANCE_ID='<ID da instância observada>'
+COOKIE_JAR='/caminho/privado/controller.cookies'
+URL="https://$TLS_HOST:$TLS_PORT"
+public_tls() {
+  openssl s_client -connect "$TLS_HOST:$TLS_PORT" -servername "$TLS_HOST" \
+    -verify_hostname "$TLS_HOST" -verify_return_error -showcerts </dev/null >"$1.handshake" \
+    && grep -F 'Verify return code: 0 (ok)' "$1.handshake" \
+    && openssl x509 -in "$1.handshake" -noout -fingerprint -sha256 -enddate \
+    && curl -qfsS --max-time 10 "$URL/health" | jq -e '.status == "healthy"'
+}
+console_events() {
+  curl -qfsSN --max-time 30 --cookie "$COOKIE_JAR" --get \
+    --data-urlencode "instance_id=$INSTANCE_ID" --data-urlencode 'auth_area=controller' \
+    --data-urlencode 'limit=10' --data-urlencode 'timeout=25' \
+    "$URL/api/customer/instance/workspace/console/stream" |
+    awk '/^id: |^event: / {print; fflush()}'
+  local statuses=("${PIPESTATUS[@]}")
+  [[ "${statuses[1]}" == 0 && ( "${statuses[0]}" == 0 || "${statuses[0]}" == 28 ) ]]
+}
+public_tls "$EVIDENCE/before" | tee "$EVIDENCE/tls.before"
+console_events >"$EVIDENCE/console.before"
+grep -Fx 'event: console-snapshot' "$EVIDENCE/console.before"
+```
+
+No Horizon, habilite o timer e espere a ativação normal da nova lineage ou do
+novo par externo. Se a primeira janela do timer já passou, aguarde até
+`systemctl list-timers` indicar o disparo ou use o start abaixo para executar
+a mesma unidade usada pelo timer. Não force reemissão nem reinicie serviços.
+
+```bash
+sudo systemctl enable --now dsm-controller-tls.timer
+systemctl list-timers dsm-controller-tls.timer --no-pager
+sudo systemctl start dsm-controller-tls.service
+sudo journalctl -u dsm-controller-tls.service --since "$(cat "$EVIDENCE/start")" --no-pager |
+  tee "$EVIDENCE/tls-journal"
+grep -F 'activation_verified' "$EVIDENCE/tls-journal"
+ROTATION_UTC='<timestamp UTC da linha activation_verified>'
+```
+
+No VPS, repita a verificação pública e observe atividade normal de console.
+Use o horário de ativação obtido no Horizon.
+
+```bash
+ROTATION_UTC='<timestamp UTC da linha activation_verified>'
+public_tls "$EVIDENCE/after" | tee "$EVIDENCE/tls.after"
+sudo journalctl -u capivara-agent.service --since "$ROTATION_UTC" --no-pager |
+  grep -F "heartbeat ok agent=$AGENT_ID health=online status=active" |
+  tail -n 1 | tee "$EVIDENCE/heartbeat.after"
+test -s "$EVIDENCE/heartbeat.after"
+console_events >"$EVIDENCE/console.after"
+grep -Fx 'event: console-snapshot' "$EVIDENCE/console.after"
+grep -Fx 'event: console-line' "$EVIDENCE/console.after"
+```
+
+Nos dois hosts, compare os jogos. No Horizon compare também o Controller.
+
+```bash
+snapshot_games >"$EVIDENCE/games.after"
+diff -u "$EVIDENCE/games.before" "$EVIDENCE/games.after"
+# Somente no Horizon:
+systemctl show dsm-dashboard.service -p MainPID -p NRestarts \
+  -p ExecMainStartTimestampMonotonic >"$EVIDENCE/controller.after"
+diff -u "$EVIDENCE/controller.before" "$EVIDENCE/controller.after"
+"${TLSCTL[@]}" --verify-active
+```
+
+Aprove quando o pacote e o HEAD coincidirem, a suíte isolada estiver verde,
+o administrador tiver confirmado recebimento, o timer estiver habilitado, o
+VPS apresentar cadeia confiável e leaf novo igual ao fingerprint do
+`activation_verified`, e o heartbeat autenticado for posterior à rotação.
+O SSE deve ter snapshot antes e depois e pelo menos uma linha nova observada
+depois. Registre o ID do evento quando disponível e o avanço da fonte de
+console no horário UTC da captura para streams de journal sem ID por linha.
+As identidades de processos de todos os jogos e o PID, início e contador de
+restart do Controller devem ser idênticos. Anexe evidências redigidas à #1161.
+Provas de falha ficam na CI e em fixtures descartáveis, sem injeção no
+Horizon ou VPS reais.
+
+## Alertas e recuperação
+
+O timer roda após o boot e depois aproximadamente a cada seis horas. A
+implementação envia alertas de 30, 15, 7, 1 dias e de expirado, além de
+falhas acionáveis de renovação, ativação e recuperação. Se o host perder
+várias janelas, a próxima execução reporta o limiar atual. O estado de
+deduplicação só avança quando o MTA aceita o aviso. A aceitação na fila é
+registrada como `administrator_alert_accepted_by_mta`; recepção na caixa é a
+evidência operacional. Uma rejeição local mantém o alerta de vencimento
+pendente e registra `administrator_alert_transport_failed` no journal. Investigue
+a fila do MTA, repita `--test-alert` e verifique a caixa novamente depois do
+reparo. Uma falha persistente do ciclo é reportada em cada execução que falha.
+
+Use `sudo journalctl -u dsm-controller-tls.service` para o código da falha
+e verifique a CA, a validade, as permissões, o hostname e o endereço de
+bind. O log privado do Certbot fica sob controle do root. Depois de corrigir
+uma falha de prontidão, `"${TLSCTL[@]}" --retry` revalida um candidato
+rejeitado. A mesma geração rejeitada exige essa ação antes de outra tentativa,
+mesmo com timer ativo. O pending journal permite recuperar uma interrupção
+em `ExecStopPost` ou no próximo ciclo. Um crash pode manter o candidato
+selecionado até a recuperação e um par anterior vencido não restaura HTTPS
+verificado. Se o Controller não conseguir iniciar, suspenda o timer, preserve
+os artefatos e restaure um par de confiança em janela autorizada. Verifique
+HTTPS antes de reabilitar o timer. O rollback do produto continua no
+atualizador convencional.

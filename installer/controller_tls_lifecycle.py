@@ -25,6 +25,9 @@ NATIVE = Path("/etc/capivara/tls")
 CONFIG = Path("/etc/capivara/controller-tls.json")
 CERTBOT_LIVE = Path("/etc/letsencrypt/live")
 UPDATE_LOCK = Path("/var/lib/capivara-dsm-928/updater-admission.lock")
+UPDATE_OWNER = Path("/usr/local/libexec/capivara-dsm-928-updater")
+LEGACY_HOOK = Path("/etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard")
+SENDMAIL = "/usr/sbin/sendmail"
 CERT = "server.crt"
 KEY = "server.key"
 DIGEST = re.compile(r"[a-f0-9]{64}")
@@ -76,9 +79,15 @@ def trusted(path, *, private=False):
     return resolved
 
 
-def retain_update_admission(locks):
-    if not UPDATE_LOCK.exists() and not UPDATE_LOCK.is_symlink():
-        return
+def retain_update_admission(locks, *, allow_legacy=False):
+    if not os.path.lexists(UPDATE_LOCK):
+        if allow_legacy and not any(os.path.lexists(path) for path in (UPDATE_LOCK.parent, UPDATE_OWNER)):
+            return
+        raise RotationError("updater_admission_missing_check_dsm928_owner")
+    for parent in reversed(UPDATE_LOCK.parents):
+        info = parent.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise RotationError("untrusted_updater_admission_directory")
     descriptor = os.open(UPDATE_LOCK, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     lock = locks.enter_context(os.fdopen(descriptor, "rb"))
     info = os.fstat(lock.fileno())
@@ -170,6 +179,28 @@ def verification_name(host):
     return "-verify_ip"
 
 
+def notify(recipient, code, detail=""):
+    if not isinstance(recipient, str) or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.+%=-]*@[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}", recipient
+    ):
+        raise RotationError("configure_administrator_alert_to")
+    message = (
+        f"To: {recipient}\nSubject: [Capivara Controller TLS] {code}\n\n"
+        f"{code} {detail}\n"
+        "See journalctl -u dsm-controller-tls.service and the Controller TLS runbook.\n"
+    )
+    try:
+        result = subprocess.run(
+            [SENDMAIL, "-i", recipient], input=message.encode(), env=ENV,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+        )
+        if result.returncode:
+            raise RotationError("administrator_alert_transport_failed")
+    except (OSError, subprocess.TimeoutExpired):
+        raise RotationError("administrator_alert_transport_failed") from None
+    event(6, "administrator_alert_accepted_by_mta", code)
+
+
 class Lifecycle:
     def __init__(self, config, root=NATIVE):
         self.config = config
@@ -179,6 +210,7 @@ class Lifecycle:
         self.pending = root / ".pending.json"
         self.rejected = root / ".rejected.json"
         self.alerts = root / ".expiry.json"
+        self.enrollment = root / ".enrollment.json"
         self.host = config["hostname"]
         verification_name(self.host)
         self.address = str(ipaddress.ip_address(config.get("address", "127.0.0.1")))
@@ -297,14 +329,15 @@ class Lifecycle:
             ).decode().strip()
             expiry = ssl.cert_time_to_seconds(output.removeprefix("notAfter="))
         except (OSError, ValueError, RotationError, subprocess.SubprocessError):
-            event(3, "active_certificate_expiry_unavailable")
-            return
+            raise RotationError("active_certificate_expiry_unavailable") from None
         left = expiry - time.time()
         threshold = next((days for days in (0, 1, 7, 15, 30) if left <= days * 86400), None)
         if threshold is not None:
             state = [hashlib.sha256(leaf).hexdigest(), threshold]
             if not self.alerts.exists() or json.loads(self.alerts.read_text()) != state:
                 event(3 if threshold <= 1 else 4, "certificate_expiry", f"days_threshold={threshold}")
+                notify(self.config.get("alert_to"), "certificate_expiry",
+                       f"controller={self.host} days_threshold={threshold}")
                 atomic_state(self.alerts, state)
 
     def recover(self):
@@ -318,20 +351,57 @@ class Lifecycle:
             old = previous
         return old
 
+    def source(self, *, renew=False, dry_run=False):
+        lineage = self.config.get("certbot_lineage")
+        if not lineage:
+            return self.config["source_cert"], self.config["source_key"]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", lineage):
+            raise RotationError("invalid_certbot_lineage")
+        if renew or dry_run:
+            args = ["/usr/bin/certbot", "renew", "--non-interactive", "--no-directory-hooks",
+                    "--cert-name", lineage]
+            if dry_run:
+                args.append("--dry-run")
+            run(args, "certbot_unattended_preflight_failed" if dry_run else "certbot_renewal_failed",
+                timeout=420)
+        source = CERTBOT_LIVE / lineage
+        return source / "fullchain.pem", source / "privkey.pem"
+
+    def enrollment_digest(self):
+        return hashlib.sha256(json.dumps(self.config, sort_keys=True).encode()).hexdigest()
+
+    def require_enrollment(self):
+        if (not self.enrollment.exists()
+                or json.loads(self.enrollment.read_text()) != self.enrollment_digest()):
+            raise RotationError("run_enrollment_for_current_configuration")
+
+    def enroll(self):
+        if self.pending.exists():
+            raise RotationError("recover_pending_activation_before_enrollment")
+        self.ready(self.validate(*self.pair(self.current())))
+        cert_path, key_path = self.source(dry_run=True)
+        certificate = trusted(cert_path).read_bytes()
+        key = trusted(key_path, private=True).read_bytes()
+        version = hashlib.sha256(certificate + b"\0" + key).hexdigest()
+        exists = (self.versions / version).exists()
+        self.stage(version, certificate, key)
+        try:
+            self.validate(*self.pair(version))
+        finally:
+            if not exists:
+                shutil.rmtree(self.versions / version)
+        notify(self.config.get("alert_to"), "enrollment_test", f"controller={self.host}")
+        if os.path.lexists(LEGACY_HOOK):
+            if trusted(LEGACY_HOOK) != LEGACY_HOOK:
+                raise RotationError("inspect_legacy_certbot_hook_before_enrollment")
+            LEGACY_HOOK.unlink()
+            sync_dir(LEGACY_HOOK.parent)
+        atomic_state(self.enrollment, self.enrollment_digest())
+        event(6, "enrollment_preflight_passed")
+
     def refresh(self, *, bootstrap=False, retry=False):
         old = self.recover()
-        lineage = self.config.get("certbot_lineage")
-        if lineage:
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", lineage):
-                raise RotationError("invalid_certbot_lineage")
-            if not bootstrap:
-                run(["/usr/bin/certbot", "renew", "--non-interactive", "--no-directory-hooks",
-                     "--cert-name", lineage], "certbot_renewal_failed", timeout=420)
-            source = CERTBOT_LIVE / lineage
-            cert_path, key_path = source / "fullchain.pem", source / "privkey.pem"
-        else:
-            cert_path, key_path = self.config["source_cert"], self.config["source_key"]
-
+        cert_path, key_path = self.source(renew=not bootstrap)
         certificate = trusted(cert_path).read_bytes()
         key = trusted(key_path, private=True).read_bytes()
         version = hashlib.sha256(certificate + b"\0" + key).hexdigest()
@@ -382,7 +452,10 @@ def main():
     mode.add_argument("--retry", action="store_true")
     mode.add_argument("--verify-active", action="store_true")
     mode.add_argument("--recover-only", action="store_true")
+    mode.add_argument("--enroll", action="store_true")
+    mode.add_argument("--test-alert", action="store_true")
     args = parser.parse_args()
+    config = {}
     try:
         if os.geteuid() != 0:
             raise RotationError("root_required")
@@ -391,36 +464,60 @@ def main():
                 raise RotationError("dns_hook_not_executable")
             return 0
         config_path = trusted(CONFIG, private=True)
-        lifecycle = Lifecycle(json.loads(config_path.read_text()))
+        config = json.loads(config_path.read_text())
+        lifecycle = Lifecycle(config)
+        if args.test_alert:
+            notify(config.get("alert_to"), "delivery_test", f"controller={lifecycle.host}")
+            return 0
+        if args.verify_active:
+            lifecycle.ready(lifecycle.validate(*lifecycle.pair(lifecycle.current())))
+            return 0
         with ExitStack() as locks:
             # Coordinate with both installed update entry points when the
             # #928 admission inode has been provisioned. Never replace it.
-            retain_update_admission(locks)
+            retain_update_admission(
+                locks, allow_legacy=args.bootstrap or config.get("legacy_without_dsm928") is True
+            )
             lifecycle.prepare()
             lock = locks.enter_context((lifecycle.root / ".lock").open("a"))
             os.chmod(lock.fileno(), 0o600)
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            try:
-                if args.recover_only:
-                    lifecycle.recover()
-                elif args.verify_active:
-                    cert, key = lifecycle.pair(lifecycle.current())
-                    lifecycle.ready(lifecycle.validate(cert, key))
-                else:
-                    lifecycle.refresh(bootstrap=args.bootstrap, retry=args.retry)
-            finally:
-                if not (args.bootstrap or args.recover_only):
-                    lifecycle.expiry()
+            if args.recover_only:
+                lifecycle.recover()
+            elif args.enroll:
+                lifecycle.enroll()
+            elif args.bootstrap:
+                lifecycle.refresh(bootstrap=True)
+            else:
+                if os.path.lexists(LEGACY_HOOK):
+                    raise RotationError("run_enrollment_to_retire_legacy_certbot_hook")
+                lifecycle.require_enrollment()
+                try:
+                    lifecycle.refresh(retry=args.retry)
+                finally:
+                    failed = sys.exc_info()[0] is not None
+                    try:
+                        lifecycle.expiry()
+                    except RotationError as exc:
+                        event(3, "expiry_monitor_failed", str(exc))
+                        if not failed:
+                            raise
     except RotationError as exc:
-        event(3, "action_required", str(exc))
-        return 1
+        failure = str(exc)
     except BlockingIOError:
         event(4, "rotation_deferred", "controller_update_or_rotation_in_progress")
         return 1
     except (OSError, ValueError, KeyError, TypeError):
-        event(3, "action_required", "check_configuration_source_permissions_and_lifecycle_storage")
-        return 1
-    return 0
+        failure = "check_configuration_source_permissions_and_lifecycle_storage"
+    else:
+        return 0
+    event(3, "action_required", failure)
+    if isinstance(config, dict) and config.get("alert_to") and not args.test_alert:
+        try:
+            notify(config["alert_to"], "lifecycle_failure", failure)
+        except RotationError:
+            event(3, "administrator_alert_transport_failed", "lifecycle_failure")
+    return 1
 
 
 if __name__ == "__main__":

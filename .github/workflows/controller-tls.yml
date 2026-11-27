@@ -74,7 +74,7 @@ jobs:
           grep -q 'dns-01-hook' installer/web_transport.sh
           grep -q -- '--manual-auth-hook' installer/web_transport.sh
           grep -q -- '--manual-cleanup-hook' installer/web_transport.sh
-          grep -q 'renewal-hooks/deploy/capivara-dashboard' installer/web_transport.sh
+          grep -q 'renewal-hooks/deploy/capivara-dashboard' installer/controller_tls_lifecycle.py
           grep -q -- '--controller-ca-file' agents/linux/installer/install-agent.sh
           grep -q 'update-ca-certificates' agents/linux/installer/install-agent.sh
           grep -q 'ControllerCaFile' agents/windows/installer/install-agent.ps1
