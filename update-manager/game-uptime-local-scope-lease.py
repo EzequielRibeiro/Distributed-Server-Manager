@@ -646,16 +646,36 @@ _JOB_TERMINAL["broadcast_deliveries"] = (*_COMMON_TERMINAL, "acknowledged")
 _JOB_TERMINAL["ha_failover_operations"] = _COMMON_TERMINAL
 
 
-def _job_inventory_sql():
-    # Identifiers and status literals come exclusively from the fixed
-    # audited schema contract above, never the database or operator input.
+# A fresh transaction is bounded to 900s; keep another 900s before
+# any deferred DayZ dispatch. A retained/recovery scope uses the original
+# absolute expiry, not a moving cutoff which could itself prevent rollback.
+_DEFERRED_DAYZ_MARGIN_SECONDS = 900
+
+def _job_inventory_sql(*, lease_expires_at=None):
+    # Fixed SQL contract. Only an exact integer from the validated local
+    # lease may be interpolated. No caller-controlled identifier or text.
+    if lease_expires_at is None:
+        cutoff = "CURRENT_TIMESTAMP + INTERVAL '1800 seconds'"
+    else:
+        if type(lease_expires_at) is not int or not 0 < lease_expires_at < 253402299799:
+            raise LocalScopeLeaseBlocked("invalid_deferred_job_lease_expiry")
+        cutoff = "to_timestamp(" + str(lease_expires_at + _DEFERRED_DAYZ_MARGIN_SECONDS) + ")"
     queries = []
     for name, states in sorted(_JOB_TERMINAL.items()):
         field = "state" if name == "ha_failover_operations" else "status"
         terminal = ",".join("'" + value + "'" for value in states)
+        outstanding = "(" + field + " IS NULL OR " + field + " NOT IN (" + terminal + "))"
+        if name == "dayz_operations":
+            # The DayZ dispatcher only offers commands at/after scheduled_at.
+            # An undelivered, pristine future row is not in-flight work.
+            # Never exempt delivered, ambiguous or previously started jobs,
+            # and never exempt maintenance warnings or YARA-X operations.
+            outstanding += (" AND (status = 'queued' AND scheduled_at > (" + cutoff + ")"
+                            " AND delivered_at IS NULL AND completed_at IS NULL"
+                            " AND canceled_at IS NULL AND result_json IS NULL"
+                            " AND last_error IS NULL) IS NOT TRUE")
         queries.append("SELECT '" + name + "' AS queue, COUNT(*) AS outstanding "
-                       "FROM public." + name + " WHERE " + field + " IS NULL OR "
-                       + field + " NOT IN (" + terminal + ")")
+                       "FROM public." + name + " WHERE " + outstanding)
     return " UNION ALL ".join(queries)
 
 
@@ -705,7 +725,8 @@ def _stable_daemon_inventory(controller, workers, alert, expected_uid):
                         for name, item in entries.items()))
 
 
-def _read_installed_controller_agents(expected_ids, hybrid_id, *, expected_uid):
+def _read_installed_controller_agents(expected_ids, hybrid_id, *, expected_uid,
+                                      lease_expires_at=None):
     """Query the actual installed PostgreSQL Controller under its service UID.
 
     Never import the mutable installed database package into the root
@@ -787,7 +808,8 @@ with backend.connect() as connection:
                           "jobs": [dict(row) for row in jobs]}, separators=(",", ":")))
 """
         result = subprocess.run(
-            ("/usr/bin/python3", "-I", "-B", "-c", reader, sql, _job_inventory_sql()),
+            ("/usr/bin/python3", "-I", "-B", "-c", reader, sql,
+             _job_inventory_sql(lease_expires_at=lease_expires_at)),
             user=uid, group=gid, extra_groups=groups,
             env=env, cwd="/", stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -1202,7 +1224,7 @@ def retain_installed_host_scope(
             raise LocalScopeLeaseBlocked("installed_controller_worker_account_mismatch")
         initial_inventory = _read_installed_controller_agents(
             expected_agent_ids, local_hybrid_agent_id,
-            expected_uid=expected_controller_uid)
+            expected_uid=expected_controller_uid, lease_expires_at=expires_at)
         options = dict(
             transaction_id=transaction_id, release_sha256=release_sha256,
             expected_controller_uid=expected_controller_uid,
@@ -1279,7 +1301,7 @@ def retain_installed_host_scope(
         def daemon_checkpoint():
             if _read_installed_controller_agents(
                     expected_agent_ids, local_hybrid_agent_id,
-                    expected_uid=expected_controller_uid) != initial_inventory:
+                    expected_uid=expected_controller_uid, lease_expires_at=expires_at) != initial_inventory:
                 raise LocalScopeLeaseBlocked("controller_agent_inventory_changed")
             raw = _root_file(witness_path, 32768)
             receipts = read_restart_evidence()
@@ -1306,7 +1328,7 @@ def retain_installed_host_scope(
                     raise LocalScopeLeaseBlocked("game_inventory_changed_before_preparation")
                 if _read_installed_controller_agents(
                         expected_agent_ids, local_hybrid_agent_id,
-                        expected_uid=expected_controller_uid) != initial_inventory:
+                        expected_uid=expected_controller_uid, lease_expires_at=expires_at) != initial_inventory:
                     raise LocalScopeLeaseBlocked("controller_inventory_changed_before_preparation")
 
             options["before_prepare"] = before_prepare
@@ -1317,7 +1339,7 @@ def retain_installed_host_scope(
                     raise LocalScopeLeaseBlocked("existing_daemon_inventory_witness_requires_review")
                 if _read_installed_controller_agents(
                         expected_agent_ids, local_hybrid_agent_id,
-                        expected_uid=expected_controller_uid) != initial_inventory:
+                        expected_uid=expected_controller_uid, lease_expires_at=expires_at) != initial_inventory:
                     raise LocalScopeLeaseBlocked("controller_agent_inventory_changed_before_binding")
                 _persist_terminal_receipt(witness_path, daemon_payload, 0)
                 original_evidence = _root_file(witness_path, 32768)
@@ -1378,7 +1400,7 @@ def retain_installed_host_scope(
                     raise LocalScopeLeaseBlocked("restart_transition_limit_reached")
                 after = _read_installed_controller_agents(
                     expected_agent_ids, local_hybrid_agent_id,
-                    expected_uid=expected_controller_uid)
+                    expected_uid=expected_controller_uid, lease_expires_at=expires_at)
                 _persist_restart_transition(
                     witness_scope, initial_inventory, after,
                     sequence=len(recovery_evidence) + 1,

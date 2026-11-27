@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import sys
+import importlib.util
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -226,6 +228,38 @@ def main() -> int:
         raise AssertionError("system administrator bootstrap failed")
     if int(stored_contract["customer_id"]) != 1 or stored_contract["game_id"] != "minecraft":
         raise AssertionError("stored service contract is invalid")
+
+    # Exercise the actual installed-scope SQL on PostgreSQL, not a mock.
+    scope_path = ROOT / "update-manager/game-uptime-local-scope-lease.py"
+    spec = importlib.util.spec_from_file_location("dsm928_test_scope", scope_path)
+    scope = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scope)
+    expires = int(time.time()) + 900
+    fixtures = (
+        ("future", "queued", 3600, False, None),
+        ("near", "queued", 1200, False, None),
+        ("due", "queued", -60, False, None),
+        ("delivered", "delivered", 3600, True, None),
+        ("ambiguous", "queued", 3600, True, None),
+        ("result", "queued", 3600, False, "{}"),
+        ("done", "completed", 3600, True, "{}"),
+    )
+    with admin.session(transaction=True) as session:
+        for label, status, delay, delivered, result in fixtures:
+            session.execute(
+                "INSERT INTO dayz_operations(operation_id,agent_id,instance_id,action,status,"
+                "scheduled_at,payload_json,result_json,created_at,delivered_at,updated_at) "
+                "VALUES (%s,'isolated-agent','isolated-instance','wipe',%s,"
+                "to_timestamp(%s),'{}',%s,CURRENT_TIMESTAMP,"
+                "CASE WHEN %s THEN CURRENT_TIMESTAMP ELSE NULL END,CURRENT_TIMESTAMP)",
+                ("scope-test-" + label, status, expires + delay - 900, result, delivered),
+            )
+        rows = session.execute(
+            scope._job_inventory_sql(lease_expires_at=expires)
+        ).fetchall()
+        dayz = next(row for row in rows if row["queue"] == "dayz_operations")
+        assert int(dayz["outstanding"]) == 5, dayz
+        session.execute("DELETE FROM dayz_operations WHERE operation_id LIKE 'scope-test-%'")
 
     print("PostgreSQL Baseline v2 isolated deployment: OK")
     return 0
