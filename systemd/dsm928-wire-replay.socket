@@ -1,0 +1,20 @@
+# DSM #928 - opt-in Unix socket for negative-only durable Agent receipts.
+# Not enabled during installation, update or release publishing.
+[Unit]
+Description=Capivara DSM #928 privileged negative wire journal socket
+Documentation=man:systemd.socket(5)
+
+[Socket]
+ListenStream=/run/capivara-dsm/dsm928-wire-replay.sock
+Accept=yes
+Service=dsm928-wire-replay@.service
+SocketUser={{DSM_USER}}
+SocketGroup={{DSM_GROUP}}
+SocketMode=0600
+DirectoryMode=0755
+Backlog=16
+MaxConnections=16
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

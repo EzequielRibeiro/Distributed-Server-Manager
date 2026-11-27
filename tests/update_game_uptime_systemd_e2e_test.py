@@ -146,6 +146,424 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         self.assertEqual(set(properties), returned)
         self.assertEqual(self._snapshot(unit["unit"]), unit)
 
+    def test_installed_entrypoint_accepts_signed_restart_candidate(self):
+        """Exercise the real fixed-path owner on the disposable systemd host."""
+        from contextlib import ExitStack
+        import fcntl
+        import grp
+        import hashlib
+        import pwd
+        import tarfile
+
+        installed = Path("/opt/dsm")
+        snapshot = Path("/usr/local/libexec/capivara-dsm-928-updater")
+        agent_snapshot = snapshot.with_name("capivara-dsm-928-agent")
+        state = Path("/var/lib/capivara-dsm-928")
+        runtime = Path("/run/capivara-dsm")
+        trust = Path("/etc/capivara-dsm")
+        unit_dir = Path("/etc/systemd/system")
+        roots = (installed, snapshot, agent_snapshot, state, runtime, trust)
+        self.assertTrue(all(not os.path.lexists(path) for path in roots))
+
+        suite = self.workspace
+        suite.chmod(0o755)
+        account = pwd.getpwnam("nobody")
+        pg_bin = Path(self._run("pg_config", "--bindir").stdout.strip())
+        python = "/usr/bin/python3"
+
+        def run(*args, timeout=30, **kwargs):
+            result = subprocess.run(tuple(map(str, args)), text=True, capture_output=True,
+                                    timeout=timeout, **kwargs)
+            self.assertEqual(result.returncode, 0, result.stdout[-2200:] + result.stderr[-2200:])
+            return result.stdout
+
+        def canonical(value):
+            return (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode()
+
+        def provision_unit(cleanup, name, content):
+            path = unit_dir / name
+            with path.open("x") as stream:
+                stream.write(content)
+            cleanup.callback(path.unlink)
+
+        def cleanup_units(names):
+            subprocess.run(("systemctl", "stop", *names), capture_output=True, timeout=30)
+
+        with ExitStack() as cleanup:
+            cleanup.callback(os.umask, os.umask(0o022))
+            cleanup.callback(run, "systemctl", "daemon-reload")
+            # Hosted images may grant their provisioning group write access
+            # under /usr/local. The installed owner requires a root-only
+            # trust chain; restore the disposable image's mode on exit.
+            prefix = snapshot.parent.parent
+            prefix_mode = prefix.stat().st_mode & 0o7777
+            if prefix_mode & 0o022:
+                prefix.chmod(prefix_mode & ~0o022)
+                cleanup.callback(prefix.chmod, prefix_mode)
+            if not snapshot.parent.exists():
+                snapshot.parent.mkdir(mode=0o755)
+                cleanup.callback(snapshot.parent.rmdir)
+            for path in roots:
+                path.mkdir(mode=0o755)
+                cleanup.callback(shutil.rmtree, path)
+            try:
+                grp.getgrnam("capivara-agent")
+            except KeyError:
+                run("groupadd", "--system", "capivara-agent")
+                cleanup.callback(run, "groupdel", "capivara-agent")
+
+            # The real inventory reader uses the host interpreter in isolated
+            # mode. Supply its PostgreSQL adapter on the disposable host.
+            if subprocess.run((python, "-I", "-c", "import psycopg"),
+                              capture_output=True).returncode:
+                run("apt-get", "install", "-y", "--no-install-recommends",
+                    "python3-psycopg", timeout=120)
+
+            postgres = suite / "postgres"
+            sockets = suite / "postgres-socket"
+            for folder in (postgres, sockets):
+                folder.mkdir()
+                os.chown(folder, account.pw_uid, account.pw_gid)
+            run("runuser", "-u", account.pw_name, "--", pg_bin / "initdb", "-D", postgres,
+                "--auth=trust", "--no-locale", "--encoding=UTF8", timeout=45)
+            run("runuser", "-u", account.pw_name, "--", pg_bin / "pg_ctl", "-D", postgres,
+                "-l", postgres / "server.log", "-o", f"-h '' -k {sockets}", "-w", "start")
+            cleanup.callback(run, "runuser", "-u", account.pw_name, "--", pg_bin / "pg_ctl",
+                             "-D", postgres, "-m", "immediate", "-w", "stop")
+
+            # Real PostgreSQL rows and real locks. The disposable Controller
+            # and Workers exercise the same hold readers while remaining
+            # independent of any customer inventory or network.
+            scope_loader = SourceFileLoader("dsm928_acceptance_scope",
+                str(ROOT / "update-manager/game-uptime-local-scope-lease.py"))
+            scope_spec = importlib.util.spec_from_loader(scope_loader.name, scope_loader)
+            lease = importlib.util.module_from_spec(scope_spec)
+            scope_loader.exec_module(lease)
+            statements = [
+                "CREATE TABLE nodes (id text, role text)",
+                "CREATE TABLE agents (id text, status text, node_id text)",
+                "CREATE TABLE instances (node_id text)",
+                "CREATE TABLE agent_credentials (agent_id text, status text)",
+                "INSERT INTO nodes VALUES ('local-node','hybrid')",
+                "INSERT INTO agents VALUES ('local-agent','active','local-node')",
+            ]
+            for queue in lease._JOB_TERMINAL:
+                columns = ("state text" if queue == "ha_failover_operations" else "status text")
+                if queue == "agent_instance_commands":
+                    columns += ", agent_id text"
+                if queue == "dayz_operations":
+                    columns += (", scheduled_at timestamptz, delivered_at timestamptz,"
+                                " completed_at timestamptz, canceled_at timestamptz,"
+                                " result_json text, last_error text")
+                statements.append(f"CREATE TABLE {queue} ({columns})")
+            run(pg_bin / "psql", "-h", sockets, "-U", account.pw_name,
+                "-d", "postgres", "-v", "ON_ERROR_STOP=1",
+                input=";\n".join(statements) + ";\n")
+
+            for name in ("update-manager", "agents", "database", "dashboard", "systemd"):
+                shutil.copytree(ROOT / name, installed / name,
+                                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+            (installed / "monitor").mkdir()
+            daemon = ("import time\n"
+                      "from game_uptime_maintenance_hold import observe\n"
+                      "while True:\n    observe()\n    time.sleep(0.5)\n")
+            (installed / "dashboard/server_part22.py").write_text(daemon)
+            (installed / "monitor/alert_engine.py").write_text(daemon)
+            for worker in lease.WORKERS:
+                folder = installed / "dashboard/workers"
+                if worker == "scheduler_worker":
+                    script = folder / "scheduler_worker.sh"
+                    script.write_text("#!/bin/bash\nwhile true; do sleep 1; done\n")
+                    script.chmod(0o755)
+                else:
+                    (folder / (worker + ".py")).write_text(
+                        "import time\nfrom pathlib import Path\n"
+                        "from maintenance_hold_gate import tracked_operation\n"
+                        f"with tracked_operation({worker!r}, root=Path('/opt/dsm')):\n"
+                        "    pass\nwhile True:\n    time.sleep(1)\n")
+            (installed / "version").write_text("2.0.998\n")
+            (installed / "release-manifest.json").write_text("{}\n")
+            probe = installed / "dashboard/acceptance_probe.py"
+            probe.write_text("generation = 1\n")
+            # Reproduce the conventional installation's signed product and
+            # subsequent, explicitly reviewed local state differences.
+            (installed / "config").mkdir()
+            local_config = installed / "config/agent.conf"
+            local_config.write_text("fixture_default=1\n")
+            script = installed / "update-manager/baseline-mode-fixture.sh"
+            script.write_text("#!/bin/bash\ntrue\n")
+            script.chmod(0o644)
+            unchanged = installed / "dashboard/unchanged_probe.py"
+            unchanged.write_text("generation = 1\n")
+            for path in (installed, *installed.rglob("*")):
+                # Release files have no ACLs. Strip any ACL inherited from
+                # the runner image before copying this disposable baseline.
+                for attribute in os.listxattr(path):
+                    if attribute.startswith("system.posix_acl_"):
+                        os.removexattr(path, attribute)
+                path.chmod(path.stat().st_mode & 0o7755)
+
+            # Snapshot the audited fixture before the systemd processes start.
+            for name in ("update-manager", "agents", "dashboard", "systemd"):
+                shutil.copytree(installed / name, snapshot / name)
+            shutil.copytree(installed / "agents/linux/runtime", agent_snapshot, dirs_exist_ok=True)
+
+            reviewed = state / "reviewed-release"
+            reviewed.mkdir()
+            payload = reviewed / "payload"
+            shutil.copytree(installed, payload)
+            (payload / "version").write_text("2.0.999\n")
+            (payload / probe.relative_to(installed)).write_text("generation = 2\n")
+            commit = run("git", "-c", f"safe.directory={ROOT}", "-C", ROOT,
+                         "rev-parse", "HEAD").strip()
+            (reviewed / "reviewed-commit").write_text(commit + "\n")
+            name = "capivara-dsm-2.0.999"
+            archive = reviewed / (name + ".tar.gz")
+            manifest = {
+                "schema_version": 1, "kind": "CapivaraReleaseManifest",
+                "name": "capivara-dsm", "version": "2.0.999", "git_commit": commit,
+                "created_at": "2026-01-01T00:00:00Z", "archive": archive.name,
+                "file_count": sum(path.is_file() for path in payload.rglob("*")),
+                "required_files": ["version", str(probe.relative_to(installed))],
+            }
+            manifest_bytes = canonical(manifest)
+            (payload / "release-manifest.json").write_bytes(manifest_bytes)
+            (reviewed / (name + ".manifest.json")).write_bytes(manifest_bytes)
+            with tarfile.open(archive, "w:gz") as package:
+                package.add(payload, arcname=name)
+            digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+            statement = reviewed / (name + ".provenance.json")
+            statement.write_bytes(canonical({
+                "schema_version": 1, "kind": "CapivaraDSMReleaseProvenance",
+                "repository": "EzequielRibeiro/Distributed-Server-Manager",
+                "version": "2.0.999", "git_commit": commit, "archive": archive.name,
+                "archive_sha256": digest,
+                "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            }))
+            key = suite / "publisher.key"
+            run("openssl", "genpkey", "-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:2048",
+                "-out", key)
+            key.chmod(0o600)
+            run("openssl", "pkey", "-in", key, "-pubout", "-out",
+                trust / "release-signing-public.pem")
+            run("openssl", "dgst", "-sha256", "-sign", key, "-out",
+                reviewed / (name + ".provenance.sig"), statement)
+
+            # Authenticate a separate OLD release, including its original
+            # manifest. Never enroll the mutable installed tree as a baseline.
+            baseline = state / "installed-baseline"
+            baseline.mkdir(mode=0o700)
+            old_payload = baseline / "payload"
+            shutil.copytree(installed, old_payload)
+            old_name = "capivara-dsm-2.0.998"
+            old_archive = baseline / (old_name + ".tar.gz")
+            old_manifest = {**manifest, "version": "2.0.998",
+                            "archive": old_archive.name}
+            old_bytes = canonical(old_manifest)
+            (old_payload / "release-manifest.json").write_bytes(old_bytes)
+            (installed / "release-manifest.json").write_bytes(old_bytes)
+            (baseline / (old_name + ".manifest.json")).write_bytes(old_bytes)
+            (baseline / "reviewed-commit").write_text(commit + "\n")
+            with tarfile.open(old_archive, "w:gz") as package:
+                package.add(old_payload, arcname=old_name)
+            old_statement = baseline / (old_name + ".provenance.json")
+            old_statement.write_bytes(canonical({
+                "schema_version": 1, "kind": "CapivaraDSMReleaseProvenance",
+                "repository": "EzequielRibeiro/Distributed-Server-Manager",
+                "version": "2.0.998", "git_commit": commit, "archive": old_archive.name,
+                "archive_sha256": hashlib.sha256(old_archive.read_bytes()).hexdigest(),
+                "manifest_sha256": hashlib.sha256(old_bytes).hexdigest(),
+            }))
+            run("openssl", "dgst", "-sha256", "-sign", key, "-out",
+                baseline / (old_name + ".provenance.sig"), old_statement)
+            # Independent fixture review of known local config; never copy
+            # secrets or accept arbitrary product-code overrides.
+            local_config.write_text("fixture_local=2\n")
+            local_config.chmod(0o640)
+            overrides = baseline / "local-overrides.json"
+            overrides.write_bytes(canonical({"config/agent.conf": {
+                "mode": 0o640,
+                "sha256": hashlib.sha256(local_config.read_bytes()).hexdigest(),
+            }}))
+            overrides.chmod(0o600)
+            script.chmod(0o744)
+            (installed / "backups").mkdir()
+            (installed / "backups/historical-fixture.py").write_text("# preserved\n")
+            run(python, "-I", "-B", "-c",
+                "import py_compile,sys; py_compile.compile(sys.argv[1],doraise=True)",
+                unchanged)
+
+            (trust / "agent-session-id").write_text("local-agent\n")
+            (trust / "agent-session-id").chmod(0o600)
+
+            versions = state / "supervisor-versions"
+            versions.mkdir()
+            supervisor = installed / "agents/linux/runtime/console_supervisor.py"
+            pin = hashlib.sha256(supervisor.read_bytes()).hexdigest()
+            stage_loader = SourceFileLoader("dsm928_acceptance_supervisor",
+                str(ROOT / "update-manager/game-uptime-supervisor-stage.py"))
+            stage_spec = importlib.util.spec_from_loader(stage_loader.name, stage_loader)
+            stage = importlib.util.module_from_spec(stage_spec)
+            stage_loader.exec_module(stage)
+            pinned = stage.stage_supervisor(supervisor, versions, expected_sha256=pin)["path"]
+            games = (f"capivara-instance-minecraft-{self.prefix}.service",
+                     f"capivara-instance-dayz-{self.prefix}.service")
+            contract = {"protocol": "dsm928-readonly-v1", "schema": "1",
+                        "controller_api": "agent-heartbeat-v1", "agent_api": "agent-heartbeat-v1"}
+            (reviewed / "operational-inputs.json").write_bytes(canonical({
+                "schema_version": 1, "release_sha256": digest, "installed_version": "2.0.998",
+                "controller_contract": contract, "agent_contract": contract,
+                "expected_active_units": sorted(games), "supervisor_expected_sha256": pin,
+            }))
+
+            for path in (installed, *installed.rglob("*")):
+                os.chown(path, account.pw_uid, account.pw_gid)
+            (installed / "logs").mkdir()
+            os.chown(installed / "logs", account.pw_uid, account.pw_gid)
+            provision = installed / "agents/linux/runtime/game_uptime_privileged_flock.py"
+            run(python, "-B", provision, "--provision-with-state")
+            run(python, "-B", provision, "--provision-updater-admission")
+            run(python, "-B", provision.with_name("game_uptime_finalization_flock.py"), "--provision")
+            provision_workers = (python, "-B",
+                installed / "dashboard/workers/prepare_maintenance_worker_locks.py",
+                "--user", account.pw_name, "--group", grp.getgrgid(account.pw_gid).gr_name)
+            run(*provision_workers)
+            run(*provision_workers, "--controller-only")
+            for kind in lease._HYBRID_HELPERS:
+                unit = f"dsm-hybrid-agent-{kind}@.service"
+                template = (installed / "systemd" / (unit + ".in")).read_text()
+                provision_unit(cleanup, unit,
+                               template.replace("@DSM_ROOT@", str(installed)).replace("@DSM_USER@", account.pw_name))
+
+            topology = "dsm-controller-service-topology.service"
+            provision_unit(cleanup, topology, (installed / "systemd" / topology).read_text())
+            controller, workers, alert = ("dsm-dashboard.service", "dsm-dashboard-worker.service",
+                                          "dsm-alert-engine.service")
+            common = (f"[Service]\nUser={account.pw_name}\n"
+                      "Environment=PYTHONDONTWRITEBYTECODE=1\n"
+                      "Environment=PYTHONPYCACHEPREFIX=/dev/null\n"
+                      "Environment=PYTHONPATH=/opt/dsm/agents/linux/runtime\n"
+                      "Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1\n")
+            restart_probe = suite / "assert-retained-locks.py"
+            restart_probe.write_text(
+                "import fcntl\nfrom pathlib import Path\n"
+                f"runtime = Path({str(runtime)!r})\n"
+                "if (runtime / 'no-drain-maintenance.json').is_file():\n"
+                f"    paths = [Path({str(state / 'updater-admission.lock')!r}),\n"
+                "        runtime / 'controller-agent-http-admission.lock',\n"
+                "        runtime / 'controller-agent-http.lock',\n"
+                "        runtime / 'agent-privileged-operations.lock',\n"
+                "        runtime / 'agent-finalization-operations.lock',\n"
+                "        *(runtime / 'worker-operations').iterdir()]\n"
+                "    for path in paths:\n"
+                "        with path.open('rb') as stream:\n"
+                "            try:\n"
+                "                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                "            except BlockingIOError:\n"
+                "                continue\n"
+                "            raise SystemExit(f'lock not retained: {path.name}')\n"
+                f"    Path({str(suite / 'restart-locks-retained')!r}).touch()\n")
+            provision_unit(cleanup, controller, "[Unit]\nAfter=" + topology + "\n" + common
+                + f"Environment=DSM_DATABASE_DRIVER=postgresql\nEnvironment=DSM_DATABASE_NAME=postgres\n"
+                  f"Environment=DSM_DATABASE_USER={account.pw_name}\nEnvironment=DSM_DATABASE_HOST={sockets}\n"
+                  "Environment=DSM_DATABASE_TLS=disable\n"
+                  f"ExecStart={python} /opt/dsm/dashboard/server_part22.py\n")
+            provision_unit(cleanup, alert, common + f"ExecStart={python} /opt/dsm/monitor/alert_engine.py\n")
+            provision_unit(cleanup, workers, common
+                + "ExecStart=/bin/bash /opt/dsm/dashboard/workers/worker.sh\nExecStartPost=/usr/bin/sleep 1\n"
+                + f"ExecStartPost=+{python} {restart_probe}\n")
+            provision_unit(cleanup, games[0], f"[Service]\nExecStart={python} {pinned} "
+                           f"--socket {suite / 'minecraft.sock'} -- /usr/bin/sleep 180\n")
+            provision_unit(cleanup, games[1], "[Service]\nExecStart=/usr/bin/sleep 180\n")
+
+            run("systemctl", "daemon-reload")
+            cleanup.callback(cleanup_units, (*games, workers, controller, alert, topology))
+            # Ensure old source inodes predate the running workers even on
+            # kernels exposing boot time only at whole-second precision.
+            time.sleep(2)
+            run("systemctl", "start", topology, alert, workers, controller, *games)
+            before = [self._snapshot(unit) for unit in games]
+            self.assertTrue(all(item["state"] == "active" and item["pid"] > 1 for item in before))
+            control_before = [self._snapshot(unit) for unit in (controller, workers)]
+            for root in (installed, payload):
+                for relative in ("dashboard/acceptance_probe.py", "version", "release-manifest.json"):
+                    self.assertEqual(os.listxattr(root / relative), [], str(root / relative))
+            for path in (Path("/"), Path("/usr"), prefix, snapshot.parent,
+                         snapshot, *snapshot.rglob("*"), Path("/var"), Path("/var/lib"),
+                         state, reviewed, payload):
+                info = path.lstat()
+                self.assertEqual(info.st_uid, 0, str(path))
+                self.assertFalse(info.st_mode & 0o022, str(path))
+            # The runner's operating-system cron tree is outside the DSM
+            # fixture. Give the owner a private, empty scheduler inventory
+            # without changing the host's cron files or service state.
+            empty_cron = suite / "cron"
+            empty_cron.mkdir()
+            cron_dirs = ("/etc/cron.d", "/etc/cron.hourly", "/etc/cron.daily",
+                         "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron/crontabs")
+            # Capture chained errors from the owner without changing its
+            # stdout contract or replacing any of its entrypoint functions.
+            trace = (
+                "import runpy, sys, traceback\n"
+                "entrypoint = sys.argv[1]\n"
+                "def trace_main(frame, event, arg):\n"
+                "    if event == 'exception':\n"
+                "        traceback.print_exception(arg[1])\n"
+                "    return trace_main\n"
+                "def select(frame, event, arg):\n"
+                "    if frame.f_code.co_filename == entrypoint and frame.f_code.co_name == 'main':\n"
+                "        return trace_main\n"
+                "sys.settrace(select)\n"
+                "sys.argv = sys.argv[1:]\n"
+                "runpy.run_path(entrypoint, run_name='__main__')\n"
+            )
+            result = subprocess.run(
+                ("unshare", "--mount", "--propagation", "private", "/bin/bash", "-ec",
+                 'empty="$1"; shift; while [ "$1" != -- ]; do '
+                 'if [ -d "$1" ]; then mount --bind "$empty" "$1"; fi; shift; done; '
+                 'shift; exec "$@"',
+                 "dsm928", empty_cron, *cron_dirs, "--", python, "-I", "-S", "-B", "-c", trace,
+                 snapshot / "update-manager/game-uptime-installed-transaction.py", payload),
+                text=True, capture_output=True, timeout=150)
+            if result.returncode:
+                diagnostic = json.loads(run(
+                    python, "-I", "-S", "-B", snapshot / "update-manager/game-uptime-preflight.py",
+                    installed, payload))
+                details = {key: diagnostic.get(key) for key in (
+                    "units", "handoff_witness", "operational_coverage",
+                    "supervisor_pin_evidence", "compatibility_gate")}
+                self.fail(result.stdout + result.stderr + json.dumps(details, sort_keys=True))
+            result = json.loads(result.stdout)
+            self.assertEqual(result["status"], "verified")
+            self.assertTrue(result["terminal_holds_released"])
+            self.assertFalse(result["game_drain_performed"])
+            self._assert_unchanged(before)
+            for original in control_before:
+                replacement = self._snapshot(original["unit"])
+                self.assertEqual(replacement["state"], "active")
+                self.assertNotEqual(replacement["pid"], original["pid"])
+            self.assertEqual(probe.read_text(), "generation = 2\n")
+            self.assertEqual(local_config.read_text(), "fixture_local=2\n")
+            self.assertEqual(script.stat().st_mode & 0o777, 0o744)
+            self.assertTrue((installed / "backups/historical-fixture.py").is_file())
+            self.assertTrue((suite / "restart-locks-retained").is_file())
+            tx = result["transaction_id"]
+            journal = json.loads((state / f"transaction-{tx}/game-uptime-transaction.json").read_text())
+            self.assertEqual(journal["status"], "verified")
+            self.assertEqual(journal["scope"]["release_sha256"], digest)
+            self.assertTrue((state / f"daemon-restart-{tx}-1.json").is_file())
+            self.assertTrue((state / f"released-{tx}.json").is_file())
+            self.assertFalse((runtime / "no-drain-maintenance.json").exists())
+            self.assertFalse((state / "no-drain-pending.json").exists())
+            for path in (runtime / "controller-agent-http-admission.lock",
+                         runtime / "controller-agent-http.lock",
+                         runtime / "agent-privileged-operations.lock",
+                         runtime / "agent-finalization-operations.lock",
+                         state / "updater-admission.lock",
+                         *(runtime / "worker-operations").iterdir()):
+                with path.open("rb") as stream:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
     def test_real_release_package_cannot_bypass_no_drain_gate_with_live_disposable_pids(self):
         """#928 stage 2.2: actual DSM release bytes must fail closed.
 
@@ -346,6 +764,77 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             gate.verify_disposable_fence(security, **kwargs)
         self._assert_unchanged(originals)
 
+        # Unified final rehearsal: use the REAL release TAR and independent
+        # RSA signed provenance from the existing release-verification contract.
+        # These are ephemeral CI keys, never a production signing authority.
+        bridge_loader = SourceFileLoader(
+            "dsm928_consolidated_disposable_transaction",
+            str(ROOT / "update-manager/game-uptime-consolidated-transaction.py"))
+        bridge_spec = spec_from_loader(bridge_loader.name, bridge_loader)
+        bridge = module_from_spec(bridge_spec)
+        bridge_spec.loader.exec_module(bridge)
+        release_manifest = output / (name + ".manifest.json")
+        signed_statement = output / (name + ".provenance.json")
+        signed_signature = output / (name + ".provenance.sig")
+        publisher_private = security / "publisher-private-rsa.pem"
+        publisher_public = security / "publisher-public-rsa.pem"
+        self._run("openssl", "genpkey", "-algorithm", "RSA",
+                  "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(publisher_private))
+        self._run("openssl", "pkey", "-in", str(publisher_private),
+                  "-pubout", "-out", str(publisher_public))
+        statement_body = {
+            "kind": "CapivaraDSMReleaseProvenance",
+            "schema_version": 1,
+            "repository": "EzequielRibeiro/Distributed-Server-Manager",
+            "git_commit": commit,
+            "version": version,
+            "archive": archive.name,
+            "archive_sha256": expected_hash,
+            "manifest_sha256": hashlib.sha256(release_manifest.read_bytes()).hexdigest(),
+        }
+        signed_statement.write_text(
+            json.dumps(statement_body, sort_keys=True, separators=(",", ":")) + "\n")
+        self._run("openssl", "dgst", "-sha256", "-sign",
+                  str(publisher_private), "-out", str(signed_signature),
+                  str(signed_statement))
+        publisher_pin = hashlib.sha256(publisher_public.read_bytes()).hexdigest()
+
+        def current_units():
+            listing = self._run(
+                "systemctl", "list-units", "--type=service", "--state=active",
+                "--no-legend", "--plain", f"{self.prefix}-*.service")
+            return [line.split()[0] for line in listing.stdout.splitlines()
+                    if line.strip()]
+
+        def inspect_game(name):
+            state = self._snapshot(name)
+            unit_config = self._run("systemctl", "cat", name).stdout
+            state["unit_config_sha256"] = hashlib.sha256(
+                unit_config.encode()).hexdigest()
+            return state
+
+        # #928: real Controller/Worker flock ownership is retained for the
+        # entire disposable update/rollback, rather than merely sampled.
+        import fcntl
+        scope_loader = SourceFileLoader(
+            "dsm928_local_scope_lease",
+            str(ROOT / "update-manager/game-uptime-local-scope-lease.py"))
+        scope_spec = spec_from_loader(scope_loader.name, scope_loader)
+        local_scope = module_from_spec(scope_spec)
+        scope_spec.loader.exec_module(local_scope)
+
+        for original in originals:
+            unit = original["unit"]
+            fragment = Path(local_scope._systemd_read(
+                "show", unit, "--property=FragmentPath", "--value").strip())
+            content = fragment.read_bytes()
+            local_scope._effective_mutator_unit(
+                unit, fragment, content, systemctl=local_scope._systemd_read)
+            with self.assertRaisesRegex(local_scope.LocalScopeLeaseBlocked, "unit_changed"):
+                local_scope._effective_mutator_unit(
+                    unit, fragment, content + b"\n# unreviewed",
+                    systemctl=local_scope._systemd_read)
+
         # Stage 2.2 moved the extracted tree into the incompatible fixture.
         # Reuse that verified package instead of its now-empty old path.
         real_tree = fixture / "new-payload"
@@ -384,10 +873,282 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertFalse(impact["live_no_drain_authorized"])
                 fixture_signer().seal_test_fixture(workspace)
                 self._assert_unchanged(originals)
-                outcome = main_rehearsal(workspace, mode)
-                self.assertEqual(outcome.returncode,
-                                 0 if mode == "no_drain_success" else 2,
-                                 outcome.stderr[-1700:] + outcome.stdout[-800:])
+                # One signed-origin → four-role ACK → durable transaction
+                # chain for apply and rollback, using existing systemd units.
+                fence_root = self.workspace / ("consolidated-fence-" + mode)
+                fence_root.mkdir(mode=0o700)
+                (fence_root / "fixture-owner").write_bytes(
+                    b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+                nonce = secrets.token_hex(16)
+                bounded_approval = {
+                    **approval, "transaction_id": nonce,
+                    "issued_at": int(time.time()),
+                    "expires_at": int(time.time()) + 300,
+                }
+                bounded_approval_path = fence_root / "approval.json"
+                bounded_approval_path.write_bytes(gate.canonical(bounded_approval))
+                bounded_signature = fence_root / "approval.sig"
+                self._run("openssl", "pkeyutl", "-sign", "-inkey",
+                          str(private), "-rawin", "-in",
+                          str(bounded_approval_path), "-out", str(bounded_signature))
+                bounded_acks = []
+                for role in bounded_approval["roles"]:
+                    ack = {
+                        "kind": "DSM928DisposableQuiescenceAck",
+                        "role": role, "transaction_id": nonce,
+                        "release_sha256": expected_hash,
+                        "status": "quiescent", "pending_jobs": 0,
+                    }
+                    ack["hmac_sha256"] = hmac.new(
+                        actor_keys[role], gate.canonical(ack),
+                        hashlib.sha256).hexdigest()
+                    bounded_acks.append(ack)
+                integrated_kwargs = {
+                    "archive": archive, "manifest": release_manifest,
+                    "statement": signed_statement,
+                    "release_signature": signed_signature,
+                    "reviewed_commit": commit,
+                    "publisher_public_key": publisher_public,
+                    "expected_publisher_key_sha256": publisher_pin,
+                    "security_workspace": fence_root,
+                    "security_approval": bounded_approval_path,
+                    "security_signature": bounded_signature,
+                    "security_publisher_public_key": public,
+                    "security_key_sha256":
+                        hashlib.sha256(public.read_bytes()).hexdigest(),
+                    "transaction_id": nonce,
+                    "actor_acks": bounded_acks,
+                    "actor_keys": actor_keys,
+                    "units": [unit["unit"] for unit in originals],
+                    "inspect": inspect_game,
+                    "list_units": current_units,
+                    "execute_fixture": lambda: main_rehearsal(workspace, mode),
+                    "expected_journal_status": expected_status,
+                }
+                with self.assertRaises(bridge.ConsolidatedTransactionBlocked):
+                    bridge.run_disposable_integrated(
+                        workspace, **{**integrated_kwargs,
+                                      "expected_publisher_key_sha256": "0"*64})
+                self.assertFalse((workspace / "backups").exists())
+                self.assertFalse((fence_root / "dsm928-security-fence.json").exists())
+                # Preprovision only /tmp lock inodes, never /run or /opt/dsm.
+                scope_root = self.workspace / ("local-scope-" + mode)
+                scope_root.mkdir(mode=0o700)
+                (scope_root / "fixture-owner").write_bytes(
+                    b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+                runtime_parent = scope_root / "runtime"
+                runtime_dir = runtime_parent / "run"
+                state_dir = scope_root / "state"
+                worker_dir = runtime_dir / "worker-operations"
+                for folder in (runtime_parent, runtime_dir, state_dir, worker_dir):
+                    folder.mkdir(mode=0o700)
+                # The real preparer requires traversable hold directories;
+                # the outer disposable workspace remains private.
+                runtime_parent.chmod(0o755)
+                runtime_dir.chmod(0o755)
+                controller_lock = runtime_dir / "controller-agent-http.lock"
+                scoped_locks = [controller_lock] + [
+                    worker_dir / (worker + ".lock")
+                    for worker in local_scope.WORKERS
+                ]
+                for lockfile in scoped_locks:
+                    lockfile.touch(mode=0o600)
+                    lockfile.chmod(0o600)
+                hold_path = runtime_dir / "no-drain-maintenance.json"
+                pending_path = state_dir / "no-drain-pending.json"
+                hold_path.write_text(json.dumps({
+                    "kind": "CapivaraDSMNoDrainMaintenanceHold",
+                    "schema_version": 1,
+                    "transaction_id": nonce,
+                    "issued_at": int(time.time()),
+                    "expires_at": int(time.time()) + 300,
+                }))
+                hold_path.chmod(0o600)
+                lease_args = dict(
+                    transaction_id=nonce, release_sha256=expected_hash,
+                    expected_controller_uid=os.geteuid(),
+                    expected_worker_uid=os.geteuid(),
+                    controller_lock=controller_lock, worker_lock_dir=worker_dir,
+                    hold_path=hold_path, pending_path=pending_path,
+                    fixture_root=scope_root,
+                )
+                with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
+                    with local_scope.retain_local_scopes(
+                            **{**lease_args, "transaction_id": "f" * 32}):
+                        pass
+                # A durable pending-recovery marker MUST block even if the
+                # current hold is valid; do not auto-retry interrupted work.
+                pending_path.write_text("interrupted")
+                with self.assertRaisesRegex(
+                        local_scope.LocalScopeLeaseBlocked,
+                        "persistent_recovery_pending"):
+                    with local_scope.retain_local_scopes(**lease_args):
+                        pass
+                pending_path.unlink()
+                # A competing Worker must block the whole transaction, not
+                # just one diagnostic snapshot.
+                busy = os.open(scoped_locks[1], os.O_RDWR)
+                try:
+                    fcntl.flock(busy, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with self.assertRaisesRegex(
+                            local_scope.LocalScopeLeaseBlocked,
+                            "operation_in_flight"):
+                        with local_scope.retain_local_scopes(**lease_args):
+                            pass
+                finally:
+                    fcntl.flock(busy, fcntl.LOCK_UN)
+                    os.close(busy)
+                # Replace the hand-built test marker with fresh durable
+                # evidence from the real coordinator, under the same locks.
+                hold_path.unlink()
+                lease_args["prepare_fresh_fixture"] = True
+                fixture_ids = ["fixture-agent-online", "fixture-agent-offline"]
+                lease_args["expected_fixture_agent_ids"] = fixture_ids
+                issued_at = int(time.time())
+                lease_args["shared_lease_window"] = (issued_at, issued_at + 600)
+                binding_path = state_dir / "no-drain-release-binding.json"
+                inventory_path = state_dir / "no-drain-agent-inventory.json"
+                helper_lock = runtime_dir / "agent-privileged-operations.lock"
+                child_lock = runtime_dir / "agent-finalization-operations.lock"
+                helper_lock.touch(mode=0o600)
+                helper_lock.chmod(0o600)
+                child_lock.touch(mode=0o660)
+                child_lock.chmod(0o660)
+                os.chown(child_lock, os.geteuid(), os.getegid())
+                # Both existing helper lock families are mandatory before
+                # the fresh transaction journal can be created.
+                for operation_lock in (helper_lock, child_lock):
+                    busy = os.open(operation_lock, os.O_RDWR)
+                    try:
+                        fcntl.flock(busy, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        with self.assertRaisesRegex(
+                                local_scope.LocalScopeLeaseBlocked,
+                                "agent_operation_lock_unavailable"):
+                            with local_scope.retain_local_scopes(**lease_args):
+                                pass
+                        self.assertFalse(pending_path.exists())
+                        self.assertFalse(binding_path.exists())
+                        self.assertFalse(inventory_path.exists())
+                    finally:
+                        os.close(busy)
+                scoped_locks.extend((helper_lock, child_lock))
+
+                def reject_uncovered_mutator():
+                    self._assert_unchanged(originals)
+                    for lockfile in scoped_locks:
+                        with lockfile.open("r+b") as outsider:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    raise local_scope.LocalScopeLeaseBlocked("uncovered_local_mutator")
+
+                with self.assertRaisesRegex(local_scope.LocalScopeLeaseBlocked,
+                                            "uncovered_local_mutator"):
+                    with local_scope.retain_local_scopes(
+                            **lease_args, before_prepare=reject_uncovered_mutator):
+                        self.fail("rejected preparation yielded a scope")
+                for path in (hold_path, pending_path, binding_path, inventory_path):
+                    self.assertFalse(path.exists())
+
+                def execute_only_under_locks():
+                    pending = json.loads(pending_path.read_text())
+                    binding = json.loads(binding_path.read_text())
+                    self.assertEqual(pending["transaction_id"], nonce)
+                    self.assertEqual((pending["issued_at"], pending["expires_at"]),
+                                     lease_args["shared_lease_window"])
+                    self.assertEqual(binding["release_sha256"], expected_hash)
+                    inventory = json.loads(inventory_path.read_text())
+                    self.assertEqual(inventory["agent_ids"], sorted(fixture_ids))
+                    self.assertEqual(inventory["transaction_id"], nonce)
+                    self.assertEqual(inventory["release_sha256"], expected_hash)
+                    self.assertFalse(pending["live_no_drain_authorized"])
+                    # This callback is now invoked INSIDE the coordinator's
+                    # mandatory local scope lease, never by the test caller.
+                    for lockfile in scoped_locks:
+                        outsider = os.open(lockfile, os.O_RDWR)
+                        try:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        finally:
+                            os.close(outsider)
+                    self._assert_unchanged(originals)
+                    return main_rehearsal(workspace, mode)
+
+                integrated_kwargs["execute_fixture"] = execute_only_under_locks
+                integrated_kwargs["local_scope_kwargs"] = lease_args
+                proof = bridge.run_disposable_integrated(
+                    workspace, **integrated_kwargs)
+                self.assertTrue(proof["fresh_durable_fixture_evidence"])
+                self.assertTrue(proof["fixture_agent_inventory_retained"])
+                self.assertTrue(proof["fixture_privileged_helper_lock_retained"])
+                self.assertTrue(proof["fixture_finalization_child_lock_retained"])
+                self.assertFalse(proof["external_jobs_acked"])
+                self.assertTrue(proof["local_controller_lock_held_during_transaction"])
+                # Evidence survives scope exit; a fresh transaction cannot
+                # mistake an interrupted journal for a new preparation.
+                self.assertTrue(pending_path.is_file())
+                self.assertTrue(binding_path.is_file())
+                self.assertTrue(inventory_path.is_file())
+                self.assertEqual(json.loads(inventory_path.read_text())["agent_ids"],
+                                 sorted(fixture_ids))
+                with self.assertRaisesRegex(
+                        local_scope.LocalScopeLeaseBlocked,
+                        "persistent_recovery_pending"):
+                    with local_scope.retain_local_scopes(**lease_args):
+                        pass
+                # Existing evidence remains blocked for apply, but a separate
+                # inspection may retain the same locks without replay/cleanup.
+                recovery_args = {**lease_args, "prepare_fresh_fixture": False,
+                                 "expected_fixture_agent_ids": None,
+                                 "inspect_existing_prepared": True,
+                                 "expected_recovery_agent_ids": fixture_ids}
+                saved = {p: p.read_bytes() for p in
+                         (hold_path, pending_path, binding_path, inventory_path)}
+                with local_scope.retain_local_scopes(**recovery_args) as recovery:
+                    self.assertTrue(recovery["existing_prepared_recovery_inspection_only"])
+                    self.assertFalse(recovery["fresh_durable_fixture_evidence"])
+                    self.assertFalse(recovery["live_no_drain_authorized"])
+                    recovery["checkpoint"]()
+                    for lockfile in scoped_locks:
+                        outsider = os.open(lockfile, os.O_RDONLY)
+                        try:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        finally:
+                            os.close(outsider)
+                self.assertEqual({p: p.read_bytes() for p in saved}, saved)
+                with self.assertRaisesRegex(local_scope.LocalScopeLeaseBlocked,
+                                            "local_scope_no_longer_retained"):
+                    recovery["checkpoint"]()
+                with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
+                    with local_scope.retain_local_scopes(
+                            **{**recovery_args, "shared_lease_window":
+                               (issued_at, issued_at + 601)}):
+                        pass
+                with self.assertRaises(local_scope.LocalScopeLeaseBlocked):
+                    with local_scope.retain_local_scopes(
+                            **{**recovery_args, "expected_recovery_agent_ids": fixture_ids[:1]}):
+                        pass
+                self.assertEqual(proof["local_worker_lock_count_held_during_transaction"], 9)
+                self.assertFalse(proof["controller_routes_opted_in_verified"])
+                self.assertFalse(proof["worker_process_inventory_verified"])
+                self._assert_unchanged(originals)
+                # After return, all descriptors must have been released.
+                for lockfile in scoped_locks:
+                    outsider = os.open(lockfile, os.O_RDWR)
+                    try:
+                        fcntl.flock(outsider, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        fcntl.flock(outsider, fcntl.LOCK_UN)
+                    finally:
+                        os.close(outsider)
+                self.assertEqual(proof["journal_status"], expected_status)
+                self.assertEqual(proof["units_preserved"], 2)
+                self.assertTrue(proof["fixture_publisher_signed"])
+                self.assertTrue(proof["fixture_actor_acks_verified"])
+                self.assertFalse(proof["operational_agents_quiesced"])
+                self.assertFalse(proof["live_no_drain_authorized"])
+                with self.assertRaises(bridge.ConsolidatedTransactionBlocked):
+                    bridge.run_disposable_integrated(
+                        workspace, **integrated_kwargs)
                 self.assertEqual((installed / "version").read_text().strip(),
                                  expected_version)
                 self.assertEqual(
@@ -1293,48 +2054,261 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
         """
         originals = [self._start("recovery-alpha"), self._start("recovery-beta")]
         fake = self.workspace/"recovery-real-updater-functions"
+        fake.mkdir(mode=0o700)
         create_tiny_release_fixture(fake)
-
-        def run(step):
-            result = run_real_update_fns(fake, step)
-            if result.returncode:
-                raise RuntimeError("fixture " + step + " failed: " + result.stderr[-450:])
-
-        run("prepare")
+        # Model the real DSM installation: product files are owned by a
+        # non-root service user, while the journal workspace stays root-only.
+        import pwd
+        product = pwd.getpwnam("nobody")
+        product_identity = (product.pw_uid, product.pw_gid)
+        for path in (fake/"installed", fake/"installed/dashboard",
+                     fake/"installed/dashboard/web", fake/"installed/version",
+                     fake/"installed/dashboard/web/presentation.js"):
+            os.chown(path, *product_identity)
+        protected = [fake/"installed", fake/"installed/runtime/hybrid-instance-storage",
+                     fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat",
+                     fake/"installed/data/database.txt", fake/"installed/config/dsm.conf"]
+        original_inodes = {p: p.stat().st_ino for p in protected}
+        interrupt_after_apply = [False]
         journal = self.workspace/"interrupted-real-systemd-journal"
         journal.mkdir(mode=0o700)
 
-        def interrupted_apply():
-            run("apply")
-            self._assert_unchanged(originals)
-            raise SystemExit(47)
-
+        # Reuse the existing local lease and real kernel inodes throughout
+        # both the interrupted apply and the reviewed recovery rollback.
+        import hashlib
+        import fcntl
+        scope_loader = SourceFileLoader("dsm928_recovery_bound_scope",
+            str(ROOT / "update-manager/game-uptime-local-scope-lease.py"))
+        scope_spec = importlib.util.spec_from_loader(scope_loader.name, scope_loader)
+        scope = importlib.util.module_from_spec(scope_spec)
+        scope_loader.exec_module(scope)
+        scope_root = self.workspace / "recovery-local-scope"
+        scope_root.mkdir(mode=0o700)
+        (scope_root / "fixture-owner").write_bytes(b"DSM928_DISPOSABLE_FIXTURE_V1\n")
+        parent = scope_root / "runtime"
+        runtime = parent / "run"
+        workers = runtime / "worker-operations"
+        state = scope_root / "state"
+        for folder in (parent, runtime, workers, state):
+            folder.mkdir(mode=0o755)
+        controller = runtime / "controller-agent-http.lock"
+        helper = runtime / "agent-privileged-operations.lock"
+        child = runtime / "agent-finalization-operations.lock"
+        locks = [controller, helper, child] + [workers / (name + ".lock")
+                                                for name in scope.WORKERS]
+        for lock in locks:
+            lock.touch(mode=0o600)
+            lock.chmod(0o660 if lock == child else 0o600)
+        hybrid_id = "fixture-agent-hybrid"
+        remote_ids = ["fixture-agent-alpha", "fixture-agent-beta"]
+        agent_ids = [hybrid_id, *remote_ids]
+        opts = dict(transaction_id=uuid4().hex, release_sha256="a"*64,
+                    expected_controller_uid=os.geteuid(),
+                    expected_worker_uid=os.geteuid(), controller_lock=controller,
+                    worker_lock_dir=workers, hold_path=runtime/"hold.json",
+                    pending_path=state/"no-drain-pending.json", fixture_root=scope_root,
+                    prepare_fresh_fixture=True, expected_fixture_agent_ids=agent_ids)
+        # The original interrupted systemd apply now also retains two
+        # Agent scopes over the real session protocol (local sockets only).
+        import sys
+        import socket
+        import threading
+        from contextlib import contextmanager
+        agent_runtime = str(ROOT / "agents/linux/runtime")
+        sys.path.insert(0, agent_runtime)
+        try:
+            from game_uptime_hold_coordinator import (
+                prepare_standalone_agent_scope, serve_prepared_agent_session,
+            )
+        finally:
+            sys.path.remove(agent_runtime)
+        channels = {}
+        remote_locks = []
+        remote_errors = []
+        for index, agent in enumerate(remote_ids):
+            host = self.workspace / ("recovery-agent-" + str(index))
+            host.mkdir(mode=0o755)
+            host.chmod(0o755)
+            host_run, host_state = host / "run", host / "state"
+            for directory in (host_run, host_state):
+                directory.mkdir(mode=0o755)
+                directory.chmod(0o755)
+            priv = host_run / "agent-privileged-operations.lock"
+            final = host_run / "agent-finalization-operations.lock"
+            for inode in (priv, final):
+                inode.touch(mode=0o600)
+                inode.chmod(0o660 if inode == final else 0o600)
+            remote_locks.extend((priv, final))
+            remote_options = dict(hold_path=host_run/"hold.json",
+                                  journal_path=host_state/"no-drain-pending.json",
+                                  privileged_lock_path=priv, finalization_lock_path=final,
+                                  trusted_uid=os.geteuid(), fixture_root=host,
+                                  fixture_group_gid=os.getegid())
+            def make_opener(agent, remote_options):
+                @contextmanager
+                def opened():
+                    client, server = socket.socketpair()
+                    def serve():
+                        try:
+                            def factory(**shared):
+                                return prepare_standalone_agent_scope(**remote_options, **shared)
+                            serve_prepared_agent_session(
+                                server.fileno(), server.fileno(), local_agent_id=agent,
+                                scope_factory=factory, now=time.time)
+                        except Exception as exc:
+                            # EOF is expected after a simulated interruption.
+                            remote_errors.append(str(exc))
+                        finally:
+                            server.close()
+                    thread = threading.Thread(target=serve, daemon=True)
+                    thread.start()
+                    try:
+                        yield (client.fileno(), client.fileno())
+                    finally:
+                        client.close()
+                        thread.join(timeout=5)
+                        self.assertFalse(thread.is_alive())
+                return opened
+            channels[agent] = make_opener(agent, remote_options)
+        locks.extend(remote_locks)
+        def inspect_game(name):
+            if (interrupt_after_apply[0] and
+                    (fake/"installed/version").read_text() == "2.0.999-fixture"):
+                interrupt_after_apply[0] = False
+                assert_locks()
+                self._assert_unchanged(originals)
+                raise SystemExit(47)
+            result = self._snapshot(name)
+            result["unit_config_sha256"] = hashlib.sha256(
+                self._run("systemctl", "cat", name).stdout.encode()).hexdigest()
+            return result
+        def list_games():
+            return [line.split()[0] for line in self._run(
+                "systemctl", "list-units", "--type=service", "--state=active",
+                "--no-legend", "--plain", f"{self.prefix}-*.service").stdout.splitlines()
+                if line.strip()]
+        names = [row["unit"] for row in originals]
+        handoff = transaction.attest_handoff(names, inspect=inspect_game, list_units=list_games)
+        def assert_locks():
+            for lock in locks:
+                fd = os.open(lock, os.O_RDONLY)
+                try:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                finally:
+                    os.close(fd)
+        # Reject omitted/misclassified members before any durable evidence.
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "inventory incomplete"):
+            transaction.execute(
+                journal, names, inspect=inspect_game, list_units=list_games,
+                handoff=handoff, local_scope_kwargs=opts,
+                distributed_fixture_openers=channels,
+                apply=lambda: self.fail("incomplete partition applied"),
+                rollback=lambda: self.fail("unexpected rollback"))
+        self.assertFalse(opts["pending_path"].exists())
+        interrupt_after_apply[0] = True
         with self.assertRaises(SystemExit):
             transaction.execute(
                 journal,
                 [row["unit"] for row in originals],
-                inspect=self._snapshot,
-                apply=interrupted_apply,
-                rollback=lambda: run("rollback"),
+                inspect=inspect_game, list_units=list_games, handoff=handoff,
+                local_scope_kwargs=opts,
+                local_fixture_agent_id=hybrid_id,
+                distributed_fixture_openers=channels,
+                file_transaction_workspace=fake, file_transaction_identity=product_identity,
+                file_transaction_paths=["dashboard/web/presentation.js", "version"],
             )
         self.assertEqual((fake/"installed/version").read_text(), "2.0.999-fixture")
-        self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
-                         "prepared")
+        recorded = json.loads((journal/"game-uptime-transaction.json").read_text())
+        self.assertEqual(recorded["status"], "applied")
+        binding = recorded["local_scope_binding"]
+        file_journal = fake/"dsm928-product-files.json"
+        self.assertEqual(file_journal.stat().st_uid, 0)
+        self.assertEqual(file_journal.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((fake/"installed/version").stat().st_uid, product_identity[0])
+        self.assertEqual(binding["product_file_binding"]["journal_sha256"],
+                         hashlib.sha256(file_journal.read_bytes()).hexdigest())
+        self.assertEqual({p: p.stat().st_ino for p in protected}, original_inodes)
+        self.assertEqual(binding["agent_ids"], sorted(agent_ids))
+        self.assertEqual(binding["distributed_scope_binding"]["agent_ids"],
+                         sorted(remote_ids))
+        self.assertEqual(binding["distributed_scope_binding"]["local_hybrid_agent_id"], hybrid_id)
+        for index in range(len(remote_ids)):
+            inventory = json.loads((self.workspace / ("recovery-agent-" + str(index))
+                / "state/no-drain-agent-inventory.json").read_text())
+            self.assertEqual(inventory["agent_ids"], sorted(agent_ids))
+        self.assertEqual(remote_errors, ["agent_session_disconnected"] * len(remote_ids))
+        remote_errors.clear()
         self._assert_unchanged(originals)
 
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "scope binding mismatch"):
+            transaction.recover_interrupted(
+                journal, names, inspect=inspect_game, list_units=list_games,
+                rollback=lambda: self.fail("unbound rollback"), operator_reviewed=True)
+        recovery_opts = {**opts, "prepare_fresh_fixture": False,
+                         "expected_fixture_agent_ids": None,
+                         "inspect_existing_prepared": True,
+                         "expected_recovery_agent_ids": agent_ids}
+        with self.assertRaisesRegex(transaction.TransactionSafetyError, "scope binding mismatch"):
+            transaction.recover_interrupted(
+                journal, names, inspect=inspect_game, list_units=list_games,
+                rollback=lambda: self.fail("remote scope omitted"), operator_reviewed=True,
+                local_scope_kwargs=recovery_opts)
         outcome = transaction.recover_interrupted(
-            journal, [row["unit"] for row in originals],
-            inspect=self._snapshot, rollback=lambda: run("rollback"),
-            operator_reviewed=True,
+            journal, names, inspect=inspect_game, list_units=list_games,
+            file_transaction_workspace=fake, file_transaction_identity=product_identity, operator_reviewed=True,
+            local_scope_kwargs=recovery_opts, distributed_fixture_openers=channels,
+            local_fixture_agent_id=hybrid_id,
         )
+        self.assertEqual(remote_errors, [])
         self.assertEqual(outcome["status"], "recovered_rollback")
         self.assertFalse(outcome["live_no_drain_authorized"])
+        terminal_hash = hashlib.sha256((journal/"game-uptime-transaction.json").read_bytes()).hexdigest()
+        for index in range(len(remote_ids)):
+            state = self.workspace / ("recovery-agent-" + str(index)) / "state"
+            terminal = json.loads((state / ("terminal-" + opts["transaction_id"] + ".json")).read_bytes())
+            self.assertEqual(terminal["outcome"], "recovered_rollback")
+            self.assertEqual(terminal["journal_sha256"], terminal_hash)
+            self.assertTrue((state/"no-drain-pending.json").exists())
+        confirmation = journal / "game-uptime-terminal-confirmation.json"
+        confirmed = json.loads(confirmation.read_bytes())
+        self.assertEqual(confirmed["journal_sha256"], terminal_hash)
+        self.assertEqual(confirmed["recorded_agent_ids"], sorted(remote_ids))
+        self.assertTrue(confirmed["pending_evidence_retained"])
+        saved_confirmation = (confirmation.stat().st_ino, confirmation.read_bytes())
+        retried = transaction.confirm_terminal(
+            journal, names, inspect=inspect_game, list_units=list_games,
+            operator_reviewed=True, local_scope_kwargs=recovery_opts,
+            distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
+            file_transaction_workspace=fake, file_transaction_identity=product_identity)
+        self.assertTrue(retried["terminal_confirmation_retried"])
+        self.assertEqual(saved_confirmation, (confirmation.stat().st_ino, confirmation.read_bytes()))
+        self.assertEqual(remote_errors, [])
+        finalized = transaction.confirm_terminal(
+            journal, names, inspect=inspect_game, list_units=list_games,
+            operator_reviewed=True, local_scope_kwargs=recovery_opts,
+            distributed_fixture_openers=channels, local_fixture_agent_id=hybrid_id,
+            finalize_fixture=True, file_transaction_workspace=fake, file_transaction_identity=product_identity)
+        self.assertTrue(finalized["fixture_hold_released"])
+        self.assertEqual(remote_errors, [])
+        self.assertFalse(opts["pending_path"].exists())
+        self.assertFalse(opts["hold_path"].exists())
+        states = [opts["pending_path"].parent]
+        states.extend(self.workspace / ("recovery-agent-" + str(i)) / "state"
+                      for i in range(len(remote_ids)))
+        for folder in states:
+            self.assertFalse((folder/"no-drain-pending.json").exists())
+            archive = json.loads((folder / ("released-" + opts["transaction_id"] + ".json")).read_bytes())
+            self.assertEqual(archive["journal_sha256"], terminal_hash)
+            self.assertIn("no-drain-pending.json", archive["evidence"])
+        self.assertTrue((journal/"game-uptime-fixture-release.json").exists())
         self.assertEqual((fake/"installed/version").read_text(), "2.0.998-fixture")
         self.assertEqual((fake/"installed/runtime/hybrid-instance-storage/minecraft005/world/level.dat").read_bytes(),
                          b"saved-world-private-test")
         self.assertEqual((fake/"installed/data/database.txt").read_text(), "db durable")
         self.assertEqual(json.loads((journal/"game-uptime-transaction.json").read_text())["status"],
                          "recovered_rollback")
+        self.assertEqual({p: p.stat().st_ino for p in protected}, original_inodes)
         self._assert_unchanged(originals)
 
 

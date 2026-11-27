@@ -11,6 +11,7 @@ import time
 from typing import Any, Callable
 
 from .base import AdapterError, InstanceRuntimeAdapter
+from game_uptime_finalization_flock import tracked_agent_operation
 from native_maintenance import NativeMaintenanceError, broadcast as native_broadcast, save as native_save
 
 _INSTANCE_ID = re.compile(r"^[A-Za-z0-9._-]{1,191}$")
@@ -251,20 +252,26 @@ class SystemdAdapter(InstanceRuntimeAdapter):
         return {"action": action, "changed": True, "idempotent": False, "state": after}
 
     def start(self, instance: dict[str, Any]) -> dict[str, Any]:
-        return self._lifecycle("start", instance)
+        return self._mutate("start", instance)
 
     def stop(self, instance: dict[str, Any]) -> dict[str, Any]:
-        return self._lifecycle("stop", instance)
+        return self._mutate("stop", instance)
 
     def restart(self, instance: dict[str, Any]) -> dict[str, Any]:
-        if str(instance.get("stop_signal") or "SIGTERM").strip().upper() == "SIGINT":
-            # systemctl restart would start a new process even if the previous
-            # game process was killed after TimeoutStopSec. Split the steps
-            # so that a failed/forced stop blocks the subsequent start.
-            self._lifecycle("stop", instance)
-            started = self._lifecycle("start", instance)
-            return {**started, "action": "restart", "idempotent": False}
-        return self._lifecycle("restart", instance)
+        return self._mutate("restart", instance)
+
+    def _mutate(self, action: str, instance: dict[str, Any]) -> dict[str, Any]:
+        with tracked_agent_operation() as admitted:
+            if not admitted:
+                raise AdapterError("systemd lifecycle blocked by local maintenance")
+            if (action == "restart"
+                    and str(instance.get("stop_signal") or "SIGTERM").strip().upper() == "SIGINT"):
+                # Retain admission across both halves, including the stop
+                # checks and the startup settle window.
+                self._lifecycle("stop", instance)
+                started = self._lifecycle("start", instance)
+                return {**started, "action": "restart", "idempotent": False}
+            return self._lifecycle(action, instance)
 
     def broadcast(
         self,

@@ -44,13 +44,28 @@ class OperationalCoverageTests(unittest.TestCase):
         self.assertEqual(result["missing_active_units"], [MINECRAFT])
         self.assertIn("expected_active_service_not_running", result["blockers"])
 
-    def test_caller_must_declare_both_game_families(self):
-        absent = coverage.assess(None, inventory(observation(DAYZ)))
-        self.assertFalse(absent["verified_for_disposable_rehearsal"])
-        self.assertIn("expected_active_units_not_declared", absent["blockers"])
-        only_dayz = coverage.assess([DAYZ], inventory(observation(DAYZ)))
-        self.assertFalse(only_dayz["verified_for_disposable_rehearsal"])
-        self.assertIn("expected_minecraft_service_missing", only_dayz["blockers"])
+    def test_caller_must_declare_exact_host_local_inventory(self):
+        for rows in (inventory(), inventory(observation(DAYZ))):
+            absent = coverage.assess(None, rows)
+            self.assertFalse(absent["verified_for_disposable_rehearsal"])
+            self.assertIn("expected_active_units_not_declared", absent["blockers"])
+
+        for names in ([DAYZ], [MINECRAFT], []):
+            with self.subTest(names=names):
+                result = coverage.assess(
+                    names, inventory(*(observation(unit) for unit in names)))
+                self.assertTrue(result["verified_for_disposable_rehearsal"])
+                self.assertFalse(result["live_no_drain_authorized"])
+                self.assertEqual(result["blockers"], [])
+                self.assertEqual(result["observed_active_units"], names)
+
+        missing = coverage.assess([DAYZ], inventory())
+        self.assertFalse(missing["verified_for_disposable_rehearsal"])
+        self.assertEqual(missing["missing_active_units"], [DAYZ])
+
+        omitted = coverage.assess([], inventory(observation(MINECRAFT)))
+        self.assertFalse(omitted["verified_for_disposable_rehearsal"])
+        self.assertEqual(omitted["unexpected_active_units"], [MINECRAFT])
 
     def test_unexpected_service_and_duplicate_inventory_block(self):
         third = "capivara-instance-cli-000002-dayz-001.service"

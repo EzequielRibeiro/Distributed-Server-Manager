@@ -16,8 +16,26 @@ _SHA = re.compile(r"^[a-f0-9]{64}$")
 class SupervisorUnitError(ValueError):
     pass
 
+def _running_command(pid: int) -> tuple[list[str], int]:
+    """Read actual kernel process identity, not a reloaded unit's future argv."""
+    root = Path("/proc") / str(pid)
+    def stamp():
+        raw = (root / "stat").read_text()
+        return int(raw.rsplit(")", 1)[1].split()[19])
+    try:
+        start = stamp()
+        with (root / "cmdline").open("rb") as stream:
+            raw = stream.read(65537)
+        if not 0 < len(raw) <= 65536 or not raw.endswith(b"\x00") or stamp() != start:
+            raise SupervisorUnitError("running supervisor process changed")
+        return [part.decode("utf-8") for part in raw[:-1].split(b"\x00")], start
+    except (OSError, ValueError, UnicodeError, IndexError) as exc:
+        raise SupervisorUnitError("running supervisor process unverifiable") from exc
+
+
 def verify_pinned_supervisor(unit: str, *, versions_dir: Path, expected_sha256: str,
-                             inspect: Callable[[str], Mapping[str, Any]]) -> dict[str, Any]:
+                             inspect: Callable[[str], Mapping[str, Any]],
+                             require_live_process: bool = False) -> dict[str, Any]:
     if not _SHA.fullmatch(expected_sha256):
         raise SupervisorUnitError("invalid digest")
     if not isinstance(unit, str) or not re.fullmatch(r"capivara-instance-[A-Za-z0-9_.-]+\.service", unit):
@@ -65,6 +83,16 @@ def verify_pinned_supervisor(unit: str, *, versions_dir: Path, expected_sha256: 
         raise SupervisorUnitError("replaceable agent path in ExecStart")
     if any(arg.endswith("console_supervisor.py") and arg != str(expected) for arg in args):
         raise SupervisorUnitError("replaceable supervisor reference")
+    if require_live_process:
+        running, ticks = _running_command(pid)
+        if running != args:
+            raise SupervisorUnitError("running supervisor is not the configured pinned revision")
+        after = inspect(unit)
+        if any(after.get(key) != observed.get(key) for key in
+               ("main_pid", "start_stamp", "exec", "fragment", "unit_config_sha256")):
+            raise SupervisorUnitError("supervisor identity changed during live inspection")
+        if _running_command(pid) != (running, ticks):
+            raise SupervisorUnitError("running supervisor identity changed")
     return {"kind": "CapivaraMinecraftPinnedSupervisorObservation", "unit": unit,
             "sha256": expected_sha256, "main_pid": pid, "start_stamp": stamp,
             "systemd_pinned_observed": True, "live_no_drain_authorized": False}

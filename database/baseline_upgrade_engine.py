@@ -25,6 +25,7 @@ from dayz_management_schema import dayz_management_ddl
 from database_intelligence_schema import database_intelligence_ddl
 from native_restart_schema import native_restart_ddl
 from maintenance_schema import maintenance_ddl
+from notification_outbox_schema import notification_outbox_ddl
 from operation_diagnostics_schema import operation_diagnostics_ddl
 from server_update_schema import content_update_ddl, server_update_ddl
 
@@ -1388,6 +1389,21 @@ def _upgrade_instance_evidence_parameters(backend: Any, connection: Any) -> None
         raise DatabaseMigrationError("instance evidence parameters column upgrade incomplete")
 
 
+def _upgrade_notification_outbox(backend: Any, connection: Any) -> None:
+    """Repair pre-outbox Baseline v2 installations without resetting a queue."""
+    table = "notification_outbox"
+    if table not in _table_names(backend, connection):
+        _execute_script(backend, connection, notification_outbox_ddl(backend.name))
+    required = {
+        "notification_id", "event_id", "alert_id", "channel", "recipient",
+        "subject", "message", "status", "attempts", "next_attempt_at",
+        "delivered_at", "last_error", "created_at", "updated_at",
+    }
+    if (table not in _table_names(backend, connection)
+            or not required <= _column_names(backend, connection, table)):
+        raise DatabaseMigrationError("notification outbox baseline upgrade incomplete")
+
+
 UPGRADES = (
     BaselineUpgrade(1, "discord_integration", _upgrade_discord),
     BaselineUpgrade(2, "agent_public_network", _upgrade_agent_public_network),
@@ -1411,6 +1427,7 @@ UPGRADES = (
     BaselineUpgrade(20, "legacy_minecraft_contract_products", _upgrade_legacy_minecraft_contract_products),
     BaselineUpgrade(21, "dayz_management_operations", _upgrade_dayz_management),
     BaselineUpgrade(22, "instance_evidence_parameters", _upgrade_instance_evidence_parameters),
+    BaselineUpgrade(23, "notification_outbox", _upgrade_notification_outbox),
 )
 
 

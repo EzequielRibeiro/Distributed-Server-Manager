@@ -155,34 +155,41 @@ def _finish_stream(connection) -> dict[str, Any]:
         raise RuntimeError(str(payload.get("message") or payload.get("error") or f"HTTP {response.status}"))
     return payload if isinstance(payload, dict) else {}
 
+from game_uptime_finalization_flock import tracked_agent_operation
+
+
 def _sender_loop(config: dict[str, Any]) -> None:
     last_error = ""
     while True:
         connection = None
         inflight: list[dict[str, Any]] = []
         try:
-            connection = _open_stream(config)
-            started = time.monotonic()
-            last_send = started
-            sent_bytes = 0
-            while True:
-                now = time.monotonic()
-                if now - started >= STREAM_SECONDS or len(inflight) >= MAX_INFLIGHT_EVENTS or sent_bytes >= MAX_STREAM_BYTES:
-                    break
-                batch = _take_batch(min(0.25, max(0.0, KEEPALIVE_SECONDS - (now - last_send))))
-                if batch:
-                    sent_bytes += _send_chunk(connection, {"kind": "console-batch", "events": batch})
-                    inflight.extend(batch)
-                    last_send = time.monotonic()
+            with tracked_agent_operation() as admitted:
+                if not admitted:
+                    time.sleep(CONNECT_RETRY_SECONDS)
                     continue
-                if time.monotonic() - last_send >= KEEPALIVE_SECONDS:
-                    sent_bytes += _send_chunk(connection, {"kind": "keepalive", "sent_at": time.time()})
-                    last_send = time.monotonic()
-            _finish_stream(connection)
-            inflight.clear()
-            if last_error:
-                _log("Controller stream recovered")
-                last_error = ""
+                connection = _open_stream(config)
+                started = time.monotonic()
+                last_send = started
+                sent_bytes = 0
+                while True:
+                    now = time.monotonic()
+                    if now - started >= STREAM_SECONDS or len(inflight) >= MAX_INFLIGHT_EVENTS or sent_bytes >= MAX_STREAM_BYTES:
+                        break
+                    batch = _take_batch(min(0.25, max(0.0, KEEPALIVE_SECONDS - (now - last_send))))
+                    if batch:
+                        sent_bytes += _send_chunk(connection, {"kind": "console-batch", "events": batch})
+                        inflight.extend(batch)
+                        last_send = time.monotonic()
+                        continue
+                    if time.monotonic() - last_send >= KEEPALIVE_SECONDS:
+                        sent_bytes += _send_chunk(connection, {"kind": "keepalive", "sent_at": time.time()})
+                        last_send = time.monotonic()
+                _finish_stream(connection)
+                inflight.clear()
+                if last_error:
+                    _log("Controller stream recovered")
+                    last_error = ""
         except Exception as exc:
             _requeue_front(inflight)
             message = str(exc)

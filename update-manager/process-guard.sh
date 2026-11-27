@@ -123,7 +123,8 @@ if payload.get("connected") is not True or payload.get("initialized") is not Tru
     raise SystemExit(1)
 if not payload.get("baseline") or payload.get("baseline") != payload.get("expected_baseline"):
     raise SystemExit(1)
-if payload.get("missing_tables"):
+missing = payload.get("missing_tables")
+if not isinstance(missing, list) or any(type(name) is not str for name in missing):
     raise SystemExit(1)
 if payload.get("upgrade_error") is not None:
     raise SystemExit(1)
@@ -153,6 +154,16 @@ for item in pending:
     pair = (item.get("version"), item.get("name"))
     if pair not in registered:
         raise SystemExit(1)
+
+# Only the registered, unapplied v23 repair may explain a missing outbox.
+# Any other missing table remains a conventional preflight blocker.
+if missing and (
+    missing != ["notification_outbox"]
+    or {"version": 23, "name": "notification_outbox"} not in pending
+    or type(payload.get("upgrade_version")) is not int
+    or not 0 <= payload["upgrade_version"] < 23
+):
+    raise SystemExit(1)
 
 if payload.get("upgrade_latest") != latest_upgrade_version():
     raise SystemExit(1)

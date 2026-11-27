@@ -8,6 +8,9 @@ ConditionPathExists=/var/lib/capivara-agent/uninstall/request.json
 Type=oneshot
 User=root
 Group=root
+# The delayed finalizer inherits the parent's fence opt-in.
+ExecStartPre=+/usr/bin/python3 -I /opt/capivara-agent/runtime/game_uptime_privileged_flock.py --provision
+Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1
 ExecStart=/usr/bin/python3 /opt/capivara-agent/privileged/uninstall_agent.py
 NoNewPrivileges=true
 PrivateTmp=true

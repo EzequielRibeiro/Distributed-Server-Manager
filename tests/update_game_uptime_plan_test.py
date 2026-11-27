@@ -28,11 +28,142 @@ class UptimeImpactTest(unittest.TestCase):
         for root,data in ((self.installed,old),(self.target,new)):
             p=root/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(data)
 
+    def test_signed_baseline_view_preserves_only_reviewed_local_state(self):
+        import hashlib
+        self.put("release-manifest.json", "old manifest", "new manifest")
+        self.put("dashboard/web/status.css", "old", "new")
+        self.put("agents/linux/installer/install-agent.sh", "script", "script")
+        (self.installed / "agents/linux/installer/install-agent.sh").chmod(0o744)
+        (self.target / "agents/linux/installer/install-agent.sh").chmod(0o644)
+        self.put("config/agent.conf", "local config", "default config")
+        old, new = plan._inventory(self.installed), plan._inventory(self.target)
+        baseline = dict(old)
+        baseline["config/agent.conf"] = new["config/agent.conf"]
+        baseline["agents/linux/installer/install-agent.sh"] = new["agents/linux/installer/install-agent.sh"]
+        path = self.installed / "backups/example.py"
+        path.parent.mkdir()
+        path.write_text("historical backup")
+        old = plan._inventory(self.installed)
+        adjusted, counts = plan._reconcile_signed_baseline(
+            self.installed, old, baseline, new,
+            {"config/agent.conf": old["config/agent.conf"]})
+        self.assertEqual({k for k in old.keys() | adjusted.keys()
+                          if old.get(k) != adjusted.get(k)},
+                         {"release-manifest.json", "dashboard/web/status.css"})
+        self.assertEqual(counts["installer_execute_mode"], 1)
+        self.assertEqual(counts["preserved_data"], 1)
+        self.assertEqual(counts["reviewed_local_configuration"], 1)
+        with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+            plan._reconcile_signed_baseline(self.installed, old, baseline, new, {})
+        changed_config = dict(new)
+        changed_config["config/agent.conf"] = (0o644, hashlib.sha256(b"new").hexdigest())
+        with self.assertRaisesRegex(ValueError, "drift on changed release path"):
+            plan._reconcile_signed_baseline(self.installed, old, baseline, changed_config,
+                                            {"config/agent.conf": old["config/agent.conf"]})
+
+    def test_signed_baseline_rejects_unexpected_product_drift_even_if_matches_target(self):
+        self.put("release-manifest.json", "old", "new")
+        self.put("dashboard/web/style.css", "old", "new")
+        baseline = plan._inventory(self.installed)
+        (self.installed / "dashboard/web/style.css").write_text("new")
+        with self.assertRaisesRegex(ValueError, "drift on changed release path"):
+            plan._reconcile_signed_baseline(
+                self.installed, plan._inventory(self.installed), baseline,
+                plan._inventory(self.target), {})
+
+    def test_signed_baseline_rejects_unverified_and_changed_source_caches(self):
+        import py_compile
+        self.put("release-manifest.json", "old", "new")
+        self.put("dashboard/example.py", "VALUE = 1", "VALUE = 1")
+        baseline = plan._inventory(self.installed)
+        cache = Path(py_compile.compile(str(self.installed / "dashboard/example.py"),
+                                        doraise=True))
+        actual = plan._inventory(self.installed)
+        target = plan._inventory(self.target)
+        adjusted, counts = plan._reconcile_signed_baseline(
+            self.installed, actual, baseline, target, {})
+        self.assertEqual(counts["verified_unchanged_python_cache"], 1)
+        self.assertEqual(adjusted[cache.relative_to(self.installed).as_posix()],
+                         actual[cache.relative_to(self.installed).as_posix()])
+        (self.target / "dashboard/example.py").write_text("VALUE = 2")
+        with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+            plan._reconcile_signed_baseline(self.installed, actual, baseline,
+                                            plan._inventory(self.target), {})
+        cache.write_bytes(cache.read_bytes()[:-1] + b"!")
+        with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+            plan._reconcile_signed_baseline(self.installed, plan._inventory(self.installed),
+                                            baseline, target, {})
+
+    def test_unsigned_runtime_projections_are_not_product_drift(self):
+        self.put("release-manifest.json", "old", "new")
+        self.put("dashboard/web/status.css", "old", "new")
+        baseline = plan._inventory(self.installed)
+        target = plan._inventory(self.target)
+        names = [
+            "runtime/resources/node-123/dayz/cli-000001-dayz-002/server.json",
+            "runtime/resources/node-123/dayz/cli-000001-dayz-002/metrics.json",
+        ]
+        for name in names:
+            path = self.installed / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"status": "online"}')
+            path.chmod(0o644)
+        signed = baseline.keys() | target.keys()
+        actual = plan._inventory(self.installed, signed_paths=signed)
+        self.assertEqual(actual, baseline)
+        for name in names:
+            (self.installed / name).write_text('{"status": "offline"}')
+        self.assertEqual(plan._inventory(self.installed, signed_paths=signed), baseline)
+        adjusted, _ = plan._reconcile_signed_baseline(
+            self.installed, actual, baseline, target, {})
+        self.assertEqual(adjusted, target)
+        # Signed member paths and strict inventory are never filtered.
+        self.assertIn(names[0], plan._inventory(self.installed))
+        self.assertIn(names[0], plan._inventory(
+            self.installed, signed_paths=signed | {names[0]}))
+        # Unknown names, wrong depth and executable product remain visible.
+        for name in ("runtime/resources/node-123/dayz/cli-000001-dayz-002/custom.py",
+                     "runtime/resources/node-123/dayz/server.json",
+                     "runtime/resources/node-123/dayz/cli-000001-dayz-002/other.json"):
+            path = self.installed / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("unexpected")
+            actual = plan._inventory(self.installed, signed_paths=signed)
+            self.assertIn(name, actual)
+            with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+                plan._reconcile_signed_baseline(self.installed, actual, baseline, target, {})
+            path.unlink()
+
+    def test_unsafe_generated_runtime_projection_blocks(self):
+        path = self.installed / "runtime/resources/node-123/dayz/instance/server.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+        path.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "unsafe generated runtime projection"):
+            plan._inventory(self.installed, signed_paths=set())
+        path.chmod(0o644)
+        alias = self.installed / "alias"
+        alias.hardlink_to(path)
+        with self.assertRaisesRegex(ValueError, "unsafe generated runtime projection"):
+            plan._inventory(self.installed, signed_paths=set())
+        alias.unlink()
+        path.unlink()
+        path.symlink_to("/nonexistent")
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            plan._inventory(self.installed, signed_paths=set())
+
     def test_runtime_change_requires_drain(self):
         self.put("agents/linux/runtime/agent.py","old","new")
         state=plan.analyze(self.installed,self.target)
         self.assertTrue(state["requires_game_drain"])
         self.assertFalse(state["live_no_drain_authorized"])
+        self.put("agents/linux/runtime/game_uptime_hold_coordinator.py", "old", "new")
+        state = plan.analyze(self.installed, self.target)
+        fixed = state["fixed_file_transaction_plan"]
+        self.assertTrue(fixed["bootstrap_installation_required"])
+        self.assertEqual(fixed["changed_paths"], [])
+        self.assertIn("initial_fence_aware_installation_or_bootstrap_update_required",
+                      fixed["blockers"])
 
     def test_unit_change_requires_drain(self):
         self.put("systemd/capivara-instance@.service","old","new")
@@ -43,6 +174,18 @@ class UptimeImpactTest(unittest.TestCase):
         state=plan.analyze(self.installed,self.target)
         self.assertEqual(state["classification"],"review_only")
         self.assertFalse(state["live_no_drain_authorized"])
+        self.put("version", "2.0.132", "2.0.133")
+        self.put("release-manifest.json", "old manifest", "new manifest")
+        fixed = plan.analyze(self.installed, self.target)["fixed_file_transaction_plan"]
+        self.assertEqual(fixed["status"], "compatible_file_plan_only")
+        self.assertEqual(fixed["changed_paths"],
+                         ["dashboard/web/style.css", "release-manifest.json", "version"])
+        self.assertFalse(fixed["live_no_drain_authorized"])
+        (self.target/"dashboard/web/extra.css").write_text("extra")
+        fixed = plan.analyze(self.installed, self.target)["fixed_file_transaction_plan"]
+        self.assertEqual(fixed["status"], "blocked")
+        self.assertEqual(fixed["changed_paths"], [])
+        self.assertEqual(fixed["incompatible_file_count"], 1)
 
     def test_unknown_file_is_critical(self):
         self.put("new-module/loader.py","old","new")

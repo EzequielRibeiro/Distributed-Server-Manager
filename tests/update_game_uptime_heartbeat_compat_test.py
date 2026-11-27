@@ -1,7 +1,7 @@
-"""#928 authenticated, read-only Agent/Controller compatibility exchange.
+"""#928 authenticated Controller-Agent compatibility and v2 replay checks.
 
-All fixtures mock heartbeat persistence and credentials. No live DSM services,
-updates, database or game processes are touched.
+All fixtures mock heartbeat persistence, credentials, and privileged replay
+commitment. No live DSM services, updates, databases or games are touched.
 """
 from __future__ import annotations
 import ast
@@ -235,6 +235,143 @@ class AuthenticatedHeartbeatBoundaryTests(unittest.TestCase):
             })
             self.assertEqual(status, 401)
             self.assertNotIn("no_drain_fence_receipt", rejected)
+
+    def test_authenticated_v2_release_pin_correlates_host_and_transaction_without_ack(self):
+        """Use existing credentialed HTTP dispatch; no remote Agent is deployed."""
+        import time
+        from game_uptime_transaction_binding import ReleaseBindingBlocked
+        agent = _load(
+            "dsm928_pinned_agent_fence",
+            ROOT / "agents/linux/runtime/game_uptime_agent_fence_evidence.py")
+        controller = _load(
+            "dsm928_pinned_controller_fence",
+            ROOT / "dashboard/game_uptime_remote_fence_evidence.py")
+        now = int(time.time())
+        hold = {
+            "active": True, "reason": "root_owned_maintenance_hold",
+            "transaction_id": "a" * 32,
+            "issued_at": now - 5, "expires_at": now + 120,
+        }
+        sha = "d" * 64
+        binding = {
+            "transaction_id": hold["transaction_id"],
+            "issued_at": hold["issued_at"], "expires_at": hold["expires_at"],
+            "release_sha256": sha,
+        }
+        with patch.object(agent, "observe", return_value=hold), patch.object(
+                agent, "binding_for_hold", return_value=binding):
+            evidence = agent.build_fence_evidence("trusted-agent", now=now)
+        self.assertEqual(evidence["contract"], agent.CONTRACT_V2)
+        self.assertEqual(evidence["release_sha256"], sha)
+        self.auth.return_value.authenticate_readonly.return_value = {
+            "agent_id": "trusted-agent", "status": "active"}
+        committed_proof = {
+            "status": "negative_v2_receipt_durably_recorded",
+            "transaction_id": evidence["transaction_id"],
+            "release_sha256": sha,
+            "request_id": evidence["request_id"],
+            "remote_agent_quiescence_acked": False,
+            "live_no_drain_authorized": False,
+        }
+        with patch.object(controller, "observe", return_value=hold), patch.object(
+                controller, "binding_for_hold", return_value=binding), patch(
+                "agent_remote_http.receipt_for_authenticated_agent",
+                side_effect=controller.receipt_for_authenticated_agent), patch(
+                "agent_remote_http.commit_authenticated_negative_v2_receipt",
+                return_value=committed_proof) as journal, patch(
+                "agent_remote_http.trusted_controller_release_pin_for_receipt",
+                return_value=sha) as trusted_pin, patch(
+                "agent_remote_http.correlate_authenticated_fence_receipts",
+                side_effect=controller.correlate_authenticated_fence_receipts):
+            # Heartbeats cannot bypass durable v2 replay accounting.
+            status, ordinary = self.post({
+                "no_drain_fence_evidence": evidence})
+            self.assertEqual(status, 200)
+            self.assertEqual(ordinary["no_drain_fence_receipt"]["status"],
+                             "blocked")
+            journal.assert_not_called()
+            # Dedicated credentialed observation admits v2 receipt only after
+            # a privileged journal reports successful unique-nonce commit.
+            status, response = dispatch_fence_observation(
+                {"no_drain_fence_evidence": evidence},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 200)
+            receipt = response["no_drain_fence_receipt"]
+            journal.assert_called_once()
+            trusted_pin.assert_called_once()
+            self.assertEqual(controller.trusted_controller_release_pin_for_receipt(
+                receipt), sha)
+            self.assertEqual(receipt["status"],
+                             "authenticated_evidence_received_unfenced")
+            self.assertEqual(receipt["release_sha256"], sha)
+            self.assertTrue(agent.verify_fence_receipt(
+                evidence, receipt, now=now)["wire_receipt_verified"])
+            self.assertFalse(receipt["remote_agent_quiescence_acked"])
+            self.assertFalse(receipt["live_no_drain_authorized"])
+            correlated = controller.correlate_authenticated_fence_receipts(
+                ["trusted-agent"], [{
+                    "authenticated_agent_id": "trusted-agent",
+                    "receipt": receipt,
+                }], transaction_id="a"*32,
+                expected_release_sha256=sha, now=now)
+            self.assertTrue(correlated["receipt_set_correlated"])
+            self.assertFalse(correlated["remote_agents_acked"])
+            self.assertFalse(correlated["live_no_drain_authorized"])
+            divergent = dict(evidence, release_sha256="e"*64)
+            status, wrong = dispatch_fence_observation(
+                {"no_drain_fence_evidence": divergent},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                wrong["no_drain_fence_receipt"]["status"], "blocked")
+            self.assertFalse(agent.verify_fence_receipt(
+                divergent, receipt, now=now)["wire_receipt_verified"])
+            missing = controller.correlate_authenticated_fence_receipts(
+                ["trusted-agent", "second-agent"], [{
+                    "authenticated_agent_id": "trusted-agent",
+                    "receipt": receipt,
+                }], transaction_id="a"*32,
+                expected_release_sha256=sha, now=now)
+            self.assertFalse(missing["receipt_set_correlated"])
+            self.assertIn("expected_agent_receipts_missing", missing["blockers"])
+            wrong_pin = controller.correlate_authenticated_fence_receipts(
+                ["trusted-agent"], [{
+                    "authenticated_agent_id": "trusted-agent",
+                    "receipt": receipt,
+                }], transaction_id="a"*32,
+                expected_release_sha256="f"*64, now=now)
+            self.assertFalse(wrong_pin["receipt_set_correlated"])
+
+        # No privileged nonce journal on an installed unprivileged Dashboard:
+        # a matching release pin and authenticated Agent are NOT enough.
+        with patch.object(controller, "observe", return_value=hold), patch.object(
+                controller, "binding_for_hold", return_value=binding), patch(
+                "agent_remote_http.receipt_for_authenticated_agent",
+                side_effect=controller.receipt_for_authenticated_agent), patch(
+                "agent_remote_http.commit_authenticated_negative_v2_receipt",
+                side_effect=PermissionError("privileged_journal_unavailable")), patch(
+                "agent_remote_http.trusted_controller_release_pin_for_receipt",
+                return_value=sha), patch(
+                "agent_remote_http.correlate_authenticated_fence_receipts",
+                side_effect=controller.correlate_authenticated_fence_receipts):
+            status, refused = dispatch_fence_observation(
+                {"no_drain_fence_evidence": evidence},
+                headers=self.headers, backend=object())
+            self.assertEqual(status, 200)
+            self.assertEqual(refused["no_drain_fence_receipt"]["status"],
+                             "blocked")
+            self.assertFalse(refused["live_no_drain_authorized"])
+
+        with patch.object(controller, "observe", return_value=hold), patch.object(
+                controller, "binding_for_hold", return_value=None):
+            denied = controller.receipt_for_authenticated_agent(
+                evidence, authenticated_agent_id="trusted-agent", now=now)
+            self.assertEqual(denied["status"], "blocked")
+        with patch.object(agent, "observe", return_value=hold), patch.object(
+                agent, "binding_for_hold",
+                side_effect=ReleaseBindingBlocked("corrupt")):
+            self.assertIsNone(agent.build_fence_evidence(
+                "trusted-agent", now=now))
 
     def test_hold_readonly_route_and_agent_transport_never_dispatch_commands(self):
         """One grouped phase-2 proof: authenticated SELECT-only endpoint.
@@ -481,6 +618,49 @@ class AgentHeartbeatScopeTests(unittest.TestCase):
         self.assertFalse({
             "stop_games", "start_games", "restart_games", "drain_games",
         }.intersection(heartbeat_calls))
+
+
+
+class PositiveClaimFailClosedTests(unittest.TestCase):
+    """Claims alone must never be promoted to operational quiescence ACKs."""
+
+    def test_positive_claim_cannot_authorize_without_independent_fencing(self):
+        from dashboard.game_uptime_credentialed_replay_admission import (
+            inspect_positive_quiescence_claim,
+        )
+        tx, sha = "a" * 32, "b" * 64
+        inventory = {"controller": {"pid": 123}, "worker": {"pid": 456}}
+        claim = {"transaction_id": tx, "release_sha256": sha,
+                 "live_no_drain_authorized": False,
+                 "controller_mutations_acked": True,
+                 "worker_cycles_acked": True,
+                 "remote_agents_acked": True,
+                 "external_jobs_acked": True}
+        result = inspect_positive_quiescence_claim(
+            claim, transaction_id=tx, release_sha256=sha,
+            expected_processes=inventory)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("positive_process_fencing_not_independently_verified",
+                      result["blockers"])
+        for key in ("controller_mutations_acked", "worker_cycles_acked",
+                    "remote_agents_acked", "external_jobs_acked",
+                    "live_no_drain_authorized"):
+            self.assertIs(result[key], False)
+
+    def test_mismatched_transaction_release_or_inventory_blocks(self):
+        from dashboard.game_uptime_credentialed_replay_admission import (
+            inspect_positive_quiescence_claim,
+        )
+        result = inspect_positive_quiescence_claim(
+            {"transaction_id": "c" * 32, "release_sha256": "d" * 64,
+             "live_no_drain_authorized": True},
+            transaction_id="a" * 32, release_sha256="b" * 64,
+            expected_processes={})
+        self.assertEqual(result["status"], "blocked")
+        self.assertTrue({"transaction_mismatch", "release_mismatch",
+                         "authoritative_process_inventory_missing",
+                         "authorization_claim_forbidden"}.issubset(
+                             set(result["blockers"])))
 
 
 if __name__ == "__main__":

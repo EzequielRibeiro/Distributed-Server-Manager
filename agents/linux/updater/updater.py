@@ -9,6 +9,7 @@ import re
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import time
@@ -804,7 +805,7 @@ def apply_request() -> int:
     return 0
 
 
-def main() -> int:
+def _execute_request() -> int:
     summary = _read_request_summary()
     try:
         return apply_request()
@@ -812,6 +813,36 @@ def main() -> int:
         REQUEST_PATH.unlink(missing_ok=True)
         _write_result("failed", **summary, error=str(exc)[:2000])
         return 1
+
+
+def main() -> int:
+    # The independent installed Agent updater is a mutator too. It must
+    # share the persistent admission inode with the retained coordinator,
+    # including during its own rollback, before consuming a request.
+    installed = Path("/opt/capivara-agent")
+    if (INSTALL_ROOT != installed and
+            Path(__file__).resolve() != installed / "updater/updater.py"):
+        # Preserve the existing isolated package/rollback test entrypoint.
+        return _execute_request()
+    runtime = str(Path(__file__).resolve().parents[1] / "runtime")
+    sys.path.insert(0, runtime)
+    try:
+        from game_uptime_privileged_flock import exclusive_update_admission
+        from game_uptime_maintenance_hold import observe
+        with exclusive_update_admission(provision=False):
+            if observe().get("active") is not False:
+                print("Agent update deferred: DSM maintenance or recovery hold active",
+                      file=sys.stderr)
+                return 2
+            return _execute_request()
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
+        # A busy, missing or untrusted mutex is not an update failure.
+        # Leave the original request and result untouched for operator retry.
+        print("Agent update deferred: DSM update admission unavailable",
+              file=sys.stderr)
+        return 2
+    finally:
+        sys.path.remove(runtime)
 
 
 if __name__ == "__main__":

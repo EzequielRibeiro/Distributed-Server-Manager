@@ -403,15 +403,24 @@ class InstanceWorkspaceRepository:
         if status not in FINAL_CONSOLE_STATES: raise ValueError("invalid console result status")
         payload = json.dumps(result, separators=(",", ":"), sort_keys=True); error = str(result.get("error") or "").strip()[:512] or None; ph = self.dialect.placeholder
         with self.session(transaction=True) as session:
-            session.execute(
+            completed = session.execute(
                 f"UPDATE instance_console_commands SET status={ph},result_json={ph},last_error={ph},completed_at={self.dialect.current_timestamp},updated_at={self.dialect.current_timestamp} WHERE command_id={ph} AND status NOT IN ('completed','failed')", (status, payload, error, command_id),
             )
-            lines = result.get("output")
-            if isinstance(lines, str): lines = lines.splitlines()
-            if isinstance(lines, list):
-                for line in lines[-500:]:
-                    text = str(line)[:512]
-                    if text: session.execute("INSERT INTO instance_console_output(instance_id,stream,line) " + f"VALUES ({self.dialect.parameters(3)})", (str(current["instance_id"]), "console", text))
+            # The Agent can retry a result after the Controller commits it
+            # but restarts before acknowledging the heartbeat.
+            if completed.rowcount == 1:
+                lines = result.get("output")
+                if isinstance(lines, str):
+                    lines = lines.splitlines()
+                if isinstance(lines, list):
+                    for line in lines[-500:]:
+                        text = str(line)[:512]
+                        if text:
+                            session.execute(
+                                "INSERT INTO instance_console_output(instance_id,stream,line) "
+                                f"VALUES ({self.dialect.parameters(3)})",
+                                (str(current["instance_id"]), "console", text),
+                            )
         return self.console_command(command_id)
 
     def clear_console_output(self, instance_id: str) -> int:

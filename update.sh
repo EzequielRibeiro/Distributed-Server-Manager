@@ -91,6 +91,7 @@ ALLOW_SAME_VERSION=0
 ALLOW_DOWNGRADE=0
 NO_BACKUP=0
 NO_DRAIN_REPORT=0
+NO_DRAIN_EXECUTE=0
 # Test-only entrypoint; NOT a production flag or authorization.
 NO_DRAIN_DISPOSABLE_MAIN=0
 NEW_SRC=""
@@ -134,7 +135,8 @@ Options:
   --allow-same-version  Allow reinstalling the currently installed version.
   --allow-downgrade     Allow installing an older version.
   --no-backup           Skip the pre-update backup. Automatic rollback will not be available.
-  --no-drain            Run read-only safety preflight; update remains blocked (exit 2).
+  --no-drain            Read-only safety preflight; update remains blocked (exit 2).
+  --no-drain-execute    Explicit audited transaction path; blocked until operational admission is proven.
   --no-drain-report     Read-only no-drain blockers; NEVER runs an update (exit 2).
   -h, --help            Show this help message.
 EOF_USAGE
@@ -155,9 +157,12 @@ parse_arguments() {
                 ;;
             --no-drain)
                 echo "No-drain update is not yet homologated; refusing to update." >&2
-                # Use the same read-only diagnostic as --no-drain-report.
-                # Never advance into main(), stop services, or mutate files.
                 NO_DRAIN_REPORT=1
+                ;;
+            --no-drain-execute)
+                # An explicit execution request is separate from the legacy
+                # diagnostic contract; it never falls through to draining.
+                NO_DRAIN_EXECUTE=1
                 ;;
             --no-backup)
                 NO_BACKUP=1
@@ -1455,7 +1460,8 @@ update_systemd() {
     then
         for UNIT_TEMPLATE in \
             "${INSTALL_DIR}/systemd/"*.service \
-            "${INSTALL_DIR}/systemd/"*.timer
+            "${INSTALL_DIR}/systemd/"*.timer \
+            "${INSTALL_DIR}/systemd/"*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
@@ -1463,7 +1469,9 @@ update_systemd() {
 
         for UNIT_TEMPLATE in \
             "${SYSTEMD_DIR}/"dsm-*.service \
-            "${SYSTEMD_DIR}/"dsm-*.timer
+            "${SYSTEMD_DIR}/"dsm-*.timer \
+            "${SYSTEMD_DIR}/"dsm928*.service \
+            "${SYSTEMD_DIR}/"dsm*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             sed -i \
@@ -1907,7 +1915,7 @@ update_summary() {
 # =============================================================
 # #928: Exercise main() -> authenticated/impact/witness transaction only
 # on GitHub-hosted disposable fixtures. This branch is never a live update.
-# The real --no-drain and --no-drain-report flags always remain read-only.
+# --no-drain-report stays read-only; --no-drain uses a separate audited owner.
 run_dsm928_disposable_main() {
     local FIXTURE_ROOT DRIVER
     [[ "${CAPIVARA_DSM928_DISPOSABLE_MAIN:-0}" == 1 ]] || return 2
@@ -1916,7 +1924,7 @@ run_dsm928_disposable_main() {
     # Never test on a machine with a DSM deployment, even if the environment
     # variables were forged. Real clients/games must not be discoverable here.
     [[ ! -e /opt/dsm && ! -L /opt/dsm ]] || return 2
-    [[ "${NO_DRAIN_REPORT}" -eq 0 && "${NO_BACKUP}" -eq 0 ]] || return 2
+    [[ "${NO_DRAIN_REPORT}" -eq 0 && "${NO_DRAIN_EXECUTE}" -eq 0 && "${NO_BACKUP}" -eq 0 ]] || return 2
     [[ "${INSTALL_DIR}" == /tmp/*/installed ]] || return 2
     FIXTURE_ROOT="${INSTALL_DIR%/installed}"
     [[ "${FIXTURE_ROOT}" != /tmp && "${INSTALL_DIR}" == "${FIXTURE_ROOT}/installed"
@@ -1940,6 +1948,49 @@ run_dsm928_disposable_main() {
     PYTHONDONTWRITEBYTECODE=1 python3 "${DRIVER}" "${FIXTURE_ROOT}" "${DSM928_DISPOSABLE_MODE:-success}"
 }
 
+# #928: hold the same root-owned inode as the retained Agent/local scopes.
+# The descriptor stays open through normal main(), ERR/TERM recovery and
+# process exit; never unlink or truncate this lock.
+retain_dsm928_update_inode() {
+    local LOCK_PATH="$1" EXPECTED_UID="$2" EXPECTED_GID="$3" EXPECTED ACTUAL
+    local OWNER_PID="${BASHPID}"
+    [[ -f "${LOCK_PATH}" && ! -L "${LOCK_PATH}" ]] || return 2
+    EXPECTED="$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "${LOCK_PATH}")" || return 2
+    [[ "${EXPECTED}" == *":${EXPECTED_UID}:${EXPECTED_GID}:600:1:0" ]] || return 2
+    exec {DSM928_UPDATE_FD}<"${LOCK_PATH}" || return 2
+    ACTUAL="$(stat -Lc '%d:%i:%u:%g:%a:%h:%s' "/proc/${OWNER_PID}/fd/${DSM928_UPDATE_FD}")" || return 2
+    [[ "${ACTUAL}" == "${EXPECTED}" ]] || return 2
+    /usr/bin/flock -n -x "${DSM928_UPDATE_FD}" || return 2
+    [[ ! -L "${LOCK_PATH}" && "$(stat -c '%d:%i:%u:%g:%a:%h:%s' -- "${LOCK_PATH}")" == "${EXPECTED}" ]] || return 2
+}
+
+acquire_dsm928_update_admission() {
+    local PROVISION="${SCRIPT_DIR}/agents/linux/runtime/game_uptime_privileged_flock.py"
+    [[ -f "${PROVISION}" && ! -L "${PROVISION}" ]] || return 2
+    /usr/bin/python3 -I -S -B "${PROVISION}" --provision-updater-admission || return 2
+    retain_dsm928_update_inode /var/lib/capivara-dsm-928/updater-admission.lock 0 0
+}
+
+# A pending #928 recovery has precedence over the ordinary draining updater.
+# Use the same installed-path fail-closed observer as Agent/Worker loops.
+# This is a read-only interlock, not a distributed transaction lock or an
+# authorization to create/clear a maintenance marker.
+observe_dsm928_recovery_clear() {
+    local PROBE="${SCRIPT_DIR}/agents/linux/runtime/game_uptime_maintenance_hold.py"
+    [[ -f "${PROBE}" && ! -L "${PROBE}" ]] || return 2
+    /usr/bin/python3 -I -S -B "${PROBE}"
+}
+
+require_dsm928_recovery_clear() {
+    if ! observe_dsm928_recovery_clear; then
+        echo "DSM #928: manutenção ou recuperação pendente/não verificável; atualização bloqueada." >&2
+        echo "DSM #928: maintenance or recovery pending/unverifiable; update blocked." >&2
+        # Explicit exit before UPDATE_TRANSACTION_STARTED: never invoke
+        # the normal error trap's service/game recovery machinery.
+        exit 2
+    fi
+}
+
 main() {
     echo
     echo "Iniciando atualização DSM..."
@@ -1954,6 +2005,33 @@ main() {
         # Do not enter the production update_failed/rollback machinery when
         # a deliberately isolated fixture is rejected.
         exit 2
+    fi
+    # The installed owner is provisioned independently from the replaceable
+    # /opt/dsm tree. It cannot inherit the draining updater's traps.
+    if [[ "${NO_DRAIN_EXECUTE}" -eq 1 ]]; then
+        trap - ERR EXIT INT TERM
+        if [[ "${NO_DRAIN_REPORT}" -ne 0 || "${NO_BACKUP}" -ne 0
+              || "${ALLOW_SAME_VERSION}" -ne 0 || "${ALLOW_DOWNGRADE}" -ne 0
+              || "${AUTO_YES}" -ne 0 || "${EUID}" -ne 0
+              || "${NEW_SRC}" != /var/lib/capivara-dsm-928/reviewed-release/payload ]]; then
+            echo "No-drain execution requires root, a reviewed payload and no conflicting options." >&2
+            exit 2
+        fi
+        local OWNER="/usr/local/libexec/capivara-dsm-928-updater/update-manager/game-uptime-installed-transaction.py"
+        local DIR
+        for DIR in / /usr /usr/local /usr/local/libexec /usr/local/libexec/capivara-dsm-928-updater /usr/local/libexec/capivara-dsm-928-updater/update-manager; do
+            if [[ ! -d "${DIR}" || -L "${DIR}" || "$(stat -c %u -- "${DIR}")" != 0 ]] ||
+               (( (8#$(stat -c %a -- "${DIR}") & 022) != 0 )); then
+                echo "No-drain update blocked: audited transaction owner unavailable." >&2
+                exit 2
+            fi
+        done
+        if [[ ! -f "${OWNER}" || -L "${OWNER}" || "$(stat -c %u:%h -- "${OWNER}")" != 0:1 ]] ||
+           (( (8#$(stat -c %a -- "${OWNER}") & 022) != 0 )); then
+            echo "No-drain update blocked: audited transaction owner unavailable." >&2
+            exit 2
+        fi
+        exec /usr/bin/python3 -I -S -B "${OWNER}" "${NEW_SRC}"
     fi
     # This diagnostic must execute BEFORE root, logging, backup, daemon or
     # filesystem changes. Always exit 2: a report is never update approval.
@@ -1976,12 +2054,17 @@ main() {
     # destructive/draining updater. A live transaction must implement durable
     # rollback and PID/start-time verification before this boundary changes.
     # Keep normal updates on the existing draining path.
-    if [[ "${NO_DRAIN_REPORT}" -ne 0 ]]; then
+    if [[ "${NO_DRAIN_REPORT}" -ne 0 || "${NO_DRAIN_EXECUTE}" -ne 0 ]]; then
         echo "Invalid no-drain transaction state; refusing update." >&2
         exit 2
     fi
     # Ambiente | Environment
     require_root
+    if ! acquire_dsm928_update_admission; then
+        echo "DSM #928: update admission busy or untrusted; update blocked." >&2
+        exit 2
+    fi
+    require_dsm928_recovery_clear
     # O pacote instalado pode ser substituído durante esta execução. Nunca
     # mantenha o shell ou jobs de progresso dentro de /opt/dsm.
     cd "$(dirname "${INSTALL_DIR}")" || {
@@ -2007,6 +2090,9 @@ main() {
     capture_game_instance_state
     # Stop writers before creating a consistent filesystem/database snapshot pair.
     capture_service_state
+    # Recheck immediately before stopping any writer/game. This does not
+    # replace the future common exclusive transaction admission lock.
+    require_dsm928_recovery_clear
     UPDATE_TRANSACTION_STARTED=1
     # Quiesce the Controller/Workers first. Otherwise a live reconciler can
     # restart a managed game in the gap after its graceful stop (observed on
@@ -2191,7 +2277,8 @@ rollback() {
         local UNIT_TEMPLATE
         for UNIT_TEMPLATE in \
             "${INSTALL_DIR}/systemd/"*.service \
-            "${INSTALL_DIR}/systemd/"*.timer
+            "${INSTALL_DIR}/systemd/"*.timer \
+            "${INSTALL_DIR}/systemd/"*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             cp -f "${UNIT_TEMPLATE}" "${SYSTEMD_DIR}/"
@@ -2201,7 +2288,9 @@ rollback() {
         # before systemd sees the restored units.
         for UNIT_TEMPLATE in \
             "${SYSTEMD_DIR}/"dsm-*.service \
-            "${SYSTEMD_DIR}/"dsm-*.timer
+            "${SYSTEMD_DIR}/"dsm-*.timer \
+            "${SYSTEMD_DIR}/"dsm928*.service \
+            "${SYSTEMD_DIR}/"dsm*.socket
         do
             [[ -e "${UNIT_TEMPLATE}" ]] || continue
             sed -i \
@@ -2212,7 +2301,9 @@ rollback() {
 
         if grep -RqsE '\{\{DSM_(USER|GROUP)\}\}' \
             "${SYSTEMD_DIR}/"dsm-*.service \
-            "${SYSTEMD_DIR}/"dsm-*.timer 2>/dev/null
+            "${SYSTEMD_DIR}/"dsm-*.timer \
+            "${SYSTEMD_DIR}/"dsm928*.service \
+            "${SYSTEMD_DIR}/"dsm*.socket 2>/dev/null
         then
             echo "[ERROR] Rollback deixou placeholders DSM em unidades systemd." >&2
             echo "[ERROR] Rollback left DSM placeholders in systemd units." >&2

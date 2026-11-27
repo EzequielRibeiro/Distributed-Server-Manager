@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+import fcntl
 import sys
 import tempfile
 import threading
@@ -22,12 +23,52 @@ import game_uptime_controller_mutation_gate as gate
 from game_uptime_controller_agent_http_flock import (
     shared_controller_agent_http_lock,
     exclusive_controller_agent_http_lock,
-    ControllerHttpLockUnavailable,
+    ControllerHttpLockUnavailable, controller_http_admission_open,
 )
 from prepare_controller_agent_http_lock import provision_controller_agent_http_lock
 
 
 class ControllerHttpGatewayTests(unittest.TestCase):
+    def test_reservation_blocks_new_requests_without_releasing_inflight_work(self):
+        with tempfile.TemporaryDirectory(prefix="dsm928-admission-") as directory:
+            parent = Path(directory) / "fence"
+            parent.mkdir()
+            witness = parent / "controller-agent-http.lock"
+            admission = parent / "controller-agent-http-admission.lock"
+            uid, gid = os.geteuid(), os.getegid()
+            for path in (witness, admission):
+                provision_controller_agent_http_lock(uid, gid, path=path, parent_uid=uid)
+            options = dict(lock_path=witness, admission_path=admission,
+                           expected_uid=uid, expected_gid=gid,
+                           parent_uid=uid, enabled=True)
+            with shared_controller_agent_http_lock(**options):
+                fd = os.open(admission, os.O_RDWR)
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.assertFalse(controller_http_admission_open(**options))
+                    with self.assertRaises(ControllerHttpLockUnavailable):
+                        with shared_controller_agent_http_lock(**options):
+                            self.fail("reservation admitted new mutation")
+                    with self.assertRaises(ControllerHttpLockUnavailable):
+                        with exclusive_controller_agent_http_lock(
+                            lock_path=witness, expected_uid=uid,
+                            expected_gid=gid, parent_uid=uid):
+                            self.fail("reservation released active request")
+                finally:
+                    os.close(fd)
+            self.assertTrue(controller_http_admission_open(**options))
+            with exclusive_controller_agent_http_lock(
+                lock_path=witness, expected_uid=uid, expected_gid=gid,
+                parent_uid=uid):
+                with self.assertRaises(ControllerHttpLockUnavailable):
+                    with shared_controller_agent_http_lock(**options):
+                        self.fail("exclusive request fence admitted mutation")
+            admission.unlink()
+            self.assertFalse(controller_http_admission_open(**options))
+            with self.assertRaises(ControllerHttpLockUnavailable):
+                with shared_controller_agent_http_lock(**options):
+                    self.fail("missing reservation gate admitted mutation")
+
     def test_all_mutating_verbs_share_single_fence_while_observer_remains_readonly(self):
         class FakeHandler:
             calls = []
@@ -66,6 +107,9 @@ class ControllerHttpGatewayTests(unittest.TestCase):
             def do_GET(self):
                 return self._execute("GET")
 
+            def do_HEAD(self):
+                return self._execute("HEAD")
+
         with tempfile.TemporaryDirectory(prefix="dsm928-all-http-") as directory:
             parent = Path(directory) / "fence"
             parent.mkdir(mode=0o755)
@@ -95,7 +139,7 @@ class ControllerHttpGatewayTests(unittest.TestCase):
                 for evidence in ({"active": True}, {"active": "unknown"}, None):
                     with patch.object(gate, "observe_no_drain_hold",
                                       return_value=evidence):
-                        for verb in ("POST", "PUT", "PATCH", "DELETE"):
+                        for verb in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
                             obj = FakeHandler("/api/admin/mutating")
                             getattr(obj, "do_" + verb)()
                             self.assertEqual(obj.calls, [])
@@ -118,21 +162,23 @@ class ControllerHttpGatewayTests(unittest.TestCase):
 
                     get = FakeHandler("/api/health")
                     get.do_GET()
-                    self.assertEqual(get.calls, ["GET"])
+                    self.assertEqual(get.calls, [])
+                    self.assertEqual(get.responses[-1][0], 423)
 
                 with patch.object(gate, "observe_no_drain_hold",
                                   return_value={"active": False}):
                     with exclusive() as evidence:
                         self.assertFalse(evidence["controller_http_acked"])
-                        obj = FakeHandler("/api/admin/mutating")
-                        obj.do_POST()
-                        self.assertEqual(obj.responses[-1][0], 423)
-                        self.assertEqual(
-                            obj.responses[-1][1]["reason"],
-                            "controller_http_interprocess_fence_unavailable")
-                        self.assertEqual(obj.calls, [])
+                        for verb in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
+                            obj = FakeHandler("/api/admin/mutating")
+                            getattr(obj, "do_" + verb)()
+                            self.assertEqual(obj.responses[-1][0], 423)
+                            self.assertEqual(
+                                obj.responses[-1][1]["reason"],
+                                "controller_http_interprocess_fence_unavailable")
+                            self.assertEqual(obj.calls, [])
 
-                    for verb in ("POST", "PUT", "PATCH", "DELETE"):
+                    for verb in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"):
                         obj = FakeHandler("/api/admin/mutating")
                         getattr(obj, "do_" + verb)()
                         self.assertEqual(obj.calls, [verb])

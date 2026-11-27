@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Materialize Capivara-owned systemd units from validated local runtime specs."""
 from __future__ import annotations
-import hashlib, os, pwd, re, stat, subprocess
+import hashlib, json, os, pwd, re, stat, subprocess
 from pathlib import Path
 from typing import Any,Callable
 from adapters.systemd import unit_for_instance
@@ -108,7 +108,7 @@ def _preview_readable_by_service_user(path, user):
   raise MaterializerError("pinned supervisor not readable by service user")
 
 
-def _validated_preview_supervisor_path(pin, *, service_user):
+def _validated_preview_supervisor_path(pin, *, service_user, trusted_owner=None):
  """Validate a staged content-addressed path solely for offline unit rendering.
 
  Never accept this value from an instance spec or daemon config. A caller must
@@ -131,14 +131,15 @@ def _validated_preview_supervisor_path(pin, *, service_user):
   parent=path.parent
   if parent.is_symlink() or not parent.is_dir() or parent.stat().st_mode & 0o022:
    raise MaterializerError("unsafe pinned supervisor directory")
-  if parent.stat().st_uid != os.geteuid():
+  if parent.stat().st_uid != (os.geteuid() if trusted_owner is None else trusted_owner):
    raise MaterializerError("pinned supervisor directory owner mismatch")
   if path.is_symlink() or not path.is_file():
    raise MaterializerError("pinned supervisor missing or symlinked")
   info=path.stat()
   if (not stat.S_ISREG(info.st_mode) or info.st_nlink!=1
       or info.st_size>1024*1024 or info.st_size==0
-      or info.st_mode & 0o222):
+      or info.st_mode & 0o222
+      or (trusted_owner is not None and info.st_uid != trusted_owner)):
    raise MaterializerError("pinned supervisor must be non-writable single-link regular file")
   if hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
    raise MaterializerError("pinned supervisor digest mismatch")
@@ -146,6 +147,51 @@ def _validated_preview_supervisor_path(pin, *, service_user):
   raise MaterializerError("unable to inspect pinned supervisor") from exc
  _preview_readable_by_service_user(path,service_user)
  return path
+
+
+# Optional, explicitly provisioned host policy. Neither an instance spec nor
+# an environment override may choose production executable code.
+_PIN_DIRECTORY=Path("/var/lib/capivara-dsm-928/supervisor-versions")
+
+
+def _installed_supervisor_pin(service_user):
+ path=_PIN_DIRECTORY/"active-pin.json"
+ if not os.path.lexists(path):
+  return None
+ try:
+  for parent in (_PIN_DIRECTORY,*_PIN_DIRECTORY.parents):
+   info=parent.lstat()
+   if not stat.S_ISDIR(info.st_mode) or info.st_uid!=0 or info.st_mode & 0o022:
+    raise MaterializerError("untrusted installed supervisor policy directory")
+  fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_CLOEXEC|os.O_NONBLOCK)
+  try:
+   before=os.fstat(fd)
+   def identity(s):
+    return (s.st_dev,s.st_ino,s.st_uid,s.st_mode,s.st_nlink,s.st_size,
+            s.st_mtime_ns,s.st_ctime_ns)
+   if (not stat.S_ISREG(before.st_mode) or before.st_uid!=0
+       or before.st_nlink!=1 or before.st_mode & 0o022
+       or not 0<before.st_size<=1024
+       or identity(path.lstat())!=identity(before)):
+    raise MaterializerError("untrusted installed supervisor policy")
+   with os.fdopen(os.dup(fd),"rb") as stream:
+    raw=stream.read(1025)
+   if (len(raw)!=before.st_size or identity(os.fstat(fd))!=identity(before)
+       or identity(path.lstat())!=identity(before)):
+    raise MaterializerError("installed supervisor policy changed")
+  finally:
+   os.close(fd)
+  pin=json.loads(raw)
+  if (type(pin) is not dict or set(pin)!={"sha256"}
+      or type(pin["sha256"]) is not str
+      or not re.fullmatch(r"[a-f0-9]{64}",pin["sha256"])):
+   raise MaterializerError("invalid installed supervisor policy")
+  digest=pin["sha256"]
+  return _validated_preview_supervisor_path(
+      {"path":str(_PIN_DIRECTORY/("console-supervisor-"+digest+".py")),
+       "sha256":digest},service_user=service_user,trusted_owner=0)
+ except (OSError,ValueError,TypeError) as exc:
+  raise MaterializerError("installed supervisor policy unreadable") from exc
 
 
 def render_unit(spec, *, pinned_supervisor_preview=None):
@@ -158,7 +204,8 @@ def render_unit(spec, *, pinned_supervisor_preview=None):
  if native_console:
   supervisor=(_validated_preview_supervisor_path(pinned_supervisor_preview, service_user=str(spec["user"]))
               if pinned_supervisor_preview is not None else
-              Path(__file__).resolve().parents[1]/"console_supervisor.py")
+              (_installed_supervisor_pin(str(spec["user"])) or
+               Path(__file__).resolve().parents[1]/"console_supervisor.py"))
   console_runtime=f"capivara-instance-console-{instance_id}"
   console_socket=f"/run/{console_runtime}/console.sock"
   argv=["/usr/bin/python3",str(supervisor),"--socket",console_socket,"--",*argv]

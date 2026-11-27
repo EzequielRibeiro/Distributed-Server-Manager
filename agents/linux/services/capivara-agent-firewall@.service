@@ -6,6 +6,10 @@ After=network-pre.target
 Type=oneshot
 User=root
 Group=root
+# Runtime identity prepares the common lock at Agent startup. A helper
+# invoked independently must also prepare it after a reboot, before SH.
+ExecStartPre=+/usr/bin/python3 -I /opt/capivara-agent/runtime/game_uptime_privileged_flock.py --provision
+Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1
 ExecStart=/usr/bin/python3 /opt/capivara-agent/privileged/reconcile_firewall.py %i
 NoNewPrivileges=true
 PrivateTmp=true

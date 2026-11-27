@@ -8,17 +8,19 @@ a distributed ACK or permission for update.sh --no-drain.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import fcntl
 import grp
 import os
 from pathlib import Path
 import stat
+import threading
 from typing import Iterator
 
 LOCK_PATH = Path("/run/capivara-dsm/agent-finalization-operations.lock")
 ENABLE_ENV = "DSM928_AGENT_FINALIZATION_FLOCK"
 AGENT_GROUP = "capivara-agent"
+_installed_shared = threading.local()
 
 
 class FinalizationFenceUnavailable(RuntimeError):
@@ -54,7 +56,7 @@ def _check_parents(path: Path, owner_uid: int) -> None:
 
 def _open_inode(path: Path, owner_uid: int, agent_gid: int) -> int:
     _check_parents(path, owner_uid)
-    flags = (os.O_RDWR | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
+    flags = (os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
              | getattr(os, "O_CLOEXEC", 0))
     try:
         before = path.lstat()
@@ -93,6 +95,10 @@ def shared_finalization_lock(*, path: Path = LOCK_PATH,
         return
     path = Path(path)
     owner_uid, agent_gid = _identities(path, trusted_uid, group_gid)
+    installed = path == LOCK_PATH
+    if installed and getattr(_installed_shared, "pid", None) == os.getpid():
+        yield True
+        return
     fd = _open_inode(path, owner_uid, agent_gid)
     try:
         try:
@@ -100,11 +106,34 @@ def shared_finalization_lock(*, path: Path = LOCK_PATH,
         except OSError as exc:
             raise FinalizationFenceUnavailable("finalization_lock_busy") from exc
         try:
+            if installed:
+                _installed_shared.pid = os.getpid()
             yield True
         finally:
+            if installed:
+                del _installed_shared.pid
             fcntl.flock(fd, fcntl.LOCK_UN)
     finally:
         os.close(fd)
+
+
+@contextmanager
+def tracked_agent_operation() -> Iterator[bool]:
+    """Share the installed runtime/finalization inode for a bounded operation.
+
+    An EX owner blocks new cooperating work. Recheck the durable hold after
+    admission. A busy or unsafe inode skips work without terminating the
+    Agent; no positive acknowledgement or update authorization is implied.
+    """
+    from game_uptime_maintenance_hold import observe
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(shared_finalization_lock())
+            snapshot = observe()
+        except (FinalizationFenceUnavailable, OSError, RuntimeError, ValueError):
+            yield False
+            return
+        yield isinstance(snapshot, dict) and snapshot.get("active") is False
 
 
 @contextmanager
@@ -179,3 +208,9 @@ def provision_finalization_lock(*, path: Path = LOCK_PATH,
     fd = _open_inode(path, owner_uid, agent_gid)
     os.close(fd)
     return path
+
+if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] != ["--provision"] or os.geteuid() != 0:
+        raise SystemExit(2)
+    provision_finalization_lock()

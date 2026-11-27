@@ -23,6 +23,7 @@ REQUIRED_TABLES = {
     "instances",
     "service_contracts",
     "schema_baseline",
+    "notification_outbox",
 }
 
 

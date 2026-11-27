@@ -40,8 +40,12 @@ from minecraft_serverpack_authenticated_report_delivery import dispatch_serverpa
 from game_uptime_heartbeat_compat import assess_authenticated_probe
 from game_uptime_remote_fence_evidence import (
     receipt_for_authenticated_agent, correlate_authenticated_fence_receipts,
+    trusted_controller_release_pin_for_receipt,
 )
 from game_uptime_maintenance_hold import observe as observe_no_drain_hold
+from game_uptime_credentialed_replay_admission import (
+    commit_authenticated_negative_v2_receipt,
+)
 from game_uptime_controller_http_inflight import track_controller_agent_mutation
 
 ENROLL_PATH = "/api/agent/enroll"
@@ -421,10 +425,11 @@ def dispatch_uninstall_result(
 def dispatch_fence_observation(
     payload: dict[str, Any] | None, *, headers, backend
 ) -> tuple[int, dict[str, Any]]:
-    """Authenticated SELECT-only #928 observation; no dispatch or mutation.
+    """Credentialed #928 observation with durable NEGATIVE v2 replay record.
 
-    Deliberately separated from dispatch_heartbeat() so a protected Agent can
-    observe while its normal heartbeat and command-processing loop are held.
+    Separated from mutating heartbeat/command routing during a root hold.
+    V2 requires a privileged on-disk nonce journal before returning receipt
+    success; no database, game or updater mutations and no quiescence ACK.
     """
     body = payload if isinstance(payload, dict) else {}
     if set(body) != {"no_drain_fence_evidence"}:
@@ -460,17 +465,45 @@ def dispatch_fence_observation(
     # Correlate the credentialed receipt with the exact authenticated host
     # in this read-only request. Multi-host callers must explicitly collect
     # every expected Agent: this does NOT certify remote quiescence.
+    expected_release_pin = None
+    if (receipt.get("status") == "authenticated_evidence_received_unfenced"
+            and receipt.get("contract", {}).get("schema") == "2"):
+        try:
+            expected_release_pin = trusted_controller_release_pin_for_receipt(
+                receipt)
+        except Exception:
+            receipt = {**receipt, "status": "blocked"}
     correlation = correlate_authenticated_fence_receipts(
         [str(identity["agent_id"])],
         [{"authenticated_agent_id": str(identity["agent_id"]),
           "receipt": receipt}],
         transaction_id=str(receipt.get("transaction_id") or ""),
+        expected_release_sha256=expected_release_pin,
     )
-    # Keep the existing exact wire response contract: correlation only
-    # downgrades a newly-invalid receipt, never adds an unverified ACK field.
+    # Correlation is necessary but not sufficient. A v2 negative receipt
+    # must also be DURABLY consumed by the privileged nonce journal before
+    # the HTTP dispatcher reports that it was received. An unprivileged
+    # dashboard, absent privileged writer, or replay FAILS CLOSED; it may
+    # never silently downgrade to a legacy v1 acknowledgement.
     if (receipt.get("status") == "authenticated_evidence_received_unfenced"
             and not correlation["receipt_set_correlated"]):
         receipt = {**receipt, "status": "blocked"}
+    elif (receipt.get("status") == "authenticated_evidence_received_unfenced"
+          and receipt.get("contract", {}).get("schema") == "2"):
+        try:
+            committed = commit_authenticated_negative_v2_receipt(
+                authenticated_agent_id=str(identity["agent_id"]),
+                receipt=receipt)
+            if (committed.get("status") !=
+                    "negative_v2_receipt_durably_recorded"
+                    or committed.get("transaction_id") != receipt["transaction_id"]
+                    or committed.get("request_id") != receipt["request_id"]
+                    or committed.get("release_sha256") != receipt["release_sha256"]
+                    or committed.get("remote_agent_quiescence_acked") is not False
+                    or committed.get("live_no_drain_authorized") is not False):
+                raise ValueError("untrusted_privileged_wire_journal_response")
+        except Exception:
+            receipt = {**receipt, "status": "blocked"}
     return 200, {"no_drain_fence_receipt": receipt,
                  "remote_agent_quiescence_acked": False,
                  "live_no_drain_authorized": False}
@@ -527,6 +560,12 @@ def dispatch_heartbeat(payload: dict[str, Any] | None, *, headers, backend) -> t
                     body["no_drain_fence_evidence"],
                     authenticated_agent_id=agent_id,
                 )
+                # The regular heartbeat also performs mutable work, and
+                # cannot consume root-owned v2 anti-replay evidence. Never
+                # accept a v2 negative receipt on this bypass path.
+                if (result["no_drain_fence_receipt"].get("contract", {})
+                        .get("schema") == "2"):
+                    result["no_drain_fence_receipt"]["status"] = "blocked"
             except (ValueError, TypeError, OSError, RuntimeError):
                 result["no_drain_fence_receipt"] = {
                     "status": "blocked",

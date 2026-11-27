@@ -16,6 +16,8 @@ from typing import Iterator
 
 LOCK_PATH = Path("/run/capivara-dsm/agent-privileged-operations.lock")
 ENABLE_ENV = "DSM928_AGENT_PRIVILEGED_FLOCK"
+RECOVERY_STATE = Path("/var/lib/capivara-dsm-928")
+UPDATE_ADMISSION_LOCK = RECOVERY_STATE / "updater-admission.lock"
 
 
 class PrivilegedHelperFenceUnavailable(RuntimeError):
@@ -40,7 +42,7 @@ def _open_inode(path: Path, trusted_uid: int) -> int:
     _trusted_parent(path, trusted_uid)
     try:
         before = path.lstat()
-        flags = (os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        flags = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
                  | getattr(os, "O_CLOEXEC", 0)
                  | getattr(os, "O_NONBLOCK", 0))
         fd = os.open(path, flags)
@@ -167,3 +169,106 @@ def provision_privileged_helper_lock(*, path: Path = LOCK_PATH,
     fd = _open_inode(path, uid)
     os.close(fd)
     return path
+
+def provision_recovery_state(*, path: Path = RECOVERY_STATE,
+                             trusted_uid: int = 0) -> Path:
+    """Provision only empty stable storage, readable by the Agent hold reader.
+
+    Existing state is never replaced, chmodded, or cleared. The root-only
+    journal and inventory retain their own private modes.
+    """
+    path = Path(path)
+    if path == RECOVERY_STATE:
+        if os.geteuid() != 0 or trusted_uid != 0:
+            raise PrivilegedHelperFenceUnavailable("root_only_recovery_storage")
+        parents = (Path("/var"), Path("/var/lib"))
+    else:
+        import tempfile
+        tmp = Path(tempfile.gettempdir()).resolve()
+        if (not path.is_absolute() or tmp not in path.parents
+                or trusted_uid != os.geteuid()):
+            raise PrivilegedHelperFenceUnavailable("disposable_recovery_storage_required")
+        parents = (path.parent,)
+    for parent in parents:
+        meta = parent.lstat()
+        if (not stat.S_ISDIR(meta.st_mode) or meta.st_uid != trusted_uid
+                or meta.st_mode & 0o022):
+            raise PrivilegedHelperFenceUnavailable("unsafe_recovery_storage_parent")
+    created = False
+    try:
+        path.mkdir(mode=0o755)
+        created = True
+    except FileExistsError:
+        pass
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        found = os.fstat(fd)
+        named = path.lstat()
+        if ((named.st_dev, named.st_ino) != (found.st_dev, found.st_ino)
+                or not stat.S_ISDIR(found.st_mode)
+                or found.st_uid != trusted_uid or found.st_mode & 0o022):
+            raise PrivilegedHelperFenceUnavailable("unsafe_recovery_storage")
+        if created:
+            os.fchmod(fd, 0o755)
+            os.fsync(fd)
+        if stat.S_IMODE(os.fstat(fd).st_mode) != 0o755:
+            raise PrivilegedHelperFenceUnavailable("unexpected_recovery_storage_mode")
+    finally:
+        os.close(fd)
+    parent_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY |
+                        os.O_NOFOLLOW | os.O_CLOEXEC)
+    try:
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+    return path
+
+
+def provision_update_admission_lock() -> Path:
+    """One persistent inode shared by conventional and retained update paths."""
+    provision_recovery_state()
+    return provision_privileged_helper_lock(path=UPDATE_ADMISSION_LOCK, trusted_uid=0)
+
+
+@contextmanager
+def exclusive_update_admission(*, provision=True):
+    """Hold the host update mutex until apply/recovery and cleanup exit.
+
+    Sandboxed systemd jobs use the already provisioned inode without writing
+    to its parent. No authorization to mutate is implied by the lock.
+    """
+    if os.geteuid() != 0:
+        raise PrivilegedHelperFenceUnavailable("root_only_update_admission")
+    if provision:
+        provision_update_admission_lock()
+    fd = _open_inode(UPDATE_ADMISSION_LOCK, 0)
+    try:
+        _acquire(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    import sys
+    if (sys.argv[1:] not in (["--provision"], ["--provision-with-state"],
+                             ["--provision-updater-admission"], ["--run-controller-topology"])
+            or os.geteuid() != 0):
+        raise SystemExit(2)
+    if sys.argv[1:] == ["--provision-updater-admission"]:
+        provision_update_admission_lock()
+    elif sys.argv[1:] == ["--run-controller-topology"]:
+        import subprocess
+        from game_uptime_maintenance_hold import observe
+
+        with shared_privileged_helper_lock(enabled=True):
+            if observe()["active"] is not False:
+                raise SystemExit("Controller topology blocked by local maintenance")
+            raise SystemExit(subprocess.run(
+                ["/bin/bash", "/opt/dsm/systemd/controller-service-topology.sh"],
+                check=False,
+            ).returncode)
+    else:
+        if sys.argv[1:] == ["--provision-with-state"]:
+            provision_recovery_state()
+        provision_privileged_helper_lock()

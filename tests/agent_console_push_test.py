@@ -93,6 +93,35 @@ class AgentConsolePushTest(unittest.TestCase):
         self.assertEqual(1, handler.responses[-1][1]["accepted"])
         self.assertEqual("ready", PUSH.console_push_snapshot("instance-1")["lines"][0]["line"])
 
+    def test_stream_yields_to_reservation_before_ingesting_next_frame(self) -> None:
+        class Connection:
+            def settimeout(self, value):
+                pass
+        class Handler:
+            connection = Connection()
+            rfile = io.BytesIO()
+            close_connection = False
+            responses = []
+            def send_json(self, status, body):
+                self.responses.append((status, body))
+
+        handler = Handler()
+        with patch.object(PUSH, "_authenticate", return_value={"agent_id": "agent-1"}), \
+             patch.object(PUSH, "_console_maintenance_hold_blocked", return_value=False), \
+             patch.object(PUSH, "controller_http_admission_open", side_effect=[True, False]), \
+             patch.object(PUSH, "_read_chunk", return_value=b'{"kind":"keepalive"}'), \
+             patch.object(PUSH, "ingest_console_events") as ingest, \
+             patch.object(PUSH, "touch_agent") as touch:
+            PUSH.serve_agent_console_stream(
+                handler, headers={"Transfer-Encoding": "chunked",
+                                  "Content-Type": "application/x-ndjson"},
+                backend=object(),
+            )
+            ingest.assert_not_called()
+            touch.assert_called_once_with("agent-1")
+        self.assertEqual(handler.responses[-1][0], 423)
+        self.assertTrue(handler.close_connection)
+
     def test_rejects_instance_not_owned_by_authenticated_agent(self) -> None:
         with patch.object(PUSH, "_owned_instances", return_value=set()):
             result = PUSH.ingest_console_events(

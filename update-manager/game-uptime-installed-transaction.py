@@ -1,0 +1,665 @@
+#!/usr/bin/env python3
+"""Installed #928 execution owner. Never drains games or migrates databases.
+
+Both bounded file modes share the host-local transaction and recovery owner.
+Restart candidates require separate ownership and rollback evidence.
+Managed mutator coverage is mandatory before any installed mutation.
+"""
+from __future__ import annotations
+from contextlib import contextmanager
+import hashlib
+import importlib.util
+from importlib.machinery import SourceFileLoader
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+import time
+import uuid
+
+SNAPSHOT = Path("/usr/local/libexec/capivara-dsm-928-updater")
+STATE = Path("/var/lib/capivara-dsm-928")
+TARGET = STATE / "reviewed-release/payload"
+INSTALLED = Path("/opt/dsm")
+TRUST = Path("/etc/capivara-dsm")
+
+
+class InstalledTransactionBlocked(RuntimeError):
+    pass
+
+
+def _trusted(path, directory=False):
+    info = path.lstat()
+    if (info.st_uid != 0 or info.st_mode & 0o022
+            or (not stat.S_ISDIR(info.st_mode) if directory else
+                not stat.S_ISREG(info.st_mode) or info.st_nlink != 1)):
+        raise InstalledTransactionBlocked("untrusted_installed_transaction_input")
+
+
+def _load(name):
+    path = SNAPSHOT / "update-manager" / name
+    _trusted(path)
+    loader = SourceFileLoader("dsm928_installed_" + name.replace("-", "_"), str(path))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def _version_key(root):
+    # Build metadata does not change precedence. Reject malformed or
+    # excessively large input rather than delegating to candidate scripts.
+    path = root / "version"
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not 0 < info.st_size <= 256:
+        raise InstalledTransactionBlocked("invalid_release_version_file")
+    raw = path.read_text(encoding="ascii").strip()
+    match = re.fullmatch(
+        r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+        r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
+        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?", raw)
+    if match is None:
+        raise InstalledTransactionBlocked("invalid_release_semver")
+    prerelease = match.group(4)
+    ids = prerelease.split(".") if prerelease is not None else []
+    if any(x.isdigit() and len(x) > 1 and x.startswith("0") for x in ids):
+        raise InstalledTransactionBlocked("invalid_numeric_prerelease")
+    return (tuple(int(x) for x in match.groups()[:3]), prerelease is None,
+            tuple((0, int(x)) if x.isdigit() else (1, x) for x in ids))
+
+
+def _require_forward_version(installed, target):
+    if _version_key(target) <= _version_key(installed):
+        raise InstalledTransactionBlocked("same_version_or_downgrade_not_allowed")
+
+
+def _validate_static_plan(report):
+    review = report.get("operational_release_review") or {}
+    plan = (report.get("release_impact") or {}).get("fixed_file_transaction_plan") or {}
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True):
+        raise InstalledTransactionBlocked("signed_exact_target_not_verified")
+    paths = plan.get("changed_paths")
+    if (plan.get("status") != "compatible_file_plan_only"
+            or plan.get("bootstrap_installation_required") is not False
+            or plan.get("blockers") != []
+            or type(paths) is not list or not paths
+            or any(type(p) is not str or not (p in ("version", "release-manifest.json")
+                or (p.startswith("dashboard/web/") and Path(p).suffix.lower() in
+                    (".css", ".js", ".html", ".htm", ".svg", ".png", ".ico", ".woff", ".woff2", ".map")))
+                or Path(p).as_posix() != p or ".." in Path(p).parts
+                for p in paths)
+            or len(set(paths)) != len(paths)
+            or plan.get("file_count") != len(paths)):
+        raise InstalledTransactionBlocked("restart_free_exact_file_plan_required")
+    digest = review.get("verified_archive_sha256")
+    if type(digest) is not str or not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise InstalledTransactionBlocked("verified_archive_digest_required")
+    return digest, paths
+
+
+def _validate_restart_candidate(report):
+    """Validate the exact diagnostic candidate without granting admission."""
+    review = report.get("operational_release_review") or {}
+    plan = (report.get("release_impact") or {}).get("control_plane_restart_plan") or {}
+    digest = review.get("verified_archive_sha256")
+    paths = plan.get("changed_paths")
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True
+            or type(digest) is not str or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or plan.get("status") != "restart_candidate_review_only"
+            or plan.get("live_no_drain_authorized") is not False
+            or plan.get("blocking_path_count") != 0
+            or plan.get("blocking_paths") != []
+            or type(paths) is not list or not paths):
+        raise InstalledTransactionBlocked("exact_signed_restart_candidate_required")
+    python_count = 0
+    for p in paths:
+        if (type(p) is not str or Path(p).is_absolute()
+                or Path(p).as_posix() != p or ".." in Path(p).parts
+                or "game_uptime" in p or "maintenance_hold" in p
+                or "__pycache__" in Path(p).parts):
+            raise InstalledTransactionBlocked("unsafe_restart_candidate_path")
+        if p.startswith("dashboard/") and p.endswith(".py"):
+            python_count += 1
+        elif not (p in ("version", "release-manifest.json")
+                  or (p.startswith("dashboard/web/") and Path(p).suffix.lower() in
+                      (".css", ".js", ".html", ".htm", ".svg", ".png", ".ico", ".woff", ".woff2", ".map"))):
+            raise InstalledTransactionBlocked("unsupported_restart_candidate_path")
+    fixed = (report.get("release_impact") or {}).get("fixed_file_transaction_plan") or {}
+    fixed_paths = fixed.get("changed_paths")
+    if (len(set(paths)) != len(paths) or not python_count
+            or python_count != plan.get("candidate_python_file_count")
+            or fixed.get("status") != "compatible_file_plan_only"
+            or fixed.get("bootstrap_installation_required") is not False
+            or fixed.get("blockers") != []
+            or type(fixed_paths) is not list
+            or any(type(p) is not str for p in fixed_paths)
+            or len(fixed_paths) != len(paths)
+            or set(fixed_paths) != set(paths)
+            or fixed.get("file_count") != len(paths)):
+        raise InstalledTransactionBlocked("restart_candidate_inventory_mismatch")
+    return digest, paths
+
+
+def _select_candidate(report):
+    impact = report.get("release_impact") or {}
+    if (impact.get("control_plane_restart_plan") or {}).get("status") == "restart_candidate_review_only":
+        digest, paths = _validate_restart_candidate(report)
+        return digest, paths, True
+    digest, paths = _validate_static_plan(report)
+    return digest, paths, False
+
+
+def _validate_plan(report):
+    """Read-only eligibility for preparation, never a retained mutation permit.
+
+    ACKs produced by a retained transaction cannot be prerequisites for
+    creating that transaction. Missing enforcement implementations, unknown
+    compatibility or incomplete inventories still block before any hold.
+    """
+    digest, paths, restart_required = _select_candidate(report)
+    review = report.get("operational_release_review") or {}
+    boundary = report.get("operational_execution_boundary") or {}
+    blockers = []
+    for evidence in (boundary.get("static_blockers"),
+                     review.get("operational_preparation_blockers")):
+        if type(evidence) is not list or any(type(item) is not str for item in evidence):
+            blockers.append("preparation_evidence_unavailable")
+        else:
+            blockers.extend(evidence)
+    if (review.get("maintenance_hold") or {}).get("active") is not False:
+        blockers.append("existing_hold_or_recovery_unverified")
+    for key in ("no_drain_handoff_witness_verified",
+                "no_drain_operational_coverage_verified",
+                "no_drain_compatibility_verified"):
+        if report.get(key) is not True:
+            blockers.append(key + "_missing")
+    if blockers:
+        raise InstalledTransactionBlocked(";".join(sorted(set(blockers))))
+    return digest, paths, restart_required
+
+
+def _require_retained_admission(scope, options):
+    """The only installed mutation gate: exact retained transaction evidence.
+
+    This cannot be satisfied by a read-only report or an empty job queue.
+    It is rechecked before mutation and terminal release.
+    """
+    if type(scope) is not dict:
+        raise InstalledTransactionBlocked("retained_scope_unavailable")
+    expected = {
+        "kind": "DSM928InstalledHostScope",
+        "transaction_id": options["transaction_id"],
+        "release_sha256": options["release_sha256"],
+        "issued_at": options["issued_at"],
+        "expires_at": options["expires_at"],
+        "agent_ids": sorted(options["expected_agent_ids"]),
+        "local_hybrid_agent_id": options["local_hybrid_agent_id"],
+    }
+    if any(scope.get(key) != value for key, value in expected.items()):
+        raise InstalledTransactionBlocked("retained_scope_binding_mismatch")
+    if not all(scope.get(key) is True for key in (
+            "controller_registry_inventory_matched", "known_database_job_queues_terminal",
+            "all_mutators_fenced", "external_jobs_acked")):
+        raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+    if not callable(scope.get("checkpoint")) or not callable(scope.get("finalize_terminal")):
+        raise InstalledTransactionBlocked("retained_scope_owner_unavailable")
+    scope["checkpoint"]()
+    observe_mutators = scope.get("managed_mutator_blockers")
+    if not callable(observe_mutators) or observe_mutators() != ():
+        raise InstalledTransactionBlocked("managed_local_mutator_coverage_unverified")
+
+
+def _restart_count(scope):
+    count = scope["restart_receipt_count"]()
+    if type(count) is not int or count not in (0, 1, 2):
+        raise InstalledTransactionBlocked("invalid_retained_restart_count")
+    return count
+
+
+def _restart_verified(scope):
+    before = _restart_count(scope)
+    restart = scope.get("restart_control_plane")
+    if before >= 2 or not callable(restart):
+        raise InstalledTransactionBlocked("retained_restart_owner_missing_or_exhausted")
+    result = restart()
+    if (type(result) is not dict
+            or result.get("status") != "restart_transition_recorded"
+            or result.get("live_no_drain_authorized") is not False
+            or result.get("sequence") != before + 1
+            or _restart_count(scope) != before + 1):
+        raise InstalledTransactionBlocked("restart_transition_not_verified")
+
+
+def _verify_terminal_restart(scope, restart_required, outcome):
+    count = _restart_count(scope)
+    allowed = (0,) if not restart_required else (
+        (1,) if outcome == "verified" else (1, 2))
+    if count not in allowed:
+        raise InstalledTransactionBlocked("terminal_restart_receipts_mismatch")
+
+
+def _verify_live_cache_policy():
+    """Verify the actual Controller and all Worker processes, not just unit files.
+
+    /dev/null must be the host's character device, not a writable directory.
+    The independent root updater snapshot itself contains no bytecode.
+    """
+    probe = _load("game-uptime-live-daemon-identity.py")
+    null = Path("/dev/null").lstat()
+    if not stat.S_ISCHR(null.st_mode) or (os.major(null.st_rdev), os.minor(null.st_rdev)) != (1, 3):
+        raise InstalledTransactionBlocked("python_cache_sink_unverified")
+    controller = probe._controller_identity()
+    workers = probe._workers_identity()
+    if (controller.get("identity_verified") is not True
+            or workers.get("all_nine_workers_verified") is not True):
+        raise InstalledTransactionBlocked("python_cache_policy_daemon_identity_unverified")
+    identities = [controller, workers["supervisor_identity"],
+                  *workers["worker_identities"].values()]
+    for item in identities:
+        proc = Path("/proc") / str(item["pid"])
+        try:
+            def ticks():
+                return int((proc / "stat").read_text().rsplit(")", 1)[1].split()[19])
+            if ticks() != item["start_ticks"]:
+                raise ValueError("process identity changed")
+            with (proc / "environ").open("rb") as stream:
+                raw = stream.read(262145)
+            if not 0 < len(raw) <= 262144 or not raw.endswith(b"\x00"):
+                raise ValueError("incomplete process environment")
+            env = raw[:-1].split(b"\x00")
+            for key, expected in ((b"PYTHONPYCACHEPREFIX=", b"/dev/null"),
+                                  (b"PYTHONDONTWRITEBYTECODE=", b"1")):
+                if [value[len(key):] for value in env if value.startswith(key)] != [expected]:
+                    raise ValueError("cache isolation missing")
+            if ticks() != item["start_ticks"]:
+                raise ValueError("process identity changed")
+        except (OSError, ValueError, IndexError) as exc:
+            raise InstalledTransactionBlocked("python_cache_policy_unverified") from exc
+    if probe._controller_identity() != controller or probe._workers_identity() != workers:
+        raise InstalledTransactionBlocked("python_cache_policy_daemon_identity_changed")
+
+
+def _execute_file_transaction(engine, scope, *, restart_required=False, cache_policy=None):
+    """Shared application/rollback orchestration under retained admission."""
+    if (scope.get("all_mutators_fenced") is not True
+            or scope.get("external_jobs_acked") is not True):
+        raise InstalledTransactionBlocked("retained_operational_guarantees_missing")
+    if _restart_count(scope) != 0:
+        raise InstalledTransactionBlocked("fresh_transaction_has_restart_receipts")
+    if restart_required and not callable(scope.get("restart_control_plane")):
+        raise InstalledTransactionBlocked("retained_restart_owner_missing")
+    scope["checkpoint"]()
+    # Check the durable before-images while the installed bytes still match.
+    # A terminal rollback result can only be verified after rollback runs.
+    engine.verify_terminal("recovered_rollback")
+    if restart_required and cache_policy is not None:
+        cache_policy()
+    try:
+        engine.apply()
+        if restart_required:
+            _restart_verified(scope)
+            if cache_policy is not None:
+                cache_policy()
+        engine.verify_terminal("verified")
+        _verify_terminal_restart(scope, restart_required, "verified")
+        scope["checkpoint"]()
+        return "verified"
+    except Exception:
+        # An uncertain restart must not be treated as a verified rollback.
+        # The retained checkpoint rejects an unrecorded daemon replacement.
+        scope["checkpoint"]()
+        engine.rollback()
+        if restart_required:
+            _restart_verified(scope)
+            if cache_policy is not None:
+                cache_policy()
+        engine.verify_terminal("rolled_back")
+        _verify_terminal_restart(scope, restart_required, "rolled_back")
+        scope["checkpoint"]()
+        return "rolled_back"
+
+
+def _write_status(workspace, report, status):
+    path = workspace / "game-uptime-transaction.json"
+    temporary = workspace / (".journal-" + uuid.uuid4().hex)
+    raw = (json.dumps({**report, "status": status}, sort_keys=True,
+                      separators=(",", ":")) + "\n").encode()
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL |
+                 os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+    folder = os.open(workspace, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        os.fsync(folder)
+    finally:
+        os.close(folder)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _engine(module, workspace, identity, scope, digest, tx):
+    return module.FileTransaction(workspace, INSTALLED, TARGET,
+        transaction_id=tx, release_sha256=digest, checkpoint=scope["checkpoint"],
+        product_identity=identity, _installed_scope=scope)
+
+
+def _require_trusted_snapshot(target):
+    if os.geteuid() != 0 or Path(__file__) != SNAPSHOT / "update-manager/game-uptime-installed-transaction.py":
+        raise InstalledTransactionBlocked("audited_root_updater_snapshot_required")
+    # The entire independent snapshot, not the candidate or installed DSM,
+    # is the import root for privileged review and transaction modules.
+    for folder in (Path("/"), Path("/usr"), Path("/usr/local"), Path("/usr/local/libexec"), SNAPSHOT):
+        _trusted(folder, directory=True)
+    for directory, dirs, files in os.walk(SNAPSHOT, followlinks=False):
+        _trusted(Path(directory), directory=True)
+        for name in dirs:
+            _trusted(Path(directory) / name, directory=True)
+        for name in files:
+            _trusted(Path(directory) / name)
+    if Path(target) != TARGET:
+        raise InstalledTransactionBlocked("fixed_reviewed_payload_required")
+    for folder in (Path("/var"), Path("/var/lib"), STATE, TARGET.parent, TARGET):
+        _trusted(folder, directory=True)
+
+
+@contextmanager
+def _installed_runtime_imports():
+    # Resolve runtime dependencies from the same verified snapshot used
+    # by retained admission, including imports made during preflight.
+    module = _load("game-uptime-local-scope-lease.py")
+    runtime = str(module._runtime_dir(True))
+    sys.path.insert(0, runtime)
+    old_prefix, old_write = sys.pycache_prefix, sys.dont_write_bytecode
+    # -B alone does not prevent reading stale privileged snapshot bytecode.
+    sys.pycache_prefix = "/dev/null"
+    sys.dont_write_bytecode = True
+    try:
+        yield
+    finally:
+        sys.pycache_prefix, sys.dont_write_bytecode = old_prefix, old_write
+        sys.path.remove(runtime)
+
+
+def run(target):
+    _require_trusted_snapshot(target)
+    with _installed_runtime_imports():
+        return _run_installed()
+
+
+def _run_installed():
+    preflight = _load("game-uptime-preflight.py")
+    review = preflight.collect_operational_review(INSTALLED, TARGET, include_remote_diagnostics=False)
+    # Read-only eligibility must pass before durable preparation. Retained
+    # admission below is separate and must pass before product mutations.
+    digest, paths, restart_required = _validate_plan(review)
+    baseline = (review.get("release_impact") or {}).get("installed_baseline_review")
+    if (type(baseline) is not dict
+            or not re.fullmatch(r"[0-9a-f]{64}", str(baseline.get("verified_archive_sha256")))):
+        raise InstalledTransactionBlocked("signed_installed_baseline_required")
+    _require_forward_version(INSTALLED, TARGET)
+    if restart_required:
+        _verify_live_cache_policy()
+    lease = _load("game-uptime-local-scope-lease.py")
+    module = _load("game-uptime-file-transaction.py")
+    identity_probe = _load("game-uptime-live-daemon-identity.py")
+    from pwd import getpwnam
+    from grp import getgrnam
+    controller = identity_probe._systemd_status(identity_probe.CONTROLLER_UNIT)
+    worker = identity_probe._systemd_status("dsm-dashboard-worker.service")
+    user = getpwnam(controller["User"])
+    uid, gid = user.pw_uid, user.pw_gid
+    if uid <= 0 or gid <= 0 or getpwnam(worker["User"]).pw_uid != uid:
+        raise InstalledTransactionBlocked("installed_service_account_mismatch")
+    # The retained owner independently checks the local identity and registry.
+    _trusted(TRUST, directory=True)
+    _trusted(TRUST / "agent-session-id")
+    hybrid = (TRUST / "agent-session-id").read_text().strip()
+    inventory = lease._read_installed_controller_agents(None, hybrid, expected_uid=uid)
+    ids = [agent for agent, _ in inventory[0]]
+    tx = uuid.uuid4().hex
+    issued = int(time.time())
+    options = dict(transaction_id=tx, release_sha256=digest,
+                   issued_at=issued, expires_at=issued+900, expected_agent_ids=ids,
+                   local_hybrid_agent_id=hybrid, expected_controller_uid=uid,
+                   expected_worker_uid=uid, operator_reviewed=True)
+    workspace = STATE / ("transaction-" + tx)
+    with lease.retain_installed_host_scope(**options) as scope:
+        _require_retained_admission(scope, options)
+        if restart_required and not callable(scope.get("restart_control_plane")):
+            raise InstalledTransactionBlocked("retained_restart_owner_missing")
+        scope["checkpoint"]()
+        operator_review = _load("game-uptime-operational-release-review.py")
+        proof = operator_review.verify_reviewed_artifact(TARGET)
+        if (proof.get("artifact_origin_verified") is not True
+                or proof.get("target_tree_bound_to_signed_tar") is not True
+                or proof.get("verified_archive_sha256") != digest):
+            raise InstalledTransactionBlocked("signed_target_changed_under_retained_scope")
+        # Re-read the reviewed expectations and the actual game witnesses
+        # while the local scope is held. A new active set cannot be adopted.
+        inputs, inputs_sha256 = operator_review.read_operational_inputs(INSTALLED, TARGET, proof)
+        if inputs_sha256 != review.get("reviewed_operational_inputs_sha256"):
+            raise InstalledTransactionBlocked("reviewed_operational_inputs_changed")
+        retained_review = preflight.preflight(INSTALLED, TARGET, **inputs)
+        if (retained_review.get("release_impact") or {}).get("installed_baseline_review") != baseline:
+            raise InstalledTransactionBlocked("signed_installed_baseline_changed")
+        for field in ("handoff_witness", "operational_coverage", "compatibility_gate",
+                      "supervisor_pin_evidence"):
+            if retained_review.get(field) != review.get(field):
+                raise InstalledTransactionBlocked("reviewed_operational_evidence_changed:" + field)
+        _require_forward_version(INSTALLED, TARGET)
+        scope["checkpoint"]()
+        workspace.mkdir(mode=0o700)
+        parent = os.open(STATE, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(parent)
+        finally:
+            os.close(parent)
+        engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
+        # Recheck both classifiers and signed binding immediately before snapshot.
+        impact = preflight.plan.analyze(INSTALLED, TARGET)
+        if impact.get("installed_baseline_review") != baseline:
+            raise InstalledTransactionBlocked("signed_installed_baseline_changed")
+        if _select_candidate({"release_impact": impact,
+                              "operational_release_review": proof}) != (digest, paths, restart_required):
+            raise InstalledTransactionBlocked("exact_file_plan_changed")
+        if restart_required:
+            engine.prepare_control_plane(impact["control_plane_restart_plan"])
+        else:
+            engine.prepare(paths)
+        if engine.requires_control_plane_restart() is not restart_required:
+            raise InstalledTransactionBlocked("product_journal_restart_mode_mismatch")
+        report = {"kind": "DSM928InstalledUptimeTransaction", "schema_version": 2,
+                  "scope": {key: options[key] for key in ("transaction_id", "release_sha256",
+                      "issued_at", "expires_at", "expected_agent_ids")},
+                  "local_hybrid_agent_id": hybrid,
+                  "product_file_journal_sha256": engine.journal_digest(),
+                  "product_identity": [uid, gid], "live_no_drain_authorized": False}
+        _write_status(workspace, report, "prepared")
+        try:
+            outcome = _execute_file_transaction(engine, scope, restart_required=restart_required,
+                                                cache_policy=_verify_live_cache_policy)
+        except Exception:
+            _write_status(workspace, report, "manual_recovery_required")
+            raise
+        terminal = _write_status(workspace, report, outcome)
+    # The persistent hold spans the transition to local terminal verification.
+    with lease.retain_installed_host_scope(**options, recover_existing=True) as scope:
+        _require_retained_admission(scope, options)
+        engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
+        if engine.journal_digest() != report["product_file_journal_sha256"]:
+            raise InstalledTransactionBlocked("product_file_journal_changed")
+        if engine.requires_control_plane_restart() is not restart_required:
+            raise InstalledTransactionBlocked("product_journal_restart_mode_mismatch")
+        engine.verify_terminal(outcome)
+        _verify_terminal_restart(scope, restart_required, outcome)
+        if restart_required:
+            _verify_live_cache_policy()
+        result = scope["finalize_terminal"](terminal)
+        if result.get("status") != "installed_terminal_holds_released":
+            raise InstalledTransactionBlocked("terminal_release_incomplete")
+    return {"status": outcome, "transaction_id": tx, "game_drain_performed": False,
+            "terminal_holds_released": True}
+
+
+def _validate_recovery_report(report, tx, now):
+    """Recovery never adopts a new release, inventory or lease window."""
+    if (type(tx) is not str or not re.fullmatch(r"[0-9a-f]{32}", tx)
+            or type(report) is not dict or set(report) != {
+                "kind", "schema_version", "scope", "local_hybrid_agent_id",
+                "product_file_journal_sha256", "product_identity",
+                "live_no_drain_authorized", "status"}
+            or report["kind"] != "DSM928InstalledUptimeTransaction"
+            or report["schema_version"] != 2
+            or report["live_no_drain_authorized"] is not False
+            or report["status"] not in ("prepared", "verified", "rolled_back", "recovered_rollback")):
+        raise InstalledTransactionBlocked("installed_recovery_journal_invalid_or_manual_review_required")
+    scope = report["scope"]
+    identity = report["product_identity"]
+    if (type(scope) is not dict or set(scope) != {
+            "transaction_id", "release_sha256", "issued_at", "expires_at",
+            "expected_agent_ids"}
+            or scope["transaction_id"] != tx
+            or any(type(x) is not str or not re.fullmatch(r"[0-9a-f]{64}", x)
+                   for x in (scope["release_sha256"], report["product_file_journal_sha256"]))
+            or type(scope["issued_at"]) is not int or type(scope["expires_at"]) is not int
+            or not 0 < scope["issued_at"] <= now < scope["expires_at"] <= scope["issued_at"] + 900
+            or type(identity) is not list or len(identity) != 2
+            or any(type(x) is not int or x <= 0 for x in identity)):
+        raise InstalledTransactionBlocked("installed_recovery_binding_or_lease_invalid")
+    ids = scope["expected_agent_ids"]
+    if (type(ids) is not list or not 1 <= len(ids) <= 64
+            or any(type(x) is not str or not re.fullmatch(r"[A-Za-z0-9._-]{1,191}", x) for x in ids)
+            or ids != sorted(set(ids))
+            or report["local_hybrid_agent_id"] not in ids):
+        raise InstalledTransactionBlocked("installed_recovery_inventory_invalid")
+    return {**scope, "local_hybrid_agent_id": report["local_hybrid_agent_id"],
+            "expected_controller_uid": identity[0], "expected_worker_uid": identity[0],
+            "recover_existing": True, "operator_reviewed": True}
+
+
+def _read_recovery_report(workspace):
+    _trusted(workspace, directory=True)
+    if stat.S_IMODE(workspace.lstat().st_mode) != 0o700:
+        raise InstalledTransactionBlocked("installed_recovery_workspace_not_private")
+    path = workspace / "game-uptime-transaction.json"
+    _trusted(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        def fingerprint(item):
+            return (item.st_dev, item.st_ino, item.st_uid, item.st_mode, item.st_nlink,
+                    item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        before = os.fstat(fd)
+        if (not stat.S_ISREG(before.st_mode) or before.st_uid != 0
+                or stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1
+                or not 0 < before.st_size <= 65536
+                or fingerprint(before) != fingerprint(path.lstat())):
+            raise InstalledTransactionBlocked("installed_recovery_journal_untrusted")
+        with os.fdopen(os.dup(fd), "rb") as stream:
+            raw = stream.read(65537)
+        if (len(raw) != before.st_size or fingerprint(before) != fingerprint(os.fstat(fd))
+                or fingerprint(before) != fingerprint(path.lstat())):
+            raise InstalledTransactionBlocked("installed_recovery_journal_changed")
+    finally:
+        os.close(fd)
+    report = json.loads(raw)
+    if raw != (json.dumps(report, sort_keys=True, separators=(",", ":")) + "\n").encode():
+        raise InstalledTransactionBlocked("installed_recovery_journal_not_canonical")
+    return report, hashlib.sha256(raw).hexdigest()
+
+
+def recover(tx):
+    """Reacquire only the original, still valid installed recovery scope.
+
+    No fresh hold, lease extension, ordinary updater, or decision reversal.
+    Missing/expired/partially released evidence stays for manual review.
+    """
+    _require_trusted_snapshot(TARGET)
+    with _installed_runtime_imports():
+        return _recover_installed(tx)
+
+
+def _recover_installed(tx):
+    if type(tx) is not str or not re.fullmatch(r"[0-9a-f]{32}", tx):
+        raise InstalledTransactionBlocked("invalid_installed_recovery_transaction")
+    workspace = STATE / ("transaction-" + tx)
+    report, terminal = _read_recovery_report(workspace)
+    options = _validate_recovery_report(report, tx, int(time.time()))
+    digest = options["release_sha256"]
+    review = _load("game-uptime-operational-release-review.py").verify_reviewed_artifact(TARGET)
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True
+            or review.get("verified_archive_sha256") != digest):
+        raise InstalledTransactionBlocked("original_signed_recovery_payload_unverified")
+    lease = _load("game-uptime-local-scope-lease.py")
+    module = _load("game-uptime-file-transaction.py")
+    with lease.retain_installed_host_scope(**options) as scope:
+        _require_retained_admission(scope, options)
+        if _read_recovery_report(workspace) != (report, terminal):
+            raise InstalledTransactionBlocked("installed_recovery_journal_changed")
+        engine = _engine(module, workspace, tuple(report["product_identity"]), scope, digest, tx)
+        if engine.journal_digest() != report["product_file_journal_sha256"]:
+            raise InstalledTransactionBlocked("product_file_journal_changed")
+        outcome = report["status"]
+        restart_required = engine.requires_control_plane_restart()
+        if restart_required:
+            _verify_live_cache_policy()
+        if outcome == "prepared":
+            for prefix in ("terminal-", "terminal-confirmation-", "released-"):
+                if os.path.lexists(STATE / (prefix + tx + ".json")):
+                    raise InstalledTransactionBlocked("existing_terminal_decision_requires_review")
+            # The before/after file journal handles an interrupted mixed
+            # state. A failed rollback keeps the prepared journal and holds.
+            count = _restart_count(scope)
+            if not restart_required and count:
+                raise InstalledTransactionBlocked("unexpected_static_restart_receipts")
+            if restart_required and count == 2:
+                # Both restart transitions are already durable. Never apply a
+                # third restart or change files behind the recorded daemons.
+                engine.verify_terminal("recovered_rollback")
+            else:
+                engine.rollback()
+                if restart_required:
+                    _restart_verified(scope)
+            outcome = "recovered_rollback"
+            engine.verify_terminal(outcome)
+            _verify_terminal_restart(scope, restart_required, outcome)
+            scope["checkpoint"]()
+            terminal = _write_status(workspace, report, outcome)
+        else:
+            # An already durable decision is immutable; only finish it.
+            engine.verify_terminal(outcome)
+            _verify_terminal_restart(scope, restart_required, outcome)
+        scope["checkpoint"]()
+        if restart_required:
+            _verify_live_cache_policy()
+        result = scope["finalize_terminal"](terminal)
+        if result.get("status") != "installed_terminal_holds_released":
+            raise InstalledTransactionBlocked("terminal_release_incomplete")
+    return {"status": outcome, "transaction_id": tx, "game_drain_performed": False,
+            "terminal_holds_released": True}
+
+
+def main():
+    try:
+        if len(sys.argv) == 3 and sys.argv[1] == "--recover":
+            result = recover(sys.argv[2])
+        elif len(sys.argv) == 2:
+            result = run(sys.argv[1])
+        else:
+            raise InstalledTransactionBlocked("exactly_one_reviewed_payload_or_recovery_id_required")
+        print(json.dumps(result, sort_keys=True))
+        return 0 if result["status"] == "verified" else 2
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
+        print(json.dumps({"status": "blocked", "reason": str(exc)[:1000],
+                          "ordinary_draining_fallback": False}, sort_keys=True))
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

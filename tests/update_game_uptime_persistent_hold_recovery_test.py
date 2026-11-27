@@ -53,6 +53,113 @@ class PersistentPendingHoldTests(unittest.TestCase):
                        trusted_uid=self.uid, now=1700000010)
 
     def test_durable_preparation_remains_negative_and_recovers_fail_closed(self):
+        from game_uptime_hold_coordinator import _game_inventory
+        self.assertEqual(_game_inventory(
+            "capivara-instance-b.service loaded active running Game B\n"
+            "capivara-instance-a.service loaded active running Game A\n"),
+            ["capivara-instance-a.service", "capivara-instance-b.service"])
+        self.assertEqual(_game_inventory(""), [])
+        from game_uptime_hold_coordinator import (
+            _installed_confirmation, _validate_installed_confirmation,
+            _release_confirmed_installed_hold,
+        )
+        scope = {"transaction_id": self.tx, "release_sha256": "a"*64,
+                 "issued_at": 1700000000, "expires_at": 1700000600,
+                 "expected_agent_ids": ["hybrid", "vps"]}
+        decision = {"outcome": "recovered_rollback", "journal_sha256": "b"*64}
+        confirmation = _installed_confirmation(
+            scope, "hybrid", ["hybrid", "vps"], **decision)
+        self.assertRegex(_validate_installed_confirmation(confirmation, scope, decision),
+                         r"^[0-9a-f]{64}$")
+        for invalid in ({**confirmation, "recorded_agent_ids": ["vps"]},
+                        {**confirmation, "release_sha256": "c"*64},
+                        {**confirmation, "journal_sha256": "c"*64},
+                        {**confirmation, "live_no_drain_authorized": True}):
+            with self.assertRaises(HoldPreparationBlocked):
+                _validate_installed_confirmation(invalid, scope, decision)
+        for raw in ("capivara-instance-a.service loaded activating start Game",
+                    "capivara-instance-a.service loaded active exited Game",
+                    "capivara-instance-a.service loaded active running Game\n"
+                    "capivara-instance-a.service loaded active running Game",
+                    "unexpected.service loaded active running Game"):
+            with self.assertRaises(HoldPreparationBlocked):
+                _game_inventory(raw)
+        # Queued systemd actions, detached uninstall timers and independent
+        # root helpers are not represented by a zero Controller job count.
+        from game_uptime_hold_coordinator import _require_idle_managed_systemd_work
+        resident = ("capivara-agent-console-reader.service loaded active running reader\n"
+                    "capivara-agent-runtime-identity.service loaded active exited identity\n")
+        _require_idle_managed_systemd_work("12 unrelated.service start running\n", resident)
+        for jobs, units in (
+            ("13 capivara-instance-test.service stop waiting\n", resident),
+            ("14 dsm-dashboard.service restart running\n", resident),
+            ("malformed job\n", resident),
+            ("", resident + "capivara-agent-uninstall-finalize.timer loaded active waiting cleanup\n"),
+            ("", resident + "dsm-backup.timer loaded active waiting backup\n"),
+            ("", resident + "capivara-update.timer loaded active waiting update\n"),
+            ("", resident + "dsm-hybrid-agent-files-access@x.service loaded activating start ACL\n"),
+            ("", resident + "capivara-agent-update.service loaded active running updater\n"),
+        ):
+            with self.subTest(jobs=jobs, units=units):
+                with self.assertRaises(HoldPreparationBlocked):
+                    _require_idle_managed_systemd_work(jobs, units)
+        from game_uptime_hold_coordinator import _MANAGED_EXTERNAL_COMMAND
+        for command in ("cd /opt/dsm", "5 * * * * dsm-backup",
+                        "0 0 * * * /usr/local/bin/dsm_job", "capivara-backup"):
+            self.assertIsNotNone(_MANAGED_EXTERNAL_COMMAND.search(command))
+        self.assertIsNone(_MANAGED_EXTERNAL_COMMAND.search("0 0 * * * /usr/bin/logrotate"))
+        # A running standalone Agent must match the installed unit and have
+        # opted into the shared finalization fence; a PID alone is insufficient.
+        from game_uptime_hold_coordinator import _validate_agent_daemon_snapshot
+        unit = {"ActiveState": "active", "SubState": "running",
+                "User": "capivara-agent", "MainPID": "210",
+                "ControlGroup": "/system.slice/capivara-agent.service",
+                "InvocationID": "a"*32, "ExecMainStartTimestampMonotonic": "1234"}
+        proc = {"pid": 210, "uid": 1000, "start_ticks": 500,
+                "cgroup": unit["ControlGroup"],
+                "argv": ("/usr/bin/python3", "/opt/capivara-agent/runtime/agent.py"),
+                "finalization_flock_opted_in": True}
+        witness = _validate_agent_daemon_snapshot(unit, proc, uid=1000)
+        self.assertEqual(witness["pid"], 210)
+        for invalid in ({**proc, "finalization_flock_opted_in": False},
+                        {**proc, "pid": 211}, {**proc, "uid": 0},
+                        {**proc, "cgroup": "/other"}, {**proc, "argv": ("/usr/bin/python3", "/tmp/agent.py")}):
+            with self.assertRaises(HoldPreparationBlocked):
+                _validate_agent_daemon_snapshot(unit, invalid, uid=1000)
+        # The autonomous Agent updater must not consume its update request
+        # when either the host admission inode or maintenance hold blocks it.
+        import importlib.util
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        import game_uptime_privileged_flock as admission
+        import game_uptime_maintenance_hold as maintenance
+        spec = importlib.util.spec_from_file_location(
+            "dsm928_autonomous_updater_test", ROOT / "agents/linux/updater/updater.py")
+        updater = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(updater)
+        @contextmanager
+        def busy(*, provision):
+            self.assertFalse(provision)
+            raise admission.PrivilegedHelperFenceUnavailable("busy")
+            yield
+        @contextmanager
+        def retained(*, provision):
+            self.assertFalse(provision)
+            yield
+        with patch.object(updater, "INSTALL_ROOT", Path("/opt/capivara-agent")), \
+             patch.object(updater, "_execute_request", return_value=0) as execute:
+            with patch.object(admission, "exclusive_update_admission", busy):
+                self.assertEqual(updater.main(), 2)
+            with patch.object(admission, "exclusive_update_admission", retained), \
+                 patch.object(maintenance, "observe", return_value={"active": True}):
+                self.assertEqual(updater.main(), 2)
+            execute.assert_not_called()
+            with patch.object(admission, "exclusive_update_admission", retained), \
+                 patch.object(maintenance, "observe", return_value={"active": False}):
+                self.assertEqual(updater.main(), 0)
+            execute.assert_called_once_with()
+        unit = (ROOT / "agents/linux/services/capivara-agent-uninstall.service").read_text()
+        self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1", unit)
         # A restrictive installer/systemd umask must not make the hold 0600.
         # Its JSON contains no credentials; Agent/Worker users need read only.
         previous_umask = os.umask(0o077)
@@ -86,6 +193,334 @@ class PersistentPendingHoldTests(unittest.TestCase):
                           "reason": "pending_journal_requires_operator_recovery"})
         with self.assertRaises(HoldPreparationBlocked):
             self.prepare()  # Never overwrite/replay without manual recovery.
+
+    def test_root_release_binding_is_durable_operator_only_and_matches_hold(self):
+        from game_uptime_transaction_binding import (
+            ReleaseBindingBlocked, binding_for_hold, read_binding,
+        )
+        binding_path = self.state / "no-drain-release-binding.json"
+        sha = "d" * 64
+        from game_uptime_wire_replay_service import read_inventory
+        ids = ["agent-B", "agent-A", "agent-offline"]
+        with self.assertRaises(HoldPreparationBlocked):
+            self.prepare(release_sha256=sha, binding_path=binding_path,
+                         expected_agent_ids=["agent-A", "agent-A"])
+        self.assertFalse(self.journal.exists())
+        proof = self.prepare(
+            release_sha256=sha, binding_path=binding_path,
+            expected_agent_ids=ids)
+        self.assertTrue(proof["release_identity_bound_locally"])
+        self.assertTrue(proof["operator_agent_inventory_persisted"])
+        inventory_path = self.state / "no-drain-agent-inventory.json"
+        inventory = read_inventory(path=inventory_path, trusted_uid=self.uid)
+        self.assertEqual(inventory["agent_ids"], sorted(ids))
+        self.assertEqual(inventory["release_sha256"], sha)
+        self.assertEqual(inventory["transaction_id"], self.tx)
+        self.assertEqual(inventory["issued_at"], 1700000000)
+        self.assertEqual(inventory["expires_at"], 1700000600)
+        self.assertEqual(stat.S_IMODE(inventory_path.stat().st_mode), 0o600)
+        original_inventory = inventory_path.read_bytes()
+        self.assertFalse(proof["publisher_signature_verified"])
+        self.assertFalse(proof["remote_agents_acked"])
+        self.assertEqual(stat.S_IMODE(binding_path.stat().st_mode), 0o644)
+        held = self.observation()
+        checked = binding_for_hold(
+            held, path=binding_path, now=1700000010, trusted_uid=self.uid)
+        self.assertEqual(checked["release_sha256"], sha)
+        self.assertEqual(checked["transaction_id"], self.tx)
+        with self.assertRaises(ReleaseBindingBlocked):
+            binding_for_hold(
+                {**held, "transaction_id": "e" * 32},
+                path=binding_path, now=1700000010, trusted_uid=self.uid)
+        with self.assertRaises(ReleaseBindingBlocked):
+            read_binding(path=binding_path, now=1700000700,
+                         trusted_uid=self.uid)
+        with self.assertRaises(HoldPreparationBlocked):
+            self.prepare(release_sha256=sha, binding_path=binding_path)
+        self.assertEqual(read_binding(
+            path=binding_path, now=1700000010,
+            trusted_uid=self.uid)["release_sha256"], sha)
+        self.assertEqual(inventory_path.read_bytes(), original_inventory)
+        # Tampered root evidence never downgrades into trusted release proof.
+        binding_path.write_text(binding_path.read_text().replace(sha, "e"*63+"Z"))
+        with self.assertRaises(ReleaseBindingBlocked):
+            read_binding(path=binding_path, now=1700000010,
+                         trusted_uid=self.uid)
+        self.assertFalse(proof["live_no_drain_authorized"])
+
+    def test_root_only_wire_nonce_journal_survives_restarts_without_ack(self):
+        """One grouped replay/crash test on the existing disposable fixture."""
+        from game_uptime_durable_wire_replay import (
+            record_authenticated_negative_receipt,
+        )
+        import importlib
+        import game_uptime_durable_wire_replay as replay_module
+
+        sha = "a" * 64
+        binding = self.state / "no-drain-release-binding.json"
+        self.prepare(release_sha256=sha, binding_path=binding)
+        receipts = self.state / "no-drain-wire-receipts"
+        receipts.mkdir(mode=0o700)
+        now = 1700000010
+        def make_receipt(agent_id, nonce):
+            return {
+                "kind": "CapivaraNoDrainFenceEvidenceReceipt",
+                "schema_version": 1, "agent_id": agent_id,
+                "request_id": nonce, "transaction_id": self.tx,
+                "release_sha256": sha, "issued_at": 1700000000,
+                "expires_at": 1700000600,
+                "contract": {
+                    "protocol": "dsm928-fence-evidence-release-bound-readonly-v2",
+                    "schema": "2",
+                },
+                "status": "authenticated_evidence_received_unfenced",
+                "scope": "authenticated_heartbeat_wire_only",
+                "agent_workers_fenced": False,
+                "remote_agent_quiescence_acked": False,
+                "live_no_drain_authorized": False,
+            }
+        scope = {
+            "expected_agent_ids": ["agent-A", "agent-B"],
+            "expected_transaction_id": self.tx,
+            "expected_release_sha256": sha,
+            "journal_dir": receipts, "hold_path": self.marker,
+            "pending_path": self.journal, "binding_path": binding,
+            "trusted_uid": self.uid, "now": now, "fixture_only": True,
+        }
+        nonce = "a" * 32
+        first = make_receipt("agent-A", nonce)
+        witness = record_authenticated_negative_receipt(
+            authenticated_agent_id="agent-A", receipt=first, **scope)
+        self.assertTrue(witness["wire_receipt_received"])
+        self.assertFalse(witness["transport_authentication_independently_verified"])
+        self.assertFalse(witness["remote_agent_quiescence_acked"])
+        self.assertFalse(witness["live_no_drain_authorized"])
+        record_path = receipts / (nonce + ".json")
+        self.assertEqual(stat.S_IMODE(record_path.stat().st_mode), 0o600)
+        original = record_path.read_bytes()
+        # Re-import simulates a freshly booted coordinator: same disk nonce
+        # cannot be accepted again, even under a different allowed Agent ID.
+        importlib.reload(replay_module)
+        with self.assertRaisesRegex(
+                replay_module.DurableWireReplayBlocked,
+                "replayed_or_existing_wire_nonce"):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-A", receipt=first, **scope)
+        with self.assertRaisesRegex(
+                replay_module.DurableWireReplayBlocked,
+                "replayed_or_existing_wire_nonce"):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-B",
+                receipt=make_receipt("agent-B", nonce), **scope)
+        self.assertEqual(record_path.read_bytes(), original)
+        # A new nonce is accepted only for a member of the fixed Agent set.
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="unknown",
+                receipt=make_receipt("unknown", "b" * 32), **scope)
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-B",
+                receipt={**make_receipt("agent-B", "b"*32),
+                         "release_sha256": "f"*64}, **scope)
+        self.assertFalse((receipts / ("b"*32 + ".json")).exists())
+        # Real socket writer's request parser + privileged append function:
+        # one authenticated NEGATIVE record succeeds under a disposable root
+        # journal; a duplicate request cannot be accepted after persistence.
+        import game_uptime_wire_replay_service as wire_writer
+        valid_wire = (json.dumps({
+            "protocol": wire_writer.PROTOCOL,
+            "authenticated_agent_id": "agent-B",
+            "receipt": make_receipt("agent-B", "c"*32),
+        }, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        def fixture_record(**kwargs):
+            return replay_module.record_authenticated_negative_receipt(
+                **kwargs, journal_dir=receipts, hold_path=self.marker,
+                pending_path=self.journal, binding_path=binding,
+                trusted_uid=self.uid, now=now, fixture_only=True)
+        inventory_path = self.state / "no-drain-agent-inventory.json"
+        inventory = {
+            "kind": "DSM928OperatorAgentInventory", "schema_version": 1,
+            "transaction_id": self.tx, "release_sha256": sha,
+            "issued_at": 1700000000, "expires_at": 1700000600,
+            "agent_ids": ["agent-A", "agent-B"],
+        }
+        def write_inventory(doc):
+            inventory_path.write_text(json.dumps(
+                doc, sort_keys=True, separators=(",", ":")) + "\n")
+            inventory_path.chmod(0o600)
+
+        def fixture_inventory():
+            return wire_writer.read_inventory(
+                path=inventory_path, trusted_uid=self.uid)
+
+        def commit_wire():
+            return wire_writer.commit_request(
+                valid_wire, record_fn=fixture_record,
+                inventory_fn=fixture_inventory)
+
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            commit_wire()
+        for changed in ({"agent_ids": ["agent-A"]},
+                        {"release_sha256": "f"*64},
+                        {"agent_ids": ["agent-B", "agent-B"]}):
+            write_inventory({**inventory, **changed})
+            with self.assertRaises(wire_writer.RootWriterBlocked):
+                commit_wire()
+        write_inventory(inventory)
+        def inspect_receipts():
+            return wire_writer.inspect_persisted_receipts(
+                journal_dir=receipts, hold_path=self.marker,
+                pending_path=self.journal, binding_path=binding,
+                trusted_uid=self.uid, now=now, fixture_only=True,
+                expected_release_sha256=sha)
+        before_coverage = inspect_receipts()
+        self.assertEqual(before_coverage["missing_agent_ids"], ["agent-B"])
+        self.assertFalse(before_coverage["wire_receipt_inventory_complete"])
+        inventory_path.chmod(0o666)
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            commit_wire()
+        inventory_path.chmod(0o600)
+        self.assertFalse((receipts / ("c"*32 + ".json")).exists())
+        recorded = commit_wire()
+        self.assertEqual(recorded["status"],
+                         "negative_v2_receipt_durably_recorded")
+        self.assertFalse(recorded["remote_agent_quiescence_acked"])
+        self.assertFalse(recorded["external_jobs_acked"])
+        self.assertFalse(recorded["live_no_drain_authorized"])
+        self.assertTrue((receipts / ("c"*32 + ".json")).exists())
+        coverage = inspect_receipts()
+        self.assertTrue(coverage["wire_receipt_inventory_complete"])
+        self.assertEqual(coverage["observed_agent_count"], 2)
+        self.assertFalse(coverage["remote_agents_acked"])
+        self.assertFalse(coverage["live_no_drain_authorized"])
+        # A registered offline Agent remains in the denominator.
+        write_inventory({**inventory, "agent_ids": ["agent-A", "agent-B", "offline"]})
+        self.assertEqual(inspect_receipts()["missing_agent_ids"], ["offline"])
+        write_inventory(inventory)
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
+            commit_wire()
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            wire_writer.decode_request(
+                valid_wire.replace(b'"protocol":', b'"protocol":"forged", "protocol":'))
+        with self.assertRaises(wire_writer.RootWriterBlocked):
+            wire_writer.decode_request(valid_wire + b"second\n")
+        # SO_PEERCRED peer must match effective UID, installed Dashboard
+        # interpreter and exact cgroup: a Worker using the same UID fails.
+        fake_proc = self.run / "fixture-proc"
+        pid_path = fake_proc / "31415"
+        pid_path.mkdir(parents=True)
+        (pid_path / "cgroup").write_text("0::/system.slice/dsm-dashboard.service\n")
+        (pid_path / "cmdline").write_bytes(
+            b"/usr/bin/python3\x00/opt/dsm/dashboard/server_part22.py\x00")
+        (pid_path / "status").write_text("Uid:\t1001\t1001\t1001\t1001\n")
+        self.assertTrue(wire_writer.peer_is_dashboard(
+            pid=31415, uid=1001, expected_uid=1001, proc_root=fake_proc))
+        self.assertFalse(wire_writer.peer_is_dashboard(
+            pid=31415, uid=1002, expected_uid=1001, proc_root=fake_proc))
+        (pid_path / "cgroup").write_text("0::/system.slice/dsm-dashboard-worker.service\n")
+        self.assertFalse(wire_writer.peer_is_dashboard(
+            pid=31415, uid=1001, expected_uid=1001, proc_root=fake_proc))
+        # Loss of the ephemeral /run hold with durable pending journal
+        # must block any new witness, without deleting historical evidence.
+        self.marker.unlink()
+        with self.assertRaises(replay_module.DurableWireReplayBlocked):
+            replay_module.record_authenticated_negative_receipt(
+                authenticated_agent_id="agent-B",
+                receipt=make_receipt("agent-B", "b"*32), **scope)
+        self.assertEqual(record_path.read_bytes(), original)
+        self.assertFalse((receipts / ("b"*32 + ".json")).exists())
+
+    def test_controller_startup_provisions_empty_storage_without_recovery(self):
+        workers = str(ROOT / "dashboard/workers")
+        sys.path.insert(0, workers)
+        try:
+            from prepare_maintenance_worker_locks import prepare_controller
+        finally:
+            sys.path.remove(workers)
+        def prepare():
+            return prepare_controller(
+                self.uid, os.getegid(), runtime=self.run,
+                state=self.state, parent_owner=self.uid)
+
+        # Couple the installed service's opt-in with its root preparer.
+        # Do not claim a local request lock proves distributed quiescence.
+        unit = (ROOT / "systemd/dsm-dashboard.service").read_text()
+        self.assertIn("Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1\n", unit)
+        self.assertIn("prepare_maintenance_worker_locks.py --user {{DSM_USER}} "
+                      "--group {{DSM_GROUP}} --controller-only", unit)
+        self.assertIn("ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part22.py", unit)
+        lock = prepare()
+        self.assertEqual(lock.name, "controller-agent-http.lock")
+        dashboard = str(ROOT / "dashboard")
+        sys.path.insert(0, dashboard)
+        try:
+            from game_uptime_controller_agent_http_flock import (
+                shared_controller_agent_http_lock,
+                exclusive_controller_agent_http_lock,
+                ControllerHttpLockUnavailable,
+            )
+        finally:
+            sys.path.remove(dashboard)
+        scope = dict(lock_path=lock, expected_uid=self.uid,
+                     expected_gid=os.getegid(), parent_uid=self.uid)
+        with shared_controller_agent_http_lock(**scope, enabled=True) as held:
+            self.assertTrue(held)
+            with self.assertRaises(ControllerHttpLockUnavailable):
+                with exclusive_controller_agent_http_lock(**scope):
+                    self.fail("exclusive lock acquired during HTTP mutation")
+        with exclusive_controller_agent_http_lock(**scope) as observation:
+            self.assertFalse(observation["live_no_drain_authorized"])
+            with self.assertRaises(ControllerHttpLockUnavailable):
+                with shared_controller_agent_http_lock(**scope, enabled=True):
+                    self.fail("HTTP mutation admitted during exclusive lock")
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o600)
+        receipts = self.state / "no-drain-wire-receipts"
+        self.assertEqual(stat.S_IMODE(receipts.stat().st_mode), 0o700)
+        self.assertFalse(self.marker.exists())
+        self.assertFalse(self.journal.exists())
+        self.assertFalse((self.state / "no-drain-release-binding.json").exists())
+        self.assertEqual(list(receipts.iterdir()), [])
+        # The standalone Agent must have the same durable recovery root
+        # before its runtime identity service runs. Restrictive umask may
+        # not hide a root-owned pending sentinel from the Agent reader.
+        from game_uptime_privileged_flock import (
+            provision_recovery_state, PrivilegedHelperFenceUnavailable,
+        )
+        agent_state = self.state.parent / "standalone-agent-state"
+        previous = os.umask(0o077)
+        try:
+            provision_recovery_state(path=agent_state, trusted_uid=self.uid)
+        finally:
+            os.umask(previous)
+        self.assertEqual(stat.S_IMODE(agent_state.stat().st_mode), 0o755)
+        self.assertEqual(list(agent_state.iterdir()), [])
+        agent_pending = agent_state / self.journal.name
+        agent_pending.write_bytes(b"interrupted")
+        agent_pending.chmod(0o600)
+        state_inode = agent_state.stat().st_ino
+        provision_recovery_state(path=agent_state, trusted_uid=self.uid)
+        self.assertEqual(agent_state.stat().st_ino, state_inode)
+        self.assertEqual(agent_pending.read_bytes(), b"interrupted")
+        self.assertTrue(observe(path=self.marker, pending_path=agent_pending,
+                                trusted_uid=self.uid)["active"])
+        agent_state.chmod(0o700)
+        with self.assertRaises(PrivilegedHelperFenceUnavailable):
+            provision_recovery_state(path=agent_state, trusted_uid=self.uid)
+        self.assertEqual(stat.S_IMODE(agent_state.stat().st_mode), 0o700)
+        self.assertIn("game_uptime_privileged_flock.py --provision-with-state",
+                      (ROOT / "agents/linux/services/capivara-agent-runtime-identity.service").read_text())
+        original = lock.stat().st_ino
+        self.journal.write_bytes(b"interrupted")
+        self.journal.chmod(0o600)
+        self.assertEqual(prepare().stat().st_ino, original)
+        self.assertEqual(self.journal.read_bytes(), b"interrupted")
+        self.assertTrue(self.observation()["active"])
+        lock.chmod(0o666)
+        with self.assertRaises(RuntimeError):
+            prepare()
+        self.assertEqual(lock.stat().st_ino, original)
+        self.assertEqual(stat.S_IMODE(lock.stat().st_mode), 0o666)
 
     def test_partial_journal_blocks_after_crash_before_marker_write(self):
         self.journal.write_bytes(b"{incomplete")
@@ -144,6 +579,22 @@ class PersistentPendingHoldTests(unittest.TestCase):
         # Invalid marker already blocks. After marker loss, pending still blocks.
         self.marker.unlink()
         self.assertTrue(self.observation()["active"])
+        # Orphaned scope evidence must also retain a durable recovery block.
+        # Use independent temporary subtests; never delete production evidence.
+        for name in ("no-drain-release-binding.json",
+                     "no-drain-agent-inventory.json"):
+            with self.subTest(name=name):
+                self.journal.unlink()  # disposable fixture reset only
+                orphan = self.state / name
+                orphan.write_bytes(b"prior evidence")
+                orphan.chmod(0o600)
+                with self.assertRaises(HoldPreparationBlocked):
+                    self.prepare()
+                self.assertEqual(orphan.read_bytes(), b"prior evidence")
+                self.assertTrue(self.journal.exists())
+                self.assertFalse(self.marker.exists())
+                self.assertTrue(self.observation()["active"])
+                orphan.unlink()
 
 
     def test_root_journal_and_privileged_exclusive_witness_is_local_and_negative(self):
@@ -279,6 +730,32 @@ class PersistentPendingHoldTests(unittest.TestCase):
             local_privileged_and_finalization_journal_witness,
         )
 
+        # The standalone systemd package must enable both existing fences,
+        # without weakening ProtectSystem or adding writable /run paths.
+        services = ROOT / "agents/linux/services"
+        identity = (services / "capivara-agent-runtime-identity.service").read_text()
+        self.assertIn("game_uptime_privileged_flock.py --provision", identity)
+        self.assertIn("game_uptime_finalization_flock.py --provision", identity)
+        for name in ("runtime-identity", "materialize@", "firewall@",
+                     "backup-create@", "backup-restore@"):
+            unit = (services / ("capivara-agent-" + name + ".service")).read_text()
+            self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1\n", unit)
+            self.assertIn("game_uptime_privileged_flock.py --provision", unit)
+            self.assertNotIn("ReadWritePaths=/run", unit)
+        # Hybrid helpers run in independent systemd units, not in the
+        # Worker process's environment. Each must opt in at its own boundary.
+        for name in ("materialize@", "native-command@", "backup-restore@", "firewall@",
+                     "files-access@"):
+            unit = (ROOT / "systemd" /
+                    ("dsm-hybrid-agent-" + name + ".service.in")).read_text()
+            self.assertIn("Environment=DSM928_AGENT_PRIVILEGED_FLOCK=1\n", unit)
+            self.assertIn("@DSM_ROOT@/agents/linux/runtime/"
+                          "game_uptime_privileged_flock.py --provision", unit)
+            self.assertNotIn("ReadWritePaths=/run", unit)
+            self.assertIn("NoNewPrivileges=true", unit)
+        standalone = (services / "capivara-agent.service").read_text()
+        self.assertIn("Environment=DSM928_AGENT_FINALIZATION_FLOCK=1\n", standalone)
+        self.assertIn("Requires=capivara-agent-runtime-identity.service", standalone)
         final_dir = self.run / "finalization-locks"
         final_dir.mkdir(mode=0o755)
         child_inode = final_dir / "agent-finalization-operations.lock"
@@ -317,6 +794,29 @@ class PersistentPendingHoldTests(unittest.TestCase):
         self.assertEqual(self.journal.read_bytes(), before_journal)
         self.assertEqual(self.marker.read_bytes(), before_marker)
 
+        # The same inode also fences bounded Agent cycles/background work.
+        # Reuse this fixture and assert that a held EX blocks admission;
+        # an active hold remains blocking even after EX is released.
+        from unittest.mock import patch
+        from functools import partial
+        import game_uptime_finalization_flock as runtime_fence
+        import game_uptime_maintenance_hold as runtime_hold
+        shared_fixture = partial(shared_finalization_lock, path=child_inode,
+                                 enabled=True, trusted_uid=self.uid, group_gid=agent_gid)
+        with patch.object(runtime_fence, "shared_finalization_lock", shared_fixture):
+            with patch.object(runtime_hold, "observe", return_value={"active": False}):
+                with runtime_fence.tracked_agent_operation() as admitted:
+                    self.assertTrue(admitted)
+                    with self.assertRaises(PrivilegedJournalWitnessBlocked):
+                        with both():
+                            self.fail("Agent operation bypassed EX")
+                with both():
+                    with runtime_fence.tracked_agent_operation() as admitted:
+                        self.assertFalse(admitted)
+            with patch.object(runtime_hold, "observe", return_value={"active": True}):
+                with runtime_fence.tracked_agent_operation() as admitted:
+                    self.assertFalse(admitted)
+
         # A child already inside SH prevents a false local completion.
         with shared_finalization_lock(
             path=child_inode, enabled=True,
@@ -351,6 +851,227 @@ class PersistentPendingHoldTests(unittest.TestCase):
                     self.fail("unsafe finalization inode must not be accepted")
         finally:
             child_inode.chmod(0o660)
+
+        # Prepare two separate Agent hosts with ONE shared transaction
+        # window, package digest and complete inventory. No additional suite.
+        from game_uptime_hold_coordinator import prepare_standalone_agent_scope
+        from contextlib import ExitStack
+        ids = ["agent-A", "agent-B", "agent-offline"]
+        options = []
+        for index, agent_id in enumerate(ids[:2]):
+            root = self.state.parent / ("remote-host-" + str(index))
+            # Model root-owned /run and /var/lib ancestors: the hold
+            # must be traversable by unprivileged cooperating processes.
+            # The pending journal and inventory remain private (0600).
+            root.mkdir(mode=0o755)
+            root.chmod(0o755)
+            runtime, state = root / "run", root / "state"
+            runtime.mkdir(mode=0o755)
+            runtime.chmod(0o755)
+            state.mkdir(mode=0o755)
+            state.chmod(0o755)
+            priv = runtime / "agent-privileged-operations.lock"
+            final = runtime / "agent-finalization-operations.lock"
+            provision_privileged_helper_lock(path=priv, trusted_uid=self.uid)
+            provision_finalization_lock(path=final, trusted_uid=self.uid, group_gid=agent_gid)
+            options.append(dict(
+                transaction_id=self.tx, release_sha256="d"*64,
+                issued_at=1700000000, expires_at=1700000600,
+                expected_agent_ids=ids, local_agent_id=agent_id,
+                hold_path=runtime/"hold.json", journal_path=state/"no-drain-pending.json",
+                privileged_lock_path=priv, finalization_lock_path=final,
+                trusted_uid=self.uid, fixture_root=root, fixture_group_gid=agent_gid,
+                now=1700000010+index))
+        second = options[1]
+        with shared_privileged_helper_lock(path=second["privileged_lock_path"],
+                                           trusted_uid=self.uid, enabled=True):
+            with self.assertRaises(HoldPreparationBlocked):
+                with prepare_standalone_agent_scope(**second):
+                    self.fail("busy Agent prepared")
+        self.assertFalse(second["journal_path"].exists())
+        # Exercise the central protocol over real dedicated sockets.
+        # The offline member must prevent PREPARE, not reduce the quorum.
+        from game_uptime_hold_coordinator import (
+            retain_distributed_agent_sessions, serve_prepared_agent_session,
+            _retained_session_deadline,
+        )
+        # The real retained-session deadline must survive an idle operation
+        # longer than 30 seconds without renewing the original lease.
+        # Independent monotonic time prevents a backward wall-clock jump
+        # from extending a session. No sleeps or additional workflow.
+        clocks = {"wall": 1700000010, "mono": 100}
+        limit = _retained_session_deadline(
+            {"issued_at": 1700000000, "expires_at": 1700000600},
+            lambda: clocks["wall"], monotonic=lambda: clocks["mono"])
+        self.assertEqual(limit(), 690)
+        self.assertEqual(limit(10), 110)
+        clocks.update(wall=1700000050, mono=140)
+        self.assertEqual(limit(), 690)
+        clocks.update(wall=1700000020, mono=689)
+        self.assertEqual(limit(10), 690)
+        clocks["mono"] = 690
+        with self.assertRaises(HoldPreparationBlocked):
+            limit()
+        from contextlib import contextmanager
+        import socket
+        import threading
+        failures = []
+        def opener(option):
+            @contextmanager
+            def opened():
+                client, server = socket.socketpair()
+                def serve():
+                    try:
+                        def factory(**shared):
+                            return prepare_standalone_agent_scope(**{**option, **shared})
+                        serve_prepared_agent_session(
+                            server.fileno(), server.fileno(),
+                            local_agent_id=option["local_agent_id"],
+                            scope_factory=factory, now=lambda: 1700000010)
+                    except Exception as exc:
+                        failures.append(exc)
+                    finally:
+                        server.close()
+                thread = threading.Thread(target=serve, daemon=True)
+                thread.start()
+                try:
+                    yield (client.fileno(), client.fileno())
+                finally:
+                    client.close()
+                    thread.join(timeout=5)
+                    self.assertFalse(thread.is_alive())
+            return opened
+        # The SSH adapter must use a complete, independently pinned
+        # endpoint inventory and never allow host-key/password fallback.
+        import base64
+        from game_uptime_ssh_transport import (
+            _endpoint_inventory, _ssh_argv, SSHTransportBlocked, REMOTE_COMMAND,
+        )
+        import struct
+        def host_key(seed):
+            # SSH public-key wire format: two length-prefixed strings.
+            algorithm = b"ssh-ed25519"
+            public_key = bytes([seed]) * 32
+            blob = (struct.pack(">I", len(algorithm)) + algorithm
+                    + struct.pack(">I", len(public_key)) + public_key)
+            return "ssh-ed25519 " + base64.b64encode(blob).decode("ascii")
+        endpoints = {
+            agent: {"host": "host-" + str(index) + ".example.invalid",
+                    "port": 22, "host_key": host_key(index)}
+            for index, agent in enumerate(ids)
+        }
+        def parse(value):
+            return _endpoint_inventory(json.dumps(value).encode(), ids)
+        self.assertEqual(parse(endpoints), endpoints)
+        for changed in (
+            {k: v for k, v in endpoints.items() if k != ids[-1]},
+            {**endpoints, ids[0]: {**endpoints[ids[0]], "host": "-oProxyCommand=evil"}},
+            {**endpoints, ids[0]: {**endpoints[ids[0]], "host_key": endpoints[ids[1]]["host_key"]}},
+        ):
+            with self.assertRaises(SSHTransportBlocked):
+                parse(changed)
+        argv = _ssh_argv(ids[0], endpoints[ids[0]], Path("/tmp/pinned-hosts"),
+                         Path("/etc/capivara-dsm/agent-session-ssh-key"))
+        self.assertEqual(argv[:5], ["/usr/bin/ssh", "-F", "/dev/null", "-T", "-i"])
+        for flag in ("StrictHostKeyChecking=yes", "PasswordAuthentication=no",
+                     "IdentitiesOnly=yes", "IdentityAgent=none",
+                     "GlobalKnownHostsFile=/dev/null", "ForwardAgent=no",
+                     "ProxyCommand=none", "ControlMaster=no",
+                     "HostKeyAlias=dsm928-" + ids[0]):
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-1], REMOTE_COMMAND)
+        self.assertIn("/usr/local/libexec/capivara-dsm-928-agent/", REMOTE_COMMAND)
+        channels = {option["local_agent_id"]: opener(option) for option in options}
+        # Probe the same protocol before preparing any Agent, with no
+        # mutation of the lock inodes or maintenance journal.
+        from game_uptime_hold_coordinator import probe_agent_session
+        for agent, opened in channels.items():
+            with opened() as (read_fd, write_fd):
+                report = probe_agent_session(read_fd, write_fd, agent_id=agent)
+                self.assertTrue(report["protocol_probe_verified"])
+                self.assertFalse(report["live_no_drain_authorized"])
+                self.assertFalse(report["maintenance_state_changed"])
+        self.assertEqual(failures, [])
+        self.assertTrue(all(not option["journal_path"].exists() and
+                            not option["hold_path"].exists() for option in options))
+        central = dict(transaction_id=self.tx, release_sha256="d"*64,
+                       issued_at=1700000000, expires_at=1700000600,
+                       expected_agent_ids=ids, session_openers=channels,
+                       now=lambda: 1700000010)
+        with self.assertRaisesRegex(HoldPreparationBlocked, "inventory_incomplete"):
+            with retain_distributed_agent_sessions(**central):
+                self.fail("offline Agent omitted from quorum")
+        self.assertTrue(all(not option["journal_path"].exists() for option in options))
+        # A separate two-host fixture with a deliberately pinned two-host
+        # inventory. Never edit a real inventory to exclude an offline host.
+        complete = ids[:2]
+        for option in options:
+            option["expected_agent_ids"] = complete
+        with retain_distributed_agent_sessions(
+                **{**central, "expected_agent_ids": complete}) as receipt:
+            receipt["checkpoint"]()
+            self.assertEqual(receipt["prepared_agent_ids"], complete)
+            self.assertEqual(receipt["issued_at"], 1700000000)
+            self.assertEqual(receipt["expires_at"], 1700000600)
+            self.assertFalse(receipt["remote_agents_acked"])
+            self.assertFalse(receipt["live_no_drain_authorized"])
+            for option in options:
+                with self.assertRaises(PrivilegedHelperFenceUnavailable):
+                    with shared_privileged_helper_lock(
+                            path=option["privileged_lock_path"], trusted_uid=self.uid, enabled=True):
+                        self.fail("Agent host lease not retained")
+        self.assertEqual(failures, [])
+        with self.assertRaises(HoldPreparationBlocked):
+            receipt["checkpoint"]()
+        # Reacquire the original distributed scope over new sessions without
+        # writing any maintenance evidence. An explicit review is mandatory.
+        recovery = {**central, "expected_agent_ids": complete,
+                    "recover_existing": True}
+        evidence_paths = [
+            path for option in options for path in (
+                option["hold_path"], option["journal_path"],
+                option["journal_path"].parent / "no-drain-release-binding.json",
+                option["journal_path"].parent / "no-drain-agent-inventory.json")]
+        saved = {path: (path.stat().st_ino, path.read_bytes()) for path in evidence_paths}
+        with self.assertRaisesRegex(HoldPreparationBlocked, "recovery_review_required"):
+            with retain_distributed_agent_sessions(**recovery):
+                self.fail("unreviewed recovery admitted")
+        with retain_distributed_agent_sessions(**recovery, operator_reviewed=True) as recovered:
+            self.assertTrue(recovered["recovery_scope_only"])
+            self.assertFalse(recovered["live_no_drain_authorized"])
+            recovered["checkpoint"]()
+            decision = recovered["record_terminal"]("recovered_rollback", "e"*64)
+            self.assertEqual(decision["recorded_agent_ids"], complete)
+            self.assertTrue(decision["pending_evidence_retained"])
+            terminal_paths = [option["journal_path"].parent /
+                ("terminal-" + self.tx + ".json") for option in options]
+            terminal_saved = {p: (p.stat().st_ino, p.read_bytes()) for p in terminal_paths}
+            self.assertEqual(recovered["record_terminal"]("recovered_rollback", "e"*64), decision)
+            self.assertEqual(terminal_saved, {p: (p.stat().st_ino, p.read_bytes())
+                                            for p in terminal_paths})
+            for p in terminal_paths:
+                record = json.loads(p.read_bytes())
+                self.assertEqual(record["journal_sha256"], "e"*64)
+                self.assertEqual(record["expected_agent_ids"], complete)
+                self.assertTrue(record["pending_evidence_retained"])
+            for option in options:
+                with self.assertRaises(PrivilegedHelperFenceUnavailable):
+                    with shared_privileged_helper_lock(
+                            path=option["privileged_lock_path"], trusted_uid=self.uid, enabled=True):
+                        self.fail("recovery scope did not retain remote lock")
+        self.assertEqual(failures, [])
+        self.assertEqual(saved, {path: (path.stat().st_ino, path.read_bytes())
+                                 for path in evidence_paths})
+        for option in options:
+            option["hold_path"].unlink()
+            with self.assertRaises(HoldPreparationBlocked):
+                with prepare_standalone_agent_scope(**option, recover_existing=True):
+                    self.fail("missing hold automatically recreated during recovery")
+            self.assertTrue(observe(path=option["hold_path"], pending_path=option["journal_path"],
+                                    trusted_uid=self.uid, now=1700000020)["active"])
+            with self.assertRaises(HoldPreparationBlocked):
+                with prepare_standalone_agent_scope(**option):
+                    self.fail("durable interrupted Agent transaction replayed")
 
         # The observer must still reject a changed journal inside both EXs.
         with self.assertRaisesRegex(

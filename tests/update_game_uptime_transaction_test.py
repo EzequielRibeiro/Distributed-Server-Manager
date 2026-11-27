@@ -60,7 +60,15 @@ class DisposableUptimeTransactionTest(unittest.TestCase):
         return json.loads((self.root/"game-uptime-transaction.json").read_text())
 
     def test_success_preserves_two_pids_with_durable_receipt(self):
-        outcome = self.run_tx()
+        def apply_with_competing_recovery():
+            self.apply()
+            with self.assertRaisesRegex(tx.TransactionSafetyError,
+                                        "already in progress"):
+                tx.recover_interrupted(
+                    self.root, self.units, inspect=self.inspect,
+                    rollback=lambda: self.fail("rollback during live apply"),
+                    operator_reviewed=True)
+        outcome = self.run_tx(apply=apply_with_competing_recovery)
         self.assertEqual(outcome["status"], "verified")
         self.assertFalse(outcome["live_no_drain_authorized"])
         self.assertEqual(len(outcome["units"]), 2)
@@ -325,6 +333,17 @@ module.execute(root, sorted(snapshots), inspect=lambda name: snapshots[name],
         count = {"n": 0}
         def fail_once():
             count["n"] += 1
+            # A second recovery or apply must not enter the same workspace
+            # while the original rollback callback still holds the lock.
+            with self.assertRaisesRegex(tx.TransactionSafetyError,
+                                        "already in progress"):
+                tx.recover_interrupted(
+                    self.root, self.units, inspect=self.inspect,
+                    rollback=lambda: self.fail("concurrent rollback"),
+                    operator_reviewed=True)
+            with self.assertRaisesRegex(tx.TransactionSafetyError,
+                                        "already in progress"):
+                self.run_tx()
             raise RuntimeError("injected rollback failure")
         with self.assertRaisesRegex(tx.TransactionSafetyError, "manual review"):
             tx.recover_interrupted(self.root, self.units, inspect=self.inspect,

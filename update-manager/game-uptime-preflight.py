@@ -47,6 +47,7 @@ def _pinned_minecraft_evidence(units, *, versions_dir, expected_sha256, inspect)
             result = supervisor_unit.verify_pinned_supervisor(
                 item["unit"], versions_dir=Path(versions_dir),
                 expected_sha256=expected_sha256, inspect=verify,
+                require_live_process=inspect is None,
             )
             if (item.get("main_pid") != result["main_pid"] or
                     not isinstance(item.get("start_stamp"), int) or
@@ -220,12 +221,90 @@ def preflight(installed: Path, target: Path, *, list_units=None, inspect=None,
     return state
 
 
+def _execution_boundary(result):
+    """One decision summary for the existing --no-drain-report entrypoint.
+
+    A bootstrap release or exact file list cannot authorize mutation.
+    The installed owner must obtain the retained scope separately.
+    """
+    impact = result.get("release_impact") or {}
+    fixed = impact.get("fixed_file_transaction_plan") or {}
+    review = result.get("operational_release_review") or {}
+    blockers = list(fixed.get("blockers", []))
+    if fixed.get("status") != "compatible_file_plan_only" and not blockers:
+        blockers.append("fixed_file_transaction_plan_unavailable")
+    if (review.get("artifact_origin_verified") is not True
+            or review.get("target_tree_bound_to_signed_tar") is not True):
+        blockers.append("signed_exact_target_not_verified")
+    # Static eligibility is independent of live quiescence. A verified
+    # artifact and exact plan alone never permit acquiring a durable hold.
+    static_blockers = sorted(set(blockers))
+    blockers = []
+    if result.get("no_drain_handoff_witness_verified") is not True:
+        blockers.append("game_handoff_unverified")
+    if result.get("no_drain_operational_coverage_verified") is not True:
+        blockers.append("complete_game_inventory_unverified")
+    if result.get("no_drain_compatibility_verified") is not True:
+        blockers.append("runtime_compatibility_unverified")
+    if review.get("operational_guarantees_complete") is not True:
+        blockers.append("operational_guarantees_unverified")
+    blockers.append("retained_installed_admission_required")
+    bootstrap = fixed.get("bootstrap_installation_required") is True
+    return {
+        "status": "blocked",
+        "release_path": ("bootstrap_requires_separately_approved_maintenance"
+                         if bootstrap else "compatible_update_review_only"),
+        "ordinary_draining_update_automatically_selected": False,
+        "live_no_drain_authorized": False,
+        "static_blockers": static_blockers,
+        "operational_blockers": sorted(set(blockers)),
+        "blockers": sorted(set(static_blockers + blockers)),
+    }
+
+
+def collect_operational_review(installed, target, *, include_remote_diagnostics=True):
+    # The production updater invokes this diagnostic in --no-drain-report
+    # BEFORE acquiring privileges, backups, service stops or file mutations.
+    # Inspect independently trusted release evidence if provisioned, but
+    # never turn a positive cryptographic result into no-drain authorization.
+    try:
+        operator_review = _load(
+            "game_uptime_operational_release_review",
+            "game-uptime-operational-release-review.py")
+        review = operator_review.evaluate(target, include_remote_diagnostics=include_remote_diagnostics)
+    except Exception:
+        review = {
+            "kind": "DSM928OperationalReleaseReview",
+            "mode": "read_only",
+            "artifact_origin_verified": False,
+            "target_tree_bound_to_signed_tar": False,
+            "operational_quiescence_acked": False,
+            "external_jobs_acked": False,
+            "durable_cross_host_recovery_verified": False,
+            "live_no_drain_authorized": False,
+            "blockers": ["operational_release_review_unavailable"],
+        }
+    inputs = {}
+    inputs_sha256 = None
+    if review.get("target_tree_bound_to_signed_tar") is True:
+        try:
+            inputs, inputs_sha256 = operator_review.read_operational_inputs(installed, target, review)
+        except (OSError, ValueError, SyntaxError, TypeError, RuntimeError):
+            review.setdefault("operational_preparation_blockers", []).append(
+                "reviewed_operational_inputs_unavailable")
+    result = preflight(installed, target, **inputs)
+    result["reviewed_operational_inputs_sha256"] = inputs_sha256
+    result["operational_release_review"] = review
+    result["operational_execution_boundary"] = _execution_boundary(result)
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("installed", type=Path)
     parser.add_argument("target", type=Path)
     args = parser.parse_args()
-    result = preflight(args.installed, args.target)
+    result = collect_operational_review(args.installed, args.target)
     print(json.dumps(result, ensure_ascii=False))
     return 2 if result["classification"] == "blocked" else 0
 

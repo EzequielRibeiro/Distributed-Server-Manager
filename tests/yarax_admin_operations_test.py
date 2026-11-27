@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import importlib.util
+from datetime import datetime, timezone, timedelta
 import json
 import sys
 import tempfile
@@ -12,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 for path in (ROOT/"dashboard",ROOT/"database"):
     if str(path) not in sys.path:sys.path.insert(0,str(path))
 
-from yarax_admin_operation_repository import ACTIONS
+from yarax_admin_operation_repository import ACTIONS, YaraXAdminOperationRepository
 from yarax_admin_operation_api import create_operation
 
 
@@ -26,6 +27,41 @@ def load(platform,name,module_name):
 
 
 class YaraXAdminOperationsTest(unittest.TestCase):
+    def test_lost_delivery_review_is_fail_closed(self):
+        spec = importlib.util.spec_from_file_location(
+            "reconcile_test", ROOT/"update-manager/game-uptime-yarax-reconcile.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        now = datetime.now(timezone.utc)
+        old = (now - timedelta(days=10)).isoformat()
+        row = dict(operation_id="yarax-" + "a"*32, agent_id="a1",
+                   action="install_engine", status="delivered",
+                   created_at=old, delivered_at=old, updated_at=old,
+                   completed_at=None, no_result=True, no_error=True)
+        report = dict(hybrid=1, credentials=0, rows=[row])
+        self.assertEqual(module.eligible(report, "a1", [row["operation_id"]], now), [row])
+        for change in ({"status":"running"}, {"no_result":False},
+                       {"updated_at":now.isoformat()}, {"agent_id":"a2"},
+                       {"delivered_at":now.isoformat(),"updated_at":now.isoformat()}):
+            with self.assertRaises(RuntimeError):
+                module.eligible(dict(report, rows=[dict(row, **change)]),
+                                "a1", [row["operation_id"]], now)
+        with self.assertRaises(RuntimeError):
+            module.eligible(dict(report, credentials=1), "a1", [row["operation_id"]], now)
+
+    def test_terminal_result_cannot_reopen_operation(self):
+        repo = YaraXAdminOperationRepository(type("Backend", (), {"name":"sqlite"})())
+        with patch.object(repo, "get", return_value={
+            "operation_id":"op1", "agent_id":"a1",
+            "action":"install_engine","status":"failed",
+            "result":{"outcome":"unconfirmed"},
+        }):
+            actual = repo.apply_result("a1", {"operation_id":"op1","status":"running"})
+            self.assertEqual(actual["status"], "failed")
+            self.assertEqual(actual["result"]["outcome"], "unconfirmed")
+            with self.assertRaises(PermissionError):
+                repo.apply_result("a2", {"operation_id":"op1","status":"completed"})
+
     def test_allowlist_is_closed(self):
         self.assertEqual(ACTIONS,{"install_engine","install_rules","test_scan","rescan_content","rollback_rules"})
         for source in (

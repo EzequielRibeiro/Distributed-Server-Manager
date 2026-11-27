@@ -166,6 +166,25 @@ class MainPathRehearsalTest(unittest.TestCase):
         self.assertEqual(list((self.root / "backups").glob("*.tar.gz")), [])
 
     def test_actual_main_path_success_preserves_world_and_checks_guard_order(self):
+        # The draining path must never bypass an unresolved #928 journal,
+        # including one appearing after the initial read-only preflight.
+        for mode in ("busy_update_admission", "pending_recovery", "pending_recovery_after_capture"):
+            with self.subTest(mode=mode):
+                blocked = main_rehearsal(self.root, mode)
+                self.assertEqual(blocked.returncode, 2, blocked.stderr)
+                expected = ("update admission busy or untrusted" if mode == "busy_update_admission"
+                            else "maintenance or recovery pending/unverifiable")
+                self.assertIn(expected, blocked.stderr)
+                self.assertEqual((self.installed/"version").read_text().strip(), "2.0.998")
+                self.assertEqual(self.world.read_bytes(), b"saved-world-private-test")
+                self.assertEqual(list((self.root/"backups").glob("*.tar.gz")), [])
+                steps = self.root/"steps"
+                if mode != "pending_recovery_after_capture":
+                    self.assertFalse(steps.exists())
+                else:
+                    self.assertEqual(steps.read_text().splitlines(), [
+                        "guard:allow-managed", "capture-games", "capture-services"])
+                    steps.unlink()
         outcome = main_rehearsal(self.root)
         self.assertEqual(outcome.returncode, 0, outcome.stderr[-2500:] + outcome.stdout[-1500:])
         self.assertEqual((self.installed/"version").read_text().strip(), "2.0.999")
@@ -371,33 +390,79 @@ class MainPathRehearsalTest(unittest.TestCase):
             member.size = len(manifest_bytes)
             package.addfile(member, io.BytesIO(manifest_bytes))
 
-        signed_body = {
-            "kind": "CapivaraDSMReleaseProvenance",
-            "schema_version": 1,
-            "repository": "EzequielRibeiro/Distributed-Server-Manager",
-            "git_commit": commit,
-            "version": version,
-            "archive": archive.name,
-            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
-            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-        }
-        statement.write_text(json.dumps(
-            signed_body, sort_keys=True, separators=(",", ":")) + "\n")
+        # Reuse the operational signed-tree verifier on the exact payload.
+        # An unsigned extra entry or mode change must never be accepted.
+        review_loader = SourceFileLoader(
+            "dsm928_exact_signed_payload_review",
+            str(ROOT / "update-manager/game-uptime-operational-release-review.py"))
+        review_spec = importlib.util.spec_from_loader(review_loader.name, review_loader)
+        review = importlib.util.module_from_spec(review_spec)
+        review_loader.exec_module(review)
+        target = self.root / "reviewed-tree"
+        target.mkdir()
+        payload = target / "release-manifest.json"
+        payload.write_bytes(manifest_bytes)
+        payload.chmod(0o644)
+        self.assertEqual(review._target_byte_match(target, archive, name), 1)
+        extra = target / "unsigned-extra.py"
+        extra.write_text("unexpected")
+        with self.assertRaisesRegex(review.OperationalReviewBlocked, "inventory_differs"):
+            review._target_byte_match(target, archive, name)
+        extra.unlink()
+        extra.mkdir()
+        with self.assertRaisesRegex(review.OperationalReviewBlocked, "inventory_differs"):
+            review._target_byte_match(target, archive, name)
+        extra.rmdir()
+        payload.chmod(0o755)
+        with self.assertRaises(review.OperationalReviewBlocked):
+            review._target_byte_match(target, archive, name)
+        payload.chmod(0o644)
+
+        # Exercise the SAME signing entrypoint used by the official
+        # release workflow, with a disposable CI key outside source.
         subprocess.run(
             ("openssl", "genpkey", "-algorithm", "RSA",
              "-pkeyopt", "rsa_keygen_bits:2048", "-out", str(private)),
             check=True, capture_output=True, timeout=30,
         )
+        private.chmod(0o600)
         subprocess.run(
             ("openssl", "pkey", "-in", str(private),
              "-pubout", "-out", str(public)),
             check=True, capture_output=True, timeout=15,
         )
-        subprocess.run(
-            ("openssl", "dgst", "-sha256", "-sign", str(private),
-             "-out", str(signature), str(statement)),
-            check=True, capture_output=True, timeout=15,
-        )
+        signer_loader = SourceFileLoader(
+            "dsm928_official_signing_entrypoint",
+            str(ROOT / "release/sign_official_release.py"))
+        signer_spec = importlib.util.spec_from_loader(
+            signer_loader.name, signer_loader)
+        signer = importlib.util.module_from_spec(signer_spec)
+        signer_loader.exec_module(signer)
+        publisher_pin = hashlib.sha256(public.read_bytes()).hexdigest()
+        with self.assertRaises(signer.ReleaseSigningBlocked):
+            signer.sign_release(
+                archive=archive, manifest=manifest, commit=commit,
+                private_key=private, trusted_public_key_sha256="0"*64,
+                output_dir=self.root)
+        self.assertFalse(statement.exists())
+        signed = signer.sign_release(
+            archive=archive, manifest=manifest, commit=commit,
+            private_key=private,
+            trusted_public_key_sha256=publisher_pin,
+            output_dir=self.root)
+        self.assertEqual(signed["status"],
+                         "official_release_provenance_signed")
+        self.assertEqual(signed["publisher_public_key_sha256"], publisher_pin)
+        self.assertFalse(signed["live_no_drain_authorized"])
+        self.assertFalse(signed["private_key_exported"])
+        with self.assertRaises(signer.ReleaseSigningBlocked):
+            signer.sign_release(
+                archive=archive, manifest=manifest, commit=commit,
+                private_key=private,
+                trusted_public_key_sha256=publisher_pin,
+                output_dir=self.root)
+        self.assertTrue(statement.exists())
+        self.assertTrue(signature.exists())
 
         def verify(**kwargs):
             return verifier.verify_signed_release(
@@ -434,6 +499,193 @@ class MainPathRehearsalTest(unittest.TestCase):
             verify()
         archive.write_bytes(original_archive)
         self.assertTrue(verify()["artifact_signature_verified"])
+
+
+
+class InstalledDaemonDriftGuardTest(unittest.TestCase):
+    """Read-only identity comparison cannot authorize a live update."""
+
+    @staticmethod
+    def _module():
+        path = ROOT / "update-manager/game-uptime-live-daemon-identity.py"
+        loader = SourceFileLoader("dsm928_daemon_drift_guard_test", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def test_stable_identity_is_diagnostic_not_ack(self):
+        module = self._module()
+        snapshot = {
+            "controller": {"identity_verified": True, "pid": 200,
+                           "start_ticks": 500, "flock_opted_in_verified": True},
+            "worker_group": {
+                "all_nine_workers_verified": True,
+                "observed_worker_count": 9,
+                "supervisor_identity": {"pid": 300, "start_ticks": 600},
+                "worker_identities": {
+                    name: {"pid": 301 + i, "start_ticks": 601 + i}
+                    for i, name in enumerate((
+                        "scheduler_worker", "automation_worker",
+                        "content_update_worker", "maintenance_worker",
+                        "observability_retention_worker",
+                        "content_upload_retention_worker",
+                        "database_intelligence_worker", "hybrid_agent_worker",
+                        "hybrid_customer_workspace_worker",
+                    ))
+                },
+            },
+            "live_no_drain_authorized": False,
+        }
+        result = module.compare_installed_daemon_observations(
+            snapshot, dict(snapshot))
+        self.assertEqual(result["status"], "stable_read_only_identity_only")
+        self.assertTrue(result["identity_snapshots_stable"])
+        for name in ("controller_mutations_acked", "worker_cycles_acked",
+                     "remote_agents_acked", "external_jobs_acked",
+                     "live_no_drain_authorized"):
+            self.assertIs(result[name], False)
+
+    def test_pid_drift_and_missing_worker_inventory_block(self):
+        module = self._module()
+        before = {
+            "controller": {"identity_verified": True, "pid": 200},
+            "worker_group": {"all_nine_workers_verified": True},
+            "live_no_drain_authorized": False,
+        }
+        after = {
+            "controller": {"identity_verified": True, "pid": 201},
+            "worker_group": {"all_nine_workers_verified": False},
+            "live_no_drain_authorized": False,
+        }
+        result = module.compare_installed_daemon_observations(before, after)
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("controller_identity_changed", result["blockers"])
+        self.assertIn("worker_group_identity_unverified", result["blockers"])
+        self.assertFalse(result["live_no_drain_authorized"])
+
+        # The installed scope independently checks the real Controller
+        # registry partition. An omitted/offline Agent or a retirement with
+        # live operational state must not become an implicit exemption.
+        path = ROOT / "update-manager/game-uptime-local-scope-lease.py"
+        loader = SourceFileLoader("dsm928_inventory_partition_test", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        scope = importlib.util.module_from_spec(spec)
+        loader.exec_module(scope)
+        rows = [
+            {"id": "hybrid", "status": "active", "role": "hybrid",
+             "instances": 1, "credentials": 1, "commands": 0},
+            {"id": "vps", "status": "active", "role": "agent",
+             "instances": 1, "credentials": 1, "commands": 0},
+            {"id": "retired", "status": "decommissioned", "role": "agent",
+             "instances": 0, "credentials": 0, "commands": 0},
+        ]
+        self.assertEqual(scope._validate_controller_agent_inventory(
+            rows, ["hybrid", "vps"], "hybrid"),
+            (("hybrid", "hybrid"), ("vps", "agent")))
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._validate_controller_agent_inventory(rows, ["hybrid"], "hybrid")
+        for change in ({"status": "offline"}, {"credentials": 1}, {"instances": 1},
+                       {"commands": 1}):
+            with self.assertRaises(scope.LocalScopeLeaseBlocked):
+                scope._validate_controller_agent_inventory(
+                    [*rows[:2], {**rows[2], **change}], ["hybrid", "vps"], "hybrid")
+        queues = [{"queue": name, "outstanding": 0}
+                  for name in sorted(scope._JOB_TERMINAL)]
+        self.assertEqual(len(scope._validate_job_inventory(queues)), len(queues))
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._validate_job_inventory(queues[:-1])
+        for name in ("instance_update_runs", "backup_jobs", "instance_file_commands",
+                     "native_restart_commands", "ha_failover_operations"):
+            busy = [{**row, "outstanding": int(row["queue"] == name)} for row in queues]
+            with self.assertRaisesRegex(scope.LocalScopeLeaseBlocked, name):
+                scope._validate_job_inventory(busy)
+        self.assertIn("FROM public.ha_failover_operations WHERE (state IS NULL",
+                      scope._job_inventory_sql())
+
+        controller = {"identity_verified": True, "flock_opted_in_verified": True,
+                      "pid": 200, "start_ticks": 500}
+        workers = {"supervisor_verified": True, "all_nine_workers_verified": True,
+                   "observed_worker_count": len(scope.WORKERS),
+                   "supervisor_identity": {"pid": 300, "start_ticks": 600},
+                   "worker_identities": {
+                       name: {"pid": 301+i, "start_ticks": 601+i}
+                       for i, name in enumerate(scope.WORKERS)}}
+        alert = {"pid": 400, "start_ticks": 700, "uid": 1000}
+        original = scope._stable_daemon_inventory(controller, workers, alert, 1000)
+        self.assertEqual(len(original), 12)
+        self.assertNotEqual(original, scope._stable_daemon_inventory(
+            {**controller, "start_ticks": 501}, workers, alert, 1000))
+        self.assertNotEqual(original, scope._stable_daemon_inventory(
+            controller, workers, {**alert, "pid": 401}, 1000))
+        for bad in ({**workers, "observed_worker_count": 8},
+                    {**workers, "supervisor_identity": {"pid": 200, "start_ticks": 600}}):
+            with self.assertRaises(scope.LocalScopeLeaseBlocked):
+                scope._stable_daemon_inventory(controller, bad, alert, 1000)
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._stable_daemon_inventory(controller, workers, alert, 1001)
+
+        # A reconnect cannot adopt a replacement daemon or a different
+        # lease as its new baseline, even if all current queues are empty.
+        witness_scope = {"transaction_id": "a"*32, "release_sha256": "b"*64,
+                         "issued_at": 1700000000, "expires_at": 1700000900,
+                         "expected_agent_ids": ["hybrid", "vps"],
+                         "local_hybrid_agent_id": "hybrid", "controller_uid": 1000}
+        inventory = (("hybrid", "vps"), tuple((x["queue"], 0) for x in queues), original)
+        receipt = scope._daemon_witness_payload(witness_scope, inventory)
+        raw = (json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n").encode()
+        scope._check_daemon_witness(raw, receipt)
+        changed = scope._stable_daemon_inventory(
+            controller, workers, {**alert, "pid": 401}, 1000)
+        for invalid in (
+            scope._daemon_witness_payload(witness_scope, (*inventory[:2], changed)),
+            scope._daemon_witness_payload({**witness_scope, "expires_at": 1700000800}, inventory),
+        ):
+            with self.assertRaises(scope.LocalScopeLeaseBlocked):
+                scope._check_daemon_witness(raw, invalid)
+        with self.assertRaises(scope.LocalScopeLeaseBlocked):
+            scope._check_daemon_witness(b"", receipt)
+
+        # Auxiliary alert cycles must share the existing Controller barrier,
+        # including the initialize/cursor mutations at the start of a cycle.
+        import os
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        import sys
+        for folder in (ROOT/"dashboard", ROOT/"agents/linux/runtime"):
+            if str(folder) not in sys.path:
+                sys.path.insert(0, str(folder))
+        import game_uptime_controller_agent_http_flock as gate
+        import game_uptime_maintenance_hold as hold
+        spec = importlib.util.spec_from_file_location(
+            "dsm928_alert_cycle_test", ROOT/"monitor/alert_engine.py")
+        alerts = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(alerts)
+        engine = alerts.DatabaseAlertEngine.__new__(alerts.DatabaseAlertEngine)
+
+        @contextmanager
+        def busy(*, enabled):
+            self.assertTrue(enabled)
+            raise gate.ControllerHttpLockUnavailable("busy")
+            yield
+
+        @contextmanager
+        def retained(*, enabled):
+            self.assertTrue(enabled)
+            yield True
+
+        with patch.dict(os.environ, {"DSM928_CONTROLLER_AGENT_HTTP_FLOCK": "1"}), \
+             patch.object(engine, "_cycle", return_value=7) as run:
+            with patch.object(gate, "shared_controller_agent_http_lock", busy):
+                self.assertEqual(engine.cycle(), 0)
+            with patch.object(gate, "shared_controller_agent_http_lock", retained), \
+                 patch.object(hold, "observe", return_value={"active": True}):
+                self.assertEqual(engine.cycle(), 0)
+            run.assert_not_called()
+            with patch.object(gate, "shared_controller_agent_http_lock", retained), \
+                 patch.object(hold, "observe", return_value={"active": False}):
+                self.assertEqual(engine.cycle(limit=3), 7)
+            run.assert_called_once_with(limit=3)
 
 
 if __name__ == "__main__":

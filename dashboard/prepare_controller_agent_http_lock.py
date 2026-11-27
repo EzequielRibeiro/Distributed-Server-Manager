@@ -15,7 +15,7 @@ import pwd
 import stat
 
 from game_uptime_controller_agent_http_flock import (
-    LOCK_PATH, ControllerHttpLockUnavailable, _trusted_parents, _open_witness,
+    LOCK_PATH, ADMISSION_PATH, ControllerHttpLockUnavailable, _trusted_parents, _open_witness,
 )
 
 
@@ -84,6 +84,7 @@ def main() -> int:
     uid = pwd.getpwnam(args.user).pw_uid
     gid = grp.getgrnam(args.group).gr_gid
     provision_controller_agent_http_lock(uid, gid)
+    provision_controller_agent_http_lock(uid, gid, path=ADMISSION_PATH)
     return 0
 
 

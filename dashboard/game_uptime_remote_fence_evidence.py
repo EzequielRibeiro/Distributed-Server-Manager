@@ -3,8 +3,9 @@
 
 Called only AFTER AgentPairingRepository authenticates the credential.
 The Controller also requires its own valid root-owned transaction marker,
-with identical transaction/issuance/expiry. No durable replay cache, remote
-operation fence, or transaction authority exists in this module.
+with identical transaction/issuance/expiry. The authenticated HTTP dispatcher
+separately requires a durable negative-only nonce record for v2; this module
+by itself grants no remote operation fence or transaction authority.
 """
 from __future__ import annotations
 
@@ -18,8 +19,13 @@ _AGENT_RUNTIME = Path(__file__).resolve().parents[1] / "agents/linux/runtime"
 if str(_AGENT_RUNTIME) not in sys.path:
     sys.path.append(str(_AGENT_RUNTIME))
 from game_uptime_maintenance_hold import observe
+from game_uptime_transaction_binding import (
+    ReleaseBindingBlocked, binding_for_hold,
+)
 
 CONTRACT = {"protocol": "dsm928-fence-evidence-readonly-v1", "schema": "1"}
+CONTRACT_V2 = {"protocol": "dsm928-fence-evidence-release-bound-readonly-v2", "schema": "2"}
+_SHA = re.compile(r"[0-9a-f]{64}\Z")
 _ID = re.compile(r"[A-Za-z0-9._-]{1,191}\Z")
 _NONCE = re.compile(r"[0-9a-f]{32}\Z")
 _EVIDENCE_KEYS = {
@@ -28,6 +34,27 @@ _EVIDENCE_KEYS = {
     "contract", "agent_workers_fenced", "external_jobs_verified",
     "live_no_drain_authorized",
 }
+
+
+def trusted_controller_release_pin_for_receipt(receipt: Mapping[str, Any]) -> str:
+    """Read SHA pinned independently by root; never trust remote claim alone."""
+    if (not isinstance(receipt, Mapping)
+            or receipt.get("contract") != CONTRACT_V2
+            or receipt.get("status") != "authenticated_evidence_received_unfenced"):
+        raise ValueError("not_a_valid_v2_negative_receipt")
+    observed = observe()
+    if (observed.get("active") is not True
+            or observed.get("reason") != "root_owned_maintenance_hold"
+            or any(observed.get(key) != receipt.get(key)
+                   for key in ("transaction_id", "issued_at", "expires_at"))):
+        raise ValueError("root_hold_does_not_match_receipt")
+    try:
+        pinned = binding_for_hold(observed)
+    except ReleaseBindingBlocked as exc:
+        raise ValueError("independent_release_pin_unavailable") from exc
+    if (pinned is None or pinned.get("release_sha256") != receipt.get("release_sha256")):
+        raise ValueError("independent_release_pin_mismatch")
+    return pinned["release_sha256"]
 
 
 def receipt_for_authenticated_agent(
@@ -46,8 +73,12 @@ def receipt_for_authenticated_agent(
     nonce = p.get("request_id")
     tx = p.get("transaction_id")
     issued, expires = p.get("issued_at"), p.get("expires_at")
+    version_two = p.get("contract") == CONTRACT_V2
+    expected_contract = CONTRACT_V2 if version_two else CONTRACT
+    required_evidence = (_EVIDENCE_KEYS | {"release_sha256"}
+                         if version_two else _EVIDENCE_KEYS)
     valid = (
-        set(p) == _EVIDENCE_KEYS
+        set(p) == required_evidence
         and p.get("kind") == "CapivaraNoDrainFenceEvidence"
         and type(p.get("schema_version")) is int and p["schema_version"] == 1
         and p.get("agent_id") == authenticated_agent_id
@@ -60,7 +91,10 @@ def receipt_for_authenticated_agent(
         and 0 < issued <= when + 30
         and issued < expires <= issued + 900
         and issued <= when < expires
-        and p.get("contract") == CONTRACT
+        and p.get("contract") == expected_contract
+        and (not version_two or
+             type(p.get("release_sha256")) is str and
+             bool(_SHA.fullmatch(p["release_sha256"])))
         and p.get("agent_workers_fenced") is False
         and p.get("external_jobs_verified") is False
         and p.get("live_no_drain_authorized") is False
@@ -76,7 +110,14 @@ def receipt_for_authenticated_agent(
             and type(local.get("expires_at")) is int
             and local["expires_at"] == expires
         )
-    return {
+        if valid and version_two:
+            try:
+                bound = binding_for_hold(local, now=when)
+            except ReleaseBindingBlocked:
+                bound = None
+            valid = bool(bound and
+                         bound.get("release_sha256") == p.get("release_sha256"))
+    receipt = {
         "kind": "CapivaraNoDrainFenceEvidenceReceipt",
         "schema_version": 1,
         "agent_id": authenticated_agent_id,
@@ -86,7 +127,7 @@ def receipt_for_authenticated_agent(
                           and _NONCE.fullmatch(tx) else None,
         "issued_at": issued if type(issued) is int else None,
         "expires_at": expires if type(expires) is int else None,
-        "contract": dict(CONTRACT),
+        "contract": dict(expected_contract),
         "status": ("authenticated_evidence_received_unfenced"
                    if valid else "blocked"),
         "scope": "authenticated_heartbeat_wire_only",
@@ -94,6 +135,10 @@ def receipt_for_authenticated_agent(
         "remote_agent_quiescence_acked": False,
         "live_no_drain_authorized": False,
     }
+    if version_two:
+        receipt["release_sha256"] = (
+            p.get("release_sha256") if valid else None)
+    return receipt
 
 
 
@@ -101,6 +146,7 @@ def correlate_authenticated_fence_receipts(
     expected_agent_ids: list[str] | tuple[str, ...],
     receipts: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
     *, transaction_id: str, now: int | None = None,
+    expected_release_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Correlate credentialed wire receipts across an explicit Agent set.
 
@@ -112,6 +158,11 @@ def correlate_authenticated_fence_receipts(
     """
     when = int(time.time()) if now is None else now
     failures: set[str] = set()
+    release_bound = expected_release_sha256 is not None
+    if (release_bound and
+            (type(expected_release_sha256) is not str or
+             not _SHA.fullmatch(expected_release_sha256))):
+        failures.add("invalid_expected_release_pin")
     expected: set[str] = set()
     seen: set[str] = set()
     nonces: set[str] = set()
@@ -142,6 +193,9 @@ def correlate_authenticated_fence_receipts(
         "status", "scope", "agent_workers_fenced",
         "remote_agent_quiescence_acked", "live_no_drain_authorized",
     }
+    if release_bound:
+        required = required | {"release_sha256"}
+    expected_contract = CONTRACT_V2 if release_bound else CONTRACT
     for item in receipts if isinstance(receipts, (list, tuple)) else ():
         if not isinstance(item, Mapping) or set(item) != {
                 "authenticated_agent_id", "receipt"}:
@@ -171,7 +225,9 @@ def correlate_authenticated_fence_receipts(
                 or receipt["schema_version"] != 1
                 or receipt.get("agent_id") != agent_id
                 or receipt.get("transaction_id") != transaction_id
-                or receipt.get("contract") != CONTRACT
+                or receipt.get("contract") != expected_contract
+                or (release_bound and
+                    receipt.get("release_sha256") != expected_release_sha256)
                 or receipt.get("status") != "authenticated_evidence_received_unfenced"
                 or receipt.get("scope") != "authenticated_heartbeat_wire_only"
                 or receipt.get("agent_workers_fenced") is not False
@@ -203,6 +259,14 @@ def correlate_authenticated_fence_receipts(
             failures.add("controller_root_hold_not_correlated")
     except Exception:
         failures.add("controller_root_hold_unavailable")
+    if release_bound:
+        try:
+            bound = binding_for_hold(local, now=when)
+            if (bound is None or
+                    bound.get("release_sha256") != expected_release_sha256):
+                failures.add("controller_release_binding_mismatch")
+        except (ReleaseBindingBlocked, UnboundLocalError):
+            failures.add("controller_release_binding_unavailable")
 
     complete = not failures and seen == expected
     return {
