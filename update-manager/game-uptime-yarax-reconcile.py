@@ -145,16 +145,16 @@ def sql(database, script, **variables):
 # literals and the row compare includes original timestamps and action.
 _SELECT = """
 SELECT json_build_object(
-  'hybrid', (SELECT count(*) FROM agents a JOIN nodes n ON n.id=a.node_id
+  'hybrid', (SELECT count(*) FROM public.agents a JOIN public.nodes n ON n.id=a.node_id
              WHERE a.id=:'agent' AND a.status='active' AND n.role='hybrid'),
-  'credentials', (SELECT count(*) FROM agent_credentials
+  'credentials', (SELECT count(*) FROM public.agent_credentials
                   WHERE agent_id=:'agent' AND status='active'),
   'rows', COALESCE((SELECT json_agg(row_to_json(q) ORDER BY q.operation_id)
      FROM (SELECT operation_id, agent_id, action, status, created_at,
                   delivered_at, updated_at, completed_at,
                   result_json IS NULL AS no_result,
                   last_error IS NULL AS no_error
-           FROM yarax_admin_operations
+           FROM public.yarax_admin_operations
            WHERE operation_id IN (SELECT jsonb_array_elements_text(:'ids'::jsonb))) q),
      '[]'::json));
 """

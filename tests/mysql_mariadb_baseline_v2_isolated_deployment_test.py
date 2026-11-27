@@ -209,6 +209,9 @@ def main() -> int:
             # against the real server flavor. Remove only the latest ledger row and
             # prove that the additive upgrade can be replayed idempotently.
             latest = UPGRADES[-1]
+            if latest.version != 23:
+                raise AssertionError("expected v23 outbox repair")
+            cursor.execute("DROP TABLE notification_outbox")
             cursor.execute("DELETE FROM baseline_upgrades WHERE version=%s", (latest.version,))
             connection.commit()
 

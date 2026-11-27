@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 import sys
 import importlib.util
+import json
+import re
 import time
 from pathlib import Path
 
@@ -44,6 +46,16 @@ def main() -> int:
         raise AssertionError(f"unexpected backend: {backend.name}")
 
     backend.initialize()
+    # Reproduce the Horizon v22 ledger with a missing outbox on a disposable DB.
+    with backend.transaction() as connection:
+        connection.execute("DROP TABLE public.notification_outbox")
+        connection.execute("DELETE FROM public.baseline_upgrades WHERE version=23")
+        connection.execute("UPDATE public.schema_baseline SET checksum='isolated-v22-missing-outbox'")
+    repaired = backend.initialize()
+    assert repaired["upgrade_version"] == 23, repaired
+    assert repaired["upgraded_now"] == [23], repaired
+    assert backend.health_check()["valid"] is True
+
     admin = AdminManagementRepository(backend)
     customers = CustomerManagementRepository(backend)
     system_users = SystemUserRepository(backend)
@@ -260,6 +272,53 @@ def main() -> int:
         dayz = next(row for row in rows if row["queue"] == "dayz_operations")
         assert int(dayz["outstanding"]) == 5, dayz
         session.execute("DELETE FROM dayz_operations WHERE operation_id LIKE 'scope-test-%'")
+
+    # Execute the reviewed reconciliation statement on real PostgreSQL.
+    # No host locks or live Agent state are involved in this disposable fixture.
+    spec = importlib.util.spec_from_file_location(
+        "dsm928_yarax_test", ROOT / "update-manager/game-uptime-yarax-reconcile.py")
+    reconcile = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reconcile)
+    old = "2020-01-01T00:00:00Z"
+    op_ids = ["yarax-" + letter * 32 for letter in ("a", "b")]
+    def render(sql, variables):
+        return re.sub(r":'([a-z]+)'",
+                      lambda match: "'" + variables[match.group(1)].replace("'", "''") + "'", sql)
+
+    with admin.session(transaction=True) as session:
+        session.execute("INSERT INTO nodes(id,name,role,status) VALUES "
+                        "('isolated-hybrid-node','Isolated Hybrid','hybrid','active')")
+        session.execute("INSERT INTO agents(id,controller_id,node_id,name,status) VALUES "
+                        "('isolated-hybrid','isolated-controller','isolated-hybrid-node','Hybrid','active')")
+        for op_id in op_ids:
+            session.execute(
+                "INSERT INTO yarax_admin_operations(operation_id,agent_id,action,status,"
+                "payload_json,created_at,delivered_at,updated_at) "
+                "VALUES (%s,'isolated-hybrid','install_engine','delivered','{}',%s,%s,%s)",
+                (op_id, old, old, old))
+        select = render(reconcile._SELECT, {"agent":"isolated-hybrid","ids":json.dumps(op_ids)})
+        report = next(iter(session.execute(select).fetchone().values()))
+        if isinstance(report, str):
+            report = json.loads(report)
+        from datetime import datetime, timezone
+        reviewed = reconcile.eligible(report, "isolated-hybrid", op_ids, datetime.now(timezone.utc))
+        statement = reconcile._UPDATE[reconcile._UPDATE.index("WITH expected AS ("):
+                                      reconcile._UPDATE.rindex("COMMIT;")]
+        variables = {"agent":"isolated-hybrid","rows":json.dumps(reviewed),"stamp":old,
+                     "actor":"isolated-ci","evidence":"isolated-fixture-review","digest":"a"*64}
+        changed = dict(variables, rows=json.dumps([reviewed[0],dict(reviewed[1],updated_at="changed")]))
+        def result(values):
+            raw = next(iter(session.execute(render(statement,values)).fetchone().values()))
+            return json.loads(raw) if isinstance(raw,str) else raw
+        assert result(changed)["updated"] == []
+        assert result(variables)["updated"] == op_ids
+        assert result(variables)["updated"] == []
+        rows = session.execute(
+            "SELECT status,result_json FROM yarax_admin_operations WHERE agent_id='isolated-hybrid'"
+        ).fetchall()
+        assert len(rows) == 2
+        assert all(row["status"] == "failed" and
+                   json.loads(row["result_json"])["outcome"] == "unconfirmed" for row in rows)
 
     print("PostgreSQL Baseline v2 isolated deployment: OK")
     return 0
