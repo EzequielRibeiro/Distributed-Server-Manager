@@ -25,6 +25,8 @@ chmod +x "${INSTALL_DIR}/database/manager.py"
 
 RESTORE_SERVICES=(dsm-dashboard.service)
 DSM_DATABASE_DRIVER=sqlite
+DSM_PUBLIC_HOST=controller.test
+DSM_TLS_CA_FILE="${TMP}/ca.pem"
 CAPTURE="${TMP}/dashboard-readiness.txt"
 
 # A falha transitória inicial não deve poluir um update que termina saudável.
@@ -35,6 +37,10 @@ printf '0\n' >"${CURL_COUNT}"
 
 curl() {
     local COUNT
+    local -a args=("$@")
+    [[ " ${args[*]} " == *" --connect-to ::127.0.0.1: "* ]]
+    [[ " ${args[*]} " == *" --cacert ${DSM_TLS_CA_FILE} "* ]]
+    [[ " ${args[*]} " != *" --insecure "* ]]
     COUNT="$(cat "${CURL_COUNT}")"
     COUNT=$((COUNT + 1))
     printf '%s\n' "${COUNT}" >"${CURL_COUNT}"
@@ -52,7 +58,7 @@ curl() {
 TRANSIENT_ERR="${TMP}/transient.err"
 
 wait_for_dashboard_readiness \
-    "https://127.0.0.1:9443/health" \
+    "https://controller.test:9443/health" \
     "https" \
     2>"${TRANSIENT_ERR}"
 
@@ -72,7 +78,7 @@ curl() {
 PERSISTENT_ERR="${TMP}/persistent.err"
 
 if wait_for_dashboard_readiness \
-    "https://127.0.0.1:9443/health" \
+    "https://controller.test:9443/health" \
     "https" \
     2>"${PERSISTENT_ERR}"
 then
@@ -97,7 +103,7 @@ wait_for_dashboard_readiness() {
 DSM_WEB_SCHEME=https
 DSM_WEB_PORT=9443
 validate_runtime_readiness >/dev/null
-[[ "$(cat "${CAPTURE}")" == "https://127.0.0.1:9443/health|https" ]]
+[[ "$(cat "${CAPTURE}")" == "https://controller.test:9443/health|https" ]]
 
 DSM_WEB_SCHEME=http
 DSM_WEB_PORT=18080

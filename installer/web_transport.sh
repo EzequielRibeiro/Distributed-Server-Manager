@@ -175,19 +175,31 @@ prepare_web_transport_certificate(){
     command -v certbot >/dev/null 2>&1 || { if command -v apt-get >/dev/null 2>&1; then DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null; DEBIAN_FRONTEND=noninteractive apt-get install -y certbot >/dev/null; fi; }
     command -v certbot >/dev/null 2>&1 || { web_transport_die "certbot não está disponível" || return 1; }
 
+    local -a acme_options=(--no-directory-hooks --cert-name "${DSM_PUBLIC_HOST}")
+    if [[ -n "${DSM_TLS_ACME_SERVER:-}" ]]; then
+        [[ "${DSM_TLS_ACME_SERVER}" == https://* ]] || { web_transport_die "DSM_TLS_ACME_SERVER deve usar HTTPS"; return 1; }
+        acme_options+=(--server "${DSM_TLS_ACME_SERVER}")
+    fi
     case "${DSM_TLS_ACME_CHALLENGE:-http-01}" in
         http-01)
             printf '[Capivara] ACME HTTP-01 requer a porta pública TCP/80 acessível durante emissão e renovação.\n'
-            certbot certonly --standalone --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
+            certbot certonly "${acme_options[@]}" --standalone --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
             ;;
         dns-01-manual)
             web_transport_is_interactive || { web_transport_die "DNS-01 manual requer instalação interativa; use dns-01-hook em automação" || return 1; }
             printf '[Capivara] O Certbot solicitará um registro TXT em _acme-challenge.%s.\n' "${DSM_PUBLIC_HOST}"
-            certbot certonly --manual --preferred-challenges dns --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
+            certbot certonly "${acme_options[@]}" --manual --preferred-challenges dns --agree-tos --email "${DSM_TLS_LE_EMAIL}" -d "${DSM_PUBLIC_HOST}"
             ;;
         dns-01-hook)
-            certbot certonly --manual --preferred-challenges dns --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" \
-                --manual-auth-hook "${DSM_TLS_DNS_AUTH_HOOK}" --manual-cleanup-hook "${DSM_TLS_DNS_CLEANUP_HOOK}" -d "${DSM_PUBLIC_HOST}"
+            local hook
+            for hook in "${DSM_TLS_DNS_AUTH_HOOK}" "${DSM_TLS_DNS_CLEANUP_HOOK}"; do
+                [[ "${hook}" =~ ^/[a-zA-Z0-9_./-]+$ ]] || { web_transport_die "Use um caminho absoluto simples para o hook DNS"; return 1; }
+                /usr/bin/python3 -I -S -B "${BASH_SOURCE[0]%/*}/controller_tls_lifecycle.py" --verify-hook "${hook}" \
+                    || return 1
+            done
+            certbot certonly "${acme_options[@]}" --manual --preferred-challenges dns --non-interactive --agree-tos --email "${DSM_TLS_LE_EMAIL}" \
+                --manual-auth-hook "${DSM_TLS_DNS_AUTH_HOOK}" --manual-cleanup-hook "${DSM_TLS_DNS_CLEANUP_HOOK}" -d "${DSM_PUBLIC_HOST}" \
+                >/dev/null 2>&1 || { web_transport_die "Falha na emissão DNS-01; revise o hook e o log privado do Certbot"; return 1; }
             ;;
         *) web_transport_die "Desafio ACME não suportado: ${DSM_TLS_ACME_CHALLENGE}" || return 1 ;;
     esac
@@ -201,18 +213,17 @@ persist_web_transport_config(){
 
     if [[ "${DSM_WEB_SCHEME}" == https ]]; then
         if [[ "${DSM_TLS_CERT_MODE}" == letsencrypt ]]; then
-            install -d -m 750 -o root -g "${group}" /etc/capivara/tls
-            install -m 0644 -o root -g "${group}" "${DSM_TLS_SOURCE_CERT_FILE}" "${DSM_TLS_CERT_FILE}"
-            install -m 0640 -o root -g "${group}" "${DSM_TLS_SOURCE_KEY_FILE}" "${DSM_TLS_KEY_FILE}"
-            install -d -m 755 /etc/letsencrypt/renewal-hooks/deploy
-            cat >/etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard <<EOF_HOOK
-#!/bin/sh
-set -e
-install -m 0644 -o root -g '${group}' '${DSM_TLS_SOURCE_CERT_FILE}' '${DSM_TLS_CERT_FILE}'
-install -m 0640 -o root -g '${group}' '${DSM_TLS_SOURCE_KEY_FILE}' '${DSM_TLS_KEY_FILE}'
-systemctl try-restart dsm-dashboard.service >/dev/null 2>&1 || true
-EOF_HOOK
-            chmod 755 /etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard
+            install_controller_tls_lifecycle || return 1
+            if [[ ! -e /etc/capivara/controller-tls.json ]]; then
+                configure_controller_certbot_lifecycle "${user}" "${group}" || return 1
+            fi
+            if [[ ! -L /etc/capivara/tls/active && ! -e "${DSM_TLS_CERT_FILE}" && ! -e "${DSM_TLS_KEY_FILE}" ]]; then
+                /usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py --bootstrap || return 1
+            fi
+            if [[ -L /etc/capivara/tls/active ]]; then
+                DSM_TLS_CERT_FILE=/etc/capivara/tls/active/server.crt
+                DSM_TLS_KEY_FILE=/etc/capivara/tls/active/server.key
+            fi
         elif [[ "${DSM_TLS_CERT_MODE}" == selfsigned ]]; then
             chown root:"${group}" "${DSM_TLS_CERT_FILE}" "${DSM_TLS_KEY_FILE}"; chmod 0644 "${DSM_TLS_CERT_FILE}"; chmod 0640 "${DSM_TLS_KEY_FILE}"
         else
@@ -226,5 +237,50 @@ EOF_HOOK
     web_transport_write_config_value "${config}" DSM_TLS_CERT_MODE "${DSM_TLS_CERT_MODE:-disabled}"; web_transport_write_config_value "${config}" DSM_TLS_ACME_CHALLENGE "${DSM_TLS_ACME_CHALLENGE:-disabled}"
     web_transport_write_config_value "${config}" DSM_TLS_DNS_AUTH_HOOK "${DSM_TLS_DNS_AUTH_HOOK:-}"; web_transport_write_config_value "${config}" DSM_TLS_DNS_CLEANUP_HOOK "${DSM_TLS_DNS_CLEANUP_HOOK:-}"
     web_transport_write_config_value "${config}" DSM_TLS_CERT_FILE "${DSM_TLS_CERT_FILE:-}"; web_transport_write_config_value "${config}" DSM_TLS_KEY_FILE "${DSM_TLS_KEY_FILE:-}"; web_transport_write_config_value "${config}" DSM_TLS_CA_FILE "${DSM_TLS_CA_FILE:-}"
-    if command -v systemctl >/dev/null 2>&1 && systemctl cat dsm-dashboard.service >/dev/null 2>&1; then systemctl restart dsm-dashboard.service; systemctl is-active --quiet dsm-dashboard.service || { web_transport_die "Dashboard não iniciou após aplicar ${DSM_WEB_SCHEME^^}" || return 1; }; fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl cat dsm-dashboard.service >/dev/null 2>&1; then
+        systemctl restart dsm-dashboard.service || return 1
+        if [[ "${DSM_TLS_CERT_MODE}" == letsencrypt ]]; then
+            /usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py --verify-active || return 1
+            systemctl enable --now dsm-controller-tls.timer || return 1
+        fi
+    fi
+}
+
+
+install_controller_tls_lifecycle(){
+    local installer_dir
+    installer_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+    mkdir -p /etc/capivara || return 1
+    [[ ! -L /etc/capivara && "$(stat -c '%u:%A' /etc/capivara)" == 0:d????-??-* ]] \
+        || { web_transport_die "Diretório /etc/capivara precisa ser controlado por root"; return 1; }
+    local program
+    program="$(mktemp /etc/capivara/.controller-tls.XXXXXX)" || return 1
+    if ! install -m 0644 -o root -g root "${installer_dir}/controller_tls_lifecycle.py" "${program}" \
+        || ! mv -fT "${program}" /etc/capivara/controller-tls-lifecycle.py; then
+        rm -f -- "${program}"
+        return 1
+    fi
+    install -m 0644 -o root -g root "${installer_dir}/"dsm-controller-tls.{service,timer} /etc/systemd/system/ || return 1
+    # Retire the legacy global hook before the distribution Certbot timer can
+    # copy an unmatched pair or restart the Controller behind this lifecycle.
+    rm -f /etc/letsencrypt/renewal-hooks/deploy/capivara-dashboard || return 1
+    systemctl daemon-reload
+}
+
+configure_controller_certbot_lifecycle(){
+    /usr/bin/python3 -I -S -B - "${DSM_PUBLIC_HOST}" "${DSM_WEB_HOST}" "${DSM_WEB_PORT}" "$1" "$2" <<'PYTHON'
+import json
+import os
+import sys
+from pathlib import Path
+
+host, bind, port, user, group = sys.argv[1:]
+address = {"0.0.0.0": "127.0.0.1", "::": "::1", "localhost": "127.0.0.1"}.get(bind, bind)
+path = Path("/etc/capivara/controller-tls.json")
+fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(fd, "w") as stream:
+    json.dump(dict(hostname=host, address=address, port=int(port), service_user=user,
+                   service_group=group, certbot_lineage=host), stream)
+    stream.write("\n")
+PYTHON
 }

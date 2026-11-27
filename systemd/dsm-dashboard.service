@@ -24,6 +24,7 @@ ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_maintenance_wo
 # Composition chain retained by dashboard/server_part22.py: Database Intelligence -> YARA-X admin -> server_part20.py -> server_part19.py -> server_part18.py -> server_part17.py
 ExecStart=/usr/bin/python3 /opt/dsm/dashboard/server_part22.py
 Restart=always
+RestartPreventExitStatus=78
 RestartSec=5
 TimeoutStopSec=30
 NoNewPrivileges=true

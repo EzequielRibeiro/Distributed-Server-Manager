@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule Controller TLS renewal and expiry monitoring
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=6h
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=Renew and verify the Controller TLS certificate
+Wants=network-online.target
+After=network-online.target dsm-dashboard.service
+ConditionPathExists=/etc/capivara/controller-tls.json
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py
+ExecStopPost=/usr/bin/python3 -I -S -B /etc/capivara/controller-tls-lifecycle.py --recover-only
+TimeoutStartSec=9min
+TimeoutStopSec=60s
+PrivateTmp=true
+NoNewPrivileges=true
+SyslogIdentifier=capivara-controller-tls
