@@ -94,6 +94,64 @@ class UptimeImpactTest(unittest.TestCase):
             plan._reconcile_signed_baseline(self.installed, plan._inventory(self.installed),
                                             baseline, target, {})
 
+    def test_unsigned_runtime_projections_are_not_product_drift(self):
+        self.put("release-manifest.json", "old", "new")
+        self.put("dashboard/web/status.css", "old", "new")
+        baseline = plan._inventory(self.installed)
+        target = plan._inventory(self.target)
+        names = [
+            "runtime/resources/node-123/dayz/cli-000001-dayz-002/server.json",
+            "runtime/resources/node-123/dayz/cli-000001-dayz-002/metrics.json",
+        ]
+        for name in names:
+            path = self.installed / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"status": "online"}')
+            path.chmod(0o644)
+        signed = baseline.keys() | target.keys()
+        actual = plan._inventory(self.installed, signed_paths=signed)
+        self.assertEqual(actual, baseline)
+        for name in names:
+            (self.installed / name).write_text('{"status": "offline"}')
+        self.assertEqual(plan._inventory(self.installed, signed_paths=signed), baseline)
+        adjusted, _ = plan._reconcile_signed_baseline(
+            self.installed, actual, baseline, target, {})
+        self.assertEqual(adjusted, target)
+        # Signed member paths and strict inventory are never filtered.
+        self.assertIn(names[0], plan._inventory(self.installed))
+        self.assertIn(names[0], plan._inventory(
+            self.installed, signed_paths=signed | {names[0]}))
+        # Unknown names, wrong depth and executable product remain visible.
+        for name in ("runtime/resources/node-123/dayz/cli-000001-dayz-002/custom.py",
+                     "runtime/resources/node-123/dayz/server.json",
+                     "runtime/resources/node-123/dayz/cli-000001-dayz-002/other.json"):
+            path = self.installed / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("unexpected")
+            actual = plan._inventory(self.installed, signed_paths=signed)
+            self.assertIn(name, actual)
+            with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+                plan._reconcile_signed_baseline(self.installed, actual, baseline, target, {})
+            path.unlink()
+
+    def test_unsafe_generated_runtime_projection_blocks(self):
+        path = self.installed / "runtime/resources/node-123/dayz/instance/server.json"
+        path.parent.mkdir(parents=True)
+        path.write_text("{}")
+        path.chmod(0o755)
+        with self.assertRaisesRegex(ValueError, "unsafe generated runtime projection"):
+            plan._inventory(self.installed, signed_paths=set())
+        path.chmod(0o644)
+        alias = self.installed / "alias"
+        alias.hardlink_to(path)
+        with self.assertRaisesRegex(ValueError, "unsafe generated runtime projection"):
+            plan._inventory(self.installed, signed_paths=set())
+        alias.unlink()
+        path.unlink()
+        path.symlink_to("/nonexistent")
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            plan._inventory(self.installed, signed_paths=set())
+
     def test_runtime_change_requires_drain(self):
         self.put("agents/linux/runtime/agent.py","old","new")
         state=plan.analyze(self.installed,self.target)

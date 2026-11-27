@@ -95,7 +95,26 @@ def _tiers(changed: list[str], before: dict, after: dict) -> dict[str, object]:
 
 
 
-def _inventory(root: Path) -> dict[str, tuple[int, str]]:
+# Controller/legacy runtime projection JSONs, not executable product files.
+# Only unsigned installed projections at the documented exact depth can be
+# omitted; a matching member of either signed release remains product data.
+_PROJECTION_NAMES = frozenset({
+    "server.json", "instance.json", "runtime.json", "provision.json",
+    "mods.json", "metrics.json", "events.json", "backup.json", "doctor.json",
+})
+
+
+def _unsigned_runtime_projection(relative, signed_paths):
+    if signed_paths is None or relative in signed_paths:
+        return False
+    parts = relative.split("/")
+    return (len(parts) == 6 and parts[:2] == ["runtime", "resources"]
+            and parts[-1] in _PROJECTION_NAMES
+            and all(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value)
+                    for value in parts[2:5]))
+
+
+def _inventory(root: Path, *, signed_paths=None) -> dict[str, tuple[int, str]]:
     if not root.is_dir() or root.is_symlink():
         raise ValueError("unsafe or missing DSM root")
     files: dict[str, tuple[int, str]] = {}
@@ -124,9 +143,25 @@ def _inventory(root: Path) -> dict[str, tuple[int, str]]:
             rel = entry.relative_to(root).as_posix()
             if entry.is_symlink():
                 raise ValueError(f"symlink in release impact inventory: {rel}")
-            named = entry.lstat()
+            projection = _unsigned_runtime_projection(rel, signed_paths)
+            try:
+                named = entry.lstat()
+            except FileNotFoundError:
+                if projection:
+                    # A generated observation may disappear between listing
+                    # and stat. No signed product member uses this exception.
+                    continue
+                raise
             if not stat.S_ISREG(named.st_mode):
                 raise ValueError(f"unsafe release filesystem entry: {rel}")
+            if projection:
+                owner = root.stat()
+                if (named.st_nlink != 1 or named.st_mode & 0o7133
+                        or (named.st_uid, named.st_gid) != (owner.st_uid, owner.st_gid)):
+                    raise ValueError(f"unsafe generated runtime projection: {rel}")
+                # The state can change at any time; it is not hashed or
+                # included in a product mutation plan. Never rewrite it.
+                continue
             digest = hashlib.sha256()
             fd = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
             with os.fdopen(fd, "rb") as stream:
@@ -434,8 +469,13 @@ def _control_plane_restart_plan(changed, before, after, fixed):
 
 
 def analyze(installed: Path, target: Path) -> dict[str, object]:
-    before = _inventory(installed)
     after = _inventory(target)
+    signed_paths = None
+    if installed == Path("/opt/dsm") and os.path.lexists(_BASELINE_DIR):
+        # Do not omit a signed member even if it resembles generated state.
+        # The reconciliation below independently authenticates the baseline.
+        signed_paths = after.keys() | _inventory(_BASELINE_DIR / "payload").keys()
+    before = _inventory(installed, signed_paths=signed_paths)
     after, baseline_review = _signed_baseline_comparison(installed, before, after)
     changed = sorted(name for name in before.keys() | after.keys()
                      if before.get(name) != after.get(name))
