@@ -103,14 +103,20 @@ class YaraXAdminOperationRepository:
         if str(current.get("agent_id"))!=str(authenticated_agent_id):raise PermissionError("YARA-X operation Agent mismatch")
         status=str(result.get("status") or "").lower()
         if status not in {"running","completed","failed"}:raise ValueError("invalid YARA-X operation status")
+        if result.get("action") is not None and result["action"] != current["action"]:
+            raise ValueError("YARA-X operation action mismatch")
+        # A late authenticated report cannot reopen an already terminal row.
+        if current["status"] in FINAL:
+            return current
         now=utc_timestamp();ph=self.dialect.placeholder
         completed=now if status in FINAL else None
         safe_result={k:v for k,v in result.items() if k not in {"credential","secret","token","password"}}
         with self.backend.transaction() as connection:
             s=AlertSession(self.backend,connection)
             try:s.execute(
-                f"UPDATE yarax_admin_operations SET status={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} WHERE operation_id={ph}",
-                (status,json.dumps(safe_result,sort_keys=True,separators=(",",":")),str(result.get("error") or "")[:2000] or None,completed,now,operation_id),
+                f"UPDATE yarax_admin_operations SET status={ph},result_json={ph},last_error={ph},completed_at={ph},updated_at={ph} "
+                f"WHERE operation_id={ph} AND agent_id={ph} AND status IN ('queued','delivered','running')",
+                (status,json.dumps(safe_result,sort_keys=True,separators=(",",":")),str(result.get("error") or "")[:2000] or None,completed,now,operation_id,authenticated_agent_id),
             )
             finally:s.close()
         return self.get(operation_id)

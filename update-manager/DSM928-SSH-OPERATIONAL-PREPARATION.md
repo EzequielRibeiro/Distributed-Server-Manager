@@ -197,3 +197,30 @@ Controller no-drain transaction; record the Agent and DayZ PIDs independently
 before and after the later Controller update. A missing or unhealthy Agent,
 unresolved job or incompatible wire contract must be investigated, not hidden
 by omitting it from the registry. No release is published by this procedure.
+
+
+### Legacy YARA-X delivered records (local PostgreSQL Hybrid only)
+
+A delivered row is not proof of execution, failure or cancellation. Never
+replay or expire it merely because it is old. The Hybrid worker persists a
+single local result; consume any matching terminal result normally. Inspect
+the local engine/rules state, journal and detached process inventory, and
+record the operator's evidence reference before declaring the outcome unknown.
+
+After conventional installation of the reviewed v23 release and its new
+Controller admission inode, run the independently signed root-owned copy of
+`game-uptime-yarax-reconcile.py --database <active-db> --operation <id>`
+(repeat --operation for each exact reviewed ID). Preview acquires the updater,
+Controller admission and HTTP, and Hybrid worker locks; it performs no write.
+The tool is intentionally limited to local PostgreSQL, the pinned local Hybrid,
+and no independently active Agent credentials. It refuses a matching local
+result, a running/ambiguous result, a changed row, or an unfinished transaction.
+If the operator has independently verified the absence of detached work and
+reviewed the actual local state, repeat with `--confirm <review_sha256>
+--evidence <operator-reviewed-reference>`. The exact unchanged delivered rows
+are marked failed with outcome unconfirmed (not an assertion the action failed),
+preserving the prior timestamps and review evidence. No command is replayed.
+Do not place secrets in the evidence reference. This is a separately approved
+conventional maintenance operation, not a distributed ACK or release admission.
+If any precondition fails, keep the rows blocking and investigate; do not
+manually change status or bypass the fence.
