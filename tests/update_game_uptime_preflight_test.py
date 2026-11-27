@@ -174,6 +174,56 @@ class UpdatePreflightTest(unittest.TestCase):
         with self.assertRaises(owner.InstalledTransactionBlocked):
             owner._verify_terminal_restart(scope, True, "verified")
 
+    def test_bootstrap_stages_both_snapshots_without_publishing(self):
+        import json
+        bootstrap = module._load("dsm928_bootstrap_stage_test",
+                                 "game-uptime-bootstrap-stage.py")
+        reviewed = self.target
+        payload = reviewed / "payload"
+        for name in ("update-manager", "agents/linux/runtime", "dashboard", "systemd"):
+            (payload / name).mkdir(parents=True)
+        (payload / "version").write_text("2.0.133-rc.9\n")
+        (reviewed / "reviewed-commit").write_text("a"*40 + "\n")
+        for suffix in (".tar.gz", ".manifest.json", ".provenance.json", ".provenance.sig"):
+            (reviewed / ("capivara-dsm-2.0.133-rc.9" + suffix)).write_text("fixture")
+        for name in bootstrap.MODULES:
+            (payload / "agents/linux/runtime" / name).write_text("# " + name)
+        (payload / "agents/linux/runtime/console_supervisor.py").write_text("# fixture")
+        stage = self.installed / "stage"
+        stage.mkdir(mode=0o700)
+        result = bootstrap._stage_bundle(reviewed, stage, version="2.0.133-rc.9",
+                                         commit="a"*40, digest="b"*64)
+        self.assertFalse(result["published"])
+        self.assertFalse(result["live_no_drain_authorized"])
+        for name in bootstrap.MODULES:
+            self.assertEqual((stage / "agent" / name).read_bytes(),
+                (stage / "updater/agents/linux/runtime" / name).read_bytes())
+        self.assertEqual(json.loads((stage / "supervisor-versions/active-pin.json").read_text()),
+                         {"sha256": result["supervisor_sha256"]})
+        self.assertEqual((stage / "installed-baseline/payload/version").read_text(),
+                         "2.0.133-rc.9\n")
+        self.assertFalse((stage / "installed-baseline/local-overrides.json").exists())
+
+    def test_changed_source_cache_is_never_removed_by_transaction(self):
+        from pathlib import Path
+        engine = module._load("dsm928_cache_guard_test",
+                              "game-uptime-file-transaction.py")
+        self.write("dashboard/probe.py", "x=1", "x=2")
+        source = self.installed / "dashboard/probe.py"
+        engine._require_no_source_cache(source)
+        cache = source.parent / "__pycache__"
+        cache.mkdir()
+        entry = cache / "probe.cpython-312.pyc"
+        entry.write_bytes(b"unsafe or obsolete")
+        with self.assertRaisesRegex(engine.FileTransactionBlocked, "python_cache"):
+            engine._require_no_source_cache(source)
+        self.assertEqual(entry.read_bytes(), b"unsafe or obsolete")
+        entry.unlink()
+        cache.rmdir()
+        cache.symlink_to(source.parent)
+        with self.assertRaisesRegex(engine.FileTransactionBlocked, "cache_directory"):
+            engine._require_no_source_cache(source)
+
     def test_preparation_and_retained_admission_are_distinct(self):
         # Pure validator fixture: a preparation report is not an installed
         # permission, even when the eligibility inputs are complete.
@@ -494,6 +544,28 @@ class UpdatePreflightTest(unittest.TestCase):
         self.assertFalse(confirmed["live_no_drain_authorized"])
         self.assertTrue(confirmed["current_updater_drains_active_games"])
 
+
+    def test_operational_coverage_accepts_exact_host_local_inventory(self):
+        self.write("dashboard/web/style.css", "old", "new")
+        for units in ([u for u in self.units if "minecraft" in u],
+                      [u for u in self.units if "dayz" in u], []):
+            with self.subTest(units=units):
+                result = module.preflight(
+                    self.installed, self.target, list_units=lambda: units,
+                    inspect=lambda unit: {"main_pid": 3456, "start_stamp": 7890},
+                    expected_active_units=units,
+                )
+                self.assertTrue(result["no_drain_operational_coverage_verified"])
+                self.assertFalse(result["live_no_drain_authorized"])
+        # A remote game is not a substitute for a missing declared local unit.
+        missing = module.preflight(
+            self.installed, self.target, list_units=lambda: [],
+            inspect=lambda unit: {"main_pid": 3456, "start_stamp": 7890},
+            expected_active_units=[self.units[0]],
+        )
+        self.assertFalse(missing["no_drain_operational_coverage_verified"])
+        self.assertEqual(missing["operational_coverage"]["missing_active_units"],
+                         [self.units[0]])
 
     def test_full_systemd_pid_and_unit_digest_witness_passes_two_points(self):
         self.write("dashboard/web/style.css", "old", "new")

@@ -9,6 +9,9 @@ Type=simple
 User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
+# DSM928: never read or generate legacy in-tree bytecode on the control plane.
+Environment=PYTHONPYCACHEPREFIX=/dev/null
+Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1
 # Reuse the existing Controller inode; no additional lock family.
 ExecStartPre=+/usr/bin/python3 /opt/dsm/dashboard/workers/prepare_maintenance_worker_locks.py --user {{DSM_USER}} --group {{DSM_GROUP}} --controller-only

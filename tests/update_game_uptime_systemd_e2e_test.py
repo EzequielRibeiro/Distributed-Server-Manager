@@ -281,6 +281,16 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             (installed / "release-manifest.json").write_text("{}\n")
             probe = installed / "dashboard/acceptance_probe.py"
             probe.write_text("generation = 1\n")
+            # Reproduce the conventional installation's signed product and
+            # subsequent, explicitly reviewed local state differences.
+            (installed / "config").mkdir()
+            local_config = installed / "config/agent.conf"
+            local_config.write_text("fixture_default=1\n")
+            script = installed / "update-manager/baseline-mode-fixture.sh"
+            script.write_text("#!/bin/bash\ntrue\n")
+            script.chmod(0o644)
+            unchanged = installed / "dashboard/unchanged_probe.py"
+            unchanged.write_text("generation = 1\n")
             for path in (installed, *installed.rglob("*")):
                 # Release files have no ACLs. Strip any ACL inherited from
                 # the runner image before copying this disposable baseline.
@@ -334,6 +344,51 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 trust / "release-signing-public.pem")
             run("openssl", "dgst", "-sha256", "-sign", key, "-out",
                 reviewed / (name + ".provenance.sig"), statement)
+
+            # Authenticate a separate OLD release, including its original
+            # manifest. Never enroll the mutable installed tree as a baseline.
+            baseline = state / "installed-baseline"
+            baseline.mkdir(mode=0o700)
+            old_payload = baseline / "payload"
+            shutil.copytree(installed, old_payload)
+            old_name = "capivara-dsm-2.0.998"
+            old_archive = baseline / (old_name + ".tar.gz")
+            old_manifest = {**manifest, "version": "2.0.998",
+                            "archive": old_archive.name}
+            old_bytes = canonical(old_manifest)
+            (old_payload / "release-manifest.json").write_bytes(old_bytes)
+            (installed / "release-manifest.json").write_bytes(old_bytes)
+            (baseline / (old_name + ".manifest.json")).write_bytes(old_bytes)
+            (baseline / "reviewed-commit").write_text(commit + "\n")
+            with tarfile.open(old_archive, "w:gz") as package:
+                package.add(old_payload, arcname=old_name)
+            old_statement = baseline / (old_name + ".provenance.json")
+            old_statement.write_bytes(canonical({
+                "schema_version": 1, "kind": "CapivaraDSMReleaseProvenance",
+                "repository": "EzequielRibeiro/Distributed-Server-Manager",
+                "version": "2.0.998", "git_commit": commit, "archive": old_archive.name,
+                "archive_sha256": hashlib.sha256(old_archive.read_bytes()).hexdigest(),
+                "manifest_sha256": hashlib.sha256(old_bytes).hexdigest(),
+            }))
+            run("openssl", "dgst", "-sha256", "-sign", key, "-out",
+                baseline / (old_name + ".provenance.sig"), old_statement)
+            # Independent fixture review of known local config; never copy
+            # secrets or accept arbitrary product-code overrides.
+            local_config.write_text("fixture_local=2\n")
+            local_config.chmod(0o640)
+            overrides = baseline / "local-overrides.json"
+            overrides.write_bytes(canonical({"config/agent.conf": {
+                "mode": 0o640,
+                "sha256": hashlib.sha256(local_config.read_bytes()).hexdigest(),
+            }}))
+            overrides.chmod(0o600)
+            script.chmod(0o744)
+            (installed / "backups").mkdir()
+            (installed / "backups/historical-fixture.py").write_text("# preserved\n")
+            run(python, "-I", "-B", "-c",
+                "import py_compile,sys; py_compile.compile(sys.argv[1],doraise=True)",
+                unchanged)
+
             (trust / "agent-session-id").write_text("local-agent\n")
             (trust / "agent-session-id").chmod(0o600)
 
@@ -382,6 +437,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                                           "dsm-alert-engine.service")
             common = (f"[Service]\nUser={account.pw_name}\n"
                       "Environment=PYTHONDONTWRITEBYTECODE=1\n"
+                      "Environment=PYTHONPYCACHEPREFIX=/dev/null\n"
                       "Environment=PYTHONPATH=/opt/dsm/agents/linux/runtime\n"
                       "Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1\n")
             restart_probe = suite / "assert-retained-locks.py"
@@ -482,6 +538,9 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 self.assertEqual(replacement["state"], "active")
                 self.assertNotEqual(replacement["pid"], original["pid"])
             self.assertEqual(probe.read_text(), "generation = 2\n")
+            self.assertEqual(local_config.read_text(), "fixture_local=2\n")
+            self.assertEqual(script.stat().st_mode & 0o777, 0o744)
+            self.assertTrue((installed / "backups/historical-fixture.py").is_file())
             self.assertTrue((suite / "restart-locks-retained").is_file())
             tx = result["transaction_id"]
             journal = json.loads((state / f"transaction-{tx}/game-uptime-transaction.json").read_text())

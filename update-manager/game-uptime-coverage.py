@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Read-only completeness of a two-game no-drain rehearsal inventory.
+"""Read-only completeness of a host-local no-drain rehearsal inventory.
 
-The caller must name *every* game unit expected to remain active. A successful
+The caller must independently name *every* game unit expected to remain active
+on this host; no game family is required or inferred from another host. A successful
 two-point inventory is only a candidate for a disposable test, not uptime
 proof across an update, and never grants a production update permission.
 """
@@ -12,7 +13,6 @@ import re
 from typing import Any
 
 _UNIT = re.compile(r"capivara-instance-[A-Za-z0-9_.-]+\.service\Z")
-_FAMILIES = ("minecraft", "dayz")
 
 
 def assess(expected_active_units: list[str] | None,
@@ -28,9 +28,6 @@ def assess(expected_active_units: list[str] | None,
         blockers.append("invalid_expected_active_unit_set")
     else:
         expected = sorted(expected_active_units)
-        for family in _FAMILIES:
-            if not any("-" + family + "-" in name for name in expected):
-                blockers.append(f"expected_{family}_service_missing")
     if not isinstance(observed_inventory, Mapping):
         blockers.append("active_inventory_missing")
         rows = []

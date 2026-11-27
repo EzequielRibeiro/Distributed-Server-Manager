@@ -47,6 +47,7 @@ def _pinned_minecraft_evidence(units, *, versions_dir, expected_sha256, inspect)
             result = supervisor_unit.verify_pinned_supervisor(
                 item["unit"], versions_dir=Path(versions_dir),
                 expected_sha256=expected_sha256, inspect=verify,
+                require_live_process=inspect is None,
             )
             if (item.get("main_pid") != result["main_pid"] or
                     not isinstance(item.get("start_stamp"), int) or

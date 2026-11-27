@@ -145,3 +145,55 @@ back a prepared mixed file state, and never renews a lease. It remains
 blocked by missing positive retained operational guarantees. Do not run it
 against production during this implementation phase; expired, rebooted,
 missing or partially released scopes still require explicit manual review.
+
+## Installed baseline and bootstrap bundle (B.2)
+
+A conventional installation can legitimately retain configuration, backup and
+runtime-state files, apply owner-execute mode to shell scripts, and create
+Python bytecode. Never erase these files to satisfy a classifier. The installed
+baseline must be the **exact previously signed** archive and payload, with its
+manifest, provenance, signature and independently reviewed commit, under
+`/var/lib/capivara-dsm-928/installed-baseline`. The installed manifest must match
+that archive. Only exact unchanged signed entries can explain installer mode
+normalization. Local configuration exceptions require explicit independent
+review in root-private `local-overrides.json` (mapping approved paths to
+`{"mode": decimal_mode, "sha256": "digest"}`); no credential contents and no
+automatic enrollment. A changed release default remains blocking. The baseline
+must be advanced to the next verified signed release after a successful
+transaction and terminal release, never after rollback. Retain prior evidence.
+
+The control-plane services must start with `PYTHONPYCACHEPREFIX=/dev/null` and
+`PYTHONDONTWRITEBYTECODE=1`; the installed owner checks the actual Controller
+and Worker processes before activation and after restart/rollback. Existing
+in-tree caches for unchanged source must match a fresh compile byte for byte.
+A cache for changed source, an unverified cache or a symlink remains blocking;
+the file engine checks affected cache paths without removing them. Resolve
+such a cache during separately approved conventional maintenance, preserving
+it for review outside the product tree. `-B` alone does not prevent cache reads.
+
+From independently verified, root-owned audited source, with no pending hold,
+run `python3 -I -S -B game-uptime-bootstrap-stage.py`. It verifies the fixed
+reviewed signed release and stages an updater snapshot, nine matching Agent
+modules, signed baseline and versioned supervisor under a new private
+`bootstrap-stage-*` directory. It never publishes the bundle. The staging
+receipt is not an ACK or installation authorization. During the approved
+maintenance window, retain the earlier root-owned snapshots, publish the two
+new snapshots at their fixed libexec paths, and validate exact byte identity.
+Do not replace snapshots with active helper/SSH sessions or an unfinished
+transaction. Publish the baseline only for the exact installed release and
+keep older pinned supervisor versions. Review and publish the root-owned
+`supervisor-versions/active-pin.json` alongside its immutable matching file.
+The normal Minecraft Java materializer then renders the pinned path. Existing
+units must be reconciled during maintenance and actually restarted on that
+revision; merely reloading a future ExecStart does not prove the live process
+uses it. Admission now checks the running kernel argv as well as systemd.
+
+For a standalone VPS, build the separate Linux Agent artifact from the same
+reviewed commit and version, independently verify its origin and digest and
+use the normal Agent updater with rollback and heartbeat validation. Stage the
+Agent's nine audited SSH modules from the verified DSM source and retain its
+existing trust identity. Do not replace a running Agent as part of a compatible
+Controller no-drain transaction; record the Agent and DayZ PIDs independently
+before and after the later Controller update. A missing or unhealthy Agent,
+unresolved job or incompatible wire contract must be investigated, not hidden
+by omitting it from the registry. No release is published by this procedure.

@@ -10,6 +10,9 @@ Type=simple
 User={{DSM_USER}}
 Group={{DSM_GROUP}}
 Environment=DSM_ROOT=/opt/dsm
+# DSM928: never read or generate legacy in-tree bytecode on the control plane.
+Environment=PYTHONPYCACHEPREFIX=/dev/null
+Environment=PYTHONDONTWRITEBYTECODE=1
 # Enable the shared request lock for installed Controller HTTP mutations.
 # A maintenance transaction still requires independent distributed fencing.
 Environment=DSM928_CONTROLLER_AGENT_HTTP_FLOCK=1

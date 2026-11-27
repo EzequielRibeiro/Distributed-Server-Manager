@@ -67,6 +67,16 @@ def _runtime_dir(installed: bool) -> Path:
                 or info.st_mode & 0o022 or info.st_nlink != 1
                 or not 0 < info.st_size <= 1024 * 1024):
             raise LocalScopeLeaseBlocked("untrusted_installed_agent_snapshot")
+        audited = Path("/usr/local/libexec/capivara-dsm-928-updater/agents/linux/runtime") / path.name
+        for folder in (audited.parent.parent.parent.parent, audited.parent.parent.parent,
+                       audited.parent.parent, audited.parent):
+            _safe_directory(folder, owner=0)
+        source = audited.lstat()
+        if (not stat.S_ISREG(source.st_mode) or source.st_uid != 0
+                or source.st_mode & 0o022 or source.st_nlink != 1
+                or not 0 < source.st_size <= 1024 * 1024
+                or path.read_bytes() != audited.read_bytes()):
+            raise LocalScopeLeaseBlocked("installed_agent_snapshot_revision_mismatch")
         # Never reuse a module previously imported from a checkout or
         # mutable installation tree in an installed privileged transaction.
         loaded = sys.modules.get(name)

@@ -242,7 +242,48 @@ def _verify_terminal_restart(scope, restart_required, outcome):
         raise InstalledTransactionBlocked("terminal_restart_receipts_mismatch")
 
 
-def _execute_file_transaction(engine, scope, *, restart_required=False):
+def _verify_live_cache_policy():
+    """Verify the actual Controller and all Worker processes, not just unit files.
+
+    /dev/null must be the host's character device, not a writable directory.
+    The independent root updater snapshot itself contains no bytecode.
+    """
+    probe = _load("game-uptime-live-daemon-identity.py")
+    null = Path("/dev/null").lstat()
+    if not stat.S_ISCHR(null.st_mode) or (os.major(null.st_rdev), os.minor(null.st_rdev)) != (1, 3):
+        raise InstalledTransactionBlocked("python_cache_sink_unverified")
+    controller = probe._controller_identity()
+    workers = probe._workers_identity()
+    if (controller.get("identity_verified") is not True
+            or workers.get("all_nine_workers_verified") is not True):
+        raise InstalledTransactionBlocked("python_cache_policy_daemon_identity_unverified")
+    identities = [controller, workers["supervisor_identity"],
+                  *workers["worker_identities"].values()]
+    for item in identities:
+        proc = Path("/proc") / str(item["pid"])
+        try:
+            def ticks():
+                return int((proc / "stat").read_text().rsplit(")", 1)[1].split()[19])
+            if ticks() != item["start_ticks"]:
+                raise ValueError("process identity changed")
+            with (proc / "environ").open("rb") as stream:
+                raw = stream.read(262145)
+            if not 0 < len(raw) <= 262144 or not raw.endswith(b"\x00"):
+                raise ValueError("incomplete process environment")
+            env = raw[:-1].split(b"\x00")
+            for key, expected in ((b"PYTHONPYCACHEPREFIX=", b"/dev/null"),
+                                  (b"PYTHONDONTWRITEBYTECODE=", b"1")):
+                if [value[len(key):] for value in env if value.startswith(key)] != [expected]:
+                    raise ValueError("cache isolation missing")
+            if ticks() != item["start_ticks"]:
+                raise ValueError("process identity changed")
+        except (OSError, ValueError, IndexError) as exc:
+            raise InstalledTransactionBlocked("python_cache_policy_unverified") from exc
+    if probe._controller_identity() != controller or probe._workers_identity() != workers:
+        raise InstalledTransactionBlocked("python_cache_policy_daemon_identity_changed")
+
+
+def _execute_file_transaction(engine, scope, *, restart_required=False, cache_policy=None):
     """Shared application/rollback orchestration under retained admission."""
     if (scope.get("all_mutators_fenced") is not True
             or scope.get("external_jobs_acked") is not True):
@@ -255,10 +296,14 @@ def _execute_file_transaction(engine, scope, *, restart_required=False):
     # Check the durable before-images while the installed bytes still match.
     # A terminal rollback result can only be verified after rollback runs.
     engine.verify_terminal("recovered_rollback")
+    if restart_required and cache_policy is not None:
+        cache_policy()
     try:
         engine.apply()
         if restart_required:
             _restart_verified(scope)
+            if cache_policy is not None:
+                cache_policy()
         engine.verify_terminal("verified")
         _verify_terminal_restart(scope, restart_required, "verified")
         scope["checkpoint"]()
@@ -270,6 +315,8 @@ def _execute_file_transaction(engine, scope, *, restart_required=False):
         engine.rollback()
         if restart_required:
             _restart_verified(scope)
+            if cache_policy is not None:
+                cache_policy()
         engine.verify_terminal("rolled_back")
         _verify_terminal_restart(scope, restart_required, "rolled_back")
         scope["checkpoint"]()
@@ -328,9 +375,14 @@ def _installed_runtime_imports():
     module = _load("game-uptime-local-scope-lease.py")
     runtime = str(module._runtime_dir(True))
     sys.path.insert(0, runtime)
+    old_prefix, old_write = sys.pycache_prefix, sys.dont_write_bytecode
+    # -B alone does not prevent reading stale privileged snapshot bytecode.
+    sys.pycache_prefix = "/dev/null"
+    sys.dont_write_bytecode = True
     try:
         yield
     finally:
+        sys.pycache_prefix, sys.dont_write_bytecode = old_prefix, old_write
         sys.path.remove(runtime)
 
 
@@ -346,7 +398,13 @@ def _run_installed():
     # Read-only eligibility must pass before durable preparation. Retained
     # admission below is separate and must pass before product mutations.
     digest, paths, restart_required = _validate_plan(review)
+    baseline = (review.get("release_impact") or {}).get("installed_baseline_review")
+    if (type(baseline) is not dict
+            or not re.fullmatch(r"[0-9a-f]{64}", str(baseline.get("verified_archive_sha256")))):
+        raise InstalledTransactionBlocked("signed_installed_baseline_required")
     _require_forward_version(INSTALLED, TARGET)
+    if restart_required:
+        _verify_live_cache_policy()
     lease = _load("game-uptime-local-scope-lease.py")
     module = _load("game-uptime-file-transaction.py")
     identity_probe = _load("game-uptime-live-daemon-identity.py")
@@ -388,6 +446,8 @@ def _run_installed():
         if inputs_sha256 != review.get("reviewed_operational_inputs_sha256"):
             raise InstalledTransactionBlocked("reviewed_operational_inputs_changed")
         retained_review = preflight.preflight(INSTALLED, TARGET, **inputs)
+        if (retained_review.get("release_impact") or {}).get("installed_baseline_review") != baseline:
+            raise InstalledTransactionBlocked("signed_installed_baseline_changed")
         for field in ("handoff_witness", "operational_coverage", "compatibility_gate",
                       "supervisor_pin_evidence"):
             if retained_review.get(field) != review.get(field):
@@ -403,6 +463,8 @@ def _run_installed():
         engine = _engine(module, workspace, (uid, gid), scope, digest, tx)
         # Recheck both classifiers and signed binding immediately before snapshot.
         impact = preflight.plan.analyze(INSTALLED, TARGET)
+        if impact.get("installed_baseline_review") != baseline:
+            raise InstalledTransactionBlocked("signed_installed_baseline_changed")
         if _select_candidate({"release_impact": impact,
                               "operational_release_review": proof}) != (digest, paths, restart_required):
             raise InstalledTransactionBlocked("exact_file_plan_changed")
@@ -420,7 +482,8 @@ def _run_installed():
                   "product_identity": [uid, gid], "live_no_drain_authorized": False}
         _write_status(workspace, report, "prepared")
         try:
-            outcome = _execute_file_transaction(engine, scope, restart_required=restart_required)
+            outcome = _execute_file_transaction(engine, scope, restart_required=restart_required,
+                                                cache_policy=_verify_live_cache_policy)
         except Exception:
             _write_status(workspace, report, "manual_recovery_required")
             raise
@@ -435,6 +498,8 @@ def _run_installed():
             raise InstalledTransactionBlocked("product_journal_restart_mode_mismatch")
         engine.verify_terminal(outcome)
         _verify_terminal_restart(scope, restart_required, outcome)
+        if restart_required:
+            _verify_live_cache_policy()
         result = scope["finalize_terminal"](terminal)
         if result.get("status") != "installed_terminal_holds_released":
             raise InstalledTransactionBlocked("terminal_release_incomplete")
@@ -542,6 +607,8 @@ def _recover_installed(tx):
             raise InstalledTransactionBlocked("product_file_journal_changed")
         outcome = report["status"]
         restart_required = engine.requires_control_plane_restart()
+        if restart_required:
+            _verify_live_cache_policy()
         if outcome == "prepared":
             for prefix in ("terminal-", "terminal-confirmation-", "released-"):
                 if os.path.lexists(STATE / (prefix + tx + ".json")):
@@ -569,6 +636,8 @@ def _recover_installed(tx):
             engine.verify_terminal(outcome)
             _verify_terminal_restart(scope, restart_required, outcome)
         scope["checkpoint"]()
+        if restart_required:
+            _verify_live_cache_policy()
         result = scope["finalize_terminal"](terminal)
         if result.get("status") != "installed_terminal_holds_released":
             raise InstalledTransactionBlocked("terminal_release_incomplete")

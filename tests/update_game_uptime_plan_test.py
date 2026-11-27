@@ -28,6 +28,72 @@ class UptimeImpactTest(unittest.TestCase):
         for root,data in ((self.installed,old),(self.target,new)):
             p=root/path;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(data)
 
+    def test_signed_baseline_view_preserves_only_reviewed_local_state(self):
+        import hashlib
+        self.put("release-manifest.json", "old manifest", "new manifest")
+        self.put("dashboard/web/status.css", "old", "new")
+        self.put("agents/linux/installer/install-agent.sh", "script", "script")
+        (self.installed / "agents/linux/installer/install-agent.sh").chmod(0o744)
+        (self.target / "agents/linux/installer/install-agent.sh").chmod(0o644)
+        self.put("config/agent.conf", "local config", "default config")
+        old, new = plan._inventory(self.installed), plan._inventory(self.target)
+        baseline = dict(old)
+        baseline["config/agent.conf"] = new["config/agent.conf"]
+        baseline["agents/linux/installer/install-agent.sh"] = new["agents/linux/installer/install-agent.sh"]
+        path = self.installed / "backups/example.py"
+        path.parent.mkdir()
+        path.write_text("historical backup")
+        old = plan._inventory(self.installed)
+        adjusted, counts = plan._reconcile_signed_baseline(
+            self.installed, old, baseline, new,
+            {"config/agent.conf": old["config/agent.conf"]})
+        self.assertEqual({k for k in old.keys() | adjusted.keys()
+                          if old.get(k) != adjusted.get(k)},
+                         {"release-manifest.json", "dashboard/web/status.css"})
+        self.assertEqual(counts["installer_execute_mode"], 1)
+        self.assertEqual(counts["preserved_data"], 1)
+        self.assertEqual(counts["reviewed_local_configuration"], 1)
+        with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+            plan._reconcile_signed_baseline(self.installed, old, baseline, new, {})
+        changed_config = dict(new)
+        changed_config["config/agent.conf"] = (0o644, hashlib.sha256(b"new").hexdigest())
+        with self.assertRaisesRegex(ValueError, "drift on changed release path"):
+            plan._reconcile_signed_baseline(self.installed, old, baseline, changed_config,
+                                            {"config/agent.conf": old["config/agent.conf"]})
+
+    def test_signed_baseline_rejects_unexpected_product_drift_even_if_matches_target(self):
+        self.put("release-manifest.json", "old", "new")
+        self.put("dashboard/web/style.css", "old", "new")
+        baseline = plan._inventory(self.installed)
+        (self.installed / "dashboard/web/style.css").write_text("new")
+        with self.assertRaisesRegex(ValueError, "drift on changed release path"):
+            plan._reconcile_signed_baseline(
+                self.installed, plan._inventory(self.installed), baseline,
+                plan._inventory(self.target), {})
+
+    def test_signed_baseline_rejects_unverified_and_changed_source_caches(self):
+        import py_compile
+        self.put("release-manifest.json", "old", "new")
+        self.put("dashboard/example.py", "VALUE = 1", "VALUE = 1")
+        baseline = plan._inventory(self.installed)
+        cache = Path(py_compile.compile(str(self.installed / "dashboard/example.py"),
+                                        doraise=True))
+        actual = plan._inventory(self.installed)
+        target = plan._inventory(self.target)
+        adjusted, counts = plan._reconcile_signed_baseline(
+            self.installed, actual, baseline, target, {})
+        self.assertEqual(counts["verified_unchanged_python_cache"], 1)
+        self.assertEqual(adjusted[cache.relative_to(self.installed).as_posix()],
+                         actual[cache.relative_to(self.installed).as_posix()])
+        (self.target / "dashboard/example.py").write_text("VALUE = 2")
+        with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+            plan._reconcile_signed_baseline(self.installed, actual, baseline,
+                                            plan._inventory(self.target), {})
+        cache.write_bytes(cache.read_bytes()[:-1] + b"!")
+        with self.assertRaisesRegex(ValueError, "unreviewed installed baseline drift"):
+            plan._reconcile_signed_baseline(self.installed, plan._inventory(self.installed),
+                                            baseline, target, {})
+
     def test_runtime_change_requires_drain(self):
         self.put("agents/linux/runtime/agent.py","old","new")
         state=plan.analyze(self.installed,self.target)

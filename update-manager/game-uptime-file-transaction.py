@@ -181,6 +181,25 @@ def _replace(path, desired, expected):
             temp.unlink()
 
 
+def _require_no_source_cache(path):
+    """Fail closed, never unlink a cache or follow a cache-directory symlink."""
+    if path.suffix != ".py":
+        return
+    for suffix in (".pyc", ".pyo"):
+        if os.path.lexists(path.with_suffix(suffix)):
+            raise FileTransactionBlocked("legacy_python_cache_for_changed_source")
+    folder = path.parent / "__pycache__"
+    if not os.path.lexists(folder):
+        return
+    info = folder.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_mode & 0o022:
+        raise FileTransactionBlocked("untrusted_python_cache_directory")
+    prefix = path.stem + "."
+    for entry in folder.iterdir():
+        if entry.name.startswith(prefix) and entry.suffix in (".pyc", ".pyo"):
+            raise FileTransactionBlocked("python_cache_for_changed_source")
+
+
 def _worker_main():
     """Only the unprivileged product account touches its own installation."""
     if os.geteuid() == 0 or os.getegid() == 0 or os.getgroups():
@@ -190,6 +209,7 @@ def _worker_main():
     os.close(fd)
     request = json.loads(sys.stdin.buffer.read(2 * _LIMIT * 2 + 65536))
     path = _file(Path("."), request["path"])
+    _require_no_source_cache(path)
     current = _read(path)
     if (current["uid"], current["gid"]) != (os.geteuid(), os.getegid()):
         raise FileTransactionBlocked("product_account_file_owner_mismatch")
@@ -202,6 +222,7 @@ def _worker_main():
         current = _read(path)
     elif request["action"] != "read":
         raise FileTransactionBlocked("unknown_product_worker_operation")
+    _require_no_source_cache(path)
     sys.stdout.buffer.write(_encode(current))
 
 

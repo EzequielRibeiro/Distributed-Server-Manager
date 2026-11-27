@@ -37,6 +37,16 @@ class PinnedSupervisorUnitTests(unittest.TestCase):
         self.assertFalse(value["live_no_drain_authorized"])
         self.assertEqual(value["main_pid"], 555)
 
+    def test_reloaded_unit_does_not_prove_running_pin(self):
+        from unittest.mock import patch
+        legacy = ["/usr/bin/python3", "/opt/dsm/agents/linux/runtime/console_supervisor.py",
+                  "--socket", "/tmp/isolated.sock", "--", "/usr/bin/sleep", "30"]
+        with patch.object(mod, "_running_command", return_value=(legacy, 1234)):
+            with self.assertRaisesRegex(mod.SupervisorUnitError, "not the configured"):
+                mod.verify_pinned_supervisor(self.unit, versions_dir=self.root,
+                    expected_sha256=self.sha, inspect=lambda unit:self.obs,
+                    require_live_process=True)
+
     def test_substring_not_accepted(self):
         self.obs["exec"] = "path=/usr/bin/python3 ; argv[]=/usr/bin/python3 "+str(self.path)+"-fake --socket /tmp/x ;"
         with self.assertRaises(mod.SupervisorUnitError): self.verify()

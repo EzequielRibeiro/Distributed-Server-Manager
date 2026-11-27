@@ -21,6 +21,7 @@ import tarfile
 import sys
 
 REVIEW_DIR = Path("/var/lib/capivara-dsm-928/reviewed-release")
+BASELINE_DIR = Path("/var/lib/capivara-dsm-928/installed-baseline")
 _MARKER = re.compile(r"[0-9a-f]{40}\Z")
 _ALLOWED_MANIFEST = re.compile(r"capivara-dsm-[a-zA-Z0-9._+-]+\.manifest\.json\Z")
 
@@ -256,11 +257,21 @@ def _target_byte_match(target: Path, archive: Path, root_name: str) -> int:
 def verify_reviewed_artifact(target: Path, *, review_dir: Path = REVIEW_DIR,
                              trusted_inputs_only: bool = True) -> dict:
     """Check the exact root-anchored artifact without claiming operational ACKs."""
-    status = {}
     # Fixtures MUST NOT masquerade as proof that production trust exists.
     if not trusted_inputs_only or Path(review_dir) != REVIEW_DIR:
         raise OperationalReviewBlocked("production_trust_path_is_fixed")
-    folder = Path(review_dir)
+    return _verify_fixed_artifact(Path(target), Path(review_dir))
+
+
+def verify_installed_baseline() -> dict:
+    """Verify the prior signed release separately from the candidate."""
+    for directory in (Path("/var"), Path("/var/lib"), BASELINE_DIR.parent, BASELINE_DIR):
+        _trusted_root_dir(directory)
+    return _verify_fixed_artifact(BASELINE_DIR / "payload", BASELINE_DIR)
+
+
+def _verify_fixed_artifact(target: Path, folder: Path) -> dict:
+    status = {}
     _trusted_root_dir(folder)
     reviewed_commit = _trusted_reviewed_commit(folder / "reviewed-commit")
     manifests = [p for p in folder.iterdir()
