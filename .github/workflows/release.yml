@@ -8,6 +8,7 @@ on:
       - 'v*.*.*'
     paths:
       - 'release/RELEASE_TRIGGER'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -15,8 +16,46 @@ permissions:
   attestations: write
 
 jobs:
+  verify_publisher:
+    # Manual, read-only verification on the reviewed default branch.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout reviewed main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build unpublished DSM artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(tr -d '\r\n' <version)
+          mkdir -p dist
+          release/build_release.sh "${GITHUB_SHA}" dist
+          python3 release/legacy_updater_bridge.py "dist/capivara-dsm-${VERSION}.tar.gz"
+
+      - name: Verify enrolled publisher without publishing
+        shell: bash
+        env:
+          CAPIVARA_REQUIRE_SIGNED_PROVENANCE: ${{ vars.CAPIVARA_DSM928_SIGNED_RELEASES }}
+          CAPIVARA_SIGNING_KEY_SHA256: ${{ vars.CAPIVARA_DSM_RELEASE_SIGNING_PUBLIC_KEY_SHA256 }}
+          CAPIVARA_SIGNING_KEY_PEM: ${{ secrets.CAPIVARA_DSM_RELEASE_SIGNING_PRIVATE_KEY_PEM }}
+        run: |
+          set -euo pipefail
+          test "${CAPIVARA_REQUIRE_SIGNED_PROVENANCE}" = true
+          VERSION=$(tr -d '\r\n' <version)
+          bash release/sign_if_enrolled.sh "${GITHUB_SHA}" dist
+          test -s "dist/capivara-dsm-${VERSION}.provenance.json"
+          test -s "dist/capivara-dsm-${VERSION}.provenance.sig"
+          echo "PUBLISHER_VERIFIED_WITHOUT_PUBLICATION"
+
   orchestrate:
-    if: github.ref_type == 'branch'
+    if: github.event_name == 'push' && github.ref_type == 'branch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -60,11 +99,7 @@ jobs:
             exit 1
           fi
 
-      - name: Prepare all release artifacts and provenance before publication
-        env:
-          CAPIVARA_REQUIRE_SIGNED_PROVENANCE: ${{ vars.CAPIVARA_DSM928_SIGNED_RELEASES }}
-          CAPIVARA_SIGNING_KEY_SHA256: ${{ vars.CAPIVARA_DSM_RELEASE_SIGNING_PUBLIC_KEY_SHA256 }}
-          CAPIVARA_SIGNING_KEY_PEM: ${{ secrets.CAPIVARA_DSM_RELEASE_SIGNING_PRIVATE_KEY_PEM }}
+      - name: Prepare all release artifacts before publication
         shell: bash
         run: |
           set -euo pipefail
@@ -75,7 +110,14 @@ jobs:
           python3 release/legacy_updater_bridge.py "dist/capivara-dsm-${VERSION}.tar.gz"
           bash release/build_agent_package.sh "${GITHUB_SHA}" dist
           python3 release/build_windows_agent_package.py "${GITHUB_SHA}" dist
-          bash release/sign_if_enrolled.sh "${GITHUB_SHA}" dist
+
+      - name: Sign official DSM provenance before publication
+        shell: bash
+        env:
+          CAPIVARA_REQUIRE_SIGNED_PROVENANCE: ${{ vars.CAPIVARA_DSM928_SIGNED_RELEASES }}
+          CAPIVARA_SIGNING_KEY_SHA256: ${{ vars.CAPIVARA_DSM_RELEASE_SIGNING_PUBLIC_KEY_SHA256 }}
+          CAPIVARA_SIGNING_KEY_PEM: ${{ secrets.CAPIVARA_DSM_RELEASE_SIGNING_PRIVATE_KEY_PEM }}
+        run: bash release/sign_if_enrolled.sh "${GITHUB_SHA}" dist
 
       - name: Publish standalone Linux and Windows Agent releases
         env:
@@ -187,7 +229,7 @@ jobs:
             --tag "v${VERSION}"
 
   publish:
-    if: github.ref_type == 'tag'
+    if: github.event_name == 'push' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
