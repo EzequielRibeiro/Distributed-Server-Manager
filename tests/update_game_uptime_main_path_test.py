@@ -600,7 +600,7 @@ class InstalledDaemonDriftGuardTest(unittest.TestCase):
             busy = [{**row, "outstanding": int(row["queue"] == name)} for row in queues]
             with self.assertRaisesRegex(scope.LocalScopeLeaseBlocked, name):
                 scope._validate_job_inventory(busy)
-        self.assertIn("FROM public.ha_failover_operations WHERE state IS NULL",
+        self.assertIn("FROM public.ha_failover_operations WHERE (state IS NULL",
                       scope._job_inventory_sql())
 
         controller = {"identity_verified": True, "flock_opted_in_verified": True,

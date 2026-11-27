@@ -251,6 +251,10 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 columns = ("state text" if queue == "ha_failover_operations" else "status text")
                 if queue == "agent_instance_commands":
                     columns += ", agent_id text"
+                if queue == "dayz_operations":
+                    columns += (", scheduled_at timestamptz, delivered_at timestamptz,"
+                                " completed_at timestamptz, canceled_at timestamptz,"
+                                " result_json text, last_error text")
                 statements.append(f"CREATE TABLE {queue} ({columns})")
             run(pg_bin / "psql", "-h", sockets, "-U", account.pw_name,
                 "-d", "postgres", "-v", "ON_ERROR_STOP=1",
@@ -446,6 +450,7 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
                 f"runtime = Path({str(runtime)!r})\n"
                 "if (runtime / 'no-drain-maintenance.json').is_file():\n"
                 f"    paths = [Path({str(state / 'updater-admission.lock')!r}),\n"
+                "        runtime / 'controller-agent-http-admission.lock',\n"
                 "        runtime / 'controller-agent-http.lock',\n"
                 "        runtime / 'agent-privileged-operations.lock',\n"
                 "        runtime / 'agent-finalization-operations.lock',\n"
@@ -550,7 +555,8 @@ class DisposableSystemdNoDrainTest(unittest.TestCase):
             self.assertTrue((state / f"released-{tx}.json").is_file())
             self.assertFalse((runtime / "no-drain-maintenance.json").exists())
             self.assertFalse((state / "no-drain-pending.json").exists())
-            for path in (runtime / "controller-agent-http.lock",
+            for path in (runtime / "controller-agent-http-admission.lock",
+                         runtime / "controller-agent-http.lock",
                          runtime / "agent-privileged-operations.lock",
                          runtime / "agent-finalization-operations.lock",
                          state / "updater-admission.lock",

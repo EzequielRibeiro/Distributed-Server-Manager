@@ -271,7 +271,8 @@ def main() -> int:
         ).fetchall()
         dayz = next(row for row in rows if row["queue"] == "dayz_operations")
         assert int(dayz["outstanding"]) == 5, dayz
-        session.execute("DELETE FROM dayz_operations WHERE operation_id LIKE 'scope-test-%'")
+        session.execute("DELETE FROM dayz_operations WHERE operation_id LIKE %s",
+                        ("scope-test-%",))
 
     # Execute the reviewed reconciliation statement on real PostgreSQL.
     # No host locks or live Agent state are involved in this disposable fixture.
