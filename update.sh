@@ -1603,15 +1603,23 @@ wait_for_dashboard_readiness() {
     local DEADLINE=$((SECONDS + READINESS_TIMEOUT))
     local LAST_ERROR=""
     local RESPONSE=""
-    local -a CURL_ARGS=(--silent --show-error --max-time 5)
+    local CONNECT_ADDRESS="${DSM_WEB_HOST:-127.0.0.1}"
+    local -a CURL_ARGS=(--disable --fail --silent --show-error --noproxy '*' --max-time 5)
 
-    # The public health endpoint is diagnostic and always returns JSON. Update
-    # readiness remains fail-closed by accepting only an explicit healthy state.
-    # For HTTPS loopback probing, skip hostname validation because the public
-    # certificate normally does not contain 127.0.0.1.
+    # Preserve the URL hostname for SNI and certificate verification while
+    # connecting directly to the Controller's local bind address.
     if [[ "${DASHBOARD_SCHEME}" == "https" ]]
     then
-        CURL_ARGS+=(--insecure)
+        case "${CONNECT_ADDRESS}" in
+            0.0.0.0|localhost) CONNECT_ADDRESS=127.0.0.1 ;;
+            ::) CONNECT_ADDRESS='[::1]' ;;
+            *:*) CONNECT_ADDRESS="[${CONNECT_ADDRESS}]" ;;
+        esac
+        CURL_ARGS+=(--connect-to "::${CONNECT_ADDRESS}:")
+        if [[ -n "${DSM_TLS_CA_FILE:-}" ]]
+        then
+            CURL_ARGS+=(--cacert "${DSM_TLS_CA_FILE}")
+        fi
     fi
 
     while true
@@ -1697,8 +1705,17 @@ validate_runtime_readiness() {
             return 1
         fi
 
-        DASHBOARD_URL="${DASHBOARD_SCHEME_VALUE}://127.0.0.1:${DASHBOARD_PORT_VALUE}/health"
-        wait_for_dashboard_readiness "${DASHBOARD_URL}" "${DASHBOARD_SCHEME_VALUE}"
+        local DASHBOARD_HEALTH_HOST=127.0.0.1
+        if [[ "${DASHBOARD_SCHEME_VALUE}" == "https" ]]
+        then
+            DASHBOARD_HEALTH_HOST="${DSM_PUBLIC_HOST:-127.0.0.1}"
+            if [[ "${DASHBOARD_HEALTH_HOST}" == *:* ]]
+            then
+                DASHBOARD_HEALTH_HOST="[${DASHBOARD_HEALTH_HOST}]"
+            fi
+        fi
+        DASHBOARD_URL="${DASHBOARD_SCHEME_VALUE}://${DASHBOARD_HEALTH_HOST}:${DASHBOARD_PORT_VALUE}/health"
+        wait_for_dashboard_readiness "${DASHBOARD_URL}" "${DASHBOARD_SCHEME_VALUE}" || return 1
         echo "[OK] Dashboard ${DASHBOARD_SCHEME_VALUE^^} /health"
     fi
 }

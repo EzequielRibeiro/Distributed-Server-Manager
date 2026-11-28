@@ -6,10 +6,13 @@ Kept outside server.py so transport concerns do not grow the legacy route module
 from __future__ import annotations
 
 import os
+import re
 import ssl
 import threading
 from pathlib import Path
 from types import MethodType
+
+NATIVE_TLS = Path("/etc/capivara/tls")
 
 
 def _transport() -> tuple[str, str, int, str | None, str | None]:
@@ -43,7 +46,7 @@ def _tls_handshake_timeout() -> float:
         return 10.0
 
 
-def _install_threaded_tls(server, context: ssl.SSLContext) -> None:
+def _install_threaded_tls(server, get_context) -> None:
     """Perform each TLS handshake inside the connection worker thread.
 
     Wrapping the listening socket causes SSLSocket.accept() to perform a client
@@ -58,7 +61,7 @@ def _install_threaded_tls(server, context: ssl.SSLContext) -> None:
         secure = None
         try:
             request.settimeout(timeout)
-            secure = context.wrap_socket(
+            secure = get_context().wrap_socket(
                 request,
                 server_side=True,
                 do_handshake_on_connect=False,
@@ -87,26 +90,67 @@ def _install_threaded_tls(server, context: ssl.SSLContext) -> None:
                     pass
 
     server.process_request_thread = MethodType(process_request_thread, server)
-    server._capivara_tls_context = context
     server._capivara_tls_handshake_timeout = timeout
 
 
-def configure_tls(server, *, scheme: str, cert_file: str | None, key_file: str | None) -> None:
-    if scheme != "https":
-        return
-    if not cert_file or not key_file:
-        raise RuntimeError("HTTPS requires DSM_TLS_CERT_FILE and DSM_TLS_KEY_FILE")
-    cert_path = Path(cert_file)
-    key_path = Path(key_file)
-    if not cert_path.is_file():
-        raise RuntimeError(f"TLS certificate not found: {cert_path}")
-    if not key_path.is_file():
-        raise RuntimeError(f"TLS private key not found: {key_path}")
+def _load_context(cert, key):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.options |= getattr(ssl, "OP_NO_COMPRESSION", 0)
-    context.load_cert_chain(certfile=str(cert_path), keyfile=str(key_path))
-    _install_threaded_tls(server, context)
+    context.load_cert_chain(str(cert), str(key), password=b"")
+    return context
+
+
+def _context_loader(cert_file, key_file):
+    if not cert_file or not key_file:
+        raise RuntimeError("HTTPS requires DSM_TLS_CERT_FILE and DSM_TLS_KEY_FILE")
+    cert, key = Path(cert_file), Path(key_file)
+    native = NATIVE_TLS / "server.crt", NATIVE_TLS / "server.key"
+    explicit = (cert, key) == (NATIVE_TLS / "active/server.crt", NATIVE_TLS / "active/server.key")
+    managed = explicit or ((cert, key) == native and os.environ.get("DSM_TLS_CERT_MODE") != "selfsigned")
+    if not managed:
+        context = _load_context(cert, key)
+        return lambda: context
+
+    def generation():
+        try:
+            target = os.readlink(NATIVE_TLS / "active")
+        except FileNotFoundError:
+            return None
+        if not re.fullmatch(r"versions/[a-f0-9]{64}", target):
+            raise RuntimeError("Invalid Controller TLS generation")
+        return target
+
+    def load(target):
+        if target:
+            directory = NATIVE_TLS / target
+            return _load_context(directory / cert.name, directory / key.name)
+        return _load_context(*native)
+
+    lock = threading.Lock()
+    current = generation()
+    context = load(current)
+
+    def get_context():
+        nonlocal current, context
+        with lock:
+            target = generation()
+            if target != current:
+                try:
+                    context = load(target)
+                except OSError:
+                    # Keep serving the established context. The deployment probe
+                    # checks the exact leaf and will reject this activation.
+                    return context
+                current = target
+            return context
+
+    return get_context
+
+
+def configure_tls(server, *, scheme: str, cert_file: str | None, key_file: str | None) -> None:
+    if scheme == "https":
+        _install_threaded_tls(server, _context_loader(cert_file, key_file))
 
 
 def install_transport_security_headers(legacy, *, scheme: str) -> None:
@@ -173,8 +217,14 @@ def run_dashboard(legacy) -> None:
     legacy.PORT = port
     install_transport_security_headers(legacy, scheme=scheme)
     legacy.print_banner()
+    try:
+        get_context = _context_loader(cert, key) if scheme == "https" else None
+    except (RuntimeError, OSError):
+        print("Controller TLS initialization failed. Check the configured certificate, key and permissions.", flush=True)
+        raise SystemExit(78) from None
     server = legacy.DashboardServer((host, port))
-    configure_tls(server, scheme=scheme, cert_file=cert, key_file=key)
+    if get_context:
+        _install_threaded_tls(server, get_context)
     threading.Thread(target=legacy.notification_worker, daemon=True).start()
     public_host = str(os.environ.get("DSM_PUBLIC_HOST", "") or "").strip()
     display_host = public_host or host
