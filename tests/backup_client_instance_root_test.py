@@ -192,6 +192,32 @@ class BackupClientInstanceRootTest(unittest.TestCase):
                 names,
             )
 
+    def test_restore_reconstructs_only_archived_dayz_compatibility_alias(self):
+        workshop = self.private / "content" / "workshop" / "steam-workshop:2289461232"
+        payload = workshop / "Addons" / "fixture.pbo"
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"fixture")
+        alias = workshop / "addons"
+        alias.symlink_to("Addons")
+
+        with (
+            patch.object(backup_client, "get_instance", return_value=self.record),
+            patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+        ):
+            created = backup_client._create(self.config, self.command())
+            alias.unlink()
+            backup_client._restore_direct(self.config, {
+                "instance_id": self.record["instance_id"],
+                "backup_id": created["backup_id"],
+            })
+
+        self.assertEqual(str(alias.readlink()), "Addons")
+        self.assertEqual(payload.read_bytes(), b"fixture")
+        with self.assertRaises(ValueError):
+            backup_client._restore_workshop_aliases(self.private, {
+                "dayz_workshop_addons_aliases": ["outside/addons"],
+            }, self.record)
+
     def test_unsafe_workshop_link_still_blocks_backup(self):
         workshop = self.private / "content" / "workshop" / "steam-workshop:2289461232"
         workshop.mkdir(parents=True)

@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from instance_runtime import get_instance, lifecycle, status
-from backup_storage_accounting import quota_snapshot, source_size
+from backup_storage_accounting import quota_snapshot, source_size, workshop_alias_path
 
 STATE_ROOT = Path(
     os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent")
@@ -97,8 +97,14 @@ def _selected(root, policy):
     candidates = []
     if includes:
         for relative in includes:
-            path = (root / str(relative)).resolve()
-            path.relative_to(root)
+            requested = Path(str(relative))
+            if requested.is_absolute() or ".." in requested.parts:
+                raise ValueError("backup source escaped instance root")
+            path = root
+            for part in requested.parts:
+                path /= part
+                if path.is_symlink():
+                    raise OSError("symlink in backup selection")
             if path.exists():
                 candidates.append(path)
     else:
@@ -285,7 +291,8 @@ def _create_unlocked(config, command):
     if not limits:
         raise OSError("backup denied: instance storage quota is unavailable")
     quota_limit = min(limits)
-    snapshot = quota_snapshot(record, BACKUP_ROOT)
+    aliases = []
+    snapshot = quota_snapshot(record, BACKUP_ROOT, aliases=aliases)
     if (BACKUP_ROOT / _safe(instance_id)).resolve().is_relative_to(root):
         raise OSError("backup storage must not be inside the archived source directory")
     estimate = source_size(selected_paths, root)
@@ -320,6 +327,12 @@ def _create_unlocked(config, command):
         )
         path = instance_dir / f"{backup_id}{suffix}"
         manifest = _manifest(record, backup_id)
+        if record.get("game_id") == "dayz":
+            manifest["dayz_workshop_addons_aliases"] = sorted(
+                alias for alias in aliases
+                if any((root / alias).with_name("Addons").is_relative_to(path)
+                       for path in selected_paths)
+            )
         if path.exists():
             raise FileExistsError(f"backup destination already exists: {path}")
         try:
@@ -398,7 +411,7 @@ def _validate_manifest(record, manifest):
 
 
 
-def _preserve_restored_owner(stage: Path, original: Path) -> None:
+def _preserve_restored_owner(stage: Path, original: Path, aliases: set[Path] | frozenset[Path] = frozenset()) -> None:
     """Restore the instance owner's UID/GID before activating a root-staged tree."""
     if os.geteuid() != 0:
         return
@@ -406,6 +419,8 @@ def _preserve_restored_owner(stage: Path, original: Path) -> None:
     pending = [stage]
     while pending:
         current = pending.pop()
+        if current in aliases and current.is_symlink() and os.readlink(current) == "Addons":
+            continue
         if current.is_symlink():
             raise RuntimeError(f"restore staging contains a symlink: {current}")
         if current.is_dir():
@@ -416,6 +431,22 @@ def _preserve_restored_owner(stage: Path, original: Path) -> None:
     # tarfile may reset the staging root's mode from the archive. Preserve
     # the actual live instance root permissions (not a broad default).
     os.chmod(stage, stat.S_IMODE(owner.st_mode))
+
+
+def _restore_workshop_aliases(stage: Path, manifest: dict | None, record: dict) -> set[Path]:
+    aliases = (manifest or {}).get("dayz_workshop_addons_aliases", [])
+    if not isinstance(aliases, list) or len(aliases) > 2000:
+        raise ValueError("invalid DayZ Workshop alias manifest")
+    if not aliases:
+        return set()
+    if record.get("game_id") != "dayz" or any(not isinstance(item, str) for item in aliases):
+        raise ValueError("invalid DayZ Workshop alias manifest")
+    paths = {workshop_alias_path(stage, relative) for relative in aliases}
+    for path in sorted(paths):
+        # The archive itself contains only regular payloads. Reconstruct
+        # exactly the fixed sibling alias under a freshly extracted tree.
+        path.symlink_to("Addons", target_is_directory=True)
+    return paths
 
 
 def _restore_direct(config, command):
@@ -458,16 +489,19 @@ def _restore_direct(config, command):
         )
     )
     moved_original = False
+    stop_attempted = False
 
     try:
-        if was_running:
-            lifecycle(config, instance_id, "stop")
         manifest = _safe_extract(artifact, stage)
         _validate_manifest(record, manifest)
         manifest_path = stage / MANIFEST_NAME
         if manifest_path.exists():
             manifest_path.unlink()
-        _preserve_restored_owner(stage, root)
+        aliases = _restore_workshop_aliases(stage, manifest, record)
+        _preserve_restored_owner(stage, root, aliases)
+        if was_running:
+            stop_attempted = True
+            lifecycle(config, instance_id, "stop")
         os.replace(root, previous)
         moved_original = True
         os.replace(stage, root)
@@ -496,7 +530,7 @@ def _restore_direct(config, command):
                 os.replace(previous, root)
             except Exception as exc:
                 rollback_errors.append(f"directory recovery failed: {exc}")
-        if was_running:
+        if stop_attempted:
             try:
                 lifecycle(config, instance_id, "start")
             except Exception as exc:
