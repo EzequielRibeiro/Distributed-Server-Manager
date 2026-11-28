@@ -76,6 +76,7 @@ jobs:
           python3 -m unittest tests/customer_management_dashboard_test.py
           python3 -m unittest tests/customer_team_c6_c9_test.py
           python3 -m unittest tests/customer_instance_workspace_v2_test.py
+          python3 -m unittest tests.agent_console_journal_reader_test tests.instance_runtime_telemetry_test tests.backup_repository_reconcile_test tests.backup_schedule_retry_guard_test tests.backup_health_workspace_schedule_test tests.backup_client_instance_root_test tests.backup_storage_accounting_1066_test tests.dayz_native_maintenance_worker_test tests.linux_updater_uninstall_parity_test tests.customer_backup_physical_inventory_test tests.customer_instance_file_security_test
           python3 -m unittest tests/recovered_provisioning_evidence_test.py
           python3 -m unittest tests/minecraft_serverpack_recovery_observation_test.py
           python3 -m unittest tests/minecraft_recovery_observation_contract_test.py

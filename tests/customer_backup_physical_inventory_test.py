@@ -90,10 +90,10 @@ class CustomerBackupPhysicalInventoryTest(unittest.TestCase):
         self.assertNotIn('getElementById("backup-list")', transfer)
         self.assertIn('id="backup-transfer-history"', transfer)
         self.assertIn('id="backup-list"', page)
-        self.assertIn('/customer-instance-v2.js?v=35', page)
+        self.assertIn('/customer-instance-v2.js?v=36', page)
         self.assertIn('/customer-backup-transfer.js?v=2', page)
         self.assertIn("Pelo menos", main)
-        self.assertIn("Uso mínimo comprovado pelos backups", main)
+        self.assertIn("Backups ficam fora da cota", main)
 
     def test_customer_ui_has_explicit_confirmation_and_legacy_fallback(self):
         source = (ROOT / "dashboard/web/customer-instance-v2.js").read_text()

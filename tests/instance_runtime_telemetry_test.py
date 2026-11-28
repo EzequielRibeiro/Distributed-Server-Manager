@@ -253,8 +253,10 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
             "instance_state_root": "/instance",
             "ports": {"signaling": {"port": 24006, "protocol": "tcp"}},
         }
-        with patch.object(telemetry.instance_runtime, "list_instances", return_value=[{"instance_id": "bedrock-001"}]),              patch.object(telemetry.instance_runtime, "get_instance", return_value=record),              patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}),              patch.object(telemetry, "_systemd_main_pid", return_value=None),              patch.object(telemetry, "_systemd_resources", return_value=(None, None)),              patch.object(telemetry, "_systemd_network", return_value=(None, None)),              patch.object(telemetry, "_bedrock_query", return_value={"latency_ms": 1.2}),              patch.object(telemetry, "_storage_used", return_value=1234) as storage:
-            samples = telemetry.collect_instance_telemetry({})
+        with tempfile.TemporaryDirectory() as backup_root:
+            with patch.dict(telemetry.os.environ, {"CAPIVARA_BACKUP_ROOT": backup_root}):
+                with patch.object(telemetry.instance_runtime, "list_instances", return_value=[{"instance_id": "bedrock-001"}]),              patch.object(telemetry.instance_runtime, "get_instance", return_value=record),              patch.object(telemetry.instance_runtime, "status", return_value={"observed_state": "running"}),              patch.object(telemetry, "_systemd_main_pid", return_value=None),              patch.object(telemetry, "_systemd_resources", return_value=(None, None)),              patch.object(telemetry, "_systemd_network", return_value=(None, None)),              patch.object(telemetry, "_bedrock_query", return_value={"latency_ms": 1.2}),              patch.object(telemetry, "_storage_used", return_value=1234) as storage:
+                    samples = telemetry.collect_instance_telemetry({})
         self.assertEqual(samples[0]["storage_used_bytes"], 1234)
         self.assertEqual(["/instance", "/instance/runtime"], [call.args[0] for call in storage.call_args_list])
 
@@ -338,6 +340,16 @@ class InstanceRuntimeTelemetryTest(unittest.TestCase):
         self.assertEqual(result["storage"]["limit_bytes"], 10_000)
         self.assertIsNone(result["storage"]["percent"])
         self.assertIsNone(result["telemetry"]["storage_used_bytes"])
+
+        service._location = lambda _agent_id: {"agent_metadata": {"instance_telemetry": [{
+            "instance_id": "dayz-001",
+            "instance_storage_used_bytes": 5000,
+            "backup_inventory_status": "unknown",
+        }]}}
+        result = service.overview({"role": "customer"}, "dayz-001")
+        self.assertEqual(result["storage"]["used_bytes"], 5000)
+        self.assertEqual(result["storage"]["percent"], 50)
+        self.assertIsNone(result["storage"]["backup_used_bytes"])
 
 
 if __name__ == "__main__":

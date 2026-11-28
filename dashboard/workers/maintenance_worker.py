@@ -47,6 +47,17 @@ def _dt(value)->datetime:return datetime.fromisoformat(str(value).replace('Z','+
 def _payload(command:dict)->dict:
  outer=command.get('result') if isinstance(command.get('result'),dict) else {};payload=outer.get('result') if isinstance(outer.get('result'),dict) else {};return payload
 def _doctor_ready(command:dict)->bool:return bool(_payload(command).get('ready'))
+def _native_doctor_ready(command:dict)->bool:
+ payload=_payload(command)
+ instance=payload.get('instance')
+ if payload.get('ready') is not True or not isinstance(instance,dict):return False
+ adapter=instance.get('adapter_state')
+ return (
+  instance.get('observed_state')=='running' and isinstance(adapter,dict)
+  and adapter.get('active_state')=='active'
+  and (instance.get('adapter')!='systemd'
+       or (type(adapter.get('main_pid')) is int and adapter['main_pid']>0))
+ )
 def _observed_state(command:dict)->str:return str(_payload(command).get('observed_state') or 'unknown').strip().lower()
 def _work_key(item:dict)->tuple[str,str]:return str(item.get('kind') or ''),str(item.get('ref') or '')
 
@@ -383,16 +394,26 @@ class MaintenanceWorker:
     try:self._warning(run,policy,offset);result['warnings']+=1;sent.add(offset)
     except Exception as exc:result['warning_failures'].append({'run_id':rid,'offset_seconds':offset,'error':str(exc)[:500]})
    return
+  capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
+  preflight=self._command(run.get('preflight_command_id'))
+  if capabilities.get('native_countdown') and not run.get('start_command_id'):
+   timeout=NATIVE_SHUTDOWN_TIMEOUT_SECONDS+NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS
+   if (now-due).total_seconds()>timeout and (
+    not preflight or str(preflight.get('status') or '') in {'queued','delivered'}
+   ):
+    self.repository.finish(rid,success=False,error_code='native_preflight_timeout',
+     error_detail='Agent did not confirm the DayZ preflight within the maintenance window',now=now)
+    result['failed']+=1
+    return
   if not run.get('preflight_command_id'):
    run=self._refresh_event_work(run,policy);event=run.get('event') or event
    try:self._enqueue(run,'status',self.repository.mark_preflight);result['preflights']+=1
    except Exception as exc:self.repository.finish(rid,success=False,error_code='preflight_enqueue_failed',error_detail=str(exc),now=now);result['failed']+=1
    return
-  preflight=self._command(run.get('preflight_command_id'));status=str((preflight or {}).get('status') or '')
+  status=str((preflight or {}).get('status') or '')
   if status in {'queued','delivered'}:return
   if status!='completed':self._failed(run,'preflight_failed',preflight or {},now,result);return
   observed=_observed_state(preflight or {})
-  capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
   native_current=self._native_command_for_current_due(run,event)
   native_status=str((native_current or {}).get('status') or '').lower()
   if native_status=='failed':
@@ -404,6 +425,16 @@ class MaintenanceWorker:
     now=now,
    );result['failed']+=1;return
   native_armed=bool(native_status=='completed' and capabilities.get('native_countdown'))
+  if capabilities.get('native_countdown') and observed not in {'running','stopped'}:
+   self.repository.finish(rid,success=False,error_code='native_preflight_state_unverified',
+    error_detail=f'Agent did not confirm a running or stopped DayZ process: {observed}',now=now)
+   result['failed']+=1
+   return
+  if capabilities.get('native_countdown') and _payload(preflight or {}).get('desired_state')=='stopped':
+   self.repository.finish(rid,success=False,error_code='native_restart_desired_stopped',
+    error_detail='DayZ is configured to remain stopped',now=now)
+   result['failed']+=1
+   return
   if observed!='running':
    if not (native_armed and observed=='stopped'):
     self.repository.finish(rid,success=True,now=now);result['completed']+=1;result['skipped']+=1;return
@@ -492,7 +523,8 @@ class MaintenanceWorker:
    return
   doctor=self._command(run.get('readiness_command_id'));doctor_status=str((doctor or {}).get('status') or '')
   if doctor_status in {'queued','delivered'}:return
-  if doctor_status=='completed' and _doctor_ready(doctor or {}):
+  ready_check=_native_doctor_ready if native_armed else _doctor_ready
+  if doctor_status=='completed' and ready_check(doctor or {}):
    event,committed=self._finalize_game_work(run,event,result)
    if not committed:return
    if self._has_rollbackable_game(event):event['recovery']={'phase':'stop','reason':str(event.get('work_error') or 'game update commit failed')};self.repository.update_event(rid,event,stage='rollback-stopping');return

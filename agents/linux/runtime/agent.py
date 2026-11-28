@@ -356,8 +356,6 @@ def heartbeat(config):
     if isinstance(commands,list):apply_configuration_commands([item for item in commands if isinstance(item,dict)])
     commands=result.get("content_commands")
     if isinstance(commands,list):apply_content_commands(config,[item for item in commands if isinstance(item,dict)])
-    commands=result.get("backup_commands")
-    if isinstance(commands,list):apply_backup_commands(config,[item for item in commands if isinstance(item,dict)])
     commands=result.get("broadcast_commands")
     if isinstance(commands,list):apply_broadcast_commands(config,[item for item in commands if isinstance(item,dict)])
     synchronous_result_ready=False
@@ -444,6 +442,10 @@ def heartbeat(config):
                     and str(state.get("status") or "").lower() in {"completed", "failed"}
                 ):
                     result.pop(command_key, None)
+    # An archive can take longer than a native maintenance window. Flush
+    # lifecycle acknowledgements before starting synchronous backup work.
+    commands=result.get("backup_commands")
+    if isinstance(commands,list):apply_backup_commands(config,[item for item in commands if isinstance(item,dict)])
     return result
 
 

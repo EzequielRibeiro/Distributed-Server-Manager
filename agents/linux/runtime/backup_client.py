@@ -292,8 +292,8 @@ def _create_unlocked(config, command):
     # TAR/gzip may expand slightly. Reserve an overhead and never assume
     # compression savings when checking capacity.
     reserve = estimate + max(2 * 1024 * 1024, estimate // 100)
-    if snapshot["total_used_bytes"] + reserve > quota_limit:
-        raise OSError("backup denied: instance plus archived backups exceed storage quota")
+    if snapshot["instance_used_bytes"] > quota_limit:
+        raise OSError("backup denied: instance data exceeds storage quota")
     disk_parent = BACKUP_ROOT
     while not disk_parent.exists() and disk_parent != disk_parent.parent:
         disk_parent = disk_parent.parent
@@ -334,8 +334,8 @@ def _create_unlocked(config, command):
             # Re-scan real files after writing; races or unexpectedly large
             # output must never commit a backup beyond the quota.
             after = quota_snapshot(record, BACKUP_ROOT)
-            if after["total_used_bytes"] > quota_limit:
-                raise OSError("backup denied: final archive exceeds storage quota")
+            if after["instance_used_bytes"] > quota_limit:
+                raise OSError("backup denied: instance data exceeds storage quota after archive creation")
             _validate_archive_payload(path)
             sha256 = _digest(path)
         except Exception:
@@ -353,7 +353,7 @@ def _create_unlocked(config, command):
             "sha256": sha256,
             "manifest": manifest,
             "quota_limit_bytes": quota_limit,
-            "quota_total_used_bytes": after["total_used_bytes"],
+            "quota_total_used_bytes": after["instance_used_bytes"],
             "quota_backup_used_bytes": after["backup_used_bytes"],
         }
     finally:
@@ -549,7 +549,7 @@ def _create_via_privileged_helper(config, command, unit_template):
     result_path = request_dir / f"{command_id}.result.json"
     if request_path.is_symlink() or result_path.is_symlink():
         raise PermissionError("unsafe privileged backup request boundary")
-    result_path.unlink(missing_ok=True)
+    previous_result = result_path.is_file()
     _write(request_path, {
         "schema_version": 1,
         "kind": "CapivaraPrivilegedBackupCreateRequest",
@@ -567,19 +567,21 @@ def _create_via_privileged_helper(config, command, unit_template):
     if unit != f"capivara-agent-backup-create@{command_id}.service":
         raise PermissionError("unapproved privileged backup create unit")
 
-    completed = subprocess.run(
-        ["systemctl", "start", unit, "--no-pager"],
-        capture_output=True, text=True, check=False, timeout=3600,
-    )
+    completed = None
+    if not previous_result:
+        completed = subprocess.run(
+            ["systemctl", "start", unit, "--no-pager"],
+            capture_output=True, text=True, check=False, timeout=3600,
+        )
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        if completed.returncode != 0:
+        if completed is not None and completed.returncode != 0:
             raise RuntimeError((completed.stderr or completed.stdout
                                 or "privileged backup create failed")[:2000]) from exc
         raise RuntimeError("privileged backup create returned no valid result") from exc
-    if completed.returncode != 0 or result.get("status") != "completed":
-        raise RuntimeError(str(result.get("error") or completed.stderr
+    if (completed is not None and completed.returncode != 0) or result.get("status") != "completed":
+        raise RuntimeError(str(result.get("error") or (completed.stderr if completed else "")
                                or "privileged backup create failed")[:2000])
     for name, expected in (
         ("command_id", command_id), ("instance_id", instance_id),
@@ -590,6 +592,10 @@ def _create_via_privileged_helper(config, command, unit_template):
     operation = result.get("operation")
     if not isinstance(operation, dict) or not operation.get("artifact_path") or not operation.get("sha256"):
         raise RuntimeError("privileged backup create returned invalid operation")
+    if previous_result:
+        artifact = _artifact(instance_id, operation.get("backup_id"))
+        if str(artifact) != operation["artifact_path"] or _digest(artifact) != operation["sha256"]:
+            raise RuntimeError("privileged backup receipt does not match the stored archive")
     return operation
 
 

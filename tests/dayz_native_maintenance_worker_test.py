@@ -248,6 +248,39 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
                 self.assertNotIn("stop", [c["action"] for c in life.enqueued])
                 self.assertNotIn("start", [c["action"] for c in life.enqueued])
 
+    def test_pending_native_preflight_expires_without_mutation(self):
+        run = run_state()
+        repo, life, worker = self.make_worker(run)
+        life.states["pre"] = {"status": "delivered"}
+        report = worker.tick(now=datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc))
+        self.assertEqual(report["failed"], 1)
+        self.assertEqual(repo.finished[-1]["error_code"], "native_preflight_timeout")
+        self.assertFalse(life.enqueued)
+
+    def test_native_readiness_requires_live_systemd_process(self):
+        from maintenance_worker import _native_doctor_ready
+
+        instance = {
+            "adapter": "systemd",
+            "observed_state": "stopped",
+            "adapter_state": {"active_state": "inactive"},
+        }
+        result = {"result": {"result": {"ready": True, "instance": instance}}}
+        self.assertFalse(_native_doctor_ready(result))
+        instance.update(observed_state="running", adapter_state={"active_state": "active", "main_pid": 12})
+        self.assertTrue(_native_doctor_ready(result))
+        instance.update(adapter="windows_service", adapter_state={"active_state": "active"})
+        self.assertTrue(_native_doctor_ready(result))
+
+    def test_native_restart_does_not_report_unknown_preflight_as_success(self):
+        run = run_state()
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "unknown")
+        report = worker.tick(now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc))
+        self.assertEqual(report["failed"], 1)
+        self.assertEqual(repo.finished[-1]["error_code"], "native_preflight_state_unverified")
+        self.assertFalse(life.enqueued)
+
     def test_unarmed_native_stopped_server_does_not_restart(self):
         run = run_state()
         repo, life, worker = self.make_worker(run)

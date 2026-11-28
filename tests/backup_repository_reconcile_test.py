@@ -430,6 +430,12 @@ class BackupRepositoryReconcileTest(unittest.TestCase):
 
         self.assertEqual(second, [])
 
+        # Simulate a concurrent scheduler that read the queue before the winner.
+        with patch.object(self.repo, "list_effective_jobs", return_value=[]):
+            self.assertEqual(
+                self.repo.schedule_due(self.agent_id, now_epoch=self.NOW_EPOCH), [],
+            )
+
         policy_after = self.repo.get_policy(self.instance_id)
         self.assertEqual(
             policy_after["policy_id"],
