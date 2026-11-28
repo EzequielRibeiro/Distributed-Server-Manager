@@ -192,6 +192,32 @@ class BackupClientInstanceRootTest(unittest.TestCase):
                 names,
             )
 
+    def test_restore_reconstructs_only_archived_dayz_compatibility_alias(self):
+        workshop = self.private / "content" / "workshop" / "steam-workshop:2289461232"
+        payload = workshop / "Addons" / "fixture.pbo"
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(b"fixture")
+        alias = workshop / "addons"
+        alias.symlink_to("Addons")
+
+        with (
+            patch.object(backup_client, "get_instance", return_value=self.record),
+            patch.object(backup_client, "status", return_value={"observed_state": "stopped"}),
+        ):
+            created = backup_client._create(self.config, self.command())
+            alias.unlink()
+            backup_client._restore_direct(self.config, {
+                "instance_id": self.record["instance_id"],
+                "backup_id": created["backup_id"],
+            })
+
+        self.assertEqual(str(alias.readlink()), "Addons")
+        self.assertEqual(payload.read_bytes(), b"fixture")
+        with self.assertRaises(ValueError):
+            backup_client._restore_workshop_aliases(self.private, {
+                "dayz_workshop_addons_aliases": ["outside/addons"],
+            }, self.record)
+
     def test_unsafe_workshop_link_still_blocks_backup(self):
         workshop = self.private / "content" / "workshop" / "steam-workshop:2289461232"
         workshop.mkdir(parents=True)
@@ -439,6 +465,31 @@ class BackupClientInstanceRootTest(unittest.TestCase):
             )
         self.assertEqual(result["backup_id"], "new-backup")
         self.assertTrue((self.root / "backups" / "instance-safe").is_dir())
+
+    def test_privileged_create_replays_existing_verified_result(self):
+        import json
+
+        command = self.command()
+        template = "capivara-agent-backup-create@{command_id}.service"
+        with patch.object(backup_client, "get_instance", return_value=self.record), \
+             patch.object(backup_client.subprocess, "run") as run:
+            operation = backup_client._create(self.config, command)
+            request_dir = backup_client.STATE_ROOT / "privileged-backup-create"
+            request_dir.mkdir()
+            receipt = request_dir / f"{command['command_id']}.result.json"
+            receipt.write_text(json.dumps({
+                "status": "completed", "action": "create",
+                "command_id": command["command_id"], "instance_id": command["instance_id"],
+                "agent_id": self.config["agent_id"], "operation": operation,
+            }))
+            self.assertEqual(
+                backup_client._create_via_privileged_helper(self.config, command, template),
+                operation,
+            )
+            Path(operation["artifact_path"]).unlink()
+            with self.assertRaisesRegex(FileNotFoundError, "artifact not found"):
+                backup_client._create_via_privileged_helper(self.config, command, template)
+            run.assert_not_called()
 
     def test_privileged_create_rejects_arbitrary_systemd_unit(self):
         with patch.object(backup_client, "get_instance", return_value=self.record), \

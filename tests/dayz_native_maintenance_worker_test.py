@@ -84,6 +84,7 @@ class FakeRepo:
         error_code=None,
         error_detail=None,
         now=None,
+        next_due_override=None,
     ):
         self.finished.append({
             "success": success,
@@ -248,6 +249,39 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
                 self.assertNotIn("stop", [c["action"] for c in life.enqueued])
                 self.assertNotIn("start", [c["action"] for c in life.enqueued])
 
+    def test_pending_native_preflight_expires_without_mutation(self):
+        run = run_state()
+        repo, life, worker = self.make_worker(run)
+        life.states["pre"] = {"status": "delivered"}
+        report = worker.tick(now=datetime(2026, 9, 16, 16, 0, tzinfo=timezone.utc))
+        self.assertEqual(report["failed"], 1)
+        self.assertEqual(repo.finished[-1]["error_code"], "native_preflight_timeout")
+        self.assertFalse(life.enqueued)
+
+    def test_native_readiness_requires_live_systemd_process(self):
+        from maintenance_worker import _native_doctor_ready
+
+        instance = {
+            "adapter": "systemd",
+            "observed_state": "stopped",
+            "adapter_state": {"active_state": "inactive"},
+        }
+        result = {"result": {"result": {"ready": True, "instance": instance}}}
+        self.assertFalse(_native_doctor_ready(result))
+        instance.update(observed_state="running", adapter_state={"active_state": "active", "main_pid": 12})
+        self.assertTrue(_native_doctor_ready(result))
+        instance.update(adapter="windows_service", adapter_state={"active_state": "active"})
+        self.assertTrue(_native_doctor_ready(result))
+
+    def test_native_restart_does_not_report_unknown_preflight_as_success(self):
+        run = run_state()
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "unknown")
+        report = worker.tick(now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc))
+        self.assertEqual(report["failed"], 1)
+        self.assertEqual(repo.finished[-1]["error_code"], "native_preflight_state_unverified")
+        self.assertFalse(life.enqueued)
+
     def test_unarmed_native_stopped_server_does_not_restart(self):
         run = run_state()
         repo, life, worker = self.make_worker(run)
@@ -256,6 +290,43 @@ class DayZNativeMaintenanceWorkerTest(unittest.TestCase):
         report = worker.tick(now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc))
         self.assertEqual(report["skipped"], 1)
         self.assertFalse(any(c["action"] in {"stop", "start"} for c in life.enqueued))
+
+    def test_unarmed_offline_scheduler_prepares_next_due_without_lifecycle_change(self):
+        run = run_state()
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "stopped")
+        life.states["pre"]["result"]["result"]["desired_state"] = "running"
+        worker.native_restart.for_instance_due = lambda iid, due: None
+        issued = []
+
+        def enqueue(**kwargs):
+            issued.append(kwargs)
+            return {"command_id": "next", "status": "queued"}
+
+        worker.native_restart.enqueue = enqueue
+        now = datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc)
+        self.assertEqual(worker.tick(now=now)["native_restart_prepared"], 1)
+        self.assertEqual(issued[0]["due_at"], repo.next_due_for_run("r1"))
+        worker.native_restart.current = {
+            "command_id": "next", "status": "completed",
+            "result": {"result": {
+                "kind": "CapivaraDayZNativeRestartPrepared", "materialized": True,
+                "due_at": issued[0]["due_at"].isoformat(),
+            }},
+        }
+        worker.tick(now=now)
+        self.assertEqual(len(issued), 1)
+        self.assertEqual(repo.finished[-1]["error_code"], "native_restart_prepared_offline")
+        self.assertEqual(life.enqueued, [])
+
+    def test_offline_only_preparation_does_not_arm_running_instance(self):
+        run = run_state()
+        repo, life, worker = self.make_worker(run)
+        complete(life, "pre", "running")
+        worker.native_restart.current["requested_by"] = worker_module.OFFLINE_PREPARATION_OWNER
+        worker.tick(now=datetime(2026, 9, 16, 15, 0, 5, tzinfo=timezone.utc))
+        self.assertEqual(repo.finished[-1]["error_code"], "native_restart_unarmed")
+        self.assertEqual(life.enqueued, [])
 
     def test_generic_stop_remains_available_if_native_countdown_disabled(self):
         run = run_state()

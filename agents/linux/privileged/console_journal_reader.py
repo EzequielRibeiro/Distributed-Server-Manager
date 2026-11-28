@@ -2,8 +2,8 @@
 """Restricted journal follower for Capivara game-instance units.
 
 The unprivileged Agent never receives generic journal access. This root helper
-exposes only MESSAGE metadata for units named capivara-instance-*.service over
-a Unix socket owned by the capivara-agent group.
+exposes MESSAGE metadata for capivara-instance-*.service units and byte counts
+for protected instance roots over an Agent-only Unix socket.
 """
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ import grp
 import re
 import socket
 import struct
+import stat
+import time
 import subprocess
 import threading
 
@@ -128,6 +130,60 @@ def _follow(connection: socket.socket) -> None:
                 process.kill()
 
 
+INSTANCE_ROOT = Path("/var/lib/capivara-instances")
+_STORAGE_SCAN = threading.Lock()
+
+
+def _instance_storage_bytes(instance_id: str) -> int | None:
+    if instance_id in {".", ".."} or UNIT_RE.fullmatch(f"capivara-instance-{instance_id}.service") is None:
+        return None
+    if not _STORAGE_SCAN.acquire(blocking=False):
+        return None
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    deadline = time.monotonic() + 1.5
+
+    def scan_error(error: OSError) -> None:
+        raise error
+
+    try:
+        root_fd = os.open(INSTANCE_ROOT, flags)
+        try:
+            parent = os.fstat(root_fd)
+            if parent.st_uid != 0 or parent.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                return None
+            instance_fd = os.open(instance_id, flags, dir_fd=root_fd)
+        finally:
+            os.close(root_fd)
+        try:
+            owner = pwd.getpwnam("capivara-instance")
+            group = grp.getgrnam("capivara-agent")
+            info = os.fstat(instance_fd)
+            if (info.st_uid != owner.pw_uid or info.st_gid != group.gr_gid
+                    or stat.S_IMODE(info.st_mode) not in (0o700, 0o710)):
+                return None
+            total = entries = 0
+            for _, dirs, files, fd in os.fwalk(
+                ".", dir_fd=instance_fd, follow_symlinks=False, onerror=scan_error,
+            ):
+                entries += len(dirs) + len(files)
+                if (entries > 200000 or time.monotonic() >= deadline
+                        or os.fstat(fd).st_dev != info.st_dev):
+                    return None
+                for name in files:
+                    if time.monotonic() >= deadline:
+                        return None
+                    entry = os.stat(name, dir_fd=fd, follow_symlinks=False)
+                    if stat.S_ISREG(entry.st_mode):
+                        total += entry.st_size
+            return total
+        finally:
+            os.close(instance_fd)
+    except (OSError, KeyError, RecursionError):
+        return None
+    finally:
+        _STORAGE_SCAN.release()
+
+
 def _handle(connection: socket.socket, allowed_uid: int) -> None:
     with connection:
         peer_uid = _peer_uid(connection)
@@ -137,9 +193,15 @@ def _handle(connection: socket.socket, allowed_uid: int) -> None:
             request = _read_request(connection)
         except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
             return
-        if str(request.get("operation") or "").strip().lower() != "follow":
-            return
-        _follow(connection)
+        operation = str(request.get("operation") or "").strip().lower()
+        if operation == "follow":
+            _follow(connection)
+        elif operation == "storage_usage" and peer_uid == allowed_uid:
+            used = _instance_storage_bytes(str(request.get("instance_id") or ""))
+            try:
+                connection.sendall(json.dumps({"used_bytes": used}).encode("utf-8") + b"\n")
+            except OSError:
+                pass
 
 
 def serve_forever() -> None:

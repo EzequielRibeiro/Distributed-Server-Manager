@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -14,6 +18,38 @@ SPEC.loader.exec_module(READER)
 
 
 class AgentConsoleJournalReaderTest(unittest.TestCase):
+    def test_storage_measurement_is_bounded_to_owned_instance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            root = parent / "dayz-002"
+            root.mkdir(mode=0o710)
+            outside = parent / "outside"
+            outside.write_bytes(b"outside")
+            (root / "alias").symlink_to(outside)
+            (parent / "linked").symlink_to(root)
+            real_fstat = os.fstat
+
+            def fstat(fd):
+                info = real_fstat(fd)
+                if info.st_ino == parent.stat().st_ino:
+                    return SimpleNamespace(st_uid=0, st_mode=info.st_mode)
+                return info
+
+            with patch.object(READER, "INSTANCE_ROOT", parent), patch.object(
+                READER.os, "fstat", side_effect=fstat,
+            ), patch.object(
+                READER.pwd, "getpwnam", return_value=SimpleNamespace(pw_uid=root.stat().st_uid),
+            ), patch.object(
+                READER.grp, "getgrnam", return_value=SimpleNamespace(gr_gid=root.stat().st_gid),
+            ):
+                self.assertEqual(READER._instance_storage_bytes("dayz-002"), 0)
+                (root / "world").write_bytes(b"abc")
+                self.assertEqual(READER._instance_storage_bytes("dayz-002"), 3)
+                self.assertIsNone(READER._instance_storage_bytes("linked"))
+                self.assertIsNone(READER._instance_storage_bytes(".."))
+                root.chmod(0o755)
+                self.assertIsNone(READER._instance_storage_bytes("dayz-002"))
+
     def test_application_output_uses_systemd_unit(self) -> None:
         event = READER._event(
             {

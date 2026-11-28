@@ -148,16 +148,25 @@ class BackupRepository:
         ):
             raise BackupValidationError("backup deletion is already queued")
 
-    def request(self, instance_id, *, action="create", backup_id=None, reason="manual", requested_by=None):
+    def request(self, instance_id, *, action="create", backup_id=None, reason="manual", requested_by=None, scheduled_day=None):
         instance=self._instance(instance_id)
         if instance is None:raise BackupValidationError("instance does not exist")
         if str(action).strip().lower()=="delete":
             self._protect_age_retention_delete(instance_id, backup_id)
         aid=str(dict(instance).get("agent_id") or "");policy=self.get_policy(instance_id);command_id=str(uuid.uuid4());now=utc_now()
-        with self.backend.transaction() as connection:
-            session=AlertSession(self.backend,connection)
-            try:session.execute(f"INSERT INTO backup_jobs(command_id,backup_id,instance_id,agent_id,action,policy_revision,status,reason,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*11)})",(command_id,backup_id,instance_id,aid,action,int(policy.get("revision")) if policy else None,"pending",reason,requested_by,now,now))
-            finally:session.close()
+        if scheduled_day is not None:
+            command_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"capivara:backup:{instance_id}:{scheduled_day}"))
+        try:
+            with self.backend.transaction() as connection:
+                session=AlertSession(self.backend,connection)
+                try:session.execute(f"INSERT INTO backup_jobs(command_id,backup_id,instance_id,agent_id,action,policy_revision,status,reason,requested_by,created_at,updated_at) VALUES ({','.join([self.ph]*11)})",(command_id,backup_id,instance_id,aid,action,int(policy.get("revision")) if policy else None,"pending",reason,requested_by,now,now))
+                finally:session.close()
+        except Exception:
+            # Only a committed winner for this occurrence can suppress the error.
+            winner = self.get_job(command_id) if scheduled_day is not None else None
+            if winner and winner["instance_id"] == instance_id and winner["reason"] == "schedule":
+                return None
+            raise
         return self.get_job(command_id)
 
     def get_job(self, command_id):
@@ -274,15 +283,24 @@ class BackupRepository:
             finally:session.close()
 
     @staticmethod
+    def _workspace_zone(schedule):
+        try:
+            return ZoneInfo(str(schedule.get("schedule_timezone") or "UTC"))
+        except ZoneInfoNotFoundError:
+            return None
+
+    @staticmethod
     def _workspace_due(schedule, jobs, now_utc):
         if not bool(schedule.get("enabled")):return False
-        timezone_name=str(schedule.get("schedule_timezone") or "UTC")
-        try:zone=ZoneInfo(timezone_name)
-        except ZoneInfoNotFoundError:zone=timezone.utc
+        zone = BackupRepository._workspace_zone(schedule)
+        if zone is None:
+            return False
         local=now_utc.astimezone(zone);parts=str(schedule.get("schedule_time") or "04:00").split(":")
-        try:hour,minute=int(parts[0]),int(parts[1])
-        except (ValueError,IndexError):return False
-        scheduled=local.replace(hour=hour,minute=minute,second=0,microsecond=0)
+        try:
+            hour, minute = map(int, parts)
+            scheduled = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        except ValueError:
+            return False
         if local<scheduled:return False
         for job in jobs:
             if job.get("action") != "create":
@@ -422,9 +440,11 @@ class BackupRepository:
             jobs=self.list_effective_jobs(instance_id=policy["instance_id"],limit=100)
             if any(job["status"] in {"pending","running"} for job in jobs):continue
             schedule=self._workspace_schedule(policy["instance_id"])
+            scheduled_day = None
             if schedule is not None:
                 if not self._workspace_due(schedule,jobs,now_utc):continue
                 if bool(schedule.get("healthy_only")) and not self._instance_is_healthy(policy["instance_id"]):continue
+                scheduled_day = now_utc.astimezone(self._workspace_zone(schedule)).date()
             else:
                 last=max((_epoch(job.get("completed_at")) for job in jobs if job.get("action")=="create" and job.get("status")=="completed"),default=0)
                 if last and now_value-last<int(policy["interval_seconds"]):continue
@@ -432,7 +452,12 @@ class BackupRepository:
                 # a scheduler failure is not permission to retry indefinitely.
                 attempted=max((_epoch(job.get("created_at")) for job in jobs if job.get("action")=="create" and job.get("reason")=="schedule"),default=0)
                 if attempted and now_value-attempted < max(21600,int(policy["interval_seconds"])):continue
-            created.append(self.request(policy["instance_id"],action="create",reason="schedule",requested_by="scheduler"))
+            job = self.request(
+                policy["instance_id"], action="create", reason="schedule",
+                requested_by="scheduler", scheduled_day=scheduled_day,
+            )
+            if job is not None:
+                created.append(job)
         return created
 
     @staticmethod

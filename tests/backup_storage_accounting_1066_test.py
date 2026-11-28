@@ -202,7 +202,7 @@ class BackupStorageAccounting1066(unittest.TestCase):
         previous = self.archive_root / "instance-one" / "history.tar.gz"
         create_tar(previous, payload=True)
         before = previous.read_bytes()
-        self.record["storage_limit_bytes"] = 256 * 1024
+        self.record["storage_limit_bytes"] = 1
         with patch.object(backup_client, "get_instance", return_value=self.record),              patch.object(backup_client, "lifecycle") as game,              patch.object(backup_client, "_create_archive") as write:
             with self.assertRaisesRegex(OSError, "quota"):
                 backup_client._create(self.config, self.command())
@@ -217,7 +217,7 @@ class BackupStorageAccounting1066(unittest.TestCase):
                 backup_client._create(self.config, self.command())
             game.assert_not_called()
 
-    def test_post_write_overflow_removes_only_new_archive(self):
+    def test_instance_growth_during_backup_removes_only_new_archive(self):
         command = self.command()
         previous = self.archive_root / "instance-one" / "history.tar.gz"
         create_tar(previous, payload=True)
@@ -226,8 +226,9 @@ class BackupStorageAccounting1066(unittest.TestCase):
         def oversized(root, paths, destination, compression, manifest):
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(b"x" * (5 * 1024 * 1024))
+            (root / "grew.dat").write_bytes(b"x" * (5 * 1024 * 1024))
         with patch.object(backup_client, "get_instance", return_value=self.record),              patch.object(backup_client, "_create_archive", side_effect=oversized),              patch.object(backup_client, "lifecycle") as game:
-            with self.assertRaisesRegex(OSError, "final archive exceeds"):
+            with self.assertRaisesRegex(OSError, "instance data exceeds"):
                 backup_client._create(self.config, command)
             game.assert_not_called()
         self.assertEqual(previous.read_bytes(), before)
@@ -236,11 +237,11 @@ class BackupStorageAccounting1066(unittest.TestCase):
             ["history.tar.gz"],
         )
 
-    def test_successful_backup_charges_archives_within_limit(self):
+    def test_successful_backup_excludes_archives_from_quota(self):
         with patch.object(backup_client, "get_instance", return_value=self.record):
             first = backup_client._create(self.config, self.command())
             second = backup_client._create(self.config, self.command())
-        self.assertGreater(second["quota_total_used_bytes"], first["quota_total_used_bytes"])
+        self.assertEqual(second["quota_total_used_bytes"], first["quota_total_used_bytes"])
         inventory = backup_inventory(self.archive_root, "instance-one")
         self.assertEqual(inventory["file_count"], 2)
         self.assertEqual(inventory["bytes"], second["quota_backup_used_bytes"])

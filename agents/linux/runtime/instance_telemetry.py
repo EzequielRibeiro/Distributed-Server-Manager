@@ -262,6 +262,24 @@ def _storage_used(path_value: Any, *, max_entries: int = 200000) -> int | None:
     return None if walk_failed else total
 
 
+def _protected_storage_used(instance_id: str) -> int | None:
+    path = os.environ.get(
+        "CAPIVARA_AGENT_CONSOLE_READER_SOCKET", "/run/capivara-agent-console/reader.sock",
+    )
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(2)
+            client.connect(path)
+            request = {"operation": "storage_usage", "instance_id": instance_id}
+            client.sendall(json.dumps(request).encode("utf-8") + b"\n")
+            with client.makefile("rb") as response:
+                payload = json.loads(response.readline(256))
+    except (OSError, ValueError):
+        return None
+    used = payload.get("used_bytes") if isinstance(payload, dict) else None
+    return used if type(used) is int and used >= 0 else None
+
+
 def _read_cstring(payload: bytes, offset: int) -> tuple[bytes, int] | None:
     end = payload.find(b"\x00", offset)
     if end < 0:
@@ -505,6 +523,11 @@ def collect_instance_telemetry(config: dict[str, Any]) -> list[dict[str, Any]]:
         state_root = record.get("instance_state_root")
         files_root = record.get("files_root")
         state_usage = _storage_used(state_root) if state_root else None
+        if (state_usage is None and game_id in {"dayz", "dayz.stable"}
+                and record.get("adapter") == "systemd"
+                and state_root == files_root == f"/var/lib/capivara-instances/{instance_id}"
+                and os.environ.get("CAPIVARA_AGENT_MODE") != "hybrid"):
+            state_usage = _protected_storage_used(instance_id)
         files_usage = _storage_used(files_root) if files_root else None
         if state_usage is not None:
             storage_used = state_usage

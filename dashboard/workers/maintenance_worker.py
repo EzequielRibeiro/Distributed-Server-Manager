@@ -23,6 +23,7 @@ if _WORKERS_MODULE_DIR not in sys.path:
 from maintenance_hold_gate import maintenance_paused, tracked_operation
 from runtime_workspace_catalog import runtime_workspace_capabilities
 INTERVAL_SECONDS=max(1,min(int(os.environ.get('DSM_MAINTENANCE_WORKER_SECONDS','5')),60))
+OFFLINE_PREPARATION_OWNER='maintenance-worker-offline'
 NATIVE_SHUTDOWN_TIMEOUT_SECONDS=max(30,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TIMEOUT_SECONDS','180')),900))
 NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS=max(15,min(int(os.environ.get('DSM_DAYZ_NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS','60')),300))
 _ALLOWED_DB_KEYS={'DSM_DATABASE_DRIVER','DSM_DATABASE','DSM_DATABASE_HOST','DSM_DATABASE_PORT','DSM_DATABASE_NAME','DSM_DATABASE_USER','DSM_DATABASE_PASSWORD_FILE','DSM_DATABASE_TLS'}
@@ -47,6 +48,17 @@ def _dt(value)->datetime:return datetime.fromisoformat(str(value).replace('Z','+
 def _payload(command:dict)->dict:
  outer=command.get('result') if isinstance(command.get('result'),dict) else {};payload=outer.get('result') if isinstance(outer.get('result'),dict) else {};return payload
 def _doctor_ready(command:dict)->bool:return bool(_payload(command).get('ready'))
+def _native_doctor_ready(command:dict)->bool:
+ payload=_payload(command)
+ instance=payload.get('instance')
+ if payload.get('ready') is not True or not isinstance(instance,dict):return False
+ adapter=instance.get('adapter_state')
+ return (
+  instance.get('observed_state')=='running' and isinstance(adapter,dict)
+  and adapter.get('active_state')=='active'
+  and (instance.get('adapter')!='systemd'
+       or (type(adapter.get('main_pid')) is int and adapter['main_pid']>0))
+ )
 def _observed_state(command:dict)->str:return str(_payload(command).get('observed_state') or 'unknown').strip().lower()
 def _work_key(item:dict)->tuple[str,str]:return str(item.get('kind') or ''),str(item.get('ref') or '')
 
@@ -284,27 +296,43 @@ class MaintenanceWorker:
   result['native_shutdown_checks']+=1
   return event,False
 
- def _prepare_next_native_restart(self,run:dict,event:dict,now:datetime,result:dict)->tuple[dict,bool]:
+ def _prepare_next_native_restart(self,run:dict,event:dict,now:datetime,result:dict,*,offline_only=False)->tuple[dict,bool]:
   capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
   if not capabilities.get('native_countdown'):return event,True
   if self.native_restart is None:return event,False
   state=dict(event.get('native_restart') or {})
   command_id=str(state.get('command_id') or '')
   if not command_id:
-   due=self.repository.next_due_for_run(str(run['run_id']),now=now)
-   if due is None:return event,True
+   rid=str(run['run_id'])
+   if state.get('due_at'):
+    due=_dt(state['due_at'])
+   else:
+    due=self.repository.next_due_for_run(rid,now=now)
+    if due is None:return event,True
+    state={'due_at':due.isoformat().replace('+00:00','Z')}
+    event={**event,'native_restart':state}
+    self.repository.update_event(rid,event,stage='preparing-native-restart')
+   if due<=now:
+    event={**event,'work_error':'Native restart preparation window expired'}
+    self.repository.update_event(rid,event,stage='native-restart-failed')
+    return event,True
+   owner=OFFLINE_PREPARATION_OWNER if offline_only else 'maintenance-worker'
    try:
-    command=self.native_restart.enqueue(agent_id=str(run['agent_id']),instance_id=str(run['instance_id']),due_at=due,requested_by='maintenance-worker')
+    command=self.native_restart.for_instance_due(str(run['instance_id']),due)
+    if command is None or command.get('requested_by')!=owner:
+     command=self.native_restart.enqueue(agent_id=str(run['agent_id']),instance_id=str(run['instance_id']),due_at=due,requested_by=owner)
+    if command.get('requested_by',owner)!=owner:return event,False
    except DayZNativeRestartCommandConflict:
     return event,False
-   state={'command_id':str(command['command_id']),'due_at':due.isoformat().replace('+00:00','Z'),'status':str(command.get('status') or 'queued')}
-   event=dict(event);event['native_restart']=state
-   self.repository.update_event(str(run['run_id']),event,stage='preparing-native-restart')
+   state={**state,'command_id':str(command['command_id']),'status':str(command.get('status') or 'queued')}
+   event={**event,'native_restart':state}
+   self.repository.update_event(rid,event,stage='preparing-native-restart')
    result['native_restart_prepared']+=1
    return event,False
   try:command=self.native_restart.snapshot(command_id)
   except Exception as exc:
    event=dict(event);event['native_restart']={**state,'status':'failed','error':str(exc)[:500]}
+   event['work_error']='Native restart preparation receipt unavailable'
    self.repository.update_event(str(run['run_id']),event,stage='native-restart-failed')
    return event,True
   status=str(command.get('status') or '').lower()
@@ -312,8 +340,19 @@ class MaintenanceWorker:
   event=dict(event);event['native_restart']=state
   self.repository.update_event(str(run['run_id']),event,stage='preparing-native-restart' if status in {'queued','delivered'} else 'native-restart-prepared')
   if status in {'queued','delivered'}:return event,False
+  if offline_only and status=='completed':
+   payload=_payload(command)
+   try:
+    confirmed=(payload.get('kind')=='CapivaraDayZNativeRestartPrepared'
+     and payload.get('materialized') is True and _dt(payload['due_at'])==_dt(state['due_at']))
+   except (KeyError,TypeError,ValueError):
+    confirmed=False
+   if not confirmed:
+    status='failed'
+    event['native_restart']={**state,'status':status}
+    event['work_error']='Offline native preparation acknowledgement is incomplete'
   if status!='completed':
-   event['work_error']=str(command.get('last_error') or 'native restart preparation failed')[:1000]
+   event['work_error']=str(event.get('work_error') or command.get('last_error') or 'native restart preparation failed')[:1000]
    self.repository.update_event(str(run['run_id']),event,stage='native-restart-failed')
    return event,True
   return event,True
@@ -383,17 +422,31 @@ class MaintenanceWorker:
     try:self._warning(run,policy,offset);result['warnings']+=1;sent.add(offset)
     except Exception as exc:result['warning_failures'].append({'run_id':rid,'offset_seconds':offset,'error':str(exc)[:500]})
    return
+  capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
+  preflight=self._command(run.get('preflight_command_id'))
+  if capabilities.get('native_countdown') and not run.get('start_command_id'):
+   timeout=NATIVE_SHUTDOWN_TIMEOUT_SECONDS+NATIVE_SHUTDOWN_TERMINATION_GRACE_SECONDS
+   if (now-due).total_seconds()>timeout and (
+    not preflight or str(preflight.get('status') or '') in {'queued','delivered'}
+   ):
+    self.repository.finish(rid,success=False,error_code='native_preflight_timeout',
+     error_detail='Agent did not confirm the DayZ preflight within the maintenance window',now=now)
+    result['failed']+=1
+    return
   if not run.get('preflight_command_id'):
    run=self._refresh_event_work(run,policy);event=run.get('event') or event
    try:self._enqueue(run,'status',self.repository.mark_preflight);result['preflights']+=1
    except Exception as exc:self.repository.finish(rid,success=False,error_code='preflight_enqueue_failed',error_detail=str(exc),now=now);result['failed']+=1
    return
-  preflight=self._command(run.get('preflight_command_id'));status=str((preflight or {}).get('status') or '')
+  status=str((preflight or {}).get('status') or '')
   if status in {'queued','delivered'}:return
   if status!='completed':self._failed(run,'preflight_failed',preflight or {},now,result);return
   observed=_observed_state(preflight or {})
-  capabilities=event.get('capabilities') if isinstance(event.get('capabilities'),dict) else {}
   native_current=self._native_command_for_current_due(run,event)
+  if (native_current or {}).get('requested_by')==OFFLINE_PREPARATION_OWNER:
+   # An offline-only receipt has no matching startup. It cannot authorize
+   # offline work or a later start as if a native shutdown had occurred.
+   native_current=None
   native_status=str((native_current or {}).get('status') or '').lower()
   if native_status=='failed':
    self.repository.finish(
@@ -404,6 +457,41 @@ class MaintenanceWorker:
     now=now,
    );result['failed']+=1;return
   native_armed=bool(native_status=='completed' and capabilities.get('native_countdown'))
+  if capabilities.get('native_countdown') and observed not in {'running','stopped'}:
+   self.repository.finish(rid,success=False,error_code='native_preflight_state_unverified',
+    error_detail=f'Agent did not confirm a running or stopped DayZ process: {observed}',now=now)
+   result['failed']+=1
+   return
+  if capabilities.get('native_countdown') and _payload(preflight or {}).get('desired_state')=='stopped':
+   self.repository.finish(rid,success=False,error_code='native_restart_desired_stopped',
+    error_detail='DayZ is configured to remain stopped',now=now)
+   result['failed']+=1
+   return
+  if (capabilities.get('native_countdown') and not native_armed
+      and observed=='stopped' and _payload(preflight or {}).get('desired_state')=='running'):
+   # Startup XML can only be prepared offline. Prime the next occurrence
+   # independently of an operator start, without initiating a lifecycle
+   # transition or treating the offline state as a verified native shutdown.
+   if (now-due).total_seconds()>timeout:
+    self.repository.finish(rid,success=False,error_code='native_restart_prepare_timeout',
+     error_detail='Offline native preparation did not finish within the maintenance window',now=now)
+    result['failed']+=1
+    return
+   event,ready=self._prepare_next_native_restart(run,event,now,result,offline_only=True)
+   if not ready:return
+   prepared=event.get('native_restart') or {}
+   error=event.get('work_error')
+   if error:
+    self.repository.finish(rid,success=False,error_code='native_restart_prepare_failed',
+     error_detail=str(error),now=now)
+    result['failed']+=1
+    return
+   if prepared.get('status')=='completed':
+    self.repository.finish(rid,success=False,error_code='native_restart_prepared_offline',
+     error_detail='Next countdown prepared offline; no shutdown or startup was performed',
+     now=now,next_due_override=prepared['due_at'])
+    result['failed']+=1
+    return
   if observed!='running':
    if not (native_armed and observed=='stopped'):
     self.repository.finish(rid,success=True,now=now);result['completed']+=1;result['skipped']+=1;return
@@ -492,7 +580,8 @@ class MaintenanceWorker:
    return
   doctor=self._command(run.get('readiness_command_id'));doctor_status=str((doctor or {}).get('status') or '')
   if doctor_status in {'queued','delivered'}:return
-  if doctor_status=='completed' and _doctor_ready(doctor or {}):
+  ready_check=_native_doctor_ready if native_armed else _doctor_ready
+  if doctor_status=='completed' and ready_check(doctor or {}):
    event,committed=self._finalize_game_work(run,event,result)
    if not committed:return
    if self._has_rollbackable_game(event):event['recovery']={'phase':'stop','reason':str(event.get('work_error') or 'game update commit failed')};self.repository.update_event(rid,event,stage='rollback-stopping');return

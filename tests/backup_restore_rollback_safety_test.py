@@ -197,7 +197,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             self.assertEqual((previous / "world.dat").read_text(), "original")
 
 
-    def test_extraction_failure_restarts_original_instance(self):
+    def test_extraction_failure_leaves_original_instance_running(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "instance"
             root.mkdir()
@@ -217,7 +217,7 @@ class RestoreRollbackSafetyTest(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "damaged archive"):
                     backup_client._restore_direct({}, {"instance_id": "test", "backup_id": "test"})
-            self.assertEqual(actions, ["stop", "start"])
+            self.assertEqual(actions, [])
             self.assertEqual(sentinel.read_text(), "original")
 
 

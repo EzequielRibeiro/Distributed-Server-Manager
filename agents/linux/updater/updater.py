@@ -749,6 +749,7 @@ def apply_request() -> int:
             _daemon_reload()
             _set_uninstall_watch(True)
             _set_console_reader(True)
+            subprocess.run(["systemctl", "restart", CONSOLE_READER_UNIT], check=True, timeout=30)
             _reconcile_runtime_identity()
             _reconcile_cli()
             _validate_installed(plain, manifest, mapping)

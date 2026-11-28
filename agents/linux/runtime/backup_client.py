@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from instance_runtime import get_instance, lifecycle, status
-from backup_storage_accounting import quota_snapshot, source_size
+from backup_storage_accounting import quota_snapshot, source_size, workshop_alias_path
 
 STATE_ROOT = Path(
     os.environ.get("CAPIVARA_AGENT_STATE_DIR", "/var/lib/capivara-agent")
@@ -97,8 +97,14 @@ def _selected(root, policy):
     candidates = []
     if includes:
         for relative in includes:
-            path = (root / str(relative)).resolve()
-            path.relative_to(root)
+            requested = Path(str(relative))
+            if requested.is_absolute() or ".." in requested.parts:
+                raise ValueError("backup source escaped instance root")
+            path = root
+            for part in requested.parts:
+                path /= part
+                if path.is_symlink():
+                    raise OSError("symlink in backup selection")
             if path.exists():
                 candidates.append(path)
     else:
@@ -285,15 +291,16 @@ def _create_unlocked(config, command):
     if not limits:
         raise OSError("backup denied: instance storage quota is unavailable")
     quota_limit = min(limits)
-    snapshot = quota_snapshot(record, BACKUP_ROOT)
+    aliases = []
+    snapshot = quota_snapshot(record, BACKUP_ROOT, aliases=aliases)
     if (BACKUP_ROOT / _safe(instance_id)).resolve().is_relative_to(root):
         raise OSError("backup storage must not be inside the archived source directory")
     estimate = source_size(selected_paths, root)
     # TAR/gzip may expand slightly. Reserve an overhead and never assume
     # compression savings when checking capacity.
     reserve = estimate + max(2 * 1024 * 1024, estimate // 100)
-    if snapshot["total_used_bytes"] + reserve > quota_limit:
-        raise OSError("backup denied: instance plus archived backups exceed storage quota")
+    if snapshot["instance_used_bytes"] > quota_limit:
+        raise OSError("backup denied: instance data exceeds storage quota")
     disk_parent = BACKUP_ROOT
     while not disk_parent.exists() and disk_parent != disk_parent.parent:
         disk_parent = disk_parent.parent
@@ -320,6 +327,12 @@ def _create_unlocked(config, command):
         )
         path = instance_dir / f"{backup_id}{suffix}"
         manifest = _manifest(record, backup_id)
+        if record.get("game_id") == "dayz":
+            manifest["dayz_workshop_addons_aliases"] = sorted(
+                alias for alias in aliases
+                if any((root / alias).with_name("Addons").is_relative_to(path)
+                       for path in selected_paths)
+            )
         if path.exists():
             raise FileExistsError(f"backup destination already exists: {path}")
         try:
@@ -334,8 +347,8 @@ def _create_unlocked(config, command):
             # Re-scan real files after writing; races or unexpectedly large
             # output must never commit a backup beyond the quota.
             after = quota_snapshot(record, BACKUP_ROOT)
-            if after["total_used_bytes"] > quota_limit:
-                raise OSError("backup denied: final archive exceeds storage quota")
+            if after["instance_used_bytes"] > quota_limit:
+                raise OSError("backup denied: instance data exceeds storage quota after archive creation")
             _validate_archive_payload(path)
             sha256 = _digest(path)
         except Exception:
@@ -353,7 +366,7 @@ def _create_unlocked(config, command):
             "sha256": sha256,
             "manifest": manifest,
             "quota_limit_bytes": quota_limit,
-            "quota_total_used_bytes": after["total_used_bytes"],
+            "quota_total_used_bytes": after["instance_used_bytes"],
             "quota_backup_used_bytes": after["backup_used_bytes"],
         }
     finally:
@@ -398,7 +411,7 @@ def _validate_manifest(record, manifest):
 
 
 
-def _preserve_restored_owner(stage: Path, original: Path) -> None:
+def _preserve_restored_owner(stage: Path, original: Path, aliases: set[Path] | frozenset[Path] = frozenset()) -> None:
     """Restore the instance owner's UID/GID before activating a root-staged tree."""
     if os.geteuid() != 0:
         return
@@ -406,6 +419,8 @@ def _preserve_restored_owner(stage: Path, original: Path) -> None:
     pending = [stage]
     while pending:
         current = pending.pop()
+        if current in aliases and current.is_symlink() and os.readlink(current) == "Addons":
+            continue
         if current.is_symlink():
             raise RuntimeError(f"restore staging contains a symlink: {current}")
         if current.is_dir():
@@ -416,6 +431,22 @@ def _preserve_restored_owner(stage: Path, original: Path) -> None:
     # tarfile may reset the staging root's mode from the archive. Preserve
     # the actual live instance root permissions (not a broad default).
     os.chmod(stage, stat.S_IMODE(owner.st_mode))
+
+
+def _restore_workshop_aliases(stage: Path, manifest: dict | None, record: dict) -> set[Path]:
+    aliases = (manifest or {}).get("dayz_workshop_addons_aliases", [])
+    if not isinstance(aliases, list) or len(aliases) > 2000:
+        raise ValueError("invalid DayZ Workshop alias manifest")
+    if not aliases:
+        return set()
+    if record.get("game_id") != "dayz" or any(not isinstance(item, str) for item in aliases):
+        raise ValueError("invalid DayZ Workshop alias manifest")
+    paths = {workshop_alias_path(stage, relative) for relative in aliases}
+    for path in sorted(paths):
+        # The archive itself contains only regular payloads. Reconstruct
+        # exactly the fixed sibling alias under a freshly extracted tree.
+        path.symlink_to("Addons", target_is_directory=True)
+    return paths
 
 
 def _restore_direct(config, command):
@@ -458,16 +489,19 @@ def _restore_direct(config, command):
         )
     )
     moved_original = False
+    stop_attempted = False
 
     try:
-        if was_running:
-            lifecycle(config, instance_id, "stop")
         manifest = _safe_extract(artifact, stage)
         _validate_manifest(record, manifest)
         manifest_path = stage / MANIFEST_NAME
         if manifest_path.exists():
             manifest_path.unlink()
-        _preserve_restored_owner(stage, root)
+        aliases = _restore_workshop_aliases(stage, manifest, record)
+        _preserve_restored_owner(stage, root, aliases)
+        if was_running:
+            stop_attempted = True
+            lifecycle(config, instance_id, "stop")
         os.replace(root, previous)
         moved_original = True
         os.replace(stage, root)
@@ -496,7 +530,7 @@ def _restore_direct(config, command):
                 os.replace(previous, root)
             except Exception as exc:
                 rollback_errors.append(f"directory recovery failed: {exc}")
-        if was_running:
+        if stop_attempted:
             try:
                 lifecycle(config, instance_id, "start")
             except Exception as exc:
@@ -549,7 +583,7 @@ def _create_via_privileged_helper(config, command, unit_template):
     result_path = request_dir / f"{command_id}.result.json"
     if request_path.is_symlink() or result_path.is_symlink():
         raise PermissionError("unsafe privileged backup request boundary")
-    result_path.unlink(missing_ok=True)
+    previous_result = result_path.is_file()
     _write(request_path, {
         "schema_version": 1,
         "kind": "CapivaraPrivilegedBackupCreateRequest",
@@ -567,19 +601,21 @@ def _create_via_privileged_helper(config, command, unit_template):
     if unit != f"capivara-agent-backup-create@{command_id}.service":
         raise PermissionError("unapproved privileged backup create unit")
 
-    completed = subprocess.run(
-        ["systemctl", "start", unit, "--no-pager"],
-        capture_output=True, text=True, check=False, timeout=3600,
-    )
+    completed = None
+    if not previous_result:
+        completed = subprocess.run(
+            ["systemctl", "start", unit, "--no-pager"],
+            capture_output=True, text=True, check=False, timeout=3600,
+        )
     try:
         result = json.loads(result_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        if completed.returncode != 0:
+        if completed is not None and completed.returncode != 0:
             raise RuntimeError((completed.stderr or completed.stdout
                                 or "privileged backup create failed")[:2000]) from exc
         raise RuntimeError("privileged backup create returned no valid result") from exc
-    if completed.returncode != 0 or result.get("status") != "completed":
-        raise RuntimeError(str(result.get("error") or completed.stderr
+    if (completed is not None and completed.returncode != 0) or result.get("status") != "completed":
+        raise RuntimeError(str(result.get("error") or (completed.stderr if completed else "")
                                or "privileged backup create failed")[:2000])
     for name, expected in (
         ("command_id", command_id), ("instance_id", instance_id),
@@ -590,6 +626,10 @@ def _create_via_privileged_helper(config, command, unit_template):
     operation = result.get("operation")
     if not isinstance(operation, dict) or not operation.get("artifact_path") or not operation.get("sha256"):
         raise RuntimeError("privileged backup create returned invalid operation")
+    if previous_result:
+        artifact = _artifact(instance_id, operation.get("backup_id"))
+        if str(artifact) != operation["artifact_path"] or _digest(artifact) != operation["sha256"]:
+            raise RuntimeError("privileged backup receipt does not match the stored archive")
     return operation
 
 
